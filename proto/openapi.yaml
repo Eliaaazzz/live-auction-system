@@ -1,0 +1,318 @@
+openapi: 3.0.3
+info:
+  title: Lumen Auction API (DRAFT v1)
+  version: 0.1.0
+  description: |
+    REST API for the live auction system. Real-time bidding goes over WebSocket (see proto/ws-envelope.md).
+    Owner: @B (Product Engineer). Status: DRAFT — freeze by Day 2 (2026-05-20).
+servers:
+  - url: http://localhost:8080/api
+    description: dev (API Gateway in apps/realtime/cmd/api)
+
+tags:
+  - name: auth
+  - name: items
+  - name: auctions
+  - name: evidence
+  - name: upload
+  - name: health
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Health check
+      responses:
+        '200': { description: ok }
+
+  /auth/dev-login:
+    post:
+      tags: [auth]
+      summary: P0 demo login (seeded user, no email/password)
+      description: P1 will replace with email-OTP. For P0 only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string, example: "u_demo_alice" }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  jwt: { type: string }
+                  refresh: { type: string }
+                  user: { $ref: '#/components/schemas/User' }
+
+  /upload/signed-url:
+    post:
+      tags: [upload]
+      summary: Get pre-signed URL for image upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content_type: { type: string, example: "image/jpeg" }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  put_url: { type: string, format: uri }
+                  read_url: { type: string, format: uri }
+
+  /items:
+    post:
+      tags: [items]
+      summary: Create item and trigger VLM facts draft (async)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [images, seller_text]
+              properties:
+                images: { type: array, items: { type: string, format: uri } }
+                seller_text: { type: string, maxLength: 2000 }
+                category_hint: { type: string }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+
+  /items/{id}:
+    get:
+      tags: [items]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+
+  /items/{id}/facts:
+    patch:
+      tags: [items]
+      summary: Seller confirms / edits facts. Marks item openable for auction.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ItemFactsConfirmed' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Item' }
+
+  /auctions:
+    get:
+      tags: [auctions]
+      parameters:
+        - { name: state, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Auction' }
+    post:
+      tags: [auctions]
+      summary: Schedule auction. Rules are mutable until /start which freezes them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_id, rules]
+              properties:
+                item_id: { type: string }
+                rules: { $ref: '#/components/schemas/AuctionRules' }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Auction' }
+
+  /auctions/{id}:
+    get:
+      tags: [auctions]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Auction' }
+
+  /auctions/{id}/start:
+    post:
+      tags: [auctions]
+      summary: Freeze rules + transition state Scheduled→Bidding via Lua. Publishes rule.changed.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Auction' }
+
+  /auctions/{id}/snapshot:
+    get:
+      tags: [auctions]
+      summary: Current state snapshot. Used by clients on snapshot.required.
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  state: { type: string }
+                  seq: { type: integer }
+                  max_amount_cents: { type: integer }
+                  max_user_id: { type: string, nullable: true }
+                  step_cents: { type: integer }
+                  ends_at_ms: { type: integer }
+                  top_n:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id: { type: string }
+                        amount_cents: { type: integer }
+
+  /auctions/{id}/evidence:
+    get:
+      tags: [evidence]
+      summary: Evidence card (only after Hammered / Settled / Passed)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EvidenceCard' }
+        '409':
+          description: Auction not yet hammered
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        display_name: { type: string }
+
+    Item:
+      type: object
+      properties:
+        id: { type: string }
+        seller_id: { type: string }
+        images: { type: array, items: { type: string, format: uri } }
+        seller_text: { type: string }
+        facts_draft: { $ref: '#/components/schemas/ItemFactsDraft' }
+        facts_confirmed: { $ref: '#/components/schemas/ItemFactsConfirmed' }
+        facts_confirmed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    ItemFactsDraft:
+      type: object
+      description: AI-generated. Not safe to display as fact — requires seller confirmation.
+      properties:
+        category: { type: string }
+        visible_condition: { type: string }
+        defects: { type: array, items: { type: string } }
+        suggested_start_cents: { type: integer }
+        confidence: { type: number, format: float }
+        high_risk_fields_disclaimer:
+          type: array
+          items: { type: string, enum: [brand, authenticity, material, manufacture_year] }
+
+    ItemFactsConfirmed:
+      type: object
+      description: After seller confirmation. Safe for LLM auctioneer to reference.
+      properties:
+        category: { type: string }
+        visible_condition: { type: string }
+        defects: { type: array, items: { type: string } }
+        suggested_start_cents: { type: integer }
+        seller_declared_brand:
+          type: string
+          nullable: true
+          description: 显式标注 "卖家声明 / AI 未验证"
+        seller_declared_authenticity:
+          type: string
+          enum: [seller_claim_not_verified, unknown]
+          default: seller_claim_not_verified
+
+    AuctionRules:
+      type: object
+      required: [start_cents, step_cents, duration_ms, anti_snipe_ms]
+      properties:
+        start_cents: { type: integer, minimum: 1 }
+        step_cents: { type: integer, minimum: 1 }
+        duration_ms: { type: integer, minimum: 5000 }
+        anti_snipe_ms: { type: integer, minimum: 0, default: 30000 }
+        reserve_cents: { type: integer, nullable: true }
+        require_seller_confirm:
+          type: boolean
+          default: false
+          description: If true, after ends_at the auction goes to AwaitingSellerConfirm before Hammered.
+
+    Auction:
+      type: object
+      properties:
+        id: { type: string }
+        item_id: { type: string }
+        state:
+          type: string
+          enum: [Draft, Scheduled, Bidding, Cooling, AwaitingSellerConfirm, Hammered, Settled, Passed, ReserveNotMet, Cancelled]
+        rules: { $ref: '#/components/schemas/AuctionRules' }
+        rules_frozen_at_seq: { type: integer, nullable: true }
+        opened_at: { type: string, format: date-time, nullable: true }
+        hammered_at: { type: string, format: date-time, nullable: true }
+        winner_user_id: { type: string, nullable: true }
+        final_amount_cents: { type: integer, nullable: true }
+
+    EvidenceCard:
+      type: object
+      properties:
+        auction_id: { type: string }
+        item_snapshot: { $ref: '#/components/schemas/Item' }
+        rules_frozen: { $ref: '#/components/schemas/AuctionRules' }
+        winner_user_id: { type: string, nullable: true }
+        final_amount_cents: { type: integer, nullable: true }
+        bid_timeline:
+          type: array
+          items:
+            type: object
+            properties:
+              seq: { type: integer }
+              user_id: { type: string }
+              amount_cents: { type: integer }
+              ts_ms: { type: integer }
+        seq_range:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+          description: "[first_seq, last_seq] inclusive"
+        events_hash:
+          type: string
+          description: "sha256 over concatenated event payloads — tamper-evident receipt"
+        generated_at: { type: string, format: date-time }

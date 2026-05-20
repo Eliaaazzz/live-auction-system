@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Live Auction System Architecture v2</title>
+  <desc id="desc">Layered architecture for a live auction system with clients, gateway, core services, Redis, and MySQL.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .layer { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 18; }
+      .layer-title { font: 700 30px Arial, Helvetica, sans-serif; fill: #0f172a; }
+      .layer-note { font: 500 18px Arial, Helvetica, sans-serif; fill: #64748b; }
+      .box { fill: #eff6ff; stroke: #60a5fa; stroke-width: 2; rx: 14; }
+      .box.green { fill: #ecfdf5; stroke: #34d399; }
+      .box.amber { fill: #fffbeb; stroke: #f59e0b; }
+      .box.rose { fill: #fff1f2; stroke: #fb7185; }
+      .box.gray { fill: #f1f5f9; stroke: #94a3b8; }
+      .box-title { font: 700 22px Arial, Helvetica, sans-serif; fill: #111827; }
+      .box-text { font: 500 17px Arial, Helvetica, sans-serif; fill: #334155; }
+      .arrow { stroke: #2563eb; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .thin { stroke-width: 3; }
+      .label { font: 700 18px Arial, Helvetica, sans-serif; fill: #1d4ed8; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1600" height="1000"/>
+  <text x="800" y="62" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="700" fill="#0f172a">Live Auction System Architecture v2</text>
+  <text x="800" y="98" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="20" fill="#64748b">Redis Lua is the atomic decision point; WebSocket rooms fan out ordered events.</text>
+
+  <rect class="layer" x="70" y="130" width="1460" height="155"/>
+  <text class="layer-title" x="105" y="174">Client Layer</text>
+  <text class="layer-note" x="105" y="202">Operator UI, bidder UI, and load testing clients</text>
+  <rect class="box" x="380" y="158" width="230" height="95"/>
+  <text class="box-title" x="495" y="194" text-anchor="middle">Admin PC</text>
+  <text class="box-text" x="495" y="224" text-anchor="middle">Products, rules, orders</text>
+  <rect class="box" x="685" y="158" width="230" height="95"/>
+  <text class="box-title" x="800" y="194" text-anchor="middle">Mobile H5</text>
+  <text class="box-text" x="800" y="224" text-anchor="middle">Room, bid, leaderboard</text>
+  <rect class="box" x="990" y="158" width="230" height="95"/>
+  <text class="box-title" x="1105" y="194" text-anchor="middle">Load Bot</text>
+  <text class="box-text" x="1105" y="224" text-anchor="middle">1000+ WS clients</text>
+
+  <rect class="layer" x="70" y="330" width="1460" height="160"/>
+  <text class="layer-title" x="105" y="374">Edge Layer</text>
+  <text class="layer-note" x="105" y="402">Authentication, rate limits, REST queries, and room connections</text>
+  <rect class="box green" x="265" y="360" width="230" height="95"/>
+  <text class="box-title" x="380" y="396" text-anchor="middle">Nginx / Gateway</text>
+  <text class="box-text" x="380" y="426" text-anchor="middle">TLS, routing, limits</text>
+  <rect class="box green" x="565" y="360" width="230" height="95"/>
+  <text class="box-title" x="680" y="396" text-anchor="middle">REST BFF</text>
+  <text class="box-text" x="680" y="426" text-anchor="middle">Commands and queries</text>
+  <rect class="box green" x="865" y="360" width="260" height="95"/>
+  <text class="box-title" x="995" y="396" text-anchor="middle">WebSocket Gateway</text>
+  <text class="box-text" x="995" y="426" text-anchor="middle">Rooms, heartbeat, lastSeq</text>
+  <rect class="box green" x="1195" y="360" width="210" height="95"/>
+  <text class="box-title" x="1300" y="396" text-anchor="middle">Auth</text>
+  <text class="box-text" x="1300" y="426" text-anchor="middle">Identity and ACL</text>
+
+  <rect class="layer" x="70" y="535" width="1460" height="205"/>
+  <text class="layer-title" x="105" y="579">Core Layer</text>
+  <text class="layer-note" x="105" y="607">State-machine services and workers own all auction transitions</text>
+  <rect class="box amber" x="210" y="585" width="220" height="105"/>
+  <text class="box-title" x="320" y="623" text-anchor="middle">Auction Service</text>
+  <text class="box-text" x="320" y="653" text-anchor="middle">Start, cancel, rules</text>
+  <rect class="box amber" x="490" y="585" width="220" height="105"/>
+  <text class="box-title" x="600" y="623" text-anchor="middle">Bid Engine</text>
+  <text class="box-text" x="600" y="653" text-anchor="middle">place_bid.lua</text>
+  <rect class="box amber" x="770" y="585" width="220" height="105"/>
+  <text class="box-title" x="880" y="623" text-anchor="middle">Timer Worker</text>
+  <text class="box-text" x="880" y="653" text-anchor="middle">close_auction.lua</text>
+  <rect class="box amber" x="1050" y="585" width="220" height="105"/>
+  <text class="box-title" x="1160" y="623" text-anchor="middle">Order Service</text>
+  <text class="box-text" x="1160" y="653" text-anchor="middle">Idempotent orders</text>
+  <rect class="box amber" x="630" y="705" width="260" height="95"/>
+  <text class="box-title" x="760" y="741" text-anchor="middle">Persistence Worker</text>
+  <text class="box-text" x="760" y="771" text-anchor="middle">Stream to MySQL</text>
+  <rect class="box amber" x="955" y="705" width="220" height="95"/>
+  <text class="box-title" x="1065" y="741" text-anchor="middle">Metrics API</text>
+  <text class="box-text" x="1065" y="771" text-anchor="middle">QPS, P95, errors</text>
+
+  <rect class="layer" x="70" y="805" width="1460" height="145"/>
+  <text class="layer-title" x="105" y="849">Data Layer</text>
+  <text class="layer-note" x="105" y="877">Redis is the hot source of truth; MySQL stores facts and audit history</text>
+  <rect class="box rose" x="465" y="825" width="315" height="95"/>
+  <text class="box-title" x="622" y="861" text-anchor="middle">Redis</text>
+  <text class="box-text" x="622" y="891" text-anchor="middle">State, leaderboard, Stream, Pub/Sub</text>
+  <rect class="box gray" x="840" y="825" width="315" height="95"/>
+  <text class="box-title" x="998" y="861" text-anchor="middle">MySQL</text>
+  <text class="box-text" x="998" y="891" text-anchor="middle">Users, bids, orders, events</text>
+
+  <path class="arrow" d="M495 253 V325"/>
+  <path class="arrow" d="M800 253 V325"/>
+  <path class="arrow" d="M1105 253 V325"/>
+  <text class="label" x="555" y="313">REST</text>
+  <text class="label" x="935" y="313">WebSocket</text>
+
+  <path class="arrow thin" d="M680 455 C665 495 485 515 365 585"/>
+  <path class="arrow thin" d="M995 455 C965 510 710 525 625 585"/>
+  <path class="arrow thin" d="M995 455 C1035 505 1105 535 1145 585"/>
+  <path class="arrow thin" d="M880 690 V820"/>
+  <path class="arrow thin" d="M600 690 C590 750 600 770 622 825"/>
+  <path class="arrow thin" d="M760 800 C780 820 835 840 840 872"/>
+  <path class="arrow thin" d="M1160 690 C1110 770 1030 790 998 825"/>
+  <path class="arrow thin" d="M622 825 C585 770 520 725 430 665"/>
+  <text class="label" x="700" y="818">Redis Stream</text>
+  <text class="label" x="515" y="782">Atomic Lua</text>
+</svg>
