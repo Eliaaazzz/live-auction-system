@@ -9,7 +9,7 @@ Lumen Auction is organized as four layers. Client surfaces handle seller admin, 
 │ Client Layer                                                  │
 │                                                              │
 │  Admin PC              Mobile H5             Load Bot         │
-│  商品上架/规则/订单     直播间/出价/榜单       1000+ WS 压测     │
+│  商品上架/规则/订单     直播间/出价/榜单       500/50 P0·1k/100 S │
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ REST               │ WebSocket
                 ▼                    ▼
