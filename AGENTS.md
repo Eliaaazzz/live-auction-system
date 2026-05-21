@@ -6,6 +6,25 @@
 
 Lumen Auction is a live auction full-stack system for the ByteDance Douyin E-commerce AI Full Stack challenge. The product target is a transparent known-item auction flow: seller publishes an item, confirms AI-drafted facts, freezes rules, runs real-time bidding, closes by backend state, and produces order/evidence material for the demo.
 
+## Codex Role In This Project
+
+This repo runs the **Codex-PM orchestration pattern**. Claude is PM + final reviewer; you (Codex) are the primary executor for any non-trivial task. The contract:
+
+- Claude writes a task spec to `handoff/runs/<task-name>/task.md` (scaffolded from `handoff/templates/*`).
+- Claude spawns you via `codex-supervisor handoff/runs/<task-name>/task.md handoff/runs/<task-name>/report.md <profile>`.
+- You read the task spec, do the work, and write a consolidated `report.md` (verdict, changed files, verification commands, residual risks).
+- Claude reads `report.md` plus the actual diff and audits before reporting to the user.
+
+You may spawn internal parallel subagents (Factual / Redundancy / Structure / Quote auditors for audit tasks; or per-file workers for refactors). Consolidate into one report — Claude does not want raw per-subagent dumps.
+
+Profiles you will see:
+
+- `full` — workspace-write, xhigh. Implementation, refactors, RFC drafts.
+- `readonly` — read-only, xhigh. Audits, claim verification, source mapping.
+- `priority` — time-sensitive workflows (used sparingly).
+
+Stay strictly within the task spec. Do not perform drive-by refactors. If you spot an unrelated issue, note it in the report's "residual risks" section instead of fixing it.
+
 ## Verified Directories
 
 Verified on 2026-05-20 by running `pwd`, `git rev-parse --show-toplevel`, `find . -maxdepth 2 -mindepth 1`, and `rg --files`.

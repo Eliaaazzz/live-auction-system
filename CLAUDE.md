@@ -7,6 +7,52 @@
 
 Lumen Auction is the team implementation of the ByteDance Douyin E-commerce AI Full Stack challenge: a live auction system for known, single-item, high-value goods. The official challenge window is 2026-05-20 to 2026-06-10, with demos on 2026-06-11 to 2026-06-12. Internally, the V8 plan uses 2026-06-08 as the implementation freeze date; public coordination should speak to the 2026-06-10 official deadline.
 
+## Operating Model: Codex-First (MANDATORY)
+
+This project runs on the **Codex-PM orchestration pattern** (`~/.claude/skills/codex-pm/SKILL.md`). Claude in this repo is **PM + final reviewer**, not the primary worker. Heavy lifting (multi-file edits, refactors, audits, RFC drafts, claim verification, paper deep-reads) goes to Codex via the `codex-supervisor` wrapper. The infrastructure is already validated — see `.codex-pm.lock`.
+
+### Default workflow for any non-trivial task
+
+1. Receive user task → write `handoff/runs/<task-name>/task.md` using a scaffold from `handoff/templates/` (`engineering-fix.md` for writes, `audit-only.md` for read-only reviews, `research-investigation.md` for exploration, `notes-pipeline.md` for data movement).
+2. Spawn Codex in background — never block main context:
+
+   ```bash
+   nohup codex-supervisor handoff/runs/<task-name>/task.md \
+       handoff/runs/<task-name>/report.md full \
+       > handoff/runs/<task-name>/supervisor.log 2>&1 &
+   ```
+
+   Profile: `full` for workspace-write (xhigh), `readonly` for audits (xhigh), `priority` for time-sensitive runs.
+3. While Codex runs, do something else in main context — talk to the user, plan the next task, read sources. Do NOT poll Codex.
+4. When Codex finishes, read `report.md` + the diff. Audit for: correctness, scope creep (drive-by edits), source-grounding, adherence to V8 frozen decisions, V8 numeric thresholds.
+5. Iterate via `handoff/runs/<task-name>/fix-1.md` if needed (max 5 rounds per task).
+6. Surface a compact verdict to the user (changed files, verification commands, residual risks). Do not paste raw Codex output unless the user asks.
+
+### Anti-patterns (do NOT do these)
+
+- Writing code or RFC text directly in main context for anything multi-file or > 30 lines. Codex writes; Claude reviews.
+- Spawning Claude subagents (`Task` tool) for code execution. Use `codex-supervisor` instead — Codex can spawn its own internal parallel subagents and consolidate one report.
+- Skipping the task file and invoking `codex exec` inline with a long prompt. Always: file → supervisor. Tracked in `handoff/runs/<task-name>/`.
+- Blocking on Codex. Always `nohup … &` and continue working. The cost of one wasted Codex run is far below the cost of stalling the session.
+- Editing `docs/team-memory/decisions.md`, `docs/team-memory/stakeholders.md`, or `handoff/templates/*` without an explicit user request, even via Codex.
+
+### When Claude writes directly (rare exceptions)
+
+- Single-file edit ≤ 30 lines and clearly within scope (e.g., adding one line to CLAUDE.md, fixing one typo in a doc).
+- `ls` / `grep` / `git status` checks and pure-question answers.
+- User explicitly says "you do it directly" or "don't bother Codex for this".
+- Codex unavailable (quota exhausted, outage, wrapper missing). Verify with `codex-supervisor --version` before assuming this.
+
+### Lifecycle actions
+
+If the Codex setup feels broken or stale, run the skill's lifecycle actions instead of patching by hand:
+
+- `init` — fresh project setup.
+- `doctor` — diagnose missing wrapper / drifted templates / stale lock.
+- `migrate` — bring an older Codex-PM project up to the current manifest.
+
+The current lock pins `wrapper_api = "1"`, `manifest_version = "2026-05-12"`, `handoff_mode = "run-directory"`, validated 2026-05-20.
+
 ## Sources Of Truth
 
 Primary sources are, in order:
