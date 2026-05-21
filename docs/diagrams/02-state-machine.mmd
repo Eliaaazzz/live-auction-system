@@ -1,0 +1,31 @@
+stateDiagram-v2
+  [*] --> Draft
+  Draft --> Scheduled: freeze_rules / rule.changed
+  Scheduled --> Bidding: start_auction
+
+  Bidding --> Bidding: bid.accepted
+  Bidding --> Bidding: anti_snipe_extended / ends_at_ms updated
+  Bidding --> Hammered: cap reached
+  Bidding --> Cooling: now >= ends_at_ms
+  Bidding --> Cancelled: abnormal_cancel
+
+  Cooling --> Hammered: highest bid exists
+  Cooling --> Passed: no valid bid
+  Cooling --> ReserveNotMet: highest < reserve_cents
+
+  Hammered --> AwaitingSellerConfirm: require_seller_confirm
+  Hammered --> Settled: order.created
+  AwaitingSellerConfirm --> Settled: seller_confirmed / order.created
+
+  Draft --> Cancelled: cancel
+  Scheduled --> Cancelled: cancel
+
+  Passed --> [*]
+  ReserveNotMet --> [*]
+  Settled --> [*]
+  Cancelled --> [*]
+
+  note right of Bidding
+    No EXTENDED state.
+    Extension is an event while status remains Bidding.
+  end note

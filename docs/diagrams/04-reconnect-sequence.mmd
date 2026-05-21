@@ -1,0 +1,23 @@
+sequenceDiagram
+  participant C as Client
+  participant W as WS Gateway
+  participant H as Redis State Hash
+  participant S as Redis Stream
+  participant API as REST Snapshot API
+
+  C->>W: ROOM_JOIN(auction_id, lastSeq)
+  W->>H: HGET seq
+  H-->>W: currentSeq
+  alt lastSeq == currentSeq
+    W-->>C: ROOM_SNAPSHOT(seq=currentSeq)
+  else stream has missing events
+    W->>S: XRANGE from lastSeq + 1
+    S-->>W: ordered events
+    W-->>C: CATCHUP_EVENTS(seq...)
+    W-->>C: ROOM_SNAPSHOT(seq=currentSeq)
+  else stream trimmed or gap too large
+    W->>API: get authoritative snapshot
+    API-->>W: snapshot
+    W-->>C: ROOM_SNAPSHOT(snapshot)
+  end
+  C->>C: apply seq monotonic; drop old events

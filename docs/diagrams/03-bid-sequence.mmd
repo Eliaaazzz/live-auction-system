@@ -1,0 +1,36 @@
+sequenceDiagram
+  participant C as Bidder H5
+  participant W as WS Gateway
+  participant B as Bid Engine
+  participant L as Redis Lua bid_v2.lua
+  participant S as Redis Stream
+  participant P as Redis PubSub
+  participant R as Room Clients
+  participant PW as Persistence Worker
+  participant M as MySQL
+
+  C->>W: BID_PLACE(client_bid_id, amount_cents)
+  W->>W: auth, room check, rate limit
+  W->>B: place bid command
+  B->>L: EVAL place_bid.lua
+  L->>L: dedupe lookup; retry returns original ack
+  L->>L: validate status Bidding and Redis TIME
+  L->>L: validate increment, cap, rate limit
+  L->>L: INCR single seq; HSET state; ZADD leaderboard
+  L->>S: XADD auction events with Stream ID seq-0
+  L->>P: PUBLISH room event
+  alt accepted below cap
+    L-->>B: OK_ACCEPTED(seq, amount, endAtMs, extended)
+    B-->>W: BID_ACCEPTED(seq)
+  else cap reached
+    L-->>B: OK_SOLD(seq, finalAmount, winnerId)
+    B-->>W: AUCTION_SOLD(seq)
+  else rejected
+    L-->>B: ERR_NOT_LIVE / ERR_TOO_LOW / ERR_AFTER_END / ERR_RATE_LIMITED / ERR_AUCTION_PAUSED
+    B-->>W: BID_REJECTED(reason)
+  end
+  W-->>C: ack with serverTimeMs
+  P-->>W: room wakeup
+  W-->>R: BID_ACCEPTED / USER_OUTBID / AUCTION_EXTENDED / AUCTION_SOLD
+  PW->>S: consume ordered events
+  PW->>M: idempotent insert bids and auction_events

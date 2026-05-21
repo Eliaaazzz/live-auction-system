@@ -1,0 +1,5 @@
+# Codex supervisor task/report scratch — don't commit
+*
+!.gitignore
+!templates/
+!templates/**

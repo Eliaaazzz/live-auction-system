@@ -1,0 +1,96 @@
+erDiagram
+  USERS ||--o{ PRODUCTS : sells
+  PRODUCTS ||--o{ AUCTIONS : listed_as
+  AUCTIONS ||--|| AUCTION_RULES : freezes
+  USERS ||--o{ BIDS : places
+  AUCTIONS ||--o{ BIDS : accepts
+  AUCTIONS ||--o{ AUCTION_EVENTS : records
+  AUCTIONS ||--o| ORDERS : creates
+  USERS ||--o{ ORDERS : buys
+  PRODUCTS ||--o{ AI_USAGE_LOGS : drafts_facts_for
+
+  USERS {
+    bigint id PK
+    string nickname
+    string avatar
+    string role
+    datetime created_at
+  }
+
+  PRODUCTS {
+    bigint id PK
+    bigint seller_id FK
+    string name
+    string image_url
+    string description
+    string status
+    datetime created_at
+    datetime updated_at
+  }
+
+  AUCTION_RULES {
+    bigint id PK
+    bigint auction_id FK
+    bigint start_price_cents
+    bigint increment_cents
+    bigint cap_price_cents
+    int duration_sec
+    int extend_window_sec
+    int extend_sec
+    datetime frozen_at
+  }
+
+  AUCTIONS {
+    bigint id PK
+    bigint product_id FK
+    bigint seller_id FK
+    string status
+    bigint current_price_cents
+    bigint winner_id
+    bigint seq
+    datetime start_at
+    datetime end_at
+    datetime finished_at
+    string cancel_reason
+  }
+
+  BIDS {
+    bigint id PK
+    bigint auction_id FK
+    bigint user_id FK
+    bigint amount_cents
+    bigint seq
+    string client_bid_id
+    string source
+    datetime accepted_at
+  }
+
+  ORDERS {
+    bigint id PK
+    bigint auction_id FK
+    bigint product_id FK
+    bigint buyer_id FK
+    bigint amount_cents
+    string status
+    datetime created_at
+    datetime paid_at
+  }
+
+  AUCTION_EVENTS {
+    bigint id PK
+    bigint auction_id FK
+    bigint seq
+    string event_type
+    json payload_json
+    datetime created_at
+  }
+
+  AI_USAGE_LOGS {
+    bigint id PK
+    string scenario
+    string model_name
+    string input_summary
+    string output_summary
+    boolean human_reviewed
+    datetime created_at
+  }
