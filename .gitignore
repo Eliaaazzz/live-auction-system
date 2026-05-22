@@ -35,3 +35,6 @@ coverage/
 .idea/
 .vscode/
 *.swp
+
+# Private session/memory notes — local only, never commit (PR #13 review #2)
+docs/team-memory/
