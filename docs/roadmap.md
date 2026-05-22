@@ -1,5 +1,7 @@
 # Roadmap
 
+V9 (issue #1) supersedes this with T0-T10 trunk steps; this file remains as Sprint baseline.
+
 Source basis: Plan V8 §7 and RFC v1 §12. The table keeps V8’s 4 Sprint / 20-day structure and folds RFC’s six phases into day-level work. Internal freeze is 2026-06-08; public deadline remains 2026-06-10.
 
 | Day | Date | Sprint | RFC phase | Focus | Exit evidence |

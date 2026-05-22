@@ -42,6 +42,8 @@ room:{<aid>}:online
 
 Lua has no rollback. Scripts must type-guard and validate before writes. Business code must not directly mutate these hot keys.
 
+P0 Lua scripts are `start_auction.lua`, `place_bid.lua`, `close_auction.lua`, and `cancel_auction.lua`.
+
 ## `place_bid.lua`
 
 Signature: `place_bid.lua(auctionId, userId, clientBidId, amountCents, requestId)`.

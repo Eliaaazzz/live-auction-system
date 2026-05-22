@@ -13,8 +13,8 @@ LIVE
   │ accepts valid bids through Redis Lua
   ├── abnormal seller cancel ─────────────▶ CANCELLED
   ├── cap reached ────────────────────────▶ SOLD
-  ├── now >= ends_at_ms and highest bid ──▶ SOLD
-  └── now >= ends_at_ms and no bid ───────▶ NO_BID
+  ├── now >= endAtMs and highest bid ─────▶ SOLD
+  └── now >= endAtMs and no bid ──────────▶ NO_BID
 
 SOLD ── order created idempotently ───────▶ ORDER_CREATED
 ```
@@ -26,11 +26,15 @@ SOLD ── order created idempotently ───────▶ ORDER_CREATED
 | LIVE | legal bid below cap | LIVE | `place_bid.lua` |
 | LIVE | legal anti-snipe bid | LIVE + `AUCTION_EXTENDED` | `place_bid.lua` |
 | LIVE | legal bid reaches cap | SOLD | `place_bid.lua` |
-| LIVE | Redis TIME `now >= ends_at_ms` and highest bid exists | SOLD | Timer Worker + `close_auction.lua` |
-| LIVE | Redis TIME `now >= ends_at_ms` and no accepted bid exists | NO_BID | Timer Worker + `close_auction.lua` |
+| LIVE | Redis TIME `now >= endAtMs` and highest bid exists | SOLD | Timer Worker + `close_auction.lua` |
+| LIVE | Redis TIME `now >= endAtMs` and no accepted bid exists | NO_BID | Timer Worker + `close_auction.lua` |
 | SOLD | order created | ORDER_CREATED | Order Service |
 | DRAFT/SCHEDULED/LIVE | abnormal cancel | CANCELLED | `cancel_auction.lua` |
 
-Terminal states reject new bids: `SOLD`, `NO_BID`, `CANCELLED`, and `ORDER_CREATED`. Existing V8 correctness wording says terminal bids return `after_hammer`; protocol docs may map that user-facing reason onto `ERR_NOT_LIVE` or a terminal-specific rejection, but accepted state must not change.
+`CANCELLED` may be entered from `DRAFT`, `SCHEDULED`, or `LIVE` via `cancel_auction.lua`.
 
-There is no `EXTENDED` state. Anti-snipe extension is an event inside `LIVE`: Redis updates `ends_at_ms`, increments `extendCount`, writes Stream, and broadcasts `AUCTION_EXTENDED`. Keeping it as an event avoids two bid-accepting states. Expiry adjudication is also not a separate persistent state: the backend remains `LIVE + endAtMs` until `close_auction.lua` atomically returns `OK_SOLD` or `OK_NO_BID`.
+Terminal states reject new bids with `ERR_NOT_LIVE`: `SOLD`, `NO_BID`, `CANCELLED`, and `ORDER_CREATED`. Existing V8 user-facing wording such as `after_hammer` maps to that wire code; accepted state must not change.
+
+There is no `EXTENDED` state. Anti-snipe extension is an event inside `LIVE`: Redis updates `endAtMs`, increments `extendCount`, writes Stream, and broadcasts `AUCTION_EXTENDED`. Keeping it as an event avoids two bid-accepting states. Expiry adjudication is also not a separate persistent state: the backend remains `LIVE + endAtMs` until `close_auction.lua` atomically returns `OK_SOLD` or `OK_NO_BID`.
+
+Reserve = P1 OPEN DECISION, pending V9 §2 all-member ratify; do not add `RESERVE_NOT_MET` to P0 state, schema, or Lua yet.

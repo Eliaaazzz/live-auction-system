@@ -59,6 +59,7 @@ Edge rules:
 
 Core rules:
 
+- Auction Service uses `start_auction.lua` for `SCHEDULED` to `LIVE` and `cancel_auction.lua` for abnormal cancellation.
 - Bid Engine is the only bid acceptance entry. `place_bid.lua` validates state, dedupe, amount, cap, anti-snipe, `seq`, Stream append, and Pub/Sub publish atomically.
 - Timer Worker is the only expiry adjudicator. It scans `auction:active`, then `close_auction.lua` re-checks Redis TIME before closing.
 - Order Service is idempotent; `orders.auction_id` is unique.

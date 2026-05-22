@@ -25,7 +25,7 @@ Protocol JSON uses camelCase. Money fields such as `amountCents` are strings at 
 |---|---|---|
 | `ROOM_JOIN` | `{ auctionId, lastSeq? }` | Join room and request catchup. |
 | `ROOM_LEAVE` | `{ auctionId }` | Leave room. |
-| `BID_PLACE` | `{ clientBidId, amountCents }` | Submit bid. |
+| `BID_PLACE` | `{ clientBidId, amountCents: string }` | Submit bid. |
 | `PING` | `{}` | Heartbeat. |
 | `CHAT_SEND` | `{ text }` | Soft room channel. |
 
@@ -71,4 +71,4 @@ Clients do not trust local time alone:
 remainingMs = endAtMs - (clientNowMs + serverClockOffsetMs)
 ```
 
-`serverClockOffsetMs` is calibrated from `serverTimeMs` in snapshots and events. Redis TIME is the adjudication source, with expiry boundary `now >= ends_at_ms`.
+`serverClockOffsetMs` is calibrated from `serverTimeMs` in snapshots and events. Redis TIME is the adjudication source, with expiry boundary `now >= endAtMs`.
