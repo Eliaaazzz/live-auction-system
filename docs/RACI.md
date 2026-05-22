@@ -14,7 +14,7 @@ DB ownership is split to avoid duplicate edits to the same schema surface.
 
 | Owner | Tables / flow | Boundary |
 |---|---|---|
-| A | `auction_events`, `bids`, Redis Stream -> MySQL idempotent replay, `UNIQUE(auction_id, seq)`, `UNIQUE(auction_id, client_bid_id)` | Event-link and replay correctness tables. A must align with Redis Stream schema and Replay Verifier I/O. |
+| A | `auction_events`, `bids`, Redis Stream -> MySQL idempotent replay, `UNIQUE(auction_id, seq)`, `UNIQUE(auction_id, user_id, client_bid_id)` | Event-link and replay correctness tables. A must align with Redis Stream schema and Replay Verifier I/O. |
 | B | `products`, `auctions`, `auction_rules`, `orders`, `users` | Business, seller, bidder, order, and mock-pay tables. B must align with product/admin/H5 flows and order idempotency. |
 
 MySQL is not the hot bidding path. Redis Lua adjudicates bids, ranking, seq, Stream append, and hammer state; MySQL stores facts, orders, events, and audit material through idempotent projection.
@@ -23,12 +23,9 @@ MySQL is not the hot bidding path. Redis Lua adjudicates bids, ranking, seq, Str
 
 All members must approve breaking or semantic changes to: WS envelope, Redis key format, Stream event schema, MySQL schema, auction state machine, Lua return structure, evidence card fields, hash chain fields, and AI Sidecar trigger contract.
 
-## Planned Contract Directory
+## Contract Canonical Path
 
-A will establish `proto/`; B and C should reference it after creation.
+Phase 1: contracts live in `docs/` (this PR). Phase 2 (Sprint 1, A line owner) materializes them to `proto/` per Issue #14.
 
-- `proto/ws-envelope.md`
-- `proto/redis-keys.md`
-- `proto/openapi.yaml`
-- `proto/ai-events.md`
-- `proto/db-schema.md`
+- Current docs: `docs/ws-protocol.md`, `docs/redis-keys.md`, `docs/mysql-schema.md`, `docs/state-machine.md`
+- Future materialization: `proto/ws-envelope.md`, `proto/redis-keys.md`, `proto/openapi.yaml`, `proto/ai-events.md`, `proto/db-schema.md`

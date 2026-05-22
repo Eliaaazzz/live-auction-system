@@ -17,7 +17,7 @@ type WsEnvelope<T = unknown> = {
 }
 ```
 
-Money fields such as `amount_cents` are strings at the protocol boundary to avoid JavaScript number ambiguity.
+Protocol JSON uses camelCase. Money fields such as `amountCents` are strings at the protocol boundary to avoid JavaScript number ambiguity.
 
 ## Client To Server
 
@@ -50,7 +50,18 @@ Issue #3 freezes the bid rejection code set through the WebSocket contract. Redi
 
 `OK_ACCEPTED`, `OK_SOLD`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_TOO_LOW`, `ERR_AFTER_END`, `ERR_RATE_LIMITED`, `ERR_AUCTION_PAUSED`, `OK_CANCELLED`, `OK_NO_BID`, `ERR_NOT_DUE`, `ERR_ALREADY_TERMINAL`, `ERR_NOT_ALLOWED`.
 
-Backpressure policy follows V8: bid-critical messages must not be blocked by soft chat/AI traffic. Watch WebSocket `bufferedAmount` at 1MB/4MB thresholds and degrade soft channels first.
+`DUPLICATE(previousResult)` is a replayed idempotent ack/result, not a client rejection.
+
+## Channel Queues
+
+Issue #3 is closed with four logical room channels. Backpressure policy follows V8 §0.3 boundary 8: bid-critical messages must not be blocked by soft chat/AI traffic, and WebSocket `bufferedAmount` is watched at 1MB/4MB thresholds.
+
+| Channel | Queue size | Traffic | Drop / degrade rule |
+|---|---:|---|---|
+| `critical` | 200 | bid ack, auction state, catchup, hammer, cancel | Never drop while the socket is open; if `bufferedAmount` exceeds 4MB, close and force reconnect/catchup. |
+| `presence` | 100 | online count, join/leave, room presence | Coalesce by latest room/user state before enqueue. |
+| `chat` | 20 | user chat and atmosphere messages | Drop oldest soft messages when full or when `bufferedAmount` exceeds 1MB. |
+| `ai` | 20 | LLM auctioneer text and AI sidecar notices | Drop oldest soft messages when full or when `bufferedAmount` exceeds 1MB; AI loss never blocks bidding. |
 
 ## Countdown Clock
 

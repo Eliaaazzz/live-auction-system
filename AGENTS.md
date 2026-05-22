@@ -8,22 +8,9 @@ Lumen Auction is a live auction full-stack system for the ByteDance Douyin E-com
 
 ## Codex Role In This Project
 
-This repo runs the **Codex-PM orchestration pattern**. Claude is PM + final reviewer; you (Codex) are the primary executor for any non-trivial task. The contract:
+Codex is the primary executor for source-grounded implementation, refactor, audit, and documentation tasks in this repository.
 
-- Claude writes a task spec to `handoff/runs/<task-name>/task.md` (scaffolded from `handoff/templates/*`).
-- Claude spawns you via `codex-supervisor handoff/runs/<task-name>/task.md handoff/runs/<task-name>/report.md <profile>`.
-- You read the task spec, do the work, and write a consolidated `report.md` (verdict, changed files, verification commands, residual risks).
-- Claude reads `report.md` plus the actual diff and audits before reporting to the user.
-
-You may spawn internal parallel subagents (Factual / Redundancy / Structure / Quote auditors for audit tasks; or per-file workers for refactors). Consolidate into one report — Claude does not want raw per-subagent dumps.
-
-Profiles you will see:
-
-- `full` — workspace-write, xhigh. Implementation, refactors, RFC drafts.
-- `readonly` — read-only, xhigh. Audits, claim verification, source mapping.
-- `priority` — time-sensitive workflows (used sparingly).
-
-Stay strictly within the task spec. Do not perform drive-by refactors. If you spot an unrelated issue, note it in the report's "residual risks" section instead of fixing it.
+Stay strictly within the task spec. Read the named sources first, inspect the current tree, make only scoped edits, and consolidate the result into a compact report with verdict, changed files, verification commands, and residual risks. If you spot an unrelated issue, note it under residual risks instead of fixing it.
 
 ## Verified Directories
 
@@ -31,10 +18,8 @@ Verified on 2026-05-20 by running `pwd`, `git rev-parse --show-toplevel`, `find 
 
 | Path | Purpose | Verified date |
 |---|---|---|
-| `docs/` | Challenge PDF, public design docs, diagrams, and team-memory notes | 2026-05-20 |
+| `docs/` | Challenge PDF, public design docs, and diagrams | 2026-05-20 |
 | `docs/diagrams/` | Mermaid architecture and flow diagrams | 2026-05-20 |
-| `docs/team-memory/` | Private memory notes; not team policy | 2026-05-20 |
-| `handoff/` | Local task templates and inbound issue snapshots | 2026-05-20 |
 | `CLAUDE.md` | Claude-facing project policy | 2026-05-20 |
 | `AGENTS.md` | Codex-facing project policy | 2026-05-20 |
 
@@ -43,7 +28,6 @@ Verified on 2026-05-20 by running `pwd`, `git rev-parse --show-toplevel`, `find 
 - `.env*`, credentials, API keys, tokens, cookies, or secrets: never read, print, or commit.
 - `.git/`, generated caches, dependency directories, build output: never edit directly.
 - Project lock files: do not modify.
-- `handoff/templates/`: do not modify unless the task explicitly names it.
 - `docs/team-memory/README.md`, `docs/team-memory/decisions.md`, `docs/team-memory/stakeholders.md`: do not modify unless explicitly requested.
 
 ## Hard Rules
@@ -73,7 +57,3 @@ Do not delete protected documentation blocks wholesale. Tighten or fold them if 
 ## Concurrency
 
 Read-only exploration may run in parallel. Only one writer should edit the main checkout at a time. Parallel implementation attempts should use separate worktrees and merge intentionally.
-
-## Handoff Mode
-
-Use a per-task run directory when a task explicitly asks for task files, logs, or a written report. Otherwise, work directly in the named files and summarize verification in the final response.

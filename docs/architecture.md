@@ -2,6 +2,8 @@
 
 Source basis: Issue #2 Architecture RFC v1 §3, with Plan V8 boundaries preserved.
 
+Backend language: **Go** (Gin/Fiber + Gorilla WebSocket).
+
 Lumen Auction is organized as four layers. Client surfaces handle seller admin, mobile bidders, and load bots. Edge services terminate REST and WebSocket traffic, enforce auth/rate limits, isolate rooms, and recover clients by `lastSeq`. Core services own all state transitions: Auction Service freezes and starts auctions, Bid Engine calls Redis Lua for bid adjudication, Timer Worker calls Lua for expiry hammer, Order Service creates orders idempotently, Persistence Worker projects Redis Stream into MySQL, and Metrics exposes load-test evidence. Data is split between Redis as the hot authoritative path and MySQL as the fact/audit store.
 
 ```text

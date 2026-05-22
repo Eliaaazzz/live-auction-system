@@ -1,31 +1,25 @@
 stateDiagram-v2
-  [*] --> Draft
-  Draft --> Scheduled: freeze_rules / rule.changed
-  Scheduled --> Bidding: start_auction
+  [*] --> DRAFT
+  DRAFT --> SCHEDULED: facts confirmed / freeze_rules
+  SCHEDULED --> LIVE: start_auction
 
-  Bidding --> Bidding: bid.accepted
-  Bidding --> Bidding: anti_snipe_extended / ends_at_ms updated
-  Bidding --> Hammered: cap reached
-  Bidding --> Cooling: now >= ends_at_ms
-  Bidding --> Cancelled: abnormal_cancel
+  LIVE --> LIVE: bid.accepted
+  LIVE --> LIVE: anti_snipe_extended / ends_at_ms updated
+  LIVE --> SOLD: cap reached
+  LIVE --> SOLD: now >= ends_at_ms / highest bid exists
+  LIVE --> NO_BID: now >= ends_at_ms / no accepted bid
+  LIVE --> CANCELLED: abnormal_cancel
 
-  Cooling --> Hammered: highest bid exists
-  Cooling --> Passed: no valid bid
-  Cooling --> ReserveNotMet: highest < reserve_cents
+  SOLD --> ORDER_CREATED: order.created
 
-  Hammered --> AwaitingSellerConfirm: require_seller_confirm
-  Hammered --> Settled: order.created
-  AwaitingSellerConfirm --> Settled: seller_confirmed / order.created
+  DRAFT --> CANCELLED: cancel
+  SCHEDULED --> CANCELLED: cancel
 
-  Draft --> Cancelled: cancel
-  Scheduled --> Cancelled: cancel
+  NO_BID --> [*]
+  ORDER_CREATED --> [*]
+  CANCELLED --> [*]
 
-  Passed --> [*]
-  ReserveNotMet --> [*]
-  Settled --> [*]
-  Cancelled --> [*]
-
-  note right of Bidding
+  note right of LIVE
     No EXTENDED state.
-    Extension is an event while status remains Bidding.
+    Extension is an event while status remains LIVE.
   end note

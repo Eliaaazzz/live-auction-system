@@ -20,4 +20,4 @@ sequenceDiagram
     API-->>W: snapshot
     W-->>C: ROOM_SNAPSHOT(snapshot)
   end
-  C->>C: apply seq monotonic; drop old events
+  C->>C: apply seq monotonic and drop old events

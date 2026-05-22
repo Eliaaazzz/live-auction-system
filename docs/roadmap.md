@@ -21,7 +21,7 @@ Source basis: Plan V8 §7 and RFC v1 §12. The table keeps V8’s 4 Sprint / 20-
 | 15 | 06-02 | Sprint 3 | Day 15-18 perf | P0 load run: 500 connected + 50 active. | ack/broadcast/seq metrics captured. |
 | 16 | 06-03 | Sprint 4 | Day 15-18 perf | Tune ack p95 < 80ms and broadcast p95 < 150ms. | Metrics dashboard screenshot. |
 | 17 | 06-04 | Sprint 4 | Day 15-18 perf | Hammer p95 < 500ms, catchup 200 events < 1s. | Report table filled. |
-| 18 | 06-05 | Sprint 4 | Day 15-18 perf | Fault drills: PG, WS, Timer, AI, Redis. | Five short clips or rehearsal notes. |
+| 18 | 06-05 | Sprint 4 | Day 15-18 perf | Fault drills: MySQL, WS, Timer, AI, Redis. | Five short clips or rehearsal notes. |
 | 19 | 06-06 | Sprint 4 | Day 19-21 materials | Public preview + local Docker fallback + backup video. | Demo script rehearsed. |
 | 20 | 06-08 | Sprint 4 | Day 19-21 materials | Final internal freeze: README, report, video, dashboard, verifier. | 3-minute demo path complete. |
 

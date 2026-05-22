@@ -13,7 +13,7 @@ sequenceDiagram
   Z-->>T: candidate auction ids
   loop each candidate
     T->>L: EVAL close_auction.lua(auctionId)
-    L->>L: Redis TIME; close only when now >= ends_at_ms
+    L->>L: Redis TIME, close only when now >= ends_at_ms
     alt not due after re-check
       L-->>T: ERR_NOT_DUE(msRemaining)
     else already terminal

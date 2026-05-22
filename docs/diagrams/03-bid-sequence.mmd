@@ -2,21 +2,21 @@ sequenceDiagram
   participant C as Bidder H5
   participant W as WS Gateway
   participant B as Bid Engine
-  participant L as Redis Lua bid_v2.lua
+  participant L as Redis Lua place_bid.lua
   participant S as Redis Stream
   participant P as Redis PubSub
   participant R as Room Clients
   participant PW as Persistence Worker
   participant M as MySQL
 
-  C->>W: BID_PLACE(client_bid_id, amount_cents)
+  C->>W: BID_PLACE(clientBidId, amountCents)
   W->>W: auth, room check, rate limit
   W->>B: place bid command
   B->>L: EVAL place_bid.lua
-  L->>L: dedupe lookup; retry returns original ack
+  L->>L: dedupe lookup and retry returns original ack
   L->>L: validate status Bidding and Redis TIME
   L->>L: validate increment, cap, rate limit
-  L->>L: INCR single seq; HSET state; ZADD leaderboard
+  L->>L: INCR single seq, HSET state, ZADD leaderboard
   L->>S: XADD auction events with Stream ID seq-0
   L->>P: PUBLISH room event
   alt accepted below cap
