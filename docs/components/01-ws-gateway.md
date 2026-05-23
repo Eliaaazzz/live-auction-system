@@ -69,8 +69,8 @@ Write pump (goroutine B):
     writeJSON(msg)
 
 Subscriber pump (goroutine C, one per gateway process):
-  subscribe to Redis "room:*"
-  on event: lookup local hub for room, fan-out to all conn.out
+  PSUBSCRIBE Redis "auction:*:pub" (canonical channel per proto/redis-keys.md)
+  on event: parse auctionId from channel, lookup local hub, fan-out to all conn.out
 
 Close handler:
   hub.leaveAll(conn); close conn; record reason metric
@@ -238,8 +238,12 @@ func (r *Router) HandleBid(c *Connection, env Envelope) error {
     // Always send ack back to originating client (even for DUPLICATE; payload is same)
     c.send(result.Wire.ToEnvelope(env.AuctionID))
 
-    // For accepted bids, the broadcast to other room members comes via the Stream subscriber pump
-    // (Bid Engine PUBLISHes on room:<aid> inside Lua). Don't double-broadcast here.
+    // For accepted bids, the broadcast to OTHER room members comes via the
+    // subscriber pump (Bid Engine PUBLISHes on auction:{<aid>}:pub inside
+    // place_bid.lua). We always direct-ack the originating socket first
+    // (lossy Pub/Sub fanout can drop ack to the sender's slow queue) — the
+    // double-delivery (direct ack + room broadcast) is fine because clients
+    // dedupe by seq. Matches PR #19 apps/lumen/internal/server/ws.go:194-203.
     return nil
 }
 ```
@@ -248,11 +252,15 @@ func (r *Router) HandleBid(c *Connection, env Envelope) error {
 
 ```go
 func (s *SubscriberPump) Run(ctx context.Context) {
-    sub := s.redis.PSubscribe(ctx, "room:*")
+    // Canonical channel format per proto/redis-keys.md: auction:{<aid>}:pub
+    sub := s.redis.PSubscribe(ctx, "auction:*:pub")
     defer sub.Close()
 
     for msg := range sub.Channel() {
-        auctionID := strings.TrimPrefix(msg.Channel, "room:")
+        // Channel = "auction:<aid>:pub" — extract <aid> from middle segment
+        parts := strings.Split(msg.Channel, ":")
+        if len(parts) != 3 { continue }
+        auctionID := parts[1]
         env := decodePublishedEvent(msg.Payload)
         s.hub.Broadcast(auctionID, env)
         s.metrics.fanoutCount.WithLabelValues(env.Type).Inc()
@@ -270,7 +278,7 @@ func (s *SubscriberPump) Run(ctx context.Context) {
 ```go
 func (r *Router) HandleCatchup(c *Connection, auctionID string, lastSeq int64) {
     // 1. Quick path: if gap is small, XRANGE from Stream
-    streamKey := fmt.Sprintf("stream:{%s}", auctionID)
+    streamKey := fmt.Sprintf("auction:{%s}:events", auctionID)  // canonical per proto/redis-keys.md
     entries, err := r.redis.XRange(ctx, streamKey,
         fmt.Sprintf("%d-0", lastSeq+1),
         "+",
@@ -280,10 +288,15 @@ func (r *Router) HandleCatchup(c *Connection, auctionID string, lastSeq int64) {
         return
     }
     if len(entries) > 200 {
-        // Slow path: fallback to REST snapshot to avoid burst
-        c.send(Envelope{Type: "ROOM_SNAPSHOT_REDIRECT", Data: map[string]string{
-            "url": fmt.Sprintf("/api/auctions/%s/snapshot", auctionID),
-        }})
+        // Slow path: send a full ROOM_SNAPSHOT (same shape as initial ROOM_JOIN
+        // response and REST /api/auctions/{id}/snapshot — single canonical
+        // snapshot type per V9 §6 "snapshot fallback shape (shared $ref)").
+        snap, err := r.snapshotter.Build(ctx, auctionID)
+        if err != nil {
+            r.metrics.catchupErr.Inc()
+            return
+        }
+        c.send(Envelope{Type: "ROOM_SNAPSHOT", AuctionID: auctionID, Seq: snap.Seq, Data: snap})
         r.metrics.catchupFallback.Inc()
         return
     }
@@ -375,8 +388,8 @@ func (c *Connection) send(env Envelope) {
 | `TestBidPlace_RoundTrip` | client sends BID_PLACE → engine called → BID_ACCEPTED returned to same conn |
 | `TestBidPlace_AmountAsString` | amountCents must be string; integer literal → BID_REJECTED ERR_BAD_AMOUNT |
 | `TestRoomJoin_TriggersCatchup` | ROOM_JOIN with lastSeq=10 → CATCHUP_EVENTS received with seq>10 |
-| `TestRoomJoin_LargeCatchup_Fallback` | lastSeq with gap > 200 → ROOM_SNAPSHOT_REDIRECT sent |
-| `TestBroadcast_FromPubSub` | publish to `room:<aid>` → all connections in that room receive |
+| `TestRoomJoin_LargeCatchup_Fallback` | lastSeq with gap > 200 → full `ROOM_SNAPSHOT` envelope sent (same shape as initial join response, per V9 §6 "shared `$ref`") |
+| `TestBroadcast_FromPubSub` | publish to `auction:<aid>:pub` → all connections in that room receive (canonical channel per proto/redis-keys.md) |
 | `TestBroadcast_OnlyToJoinedRoom` | connection in room A doesn't receive room B events |
 | `TestBackpressure_SoftDrop` | fill out chan past 1MB → chat dropped, bid still delivered |
 | `TestBackpressure_HardClose` | fill out chan past 4MB → connection closed, force_close metric +1 |

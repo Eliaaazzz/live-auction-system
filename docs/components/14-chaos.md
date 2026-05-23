@@ -269,12 +269,15 @@ type SeqNoGap struct{ redis *redis.Client }
 
 func (s *SeqNoGap) Name() string { return "seq_no_gap" }
 func (s *SeqNoGap) Check(ctx context.Context, auctionID string) (bool, string) {
-    entries, err := s.redis.XRange(ctx, fmt.Sprintf("stream:{%s}", auctionID), "-", "+").Result()
+    entries, err := s.redis.XRange(ctx, fmt.Sprintf("auction:{%s}:events", auctionID), "-", "+").Result()
     if err != nil { return false, err.Error() }
     var prevSeq int64
     for _, e := range entries {
         seq := parseSeq(e.ID)
-        if prevSeq > 0 && seq != prevSeq+1 && seq != prevSeq /* allow synthetic <seq>-1 */ {
+        // v2: single Stream entry per seq (anti-snipe encoded as `extended` flag
+        // in BID_ACCEPTED payload, not as a separate <seq>-1 entry). So any
+        // duplicate or non-monotonic seq is a real gap.
+        if prevSeq > 0 && seq != prevSeq+1 {
             return false, fmt.Sprintf("gap at seq=%d (prev=%d)", seq, prevSeq)
         }
         prevSeq = seq

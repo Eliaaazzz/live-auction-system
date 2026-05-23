@@ -114,17 +114,21 @@ func (e *Engine) PlaceBid(ctx context.Context, req PlaceBidRequest) (PlaceBidRes
     timer := prometheus.NewTimer(e.metricsHist.WithLabelValues("place_bid"))
     defer timer.ObserveDuration()
 
+    // Canonical key + channel names per proto/redis-keys.md (matches PR #19).
+    // dedupe key is per-user; clientBidId is a Hash FIELD (not part of the key).
     keys := []string{
-        fmt.Sprintf("state:{%s}", req.AuctionID),
-        fmt.Sprintf("lb:{%s}", req.AuctionID),
-        fmt.Sprintf("stream:{%s}", req.AuctionID),
-        fmt.Sprintf("dedupe:{%s}:%s:%s", req.AuctionID, req.UserID, req.ClientBidID),
+        fmt.Sprintf("auction:{%s}:state", req.AuctionID),
+        fmt.Sprintf("auction:{%s}:leaderboard", req.AuctionID),
+        fmt.Sprintf("auction:{%s}:events", req.AuctionID),
+        fmt.Sprintf("auction:{%s}:dedupe:%s", req.AuctionID, req.UserID),
     }
+    pubChannel := fmt.Sprintf("auction:%s:pub", req.AuctionID)
     args := []interface{}{
         req.UserID,
         req.ClientBidID,
         strconv.FormatInt(req.AmountCents, 10),
         req.DisplayName,
+        pubChannel,  // ARGV[5] — gateway PSUBSCRIBE pattern is "auction:*:pub"
     }
 
     raw, err := e.redis.EvalSha(ctx, e.shas["place_bid"], keys, args...).Result()

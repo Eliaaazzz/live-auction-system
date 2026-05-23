@@ -245,14 +245,11 @@ func (h *AuctionHandler) Snapshot(c *gin.Context) {
 
 // service layer:
 func (s *Service) BuildSnapshot(ctx context.Context, auctionID string) (*RoomSnapshot, error) {
-    // Read live state from Redis (HGETALL)
-    state, err := s.redis.HGetAll(ctx, fmt.Sprintf("state:{%s}", auctionID)).Result()
+    // Canonical key names per proto/redis-keys.md (matches PR #19).
+    state, err := s.redis.HGetAll(ctx, fmt.Sprintf("auction:{%s}:state", auctionID)).Result()
     if err != nil { return nil, err }
-    // Read top-50 leaderboard
-    lb, err := s.redis.ZRevRangeWithScores(ctx, fmt.Sprintf("lb:{%s}", auctionID), 0, 49).Result()
-    // Read last 20 bid events from Stream (XREVRANGE)
-    bids, err := s.redis.XRevRangeN(ctx, fmt.Sprintf("stream:{%s}", auctionID), "+", "-", 20).Result()
-    // Read server time
+    lb, err := s.redis.ZRevRangeWithScores(ctx, fmt.Sprintf("auction:{%s}:leaderboard", auctionID), 0, 49).Result()
+    bids, err := s.redis.XRevRangeN(ctx, fmt.Sprintf("auction:{%s}:events", auctionID), "+", "-", 20).Result()
     nowMs := time.Now().UnixMilli()
     return assembleSnapshot(state, lb, bids, nowMs), nil
 }

@@ -8,7 +8,7 @@
 
 1. **One Go binary, multiple subcommands** (per #14 challenge 5) — `./lumen serve --mode=api|gateway|bid-engine|timer|pg-writer`. Compose runs 5 containers using the same image; trunk leader iterates without cross-binary contracts.
 2. **Go everywhere on backend** (per #14 challenge 6) — AI sidecar is also Go. Single toolchain, single Dockerfile base, single CI build matrix.
-3. **Canonical 5-state machine** (per #14 challenge 1, matches PR #13 `docs/state-machine.md`) — `DRAFT → SCHEDULED → LIVE → {SOLD | NO_BID | CANCELLED} → ORDER_CREATED`. No `BIDDING`, `HAMMERED`, `PASSED`, `RESERVE_NOT_MET`.
+3. **Canonical 7-state machine** (per #14 challenge 1, matches PR #13 `docs/state-machine.md` + PR #19 `apps/lumen/internal/model/model.go`) — `DRAFT → SCHEDULED → LIVE → {SOLD | NO_BID | CANCELLED} → ORDER_CREATED`. No `BIDDING`, `HAMMERED`, `PASSED`, `RESERVE_NOT_MET`.
 4. **Hash chain computed in Persistence Worker** (per #14 challenge 3) — Stream events do NOT carry `event_hash`. MySQL `auction_events.event_hash / prev_hash` is the integrity layer on the *projection*. "Integrity check", not "tamper-evident".
 5. **Single error code for amount-invalid** (per #14 challenge 2) — `ERR_TOO_LOW` covers both increment-fail and cap-overshoot. Cap-hit is `OK_SOLD` (success in `place_bid.lua`), not an error.
 6. **MP4 only for T1-T10** (per #14 challenge 7) — webcam dropped to P2 stretch; no `getUserMedia` in the demo path.

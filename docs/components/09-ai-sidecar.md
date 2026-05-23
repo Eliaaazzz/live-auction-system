@@ -103,7 +103,7 @@ type Server struct {
     auct      *auctioneer.Generator
     guard     *guardrail.Guardrail
     ssrf      *ssrf.ImageFetcher
-    redis     *redis.Client  // for publishing streaming auctioneer chunks to room:<aid> AI channel
+    redis     *redis.Client  // for publishing streaming auctioneer chunks to auction:<aid>:pub AI channel
     metrics   *metrics
 }
 
@@ -207,7 +207,7 @@ func (g *Generator) Trigger(ctx context.Context, req AuctioneerTriggerRequest) e
         "context": req.Context, // server-side — trusted
     })
 
-    // Stream tokens via SSE; each chunk pushed to Redis room:<aid> AI channel
+    // Stream tokens via SSE; each chunk pushed to Redis auction:<aid>:pub AI channel
     streamCh := make(chan string, 32)
     go func() {
         defer close(streamCh)
@@ -239,7 +239,7 @@ func (g *Generator) Trigger(ctx context.Context, req AuctioneerTriggerRequest) e
         "auctionId": req.AuctionID,
         "serverTimeMs": time.Now().UnixMilli(),
     })
-    g.redis.Publish(ctx, "room:"+req.AuctionID, payload)
+    g.redis.Publish(ctx, "auction:"+req.AuctionID+":pub", payload)  // canonical channel per proto/redis-keys.md
 
     return nil
 }
@@ -346,7 +346,7 @@ When circuit open, AI sidecar returns `503 SERVICE_UNAVAILABLE`. Gateway interpr
 | `TestFacts_ImageFetchSSRFBlocked` | image URL → private IP → 400 with SSRF error |
 | `TestFacts_DoubaoTimeout_ReturnsErr` | Doubao times out → 503 |
 | `TestFacts_JSONRepairOnMalformed` | Doubao returns JSON with trailing comma → repair succeeds |
-| `TestAuctioneer_OpeningPublishesToPubSub` | Trigger(opening) → Redis "room:<aid>" receives AI_AUCTIONEER message |
+| `TestAuctioneer_OpeningPublishesToPubSub` | Trigger(opening) → Redis "auction:<aid>:pub" receives AI_AUCTIONEER message |
 | `TestAuctioneer_BanwordsRedacted` | mocked Doubao returns "this is genuine" → published text has [redacted: genuine] |
 | `TestAuctioneer_FallbackOnEmpty` | mocked Doubao returns "" → fallback copy used |
 | `TestGuardrail_QuoteUntrusted_NoEscape` | input with backticks → backticks neutralized |

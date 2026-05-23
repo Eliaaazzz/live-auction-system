@@ -34,13 +34,13 @@ err := w.redis.XGroupCreateMkStream(ctx, streamKey, "pg_writer", "0").Err()
 // Ignore BUSYGROUP error (already exists)
 ```
 
-Each auction has its own Stream (`stream:{<aid>}`). Worker can't pre-subscribe to streams that don't yet exist — uses a **scanner** to discover active auctions every 5s:
+Each auction has its own Stream (`auction:{<aid>}:events` — canonical per proto/redis-keys.md, materialized in PR #19). Worker can't pre-subscribe to streams that don't yet exist — uses a **scanner** to discover active auctions every 5s:
 
 ```go
 func (w *Worker) discoverStreams(ctx context.Context) {
     auctionIDs, _ := w.redis.SMembers(ctx, "active:auctions").Result()
     for _, aid := range auctionIDs {
-        streamKey := fmt.Sprintf("stream:{%s}", aid)
+        streamKey := fmt.Sprintf("auction:{%s}:events", aid)
         if !w.subscribed[streamKey] {
             w.subscribed[streamKey] = true
             go w.consumeStream(ctx, streamKey, aid)
