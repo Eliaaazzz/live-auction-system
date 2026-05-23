@@ -15,7 +15,7 @@ var ErrNotFound = errors.New("not found")
 func (s *Store) UpsertUser(ctx context.Context, id, nickname, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (id, nickname, role, created_at) VALUES (?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE nickname = VALUES(nickname)`,
+		 ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), role = VALUES(role)`,
 		id, nickname, role, time.Now().UTC())
 	return err
 }

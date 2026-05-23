@@ -46,5 +46,6 @@ local payload = cjson.encode({
 })
 redis.call('XADD', stream_key, seq .. '-0', 'type', 'BID_ACCEPTED', 'seq', seq, 'payload', payload)
 redis.call('HSET', dedupe_key, clientBidId, payload)
+redis.call('EXPIRE', dedupe_key, 86400) -- 24h TTL (proto/redis-keys.md); was unbounded
 redis.call('PUBLISH', pub, payload)
 return {'OK_ACCEPTED', seq, payload}

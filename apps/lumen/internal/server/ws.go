@@ -59,11 +59,12 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
+	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ps.Channel():
+		case msg, ok := <-ch:
 			if !ok {
 				return
 			}
@@ -178,7 +179,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		var d model.BidPlaceData
 		_ = json.Unmarshal(env.Data, &d)
 		if c.aid == "" || d.ClientBidID == "" || d.AmountCents == "" {
-			c.push(rejected(c.aid, model.CodeErrBadState))
+			c.push(rejected(c.aid, model.CodeErrBadInput))
 			return
 		}
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.userID)

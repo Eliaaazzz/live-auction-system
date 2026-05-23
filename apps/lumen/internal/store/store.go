@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -102,7 +103,7 @@ const PubPattern = "auction:*:pub"
 // AIDFromPubChannel extracts <aid> from "auction:{<aid>}:pub".
 func AIDFromPubChannel(ch string) string {
 	const prefix, suffix = "auction:{", "}:pub"
-	if len(ch) <= len(prefix)+len(suffix) {
+	if !strings.HasPrefix(ch, prefix) || !strings.HasSuffix(ch, suffix) || len(ch) <= len(prefix)+len(suffix) {
 		return ""
 	}
 	return ch[len(prefix) : len(ch)-len(suffix)]

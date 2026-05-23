@@ -56,6 +56,7 @@ const (
 	CodeErrPaused   = "ERR_AUCTION_PAUSED"
 	CodeErrInternal = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
 	CodeErrFacts    = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
+	CodeErrBadInput = "ERR_BAD_INPUT"           // malformed client message (missing fields)
 )
 
 // Envelope is the WS message frame. Money fields inside Data are strings.

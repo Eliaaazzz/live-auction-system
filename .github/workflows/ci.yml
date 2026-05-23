@@ -33,11 +33,11 @@ jobs:
       - name: no *_v2.lua naming (V9)
         run: |
           if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua banned"; exit 1; fi
-      - name: no leaked DOUBAO_ENDPOINT_ID (scans tracked files incl. binaries)
+      - name: no real DOUBAO endpoint id (pattern-based; placeholder allowlisted)
         run: |
-          # split the literal so this guard file does not match itself
-          PAT='ep-20260514111437''-7crsm'
-          if git grep -n "$PAT"; then echo "FAIL: leaked endpoint id"; exit 1; fi
+          # match a real ep-<digits> id; the ep-xxxx placeholder has no digits, and
+          # this regex contains no secret literal (so the guard can't match itself).
+          if git grep -nE 'ep-[0-9]{8}'; then echo "FAIL: real DOUBAO endpoint id present"; exit 1; fi
       - name: contracts present
         run: |
           for f in ws-envelope redis-keys error-codes db-schema ai-events; do
