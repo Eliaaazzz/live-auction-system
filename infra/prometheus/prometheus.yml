@@ -1,0 +1,78 @@
+# Prometheus scrape config for Lumen Auction.
+# See docs/components/13-observability.md for the metrics catalog this config feeds.
+#
+# Scrape intervals:
+#   - hot   (5s):  bid-engine, gateway — drives the ack/broadcast SLO graphs
+#   - warm (10s):  api, timer, persistence, ai-sidecar
+#   - cold (30s):  redis, mysql, runtime — capacity/health, not SLO
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: lumen-local
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+  - /etc/prometheus/recording.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []  # P0 = no alertmanager wired; alerts surface in Grafana panels
+
+scrape_configs:
+  # Hot path — 5s for SLO precision
+  - job_name: lumen-bid-engine
+    scrape_interval: 5s
+    static_configs:
+      - targets: ['lumen-bid-engine:8082']
+        labels: { mode: bid-engine }
+
+  - job_name: lumen-gateway
+    scrape_interval: 5s
+    static_configs:
+      - targets:
+          - 'lumen-gateway-1:8081'
+          - 'lumen-gateway-2:8081'  # T5 horizontal scale; comment one out for single-gateway dev
+        labels: { mode: gateway }
+
+  # Warm path
+  - job_name: lumen-api
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['lumen-api:8085']
+        labels: { mode: api }
+
+  - job_name: lumen-timer
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['lumen-timer:8083']
+        labels: { mode: timer }
+
+  - job_name: lumen-persistence
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['lumen-pg-writer:8084']
+        labels: { mode: pg-writer }
+
+  - job_name: ai-sidecar
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['ai-sidecar:9090']
+
+  # Cold path — capacity / health
+  - job_name: redis
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: mysql
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['mysqld-exporter:9104']
+
+  - job_name: prometheus-self
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['localhost:9090']

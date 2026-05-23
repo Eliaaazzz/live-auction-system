@@ -1,0 +1,113 @@
+{
+  "description": "Infra base — Redis, MySQL, Go runtime. Underlay for the realtime + ai-sidecar dashboards.",
+  "editable": false,
+  "id": null,
+  "panels": [
+    {
+      "type": "row",
+      "title": "Redis",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Redis up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"redis\"}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "mappings": [{ "type": "value", "options": { "1": { "text": "UP", "color": "green" }, "0": { "text": "DOWN", "color": "red" } } }] } }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Redis memory (used / max)",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "redis_memory_used_bytes", "legendFormat": "used", "refId": "A" },
+        { "expr": "redis_memory_max_bytes", "legendFormat": "max", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Redis ops/sec",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(redis_commands_processed_total[1m])", "legendFormat": "cmds/s", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "MySQL",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 2
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "MySQL up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "expr": "up{job=\"mysql\"}", "refId": "A" }]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "MySQL connections",
+      "gridPos": { "h": 8, "w": 9, "x": 6, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "mysql_global_status_threads_connected", "legendFormat": "connected", "refId": "A" }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "MySQL queries/sec",
+      "gridPos": { "h": 8, "w": 9, "x": 15, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "rate(mysql_global_status_queries[1m])", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Go runtime (per mode)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "id": 3
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Goroutines",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "go_goroutines{job=~\"lumen-.*\"}", "legendFormat": "{{job}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Heap allocated",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "go_memstats_alloc_bytes{job=~\"lumen-.*\"}", "legendFormat": "{{job}}", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bytes" } }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["lumen", "infra"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Lumen Auction — Infra Base",
+  "uid": "lumen-infra-base",
+  "version": 1
+}
