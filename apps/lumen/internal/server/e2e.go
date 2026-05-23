@@ -68,6 +68,11 @@ func RunE2E(target string) error {
 		return fmt.Errorf("send bid: %w", err)
 	}
 
+	// Both the originating bidder (direct ack) and the observer (Pub/Sub
+	// broadcast) must receive BID_ACCEPTED.
+	if err := waitForType(bidder, model.TypeBidAccepted, 5*time.Second); err != nil {
+		return fmt.Errorf("bidder did not receive its BID_ACCEPTED ack: %w", err)
+	}
 	if err := waitForType(observer, model.TypeBidAccepted, 5*time.Second); err != nil {
 		return fmt.Errorf("observer did not receive BID_ACCEPTED: %w", err)
 	}
@@ -109,6 +114,7 @@ func createAuction(hc *http.Client, target, token, productID string) (string, er
 			StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
 			DurationSec: 60, ExtendWindowSec: 10, ExtendSec: 10,
 		},
+		"factsConfirmed": true, // seller confirmed the AI facts draft
 	}
 	err := postJSON(hc, target+"/api/auctions", token, body, &out)
 	return out.AuctionID, err

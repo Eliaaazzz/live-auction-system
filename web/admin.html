@@ -48,9 +48,13 @@
         log('product: ' + p.productId, 'ok');
         const facts = await api('/api/facts/draft', s.token, { productId: p.productId, imageUrls: ['https://example.com/w.jpg'] });
         log('AI facts (mock): ' + facts.highRiskFieldsDisclaimer, 'ok');
+        log('seller confirms facts ✓', 'ok');
         const a = await api('/api/auctions', s.token, {
           productId: p.productId,
-          rules: { startPriceCents: 10000, incrementCents: 1000, capPriceCents: 1000000, durationSec: 300, extendWindowSec: 10, extendSec: 10 },
+          // money fields are strings at the JS boundary (money-as-string invariant)
+          rules: { startPriceCents: '10000', incrementCents: '1000', capPriceCents: '1000000', durationSec: 300, extendWindowSec: 10, extendSec: 10 },
+          factsConfirmed: true,
+          confirmedFacts: facts,
         });
         log('auction: ' + a.auctionId, 'ok');
         const f = await api('/api/auctions/' + a.auctionId + '/freeze', s.token);

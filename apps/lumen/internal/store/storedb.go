@@ -29,17 +29,24 @@ func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL,
 }
 
 // CreateAuction inserts a DRAFT auction and its frozen-able rules in one tx.
-func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID string, r model.Rules) error {
+// factsConfirmed records that the seller confirmed the AI facts draft before
+// the auction can be frozen/started; confirmedFacts is the confirmed snapshot
+// (may be empty).
+func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID string, r model.Rules, factsConfirmed bool, confirmedFacts string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	var facts any
+	if confirmedFacts != "" {
+		facts = confirmedFacts
+	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auctions (id, product_id, seller_id, status, current_price_cents, seq, created_at, updated_at)
-		 VALUES (?, ?, ?, 'DRAFT', ?, 0, ?, ?)`,
-		id, productID, sellerID, r.StartPriceCents, time.Now().UTC(), time.Now().UTC()); err != nil {
+		`INSERT INTO auctions (id, product_id, seller_id, status, current_price_cents, seq, facts_confirmed, confirmed_facts_json, created_at, updated_at)
+		 VALUES (?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?, ?)`,
+		id, productID, sellerID, r.StartPriceCents, factsConfirmed, facts, time.Now().UTC(), time.Now().UTC()); err != nil {
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
@@ -53,17 +60,18 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 
 // Auction is the minimal row used for ownership + state checks.
 type Auction struct {
-	ID        string
-	ProductID string
-	SellerID  string
-	Status    string
+	ID             string
+	ProductID      string
+	SellerID       string
+	Status         string
+	FactsConfirmed bool
 }
 
 func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 	var a Auction
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, product_id, seller_id, status FROM auctions WHERE id = ?`, id).
-		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status)
+		`SELECT id, product_id, seller_id, status, facts_confirmed FROM auctions WHERE id = ?`, id).
+		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status, &a.FactsConfirmed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}

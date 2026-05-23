@@ -19,17 +19,18 @@ auction:active               ZSET   member=auctionId score=endAtMs (Timer Worker
 
 `start_auction.lua`, `freeze_rules.lua`, `place_bid.lua`, `close_auction.lua` (T3), `cancel_auction.lua` (T3). **No `*_v2.lua`.** All loaded via `SCRIPT LOAD` at startup, SHA cached, called by `EVALSHA`.
 
-### `freeze_rules.lua(aid, sellerId, rulesJson)`  — **NEW contract (all-member approve)**
-`DRAFT → SCHEDULED`. Copies rule fields into `state` Hash, marks immutable.
-Returns: `OK_FROZEN(seq)` · `ERR_BAD_STATE(status)` · `ERR_NOT_ALLOWED`.
+### `freeze_rules.lua(KEYS=[state], ARGV=[rulesJson])`  — **NEW contract (all-member approve)**
+`DRAFT → SCHEDULED`. Copies rule fields into `state` Hash; **does NOT consume the bid `seq`** (seq is the event sequence; first bid = seq 1). Type-guards `state` before write.
+Returns: `OK_FROZEN` · `ERR_BAD_STATE(status | 'key_type')`.
+Seller ownership is enforced in **Go** (authoritative against MySQL) in T1; lua-level seller checks land in T2.
 
-### `start_auction.lua(aid, sellerId, durationMs)`  — **NEW contract (all-member approve)**
-`SCHEDULED → LIVE`. Sets `endAtMs = redisNow + durationMs`, `status=LIVE`.
-Returns: `OK_LIVE(seq, endAtMs)` · `ERR_BAD_STATE(status)` · `ERR_NOT_ALLOWED`.
+### `start_auction.lua(KEYS=[state], ARGV=[durationMs])`  — **NEW contract (all-member approve)**
+`SCHEDULED → LIVE`. Sets `endAtMs = redisNow + durationMs`, `status=LIVE`; **does NOT consume the bid `seq`**. Type-guards `state` before write.
+Returns: `OK_LIVE(endAtMs)` · `ERR_BAD_STATE(status | 'key_type')`.
 
 ### `place_bid.lua(aid, userId, clientBidId, amountCents, displayName)`
 T1 = **accept-any** (shape-valid only): dedupe short-circuit → guard `status==LIVE` → `now < endAtMs` → `HINCRBY seq` → update price/winner → `ZADD` → `XADD <seq>-0` → `PUBLISH` → cache ack.
-Returns (T1): `OK_ACCEPTED(seq,amount,endAtMs)` · `DUPLICATE(ack)` · `ERR_NOT_LIVE(status)` · `ERR_AFTER_END(endAtMs,now)`.
+Returns (T1): `OK_ACCEPTED(seq,payload)` · `DUPLICATE(ack)` · `ERR_NOT_LIVE(status)` · `ERR_AFTER_END(endAtMs,now)` · `ERR_AUCTION_PAUSED` (paused flag) · `ERR_TOO_LOW` (amount ≤ 0 in T1) · `ERR_INTERNAL('key_type')` (type-guard).
 T2 adds: amount/increment/cap validation (`ERR_TOO_LOW`), anti-snipe (`OK_EXTENDED`), cap-hit (`OK_SOLD`).
 
 Invariants (frozen, RFC v2): single `seq` (`HINCRBY state seq`); Stream ID `<seq>-0`; Redis TIME authoritative, boundary `>=`; dedupe Hash returns original ack on retry; AOF everysec, Redis down → `ERR_AUCTION_PAUSED`. **`event_hash` is NOT computed in Lua** — Persistence Worker computes it on the MySQL projection (T4).

@@ -2,6 +2,9 @@
 -- KEYS[1]=state   ARGV[1]=durationMs
 -- Ownership enforced in Go; T1 lua is state-only.
 local state_key = KEYS[1]
+-- type-guard before any write (Lua has no rollback; RFC v2 boundary 2)
+local kt = redis.call('TYPE', state_key).ok
+if kt ~= 'none' and kt ~= 'hash' then return {'ERR_BAD_STATE', 'key_type'} end
 local status = redis.call('HGET', state_key, 'status')
 if status ~= 'SCHEDULED' then return {'ERR_BAD_STATE', status or 'UNKNOWN'} end
 

@@ -4,7 +4,10 @@
 package model
 
 import (
+	"database/sql/driver"
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -51,7 +54,8 @@ const (
 	CodeErrBadState = "ERR_BAD_STATE"
 	CodeErrNotAllow = "ERR_NOT_ALLOWED"
 	CodeErrPaused   = "ERR_AUCTION_PAUSED"
-	CodeErrInternal = "ERR_INTERNAL" // dispatcher/store transport error (wire-only)
+	CodeErrInternal = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
+	CodeErrFacts    = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
 )
 
 // Envelope is the WS message frame. Money fields inside Data are strings.
@@ -114,10 +118,54 @@ type RoomSnapshotData struct {
 
 // --- REST DTOs ---
 
+// Cents is money in integer cents. It is a STRING at every JSON (JS-visible)
+// boundary per the money-as-string invariant, but an int64 internally and in
+// SQL (driver.Valuer + sql.Scanner). UnmarshalJSON also accepts a bare number
+// so older clients don't break.
+type Cents int64
+
+func (c Cents) MarshalJSON() ([]byte, error) {
+	return []byte(strconv.Quote(strconv.FormatInt(int64(c), 10))), nil
+}
+
+func (c *Cents) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if len(s) >= 2 && s[0] == '"' { // quoted string form
+		s = s[1 : len(s)-1]
+	}
+	if s == "" || s == "null" {
+		*c = 0
+		return nil
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid cents %q: %w", s, err)
+	}
+	*c = Cents(n)
+	return nil
+}
+
+func (c *Cents) Scan(v any) error {
+	switch x := v.(type) {
+	case int64:
+		*c = Cents(x)
+	case []byte:
+		n, _ := strconv.ParseInt(string(x), 10, 64)
+		*c = Cents(n)
+	case nil:
+		*c = 0
+	default:
+		return fmt.Errorf("cannot scan %T into Cents", v)
+	}
+	return nil
+}
+
+func (c Cents) Value() (driver.Value, error) { return int64(c), nil }
+
 type Rules struct {
-	StartPriceCents int64 `json:"startPriceCents"`
-	IncrementCents  int64 `json:"incrementCents"`
-	CapPriceCents   int64 `json:"capPriceCents"`
+	StartPriceCents Cents `json:"startPriceCents"`
+	IncrementCents  Cents `json:"incrementCents"`
+	CapPriceCents   Cents `json:"capPriceCents"`
 	DurationSec     int64 `json:"durationSec"`
 	ExtendWindowSec int64 `json:"extendWindowSec"`
 	ExtendSec       int64 `json:"extendSec"`

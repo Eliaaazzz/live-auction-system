@@ -6,8 +6,8 @@ COMPOSE := docker compose -f infra/docker-compose.yml
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
-	@echo "admin:  http://localhost:8080/admin"
-	@echo "mobile: http://localhost:8080/room?auction=auc_demo"
+	@echo "admin:  http://localhost:8080/admin.html"
+	@echo "mobile: http://localhost:8080/room.html?auction=auc_demo"
 
 down:             ## stop stack + wipe volumes
 	$(COMPOSE) down -v

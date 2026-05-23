@@ -22,7 +22,10 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 | `ERR_ALREADY_TERMINAL` | close/cancel (T3) | already terminal | engine no-op (not surfaced) |
 | `ERR_NOT_ALLOWED` | cancel_auction (T3) | caller not owner/admin | `OPERATION_REJECTED {code: ERR_NOT_ALLOWED}` |
 | `ERR_BAD_STATE` | start_auction / freeze_rules | wrong source state | `OPERATION_REJECTED {code: ERR_BAD_STATE}` |
-| `ERR_INTERNAL` | (Go dispatcher only) | transport/script failure (Redis unreachable, NOSCRIPT, …) — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
+| `ERR_INTERNAL` | place_bid type-guard / Go dispatcher | wrong-typed key (`'key_type'`) or NOSCRIPT — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
+| `ERR_FACTS_NOT_CONFIRMED` | REST `freeze` handler | seller has not confirmed the AI facts draft | `409 {code: ERR_FACTS_NOT_CONFIRMED}` |
+
+**Redis-unavailable vs internal**: an EVALSHA transport error is mapped to the frozen-boundary code `ERR_AUCTION_PAUSED` (Redis effectively down); only NOSCRIPT and Lua-returned `ERR_INTERNAL` map to `ERR_INTERNAL`.
 
 **Single `ERR_TOO_LOW`** (fariZzzz #14 challenge #2): increment-fail and cap-overshoot are both "amount invalid"; cap-hit success is signalled by `OK_SOLD`, not a rejection. No `ERR_INCREMENT` / `ERR_OVER_CAP`.
 

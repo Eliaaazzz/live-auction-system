@@ -21,6 +21,8 @@
   <p id="status">—</p>
   <input id="amount" type="number" value="11000" />
   <button id="bid">Place bid</button>
+  <button id="evidence">Show evidence</button>
+  <pre id="evidence-out" style="background:#f1f5f9;padding:8px;border-radius:6px;font-size:12px;overflow:auto"></pre>
   <div id="feed"></div>
 
   <script>
@@ -35,6 +37,7 @@
     };
 
     let ws;
+    let lastSeq = 0; // dedupe: the sender receives both a direct ack and the broadcast
     async function connect() {
       const s = await (await fetch('/api/dev-login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -59,6 +62,8 @@
           render(env.data.currentPriceCents, env.data.status, env.seq);
           feed('snapshot: ' + (env.data.status || '—'));
         } else if (env.type === 'BID_ACCEPTED') {
+          if (env.seq && env.seq <= lastSeq) return; // already applied (dedupe ack vs broadcast)
+          lastSeq = env.seq || lastSeq;
           render(env.data.amountCents, env.data.status, env.seq);
           feed('BID_ACCEPTED seq=' + env.seq + ' by ' + env.data.userId + ' @ ' + env.data.amountCents);
         } else if (env.type === 'BID_REJECTED') {
@@ -78,6 +83,15 @@
       const clientBidId = 'cb_' + Date.now() + '_' + Math.random().toString(16).slice(2);
       ws.send(JSON.stringify({ type: 'BID_PLACE', auctionId: aid, serverTimeMs: Date.now(), data: { clientBidId, amountCents: amount } }));
       feed('sent BID_PLACE @ ' + amount);
+    };
+
+    document.getElementById('evidence').onclick = async () => {
+      try {
+        const ev = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/evidence')).json();
+        document.getElementById('evidence-out').textContent = JSON.stringify(ev, null, 2);
+      } catch (e) {
+        document.getElementById('evidence-out').textContent = String(e);
+      }
     };
 
     connect();
