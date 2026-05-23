@@ -28,3 +28,14 @@ and rendered to both SVG and PNG.
 8. `08-ownership-evidence`
 
 See `inspection-report.md` for the per-image acceptance notes.
+
+## Canonical / Deprecated
+
+**v4 is the canonical architecture diagram set** for issues, PR review, mentor sync, and answer-deck materials going forward.
+
+Older sets under `docs/architecture/` top level are **deprecated**:
+
+- `live_auction_*_v2_overwrite.svg` and `*_v3.svg` (Eliaaazzz, pre-V9 single-source closure) — kept for diff history only
+- A separate cleanup PR will remove deprecated versions after v4 merges; meanwhile reviewers should reference v4 PNGs
+
+The `../gpt-image-2-drafts/` directory is **visual reference only** (raw GPT image 2 outputs). It is **not** a canonical source — text/arrow accuracy was not validated. `03-state-machine-draft-rejected.png` is explicitly rejected. Future agents must not treat any draft as authoritative.
