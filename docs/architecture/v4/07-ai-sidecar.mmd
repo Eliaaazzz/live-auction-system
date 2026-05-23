@@ -1,0 +1,41 @@
+flowchart LR
+  title["AI Sidecar Flow v4<br/>AI improves listing and atmosphere, but never adjudicates bids."]
+
+  subgraph Facts["VLM facts draft"]
+    Seller["Seller Admin"] --> Upload["Upload images + text"]
+    Upload --> SidecarFacts["AI Sidecar /facts/draft"]
+    SidecarFacts --> VLM["Doubao VLM or T1 mock"]
+    VLM --> Draft["Facts Draft JSON<br/>highRiskFieldsDisclaimer"]
+    Draft --> Confirm["Seller confirm/edit"]
+    Confirm --> Confirmed["Confirmed facts snapshot<br/>facts_confirmed = true"]
+    Confirmed --> Auction["Auction Service<br/>freeze_rules allowed"]
+  end
+
+  subgraph Auctioneer["LLM auctioneer copy"]
+    Events["Server events<br/>opening, big_jump, cold_30s, hammered"]
+    Events --> Trigger["Trigger Builder"]
+    Trigger --> SidecarLLM["AI Sidecar /auctioneer/trigger"]
+    SidecarLLM --> LLM["Doubao LLM stream"]
+    LLM --> Guard["Guardrail filter<br/>ban claims, prompt injection, PII leakage"]
+    Guard --> Pub["Redis Pub/Sub ai channel"]
+    Pub --> Ws["WS Gateway"]
+    Ws --> UI["Room UI"]
+  end
+
+  Boundary["Forbidden boundary<br/>AI cannot accept bids, pick winner, close auction, create order, block payment, or change frozen rules without seller confirmation."]
+  SidecarFacts -.-> Boundary
+  SidecarLLM -.-> Boundary
+
+  Logs["AI usage logs<br/>prompts, model, summaries, human_reviewed"] --> MySQL["MySQL"]
+  Metrics["AI metrics<br/>latency, fallback, ban hits, tokens"] --> Prom["Prometheus"]
+  Fallback["Fallback<br/>AI offline badge; auction continues"] --> UI
+
+  classDef ai fill:#fef3c7,stroke:#d97706,color:#0f172a
+  classDef core fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef warn fill:#fee2e2,stroke:#dc2626,color:#0f172a
+  classDef data fill:#dff2ff,stroke:#0284c7,color:#0f172a
+  class SidecarFacts,VLM,SidecarLLM,LLM,Guard ai
+  class Auction,Ws,UI,Confirmed core
+  class Boundary warn
+  class Logs,Metrics,MySQL,Prom,Fallback data
+

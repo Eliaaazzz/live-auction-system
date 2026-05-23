@@ -1,0 +1,28 @@
+sequenceDiagram
+  title Reconnect And Catchup Flow v4
+  participant C as Client
+  participant W as WS Gateway
+  participant H as Redis State Hash
+  participant S as Redis Stream
+  participant API as REST Snapshot API
+
+  C->>W: ROOM_JOIN(auctionId, lastSeq)
+  W->>W: authenticate, Origin allowlist, join local room
+  W->>H: HGET seq
+  H-->>W: currentSeq
+
+  alt lastSeq == currentSeq
+    W-->>C: ROOM_SNAPSHOT(seq=currentSeq)
+  else stream has missing events
+    W->>S: XRANGE from lastSeq + 1 to currentSeq
+    S-->>W: ordered events
+    W-->>C: CATCHUP_EVENTS(seq...)
+    W-->>C: ROOM_SNAPSHOT(seq=currentSeq)
+  else stream trimmed or gap > 200
+    W->>API: GET /auctions/{id}/snapshot
+    API-->>W: authoritative snapshot
+    W-->>C: ROOM_SNAPSHOT(snapshot)
+  end
+
+  C->>C: apply seq monotonic and drop old events
+  Note over C,API: PubSub is wakeup only. Stream or snapshot repairs correctness.

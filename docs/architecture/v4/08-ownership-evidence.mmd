@@ -1,0 +1,80 @@
+flowchart LR
+  title["Delivery Ownership And Evidence Map v4<br/>Core correctness, product flow, AI, load, chaos, and demo evidence converge."]
+
+  subgraph Roles["Runtime roles"]
+    Seller["Seller<br/>create, configure, manage listings"]
+    Bidder["Bidder<br/>join room, place bids, view results"]
+    Operator["Operator<br/>monitor, audit, run fallback"]
+  end
+
+  subgraph Surfaces["Delivery surfaces"]
+    subgraph Core["Realtime core"]
+      Ws["WS Gateway"]
+      BidEngine["Bid Engine"]
+      Lua["Redis Lua"]
+      Timer["Timer Worker"]
+      Replay["Replay Verifier"]
+    end
+    subgraph Product["Product flow"]
+      CRUD["Product CRUD"]
+      Rules["Rules Freeze"]
+      Room["Room UI"]
+      Evidence["Evidence Card UI"]
+      Orders["Orders"]
+      Pay["Mock Pay"]
+    end
+    subgraph Infra["AI + infra + QA"]
+      AI["AI Sidecar"]
+      Compose["Docker Compose"]
+      Dash["Metrics Dashboard"]
+      Load["Load Test"]
+      Chaos["Chaos Runner"]
+      Fallback["Demo Fallback"]
+    end
+  end
+
+  subgraph Score["Scoring evidence"]
+    E1["End-to-end auction loop"]
+    E2["500/50 stable load proof"]
+    E3["seq gap = 0"]
+    E4["ack p95 < 80ms"]
+    E5["broadcast p95 < 150ms"]
+    E6["hammer p95 < 500ms"]
+    E7["Replay Verifier consistent"]
+    E8["event_hash chain"]
+    E9["five fault videos"]
+    E10["AI usage logs"]
+  end
+
+  Seller --> CRUD
+  Seller --> Rules
+  Bidder --> Ws
+  Bidder --> Room
+  Operator --> Dash
+  Operator --> Replay
+  Operator --> Chaos
+
+  Core --> E2
+  Core --> E3
+  Core --> E4
+  Core --> E5
+  Core --> E6
+  Core --> E7
+  Product --> E1
+  Product --> E8
+  Infra --> E9
+  AI --> E10
+  Fallback --> E1
+
+  note["1000/100 is Stretch; P0 must not sacrifice the closed auction loop."]
+  Score --> note
+
+  classDef role fill:#dff2ff,stroke:#0284c7,color:#0f172a
+  classDef core fill:#dcfce7,stroke:#16a34a,color:#0f172a
+  classDef infra fill:#fff7ed,stroke:#ea580c,color:#0f172a
+  classDef score fill:#f8fafc,stroke:#64748b,color:#0f172a
+  class Seller,Bidder,Operator role
+  class Ws,BidEngine,Lua,Timer,Replay,CRUD,Rules,Room,Evidence,Orders,Pay core
+  class AI,Compose,Dash,Load,Chaos,Fallback infra
+  class E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,note score
+
