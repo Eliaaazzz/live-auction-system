@@ -156,6 +156,12 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		if d.AuctionID == "" {
 			return
 		}
+		// Leave any previously joined room first, otherwise a re-JOIN to a
+		// different auction would leave a stale reference in the old room's map
+		// (memory leak + send-on-closed-channel panic on later broadcast).
+		if c.aid != "" {
+			s.hub.leave(c)
+		}
 		c.aid = d.AuctionID
 		s.hub.join(d.AuctionID, c)
 		snap, err := s.st.Snapshot(ctx, d.AuctionID)
@@ -176,8 +182,10 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.userID)
 		if err != nil {
+			// Transport/script error (Redis down, NOSCRIPT, ...). Don't mislabel
+			// it as a business ERR_AUCTION_PAUSED; surface a distinct internal code.
 			log.Printf("place_bid %s: %v", c.aid, err)
-			c.push(rejected(c.aid, model.CodeErrPaused))
+			c.push(rejected(c.aid, model.CodeErrInternal))
 			return
 		}
 		switch code {

@@ -22,6 +22,7 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 | `ERR_ALREADY_TERMINAL` | close/cancel (T3) | already terminal | engine no-op (not surfaced) |
 | `ERR_NOT_ALLOWED` | cancel_auction (T3) | caller not owner/admin | `OPERATION_REJECTED {code: ERR_NOT_ALLOWED}` |
 | `ERR_BAD_STATE` | start_auction / freeze_rules | wrong source state | `OPERATION_REJECTED {code: ERR_BAD_STATE}` |
+| `ERR_INTERNAL` | (Go dispatcher only) | transport/script failure (Redis unreachable, NOSCRIPT, …) — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
 
 **Single `ERR_TOO_LOW`** (fariZzzz #14 challenge #2): increment-fail and cap-overshoot are both "amount invalid"; cap-hit success is signalled by `OK_SOLD`, not a rejection. No `ERR_INCREMENT` / `ERR_OVER_CAP`.
 

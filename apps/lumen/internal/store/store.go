@@ -107,33 +107,27 @@ func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...int
 	return arr, nil
 }
 
-// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). Returns the result code
-// and, on OK_FROZEN, the seq.
-func (s *Store) FreezeRules(ctx context.Context, aid string, rules model.Rules) (string, int64, error) {
+// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). Returns the result code.
+func (s *Store) FreezeRules(ctx context.Context, aid string, rules model.Rules) (string, error) {
 	rj, _ := json.Marshal(rules)
 	arr, err := s.eval(ctx, s.shaFreeze, []string{stateKey(aid)}, string(rj))
+	if err != nil {
+		return "", err
+	}
+	return luaStr(arr[0]), nil
+}
+
+// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns endAtMs.
+func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) (string, int64, error) {
+	arr, err := s.eval(ctx, s.shaStart, []string{stateKey(aid)}, durationMs)
 	if err != nil {
 		return "", 0, err
 	}
 	c := luaStr(arr[0])
-	if c == model.CodeOKFrozen {
+	if c == model.CodeOKLive {
 		return c, luaInt(arr[1]), nil
 	}
 	return c, 0, nil
-}
-
-// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns
-// seq and endAtMs.
-func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) (string, int64, int64, error) {
-	arr, err := s.eval(ctx, s.shaStart, []string{stateKey(aid)}, durationMs)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	c := luaStr(arr[0])
-	if c == model.CodeOKLive {
-		return c, luaInt(arr[1]), luaInt(arr[2]), nil
-	}
-	return c, 0, 0, nil
 }
 
 // PlaceBid runs place_bid.lua. Returns code, seq (on accept) and the JSON event
