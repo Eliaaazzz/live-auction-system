@@ -179,7 +179,10 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
 		return
 	}
-	_ = s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled)
+	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
 
@@ -219,7 +222,10 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
 		return
 	}
-	_ = s.st.UpdateAuctionStatus(r.Context(), aid, model.StateLive)
+	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateLive); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
 }
 

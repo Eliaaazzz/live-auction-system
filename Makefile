@@ -15,7 +15,7 @@ down:             ## stop stack + wipe volumes
 logs:
 	$(COMPOSE) logs -f lumen
 
-seed:             ## idempotent dev seed (user + product + DRAFT auction + rules)
+seed:             ## idempotent dev seed (user + product + LIVE auction)
 	$(COMPOSE) exec -T lumen /lumen seed
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
