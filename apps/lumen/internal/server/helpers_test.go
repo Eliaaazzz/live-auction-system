@@ -9,18 +9,27 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
 
-func TestValidAmount(t *testing.T) {
-	ok := []string{"1", "11000", "9223372036854775807"} // up to int64 max
-	for _, s := range ok {
-		if !validAmount(s) {
-			t.Errorf("validAmount(%q)=false, want true", s)
+func TestCanonicalAmount(t *testing.T) {
+	// valid inputs canonicalize to plain decimal (no leading zeros / plus sign).
+	ok := map[string]string{
+		"1":                   "1",
+		"11000":               "11000",
+		"9223372036854775807": "9223372036854775807", // int64 max
+		"0123":                "123",                 // leading zero
+		"+123":                "123",                 // leading plus
+		"007":                 "7",
+	}
+	for in, want := range ok {
+		got, valid := canonicalAmount(in)
+		if !valid || got != want {
+			t.Errorf("canonicalAmount(%q)=(%q,%v), want (%q,true)", in, got, valid, want)
 		}
 	}
-	bad := []string{"", "0", "-1", "abc", "1.5", "11000 ", "0x10",
+	bad := []string{"", "0", "-1", "abc", "1.5", "11000 ", " 11000", "0x10", "1e3",
 		"9223372036854775808"} // int64 overflow
 	for _, s := range bad {
-		if validAmount(s) {
-			t.Errorf("validAmount(%q)=true, want false", s)
+		if _, valid := canonicalAmount(s); valid {
+			t.Errorf("canonicalAmount(%q) valid=true, want false", s)
 		}
 	}
 }

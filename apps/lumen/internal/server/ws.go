@@ -216,11 +216,14 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 	case model.TypeBidPlace:
 		var d model.BidPlaceData
 		_ = json.Unmarshal(env.Data, &d)
-		// §8: strictly validate envelope/amount BEFORE the Lua call. A non-numeric
-		// or non-positive amount is a malformed client message (ERR_BAD_INPUT), not
-		// a business "too low" (ERR_TOO_LOW). Range checks vs increment/cap need
-		// auction state and stay in place_bid.lua.
-		if c.aid == "" || d.ClientBidID == "" || len(d.ClientBidID) > maxClientBidIDLen || !validAmount(d.AmountCents) {
+		// §8: strictly validate AND canonicalize the amount BEFORE the Lua call. A
+		// non-numeric/non-positive amount is a malformed message (ERR_BAD_INPUT),
+		// not a business "too low" (ERR_TOO_LOW). place_bid.lua echoes ARGV[3]
+		// verbatim into the ack/Stream/broadcast, so canonicalize here ("0123" /
+		// "+123" -> "123") to keep money-as-string canonical on the wire. Range
+		// checks vs increment/cap need auction state and stay in place_bid.lua.
+		amount, ok := canonicalAmount(d.AmountCents)
+		if c.aid == "" || d.ClientBidID == "" || len(d.ClientBidID) > maxClientBidIDLen || !ok {
 			c.push(rejected(c.aid, model.CodeErrBadInput))
 			return
 		}
@@ -228,7 +231,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// ERR_RATE_LIMITED (§8). Deferred: the new code is an all-member-approve
 		// contract change and dedupe already makes retries cheap. At T2 scale (single
 		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.
-		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.displayName)
+		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
 		if err != nil {
 			log.Printf("place_bid %s: %v", c.aid, err)
 			c.push(rejected(c.aid, bidErrCode(err)))
@@ -255,11 +258,17 @@ func rejected(aid, code string) model.Envelope {
 	return env
 }
 
-// validAmount reports whether s is a positive base-10 integer that fits int64
-// (cents). Range validation against increment/cap is the Lua hot path's job.
-func validAmount(s string) bool {
+// canonicalAmount validates that s is a positive base-10 integer fitting int64
+// (cents) and returns its canonical decimal form, so "0123" / "+123" -> "123".
+// ok=false ⇒ malformed (ERR_BAD_INPUT). Range checks vs increment/cap are the
+// Lua hot path's job. Canonicalizing here keeps the money-as-string boundary
+// canonical, since place_bid.lua echoes the amount string verbatim.
+func canonicalAmount(s string) (string, bool) {
 	n, err := strconv.ParseInt(s, 10, 64)
-	return err == nil && n > 0
+	if err != nil || n <= 0 {
+		return "", false
+	}
+	return strconv.FormatInt(n, 10), true
 }
 
 func bidAccepted(aid, payload string) model.Envelope {
