@@ -28,17 +28,21 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 			if aid == "" {
 				continue
 			}
-			events, newLast, err := st.ReadEventsAfter(ctx, aid, lastID[aid])
+			events, _, err := st.ReadEventsAfter(ctx, aid, lastID[aid])
 			if err != nil {
 				log.Printf("persistence read %s: %v", aid, err)
 				continue
 			}
+			// Advance the cursor only past events that were actually projected.
+			// On a transient insert error, stop so the next Pub/Sub hint re-reads
+			// from the failed event (INSERT IGNORE makes re-processing safe).
 			for _, e := range events {
 				if err := st.InsertEvent(ctx, aid, e.Seq, e.Type, e.Payload); err != nil {
-					log.Printf("persistence insert %s seq=%d: %v", aid, e.Seq, err)
+					log.Printf("persistence insert %s seq=%d: %v (will retry on next hint)", aid, e.Seq, err)
+					break
 				}
+				lastID[aid] = e.ID
 			}
-			lastID[aid] = newLast
 		}
 	}
 }
