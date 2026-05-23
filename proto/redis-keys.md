@@ -7,7 +7,7 @@ Materialized from PR #13 `docs/redis-keys.md`. All auction-local keys share the 
 ```text
 auction:{<aid>}:state        Hash   status,currentPriceCents,winnerId,endAtMs,seq,
                                     startPriceCents,incrementCents,capPriceCents,
-                                    extendWindowSec,extendSec,extendCount,paused
+                                    extendWindowSec,extendSec,maxExtensions,extendCount,paused
 auction:{<aid>}:leaderboard  ZSET   member=userId  score=accepted max amountCents
 auction:{<aid>}:dedupe:{uid} Hash   clientBidId -> result json   (TTL 24h)
 auction:{<aid>}:events       Stream durable ordered log; Stream ID = <seq>-0
@@ -35,7 +35,7 @@ Validation order (each step before any write; Lua has no rollback): type-guard a
 
 **Amount range** (single `ERR_TOO_LOW` namespace, error-codes.md): reject when `amount < currentPriceCents + incrementCents` **or** (`capPriceCents > 0` and `amount > capPriceCents`). `capPriceCents == 0` means no buy-now ceiling.
 
-**Anti-snipe** (`OK_EXTENDED`): when not a cap-hit and `extendWindowSec > 0` and `extendSec > 0` and `endAtMs - now <= extendWindowSec*1000` → `endAtMs += extendSec*1000`, `HINCRBY extendCount`, and emit a second `AUCTION_EXTENDED` event. **No separate `extend.lua`.**
+**Anti-snipe** (`OK_EXTENDED`): when not a cap-hit and `extendWindowSec > 0` and `extendSec > 0` and `endAtMs - now <= extendWindowSec*1000` **and** `extendCount < maxExtensions` (`maxExtensions == 0` = unlimited) → `endAtMs += extendSec*1000`, `HINCRBY extendCount`, and emit a second `AUCTION_EXTENDED` event. **No separate `extend.lua`.** Past the extension cap an in-window bid is accepted as a normal `OK_ACCEPTED` (no `endAtMs` bump, no `AUCTION_EXTENDED`) — this bounds the auction lifetime against two bidders bouncing the price inside the window.
 
 **Cap-hit / buy-now** (`OK_SOLD`): when `capPriceCents > 0` and `amount >= capPriceCents` → `status=SOLD` (terminal) and emit a second `AUCTION_SOLD` event. Cap-hit takes priority over anti-snipe.
 

@@ -40,7 +40,7 @@ end
 -- 2. state guards. Read every field needed for adjudication in one round trip.
 local s = redis.call('HMGET', state_key,
   'status', 'endAtMs', 'paused', 'currentPriceCents', 'incrementCents',
-  'capPriceCents', 'extendWindowSec', 'extendSec')
+  'capPriceCents', 'extendWindowSec', 'extendSec', 'extendCount', 'maxExtensions')
 local status            = s[1]
 local endAtMs           = tonumber(s[2]) or 0
 local paused            = s[3]
@@ -49,6 +49,8 @@ local incrementCents    = tonumber(s[5]) or 0
 local capPriceCents     = tonumber(s[6]) or 0
 local extendWindowSec   = tonumber(s[7]) or 0
 local extendSec         = tonumber(s[8]) or 0
+local curExtendCount    = tonumber(s[9]) or 0
+local maxExtensions     = tonumber(s[10]) or 0
 if paused == 'true' then return {'ERR_AUCTION_PAUSED'} end
 if status ~= 'LIVE' then return {'ERR_NOT_LIVE', status or 'UNKNOWN'} end
 
@@ -69,8 +71,12 @@ if capPriceCents > 0 and amount > capPriceCents then return {'ERR_TOO_LOW', amou
 -- 5. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard (ZADD GT keeps
 -- each member's accepted max). cap==0 means "no buy-now ceiling".
 local capHit = capPriceCents > 0 and amount >= capPriceCents
+-- anti-snipe fires only inside the window AND while under the extension cap
+-- (maxExtensions == 0 means unlimited). Past the cap the bid is accepted as a
+-- normal bid: no endAtMs bump, no AUCTION_EXTENDED — bounds the auction lifetime.
 local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
   and (endAtMs - now) <= extendWindowSec * 1000
+  and (maxExtensions <= 0 or curExtendCount < maxExtensions)
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 redis.call('HMSET', state_key, 'currentPriceCents', amount, 'winnerId', userId)

@@ -205,6 +205,11 @@ type Rules struct {
 	DurationSec     int64 `json:"durationSec"`
 	ExtendWindowSec int64 `json:"extendWindowSec"`
 	ExtendSec       int64 `json:"extendSec"`
+	// MaxExtensions caps anti-snipe extensions to bound an auction's lifetime
+	// (two bidders bouncing the price inside the window could otherwise extend
+	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
+	// accepted as a normal bid (no endAtMs bump, no AUCTION_EXTENDED).
+	MaxExtensions int64 `json:"maxExtensions"`
 }
 
 // Validate enforces the rule-DSL invariants the Lua hot path assumes, so a
@@ -226,6 +231,8 @@ func (r Rules) Validate() error {
 		return fmt.Errorf("durationSec must be > 0")
 	case r.ExtendWindowSec < 0 || r.ExtendSec < 0:
 		return fmt.Errorf("extendWindowSec and extendSec must be >= 0")
+	case r.MaxExtensions < 0:
+		return fmt.Errorf("maxExtensions must be >= 0 (0 = unlimited)")
 	}
 	return nil
 }

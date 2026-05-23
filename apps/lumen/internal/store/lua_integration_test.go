@@ -289,6 +289,80 @@ func TestPlaceBidCapHitSells(t *testing.T) {
 	}
 }
 
+// Anti-snipe respects maxExtensions: once the cap is hit, an in-window bid is a
+// normal accept (no endAtMs bump, no AUCTION_EXTENDED) — bounds auction lifetime.
+func TestPlaceBidAntiSnipeRespectsMaxExtensions(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions = 60, 30, 1 // any bid in-window, cap 1
+	aid := liveAuction(t, s, r, 2000)
+
+	// bid 1: in-window -> extends (extendCount 0 -> 1).
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKExtended {
+		t.Fatalf("bid1 code=%s err=%v want OK_EXTENDED", code, err)
+	}
+	endAfter1, _ := s.rdb.HGet(ctx, stateKey(aid), "endAtMs").Int64()
+
+	// bid 2: still in-window and higher, but the cap (1) is reached -> normal accept.
+	code, _, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2")
+	if err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid2 code=%s err=%v want OK_ACCEPTED (extension capped)", code, err)
+	}
+	endAfter2, _ := s.rdb.HGet(ctx, stateKey(aid), "endAtMs").Int64()
+	if endAfter2 != endAfter1 {
+		t.Fatalf("endAtMs moved past the extension cap: %d -> %d", endAfter1, endAfter2)
+	}
+	if cnt, _ := s.rdb.HGet(ctx, stateKey(aid), "extendCount").Int64(); cnt != 1 {
+		t.Fatalf("extendCount=%d want 1 (capped)", cnt)
+	}
+	// stream: BID_ACCEPTED(1) AUCTION_EXTENDED(2) BID_ACCEPTED(3) — no 2nd extension event.
+	events, _, _ := s.ReadEventsAfter(ctx, aid, "")
+	if len(events) != 3 || events[1].Type != model.TypeAuctionExtended ||
+		events[2].Type != model.TypeBidAccepted {
+		t.Fatalf("stream=%+v want [BID_ACCEPTED AUCTION_EXTENDED BID_ACCEPTED]", events)
+	}
+}
+
+// DUPLICATE retry after an extend replays the cached ack (which carries the
+// already-extended endAtMs) and has NO side effect — it does not re-extend or
+// re-emit AUCTION_EXTENDED. Recovery of the missed AUCTION_EXTENDED event is
+// reconnect+catchup only (XRANGE replays both entries). (review #3)
+func TestPlaceBidDuplicateAfterExtend(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.ExtendWindowSec, r.ExtendSec = 60, 30
+	aid := liveAuction(t, s, r, 2000)
+
+	_, _, origPayload, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endAfter, _ := s.rdb.HGet(ctx, stateKey(aid), "endAtMs").Int64()
+
+	// retry same clientBidId -> DUPLICATE, byte-identical ack, no new events.
+	code, _, dupPayload, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1")
+	if err != nil || code != model.CodeDuplicate || dupPayload != origPayload {
+		t.Fatalf("retry code=%s identical=%v err=%v", code, dupPayload == origPayload, err)
+	}
+	// the cached ack carries the EXTENDED endAtMs (not stale).
+	var ack model.BidAcceptedData
+	if err := json.Unmarshal([]byte(dupPayload), &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.EndAtMs != endAfter {
+		t.Fatalf("dup ack endAtMs=%d want extended %d", ack.EndAtMs, endAfter)
+	}
+	// no re-extend, no new stream entry.
+	if cnt, _ := s.rdb.HGet(ctx, stateKey(aid), "extendCount").Int64(); cnt != 1 {
+		t.Fatalf("extendCount=%d want 1 (retry must not re-extend)", cnt)
+	}
+	if events, _, _ := s.ReadEventsAfter(ctx, aid, ""); len(events) != 2 {
+		t.Fatalf("stream len=%d want 2 (BID_ACCEPTED + AUCTION_EXTENDED, no dup side effects)", len(events))
+	}
+}
+
 // --- concurrency: seq strictly monotonic, no gap, no dup ---
 
 func TestPlaceBidConcurrentSeqNoGap(t *testing.T) {

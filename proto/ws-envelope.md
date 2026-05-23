@@ -41,6 +41,13 @@ type WsEnvelope<T = unknown> = {
 
 `GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
 
+## Semantics / known limitations (T2)
+
+- **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
+- **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
+- **Anti-snipe is bounded** by `maxExtensions` (rule DSL; `0` = unlimited). Past the cap an in-window bid is a normal `BID_ACCEPTED` with no `AUCTION_EXTENDED` and no `endAtMs` change.
+- A `DUPLICATE` retry on the **same** socket after an extension replays the cached `BID_ACCEPTED` (which already carries the extended `endAtMs`) but **not** the separate `AUCTION_EXTENDED` event; the canonical recovery for a missed event is reconnect + `lastSeq` catchup (T5).
+
 ## T1 / T2 subset
 
 T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) and `AUCTION_SOLD` (cap-hit) broadcasts and the client `seq-guard`. Backpressure channels (critical/presence/chat/ai), catchup, and the remaining terminal events are wired in their gating T-steps (T3/T5).

@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS auction_rules (
   duration_sec      BIGINT NOT NULL,
   extend_window_sec BIGINT NOT NULL DEFAULT 0,
   extend_sec        BIGINT NOT NULL DEFAULT 0,
+  max_extensions    BIGINT NOT NULL DEFAULT 0, -- 0 = unlimited anti-snipe extensions
   frozen_at         DATETIME NULL,
   UNIQUE KEY uq_rules_auction (auction_id)
 );

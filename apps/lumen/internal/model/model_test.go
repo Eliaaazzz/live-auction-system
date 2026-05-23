@@ -145,6 +145,7 @@ func TestRulesValidate(t *testing.T) {
 		"cap below 1st bid":   {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10500, DurationSec: 60},
 		"zero duration":       {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 0},
 		"negative extend win": {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, ExtendWindowSec: -1},
+		"negative maxExt":     {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, MaxExtensions: -1},
 	}
 	for name, r := range bad {
 		if err := r.Validate(); err == nil {

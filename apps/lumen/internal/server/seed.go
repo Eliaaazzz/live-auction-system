@@ -36,7 +36,7 @@ func Seed(ctx context.Context, cfg config.Config) error {
 	}
 	rules := model.Rules{
 		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
-		DurationSec: 3600, ExtendWindowSec: 10, ExtendSec: 10,
+		DurationSec: 3600, ExtendWindowSec: 10, ExtendSec: 10, MaxExtensions: 5,
 	}
 	facts := `{"facts":[{"field":"category","value":"watch","highRisk":false}],"highRiskFieldsDisclaimer":"高风险字段为卖家声明，AI 未验证。"}`
 	if err := st.CreateAuction(ctx, "auc_demo", "prod_demo", "seller_demo", rules, true, facts); err != nil {

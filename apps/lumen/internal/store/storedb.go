@@ -75,9 +75,9 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec); err != nil {
+		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -106,9 +106,9 @@ func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
 	var r model.Rules
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec
+		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions
 		 FROM auction_rules WHERE auction_id = ?`, aid).
-		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec)
+		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
