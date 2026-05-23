@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/redis/go-redis/v9"
@@ -26,24 +27,41 @@ type Store struct {
 	shaStart    string
 }
 
-// New connects to Redis + MySQL and loads the Lua scripts.
+// New connects to Redis + MySQL and loads the Lua scripts. Connections are
+// retried (up to ~30s) so startup is robust against datastores still booting
+// (e.g. MySQL finishing first-run init after its healthcheck flips healthy).
 func New(ctx context.Context, redisAddr, mysqlDSN string) (*Store, error) {
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		return nil, fmt.Errorf("redis ping: %w", err)
+	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
+		return nil, err
 	}
 	db, err := sql.Open("mysql", mysqlDSN)
 	if err != nil {
 		return nil, fmt.Errorf("mysql open: %w", err)
 	}
-	if err := db.PingContext(ctx); err != nil {
-		return nil, fmt.Errorf("mysql ping: %w", err)
+	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
+		return nil, err
 	}
 	s := &Store{rdb: rdb, db: db}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
+}
+
+func pingWithRetry(ctx context.Context, name string, ping func(context.Context) error) error {
+	var err error
+	for i := 0; i < 30; i++ {
+		if err = ping(ctx); err == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+	return fmt.Errorf("%s not ready after retries: %w", name, err)
 }
 
 func (s *Store) loadScripts(ctx context.Context) error {
