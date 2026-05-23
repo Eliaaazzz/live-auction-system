@@ -14,13 +14,14 @@ import (
 func runPersistenceWorker(ctx context.Context, st *store.Store) {
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
+	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
 
 	lastID := make(map[string]string)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-ps.Channel():
+		case msg, ok := <-ch:
 			if !ok {
 				return
 			}

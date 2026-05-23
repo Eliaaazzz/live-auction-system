@@ -10,7 +10,9 @@ import (
 )
 
 // Seed inserts idempotent demo data for the two-tab human demo: a seller, a
-// buyer, one product and one DRAFT auction (admin UI drives freeze + start).
+// buyer, one product, and one auction that is driven all the way to LIVE (via
+// freeze + start through the store) so /room.html?auction=auc_demo is bid-able
+// immediately without any admin steps.
 func Seed(ctx context.Context, cfg config.Config) error {
 	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN)
 	if err != nil {

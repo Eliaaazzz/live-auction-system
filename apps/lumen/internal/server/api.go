@@ -197,7 +197,12 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		DurationMs int64 `json:"durationMs"`
 	}
-	_ = readJSONOptional(r, &body)
+	// body is optional (empty -> default duration), but a present-yet-malformed
+	// body is a client error rather than a silent default.
+	if err := readJSONOptional(r, &body); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
 	if body.DurationMs <= 0 {
 		if rules, err := s.st.GetRules(r.Context(), aid); err == nil && rules.DurationSec > 0 {
 			body.DurationMs = rules.DurationSec * 1000

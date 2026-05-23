@@ -24,6 +24,7 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 | `ERR_BAD_STATE` | start_auction / freeze_rules | wrong source state | `OPERATION_REJECTED {code: ERR_BAD_STATE}` |
 | `ERR_INTERNAL` | place_bid type-guard / Go dispatcher | wrong-typed key (`'key_type'`) or NOSCRIPT — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
 | `ERR_FACTS_NOT_CONFIRMED` | REST `freeze` handler | seller has not confirmed the AI facts draft | `409 {code: ERR_FACTS_NOT_CONFIRMED}` |
+| `ERR_BAD_INPUT` | WS gateway | malformed `BID_PLACE` (missing clientBidId/amount) | `BID_REJECTED {code: ERR_BAD_INPUT}` |
 
 **Redis-unavailable vs internal**: an EVALSHA transport error is mapped to the frozen-boundary code `ERR_AUCTION_PAUSED` (Redis effectively down); only NOSCRIPT and Lua-returned `ERR_INTERNAL` map to `ERR_INTERNAL`.
 
