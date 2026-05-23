@@ -97,8 +97,8 @@ func dedupeKey(aid, uid string) string { return fmt.Sprintf("auction:{%s}:dedupe
 // PubChannel is the per-auction Pub/Sub fanout hint channel.
 func PubChannel(aid string) string { return fmt.Sprintf("auction:{%s}:pub", aid) }
 
-// PubPattern matches all auction pub channels (gateway + persistence subscribe).
-const PubPattern = "auction:*:pub"
+// PubPattern matches all well-formed auction pub channels (gateway + persistence subscribe).
+const PubPattern = "auction:{*}:pub"
 
 // AIDFromPubChannel extracts <aid> from "auction:{<aid>}:pub".
 func AIDFromPubChannel(ch string) string {

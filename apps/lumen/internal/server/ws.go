@@ -69,6 +69,9 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 				return
 			}
 			aid := store.AIDFromPubChannel(msg.Channel)
+			if aid == "" {
+				continue
+			}
 			var bad model.BidAcceptedData
 			if err := json.Unmarshal([]byte(msg.Payload), &bad); err != nil {
 				continue

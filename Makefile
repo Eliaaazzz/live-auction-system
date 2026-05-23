@@ -1,5 +1,6 @@
 # Lumen Auction — T1 targets. Demo path = a sequence of make targets (per #14).
 COMPOSE := docker compose -f infra/docker-compose.yml
+E2E_AID_FILE := .e2e-auction-id
 
 .PHONY: up down logs seed e2e-dummy-bid verify build vet test fmt guard
 
@@ -19,10 +20,17 @@ seed:             ## idempotent dev seed (user + product + LIVE auction)
 	$(COMPOSE) exec -T lumen /lumen seed
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
-	$(COMPOSE) --profile tools run --rm e2e
+	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \
+	code=$$?; printf '%s\n' "$$out"; \
+	if [ $$code -ne 0 ]; then exit $$code; fi; \
+	aid="$$(printf '%s\n' "$$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"; \
+	test -n "$$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }; \
+	printf '%s\n' "$$aid" > $(E2E_AID_FILE)
 
 verify:           ## replay-verifier skeleton: expect "consistent"
-	$(COMPOSE) --profile tools run --rm verifier
+	@aid="$(VERIFY_AID)"; \
+	if [ -z "$$aid" ] && [ -f "$(E2E_AID_FILE)" ]; then aid="$$(cat $(E2E_AID_FILE))"; fi; \
+	$(COMPOSE) --profile tools run --rm --build -e VERIFY_AID="$$aid" verifier
 
 ## --- pure Go (needs Go toolchain; used by CI) ---
 build:

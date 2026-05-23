@@ -119,6 +119,14 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	}
 	id := "auc_" + newID()
 	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
+		if err == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "product not found")
+			return
+		}
+		if err == store.ErrNotAllowed {
+			writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

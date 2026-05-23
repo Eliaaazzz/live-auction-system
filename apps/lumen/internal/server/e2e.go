@@ -28,6 +28,13 @@ func RunE2E(target string) error {
 	if err != nil {
 		return fmt.Errorf("create product: %w", err)
 	}
+	otherSeller, err := devLogin(hc, target, "Other Seller E2E", "seller")
+	if err != nil {
+		return fmt.Errorf("other seller dev-login: %w", err)
+	}
+	if err := assertCreateAuctionForbidden(hc, target, otherSeller.Token, productID); err != nil {
+		return fmt.Errorf("cross-seller create auction guard: %w", err)
+	}
 	if err := assertFactsMock(hc, target, seller.Token, productID); err != nil {
 		return fmt.Errorf("ai facts mock: %w", err)
 	}
@@ -80,6 +87,7 @@ func RunE2E(target string) error {
 		return fmt.Errorf("persistence projection: %w", err)
 	}
 
+	fmt.Printf("E2E_AUCTION_ID=%s\n", auctionID)
 	fmt.Println("e2e-dummy-bid: PASS")
 	return nil
 }
@@ -118,6 +126,25 @@ func createAuction(hc *http.Client, target, token, productID string) (string, er
 	}
 	err := postJSON(hc, target+"/api/auctions", token, body, &out)
 	return out.AuctionID, err
+}
+
+func assertCreateAuctionForbidden(hc *http.Client, target, token, productID string) error {
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
+			DurationSec: 60, ExtendWindowSec: 10, ExtendSec: 10,
+		},
+		"factsConfirmed": true,
+	}
+	resp, data, err := postJSONRaw(hc, target+"/api/auctions", token, body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		return fmt.Errorf("got status %d, want 403: %s", resp.StatusCode, string(data))
+	}
+	return nil
 }
 
 func assertFactsMock(hc *http.Client, target, token, productID string) error {
@@ -202,21 +229,41 @@ func postExpectCode(hc *http.Client, urlStr, token string, body any, want string
 }
 
 func postJSON(hc *http.Client, urlStr, token string, body, out any) error {
+	resp, data, err := postJSONRaw(hc, urlStr, token, body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("POST %s -> %d: %s", resp.Request.URL.Path, resp.StatusCode, string(data))
+	}
+	if out != nil {
+		return json.Unmarshal(data, out)
+	}
+	return nil
+}
+
+func postJSONRaw(hc *http.Client, urlStr, token string, body any) (*http.Response, []byte, error) {
 	var buf bytes.Buffer
 	if body != nil {
 		if err := json.NewEncoder(&buf).Encode(body); err != nil {
-			return err
+			return nil, nil, err
 		}
 	}
 	req, err := http.NewRequest(http.MethodPost, urlStr, &buf)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	return doJSON(hc, req, out)
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp, data, nil
 }
 
 func getJSON(hc *http.Client, urlStr string, out any) error {

@@ -12,6 +12,7 @@ vendor/
 .env
 .env.local
 *.local
+.e2e-auction-id
 
 # node / web
 node_modules/

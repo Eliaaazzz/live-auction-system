@@ -32,4 +32,4 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 
 ## T1 subset
 
-T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `ERR_NOT_LIVE`, `ERR_BAD_STATE`. The rest are authored here (frozen contract) and exercised by their gating T-steps.
+T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_BAD_STATE`, `ERR_INTERNAL`, `ERR_FACTS_NOT_CONFIRMED`, `ERR_BAD_INPUT`. The rest are authored here and exercised by their gating T-steps.

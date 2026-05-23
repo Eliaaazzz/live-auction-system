@@ -35,7 +35,15 @@ func TestParseInt(t *testing.T) {
 }
 
 func TestAIDFromPubChannelEdge(t *testing.T) {
-	if got := AIDFromPubChannel("garbage"); got != "" {
-		t.Errorf("garbage channel should yield empty, got %q", got)
+	cases := []string{
+		"garbage",
+		"auction:foo:pub",
+		"auction:{auc_demo}:pubx",
+		"auction:{}:pub",
+	}
+	for _, ch := range cases {
+		if got := AIDFromPubChannel(ch); got != "" {
+			t.Errorf("AIDFromPubChannel(%q)=%q, want empty", ch, got)
+		}
 	}
 }
