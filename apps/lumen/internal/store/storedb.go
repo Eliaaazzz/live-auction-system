@@ -1,0 +1,128 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"time"
+
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
+)
+
+// ErrNotFound is returned when a row does not exist.
+var ErrNotFound = errors.New("not found")
+
+// ErrNotAllowed is returned when a caller tries to operate on another owner's row.
+var ErrNotAllowed = errors.New("not allowed")
+
+func (s *Store) UpsertUser(ctx context.Context, id, nickname, role string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (id, nickname, role, created_at) VALUES (?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), role = VALUES(role)`,
+		id, nickname, role, time.Now().UTC())
+	return err
+}
+
+func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL, description string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO products (id, seller_id, name, image_url, description, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
+		id, sellerID, name, imageURL, description, time.Now().UTC(), time.Now().UTC())
+	return err
+}
+
+// CreateAuction inserts a DRAFT auction and its frozen-able rules in one tx.
+// factsConfirmed records that the seller confirmed the AI facts draft before
+// the auction can be frozen/started; confirmedFacts is the confirmed snapshot
+// (may be empty).
+func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID string, r model.Rules, factsConfirmed bool, confirmedFacts string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var productSellerID string
+	if err = tx.QueryRowContext(ctx, `SELECT seller_id FROM products WHERE id = ?`, productID).Scan(&productSellerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if productSellerID != sellerID {
+		return ErrNotAllowed
+	}
+
+	var facts any
+	if confirmedFacts != "" {
+		facts = confirmedFacts
+	}
+	if _, err = tx.ExecContext(ctx,
+		`INSERT INTO auctions (id, product_id, seller_id, status, current_price_cents, seq, facts_confirmed, confirmed_facts_json, created_at, updated_at)
+		 VALUES (?, ?, ?, 'DRAFT', ?, 0, ?, ?, ?, ?)`,
+		id, productID, sellerID, r.StartPriceCents, factsConfirmed, facts, time.Now().UTC(), time.Now().UTC()); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx,
+		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Auction is the minimal row used for ownership + state checks.
+type Auction struct {
+	ID             string
+	ProductID      string
+	SellerID       string
+	Status         string
+	FactsConfirmed bool
+}
+
+func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
+	var a Auction
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, product_id, seller_id, status, facts_confirmed FROM auctions WHERE id = ?`, id).
+		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status, &a.FactsConfirmed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, ErrNotFound
+	}
+	return a, err
+}
+
+func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
+	var r model.Rules
+	err := s.db.QueryRowContext(ctx,
+		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec
+		 FROM auction_rules WHERE auction_id = ?`, aid).
+		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec)
+	if errors.Is(err, sql.ErrNoRows) {
+		return r, ErrNotFound
+	}
+	return r, err
+}
+
+func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET status = ?, updated_at = ? WHERE id = ?`, status, time.Now().UTC(), id)
+	return err
+}
+
+// InsertEvent projects one Stream event into auction_events. Idempotent via
+// UNIQUE(auction_id, seq) (INSERT IGNORE). Hash chain is added in T4.
+func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventType, payload string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO auction_events (auction_id, seq, event_type, payload_json, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		aid, seq, eventType, payload, time.Now().UTC())
+	return err
+}
+
+func (s *Store) CountEvents(ctx context.Context, aid string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM auction_events WHERE auction_id = ?`, aid).Scan(&n)
+	return n, err
+}

@@ -1,0 +1,91 @@
+# Lumen T1 local stack. `make up` brings up redis + mysql + ai-sidecar + lumen.
+# e2e / verifier run on demand via the "tools" profile.
+services:
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: lumen
+      MYSQL_USER: lumen
+      MYSQL_PASSWORD: lumen
+    volumes:
+      - ./mysql/init:/docker-entrypoint-initdb.d:ro
+    ports: ["3306:3306"]
+    # -h 127.0.0.1 forces TCP so health only flips after the REAL server listens
+    # on 3306 (the first-run init temp server uses a socket on port 0).
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpw"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  ai-sidecar:
+    build:
+      context: ..
+      dockerfile: apps/ai-sidecar/Dockerfile
+    environment:
+      SIDECAR_ADDR: ":8090"
+    ports: ["8090:8090"]
+
+  lumen:
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["serve", "--mode=all"]
+    environment:
+      HTTP_ADDR: ":8080"
+      APP_ENV: dev
+      ENABLE_DEV_LOGIN: "true"
+      JWT_SECRET: change-me-local-only
+      FRONTEND_ORIGIN: http://localhost:8080
+      MYSQL_DSN: "lumen:lumen@tcp(mysql:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
+      REDIS_ADDR: redis:6379
+      AI_SIDECAR_URL: http://ai-sidecar:8090
+    depends_on:
+      redis: {condition: service_healthy}
+      mysql: {condition: service_healthy}
+      ai-sidecar: {condition: service_started}
+    ports: ["8080:8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  e2e:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["e2e"]
+    environment:
+      TARGET: http://lumen:8080
+    depends_on:
+      lumen: {condition: service_healthy}
+
+  verifier:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["verify"]
+    environment:
+      APP_ENV: dev
+      JWT_SECRET: change-me-local-only
+      MYSQL_DSN: "lumen:lumen@tcp(mysql:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
+      REDIS_ADDR: redis:6379
+    depends_on:
+      mysql: {condition: service_healthy}
+      redis: {condition: service_healthy}
