@@ -30,6 +30,10 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 
 **Single `ERR_TOO_LOW`** (fariZzzz #14 challenge #2): increment-fail and cap-overshoot are both "amount invalid"; cap-hit success is signalled by `OK_SOLD`, not a rejection. No `ERR_INCREMENT` / `ERR_OVER_CAP`.
 
-## T1 subset
+## T1 / T2 subset
 
-T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_BAD_STATE`, `ERR_INTERNAL`, `ERR_FACTS_NOT_CONFIRMED`, `ERR_BAD_INPUT`. The rest are authored here and exercised by their gating T-steps.
+T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_BAD_STATE`, `ERR_INTERNAL`, `ERR_FACTS_NOT_CONFIRMED`, `ERR_BAD_INPUT`.
+
+**T2 adds** `OK_EXTENDED` (anti-snipe) and `OK_SOLD` (cap-hit / buy-now) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive `amountCents` (validated at the gateway before the Lua call); below-increment / over-cap remain `ERR_TOO_LOW`.
+
+The rest (`OK_NO_BID`, `OK_CANCELLED`, `ERR_NOT_DUE`, `ERR_ALREADY_TERMINAL`, `ERR_NOT_ALLOWED`) are authored here and exercised by their gating T-steps (T3).

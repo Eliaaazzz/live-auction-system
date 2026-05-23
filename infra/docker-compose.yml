@@ -75,6 +75,21 @@ services:
     depends_on:
       lumen: {condition: service_healthy}
 
+  perf-smoke:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["perf-smoke"]
+    environment:
+      TARGET: http://lumen:8080
+      # §4.2 fallback budgets (this is a single-gateway floor-check, not the SLO gate).
+      PERF_BIDS: "200"
+      PERF_ACK_P95_MS: "200"
+      PERF_BCAST_P95_MS: "500"
+    depends_on:
+      lumen: {condition: service_healthy}
+
   verifier:
     profiles: ["tools"]
     build:

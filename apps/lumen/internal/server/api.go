@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
@@ -115,6 +116,10 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ProductID == "" {
 		writeErr(w, http.StatusBadRequest, "productId required")
+		return
+	}
+	if err := body.Rules.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id := "auc_" + newID()
@@ -245,6 +250,33 @@ func (s *Server) handleEventsCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"count": n})
+}
+
+// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, amountCents}]}.
+// Top-n bidders by accepted max amount (Redis ZSET), money as string. n clamps to [1,100].
+// Requires a valid token: the bidder list (userId + amount) is room-scoped data, not
+// public the way the single current price is — so unlike GET /auctions/{id} it is gated.
+func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	n := 10
+	if q := r.URL.Query().Get("n"); q != "" {
+		if v, err := strconv.Atoi(q); err == nil && v > 0 {
+			if v > 100 {
+				v = 100
+			}
+			n = v
+		}
+	}
+	lb, err := s.st.Leaderboard(r.Context(), aid, n)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
 }
 
 // GET /api/auctions/{id}/evidence -> T1 evidence stub (real hash chain = T4).

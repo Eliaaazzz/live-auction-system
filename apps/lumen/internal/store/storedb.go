@@ -23,6 +23,17 @@ func (s *Store) UpsertUser(ctx context.Context, id, nickname, role string) error
 	return err
 }
 
+// UserNickname returns the display nickname for a user id, or "" if not found.
+// Used by the WS gateway to label bids with the human name rather than the id.
+func (s *Store) UserNickname(ctx context.Context, id string) (string, error) {
+	var nickname string
+	err := s.db.QueryRowContext(ctx, `SELECT nickname FROM users WHERE id = ?`, id).Scan(&nickname)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return nickname, err
+}
+
 func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL, description string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO products (id, seller_id, name, image_url, description, status, created_at, updated_at)

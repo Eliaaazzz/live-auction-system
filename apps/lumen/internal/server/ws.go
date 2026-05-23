@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +16,14 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
+
+// maxWSFrameBytes bounds an inbound WS frame (§8 WS hardening). Client messages
+// are a few hundred bytes; 32 KiB is generous headroom without inviting abuse.
+const maxWSFrameBytes = 32 * 1024
+
+// maxClientBidIDLen bounds the client-supplied idempotency key. It becomes a
+// Redis hash field name in the dedupe Hash, so cap it well below the frame limit.
+const maxClientBidIDLen = 128
 
 // Hub tracks room membership and fans out broadcasts. The bid path is decoupled
 // from the broadcast path via Redis Pub/Sub (subscribe), so adding gateways at
@@ -72,12 +81,8 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 			if aid == "" {
 				continue
 			}
-			var bad model.BidAcceptedData
-			if err := json.Unmarshal([]byte(msg.Payload), &bad); err != nil {
-				continue
-			}
-			env, err := model.NewEnvelope(model.TypeBidAccepted, aid, bad.Seq, bad)
-			if err != nil {
+			env, ok := decodePub(aid, msg.Payload)
+			if !ok {
 				continue
 			}
 			b, _ := json.Marshal(env)
@@ -86,12 +91,32 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 	}
 }
 
+// decodePub turns a Pub/Sub fanout payload (a typed model.PubMessage written by
+// the Lua hot path) into the WS envelope to broadcast to the room. One channel
+// fans out BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD; type + seq are
+// forwarded verbatim and data is already the wire payload. Returns ok=false for
+// a malformed or typeless message (the subscriber skips it).
+func decodePub(aid, payload string) (model.Envelope, bool) {
+	var pm model.PubMessage
+	if err := json.Unmarshal([]byte(payload), &pm); err != nil || pm.Type == "" {
+		return model.Envelope{}, false
+	}
+	return model.Envelope{
+		Type:         pm.Type,
+		AuctionID:    aid,
+		Seq:          pm.Seq,
+		ServerTimeMs: time.Now().UnixMilli(),
+		Data:         pm.Data,
+	}, true
+}
+
 // Conn is one WS client connection with a serialized write pump.
 type Conn struct {
-	ws     *websocket.Conn
-	send   chan []byte
-	userID string
-	aid    string
+	ws          *websocket.Conn
+	send        chan []byte
+	userID      string
+	displayName string // human nickname, resolved at connect (falls back to userID)
+	aid         string
 }
 
 func (c *Conn) writePump() {
@@ -129,7 +154,17 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // upgrader already wrote the error
 	}
-	c := &Conn{ws: ws, send: make(chan []byte, 64), userID: userID}
+	// §8 WS hardening: bound inbound frame size. Client messages (BID_PLACE,
+	// ROOM_JOIN, PING) are tiny; a multi-KB frame is abuse. Gorilla closes the
+	// connection with 1009 when the limit is exceeded.
+	ws.SetReadLimit(maxWSFrameBytes)
+	// Resolve the human nickname once at connect so bids broadcast a display name,
+	// not the opaque user id. Falls back to the id if the lookup fails/empty.
+	display := userID
+	if nick, err := s.st.UserNickname(r.Context(), userID); err == nil && nick != "" {
+		display = nick
+	}
+	c := &Conn{ws: ws, send: make(chan []byte, 64), userID: userID, displayName: display}
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
@@ -181,22 +216,33 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 	case model.TypeBidPlace:
 		var d model.BidPlaceData
 		_ = json.Unmarshal(env.Data, &d)
-		if c.aid == "" || d.ClientBidID == "" || d.AmountCents == "" {
+		// §8: strictly validate envelope/amount BEFORE the Lua call. A non-numeric
+		// or non-positive amount is a malformed client message (ERR_BAD_INPUT), not
+		// a business "too low" (ERR_TOO_LOW). Range checks vs increment/cap need
+		// auction state and stay in place_bid.lua.
+		if c.aid == "" || d.ClientBidID == "" || len(d.ClientBidID) > maxClientBidIDLen || !validAmount(d.AmountCents) {
 			c.push(rejected(c.aid, model.CodeErrBadInput))
 			return
 		}
-		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.userID)
+		// TODO(T3, [全员 approve]): per-connection inbound bid rate limit + wire code
+		// ERR_RATE_LIMITED (§8). Deferred: the new code is an all-member-approve
+		// contract change and dedupe already makes retries cheap. At T2 scale (single
+		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.
+		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.displayName)
 		if err != nil {
 			log.Printf("place_bid %s: %v", c.aid, err)
 			c.push(rejected(c.aid, bidErrCode(err)))
 			return
 		}
 		switch code {
-		case model.CodeOKAccepted, model.CodeDuplicate:
-			// Ack the originating socket DIRECTLY (reliable), independent of the
-			// Pub/Sub room broadcast that the subscriber fans out to observers.
-			// (A slow sender's queue could drop the broadcast copy.) Clients
-			// dedupe by seq, so the sender seeing both ack + broadcast is fine.
+		case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold, model.CodeDuplicate:
+			// Ack the originating socket directly, in addition to the Pub/Sub room
+			// broadcast the subscriber fans out to observers. push is best-effort
+			// (drops if the send buffer is full), but for a responsive client the
+			// 64-slot buffer makes the direct ack effectively reliable; the client
+			// also receives the broadcast copy and dedupes by seq. OK_EXTENDED/
+			// OK_SOLD ack the bid here; their AUCTION_EXTENDED / AUCTION_SOLD event
+			// reaches the room (incl. this socket) via Pub/Sub.
 			c.push(bidAccepted(c.aid, payload))
 		default:
 			c.push(rejected(c.aid, code))
@@ -207,6 +253,13 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 func rejected(aid, code string) model.Envelope {
 	env, _ := model.NewEnvelope(model.TypeBidRejected, aid, 0, model.BidRejectedData{Code: code})
 	return env
+}
+
+// validAmount reports whether s is a positive base-10 integer that fits int64
+// (cents). Range validation against increment/cap is the Lua hot path's job.
+func validAmount(s string) bool {
+	n, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && n > 0
 }
 
 func bidAccepted(aid, payload string) model.Envelope {

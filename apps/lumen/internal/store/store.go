@@ -158,13 +158,47 @@ func (s *Store) PlaceBid(ctx context.Context, aid, userID, clientBidID, amountCe
 		return "", 0, "", err
 	}
 	switch c := luaStr(arr[0]); c {
-	case model.CodeOKAccepted:
+	case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold:
+		// All three accept the bid; the secondary AUCTION_EXTENDED/AUCTION_SOLD
+		// event (arr[3..4]) is delivered to the room via Pub/Sub, so the gateway
+		// only needs the bid ack (arr[1..2]) for the originating socket.
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
 		return c, luaInt(arr[1]), luaStr(arr[2]), nil
 	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
 		return c, 0, luaStr(arr[1]), nil
 	default:
 		return c, 0, "", nil
 	}
+}
+
+// LeaderEntry is one leaderboard row (highest accepted bid per user).
+type LeaderEntry struct {
+	UserID      string `json:"userId"`
+	AmountCents string `json:"amountCents"`
+}
+
+// Leaderboard returns the top-n bidders by accepted max amount, descending.
+// Money is a string at the boundary (proto/ws-envelope.md money-as-string).
+func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEntry, error) {
+	if n <= 0 {
+		n = 10
+	}
+	z, err := s.rdb.ZRevRangeWithScores(ctx, lbKey(aid), 0, int64(n-1)).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LeaderEntry, 0, len(z))
+	for _, m := range z {
+		uid, _ := m.Member.(string)
+		// scores are integer cents stored via ZADD; format without exponent/decimal.
+		out = append(out, LeaderEntry{UserID: uid, AmountCents: strconv.FormatInt(int64(m.Score), 10)})
+	}
+	return out, nil
 }
 
 // Snapshot returns the current room state from the Redis state Hash.

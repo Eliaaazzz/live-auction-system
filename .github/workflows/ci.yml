@@ -8,6 +8,21 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    services:
+      # redis-backed Lua hot-path tests (§4.1 correctness suite + every return
+      # code) run as a real gate, not skipped. Default config is fine; the tests
+      # use unique auction ids + cleanup.
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      REDIS_ADDR: 127.0.0.1:6379
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -23,8 +38,8 @@ jobs:
         run: go vet ./...
       - name: build
         run: go build ./...
-      - name: test
-        run: go test ./...
+      - name: test (race + redis-backed Lua suite)
+        run: go test -race ./...
 
   guards:
     runs-on: ubuntu-latest
@@ -61,6 +76,8 @@ jobs:
           aid="$(printf '%s\n' "$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"
           test -n "$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }
           echo "VERIFY_AID=$aid" >> "$GITHUB_ENV"
+      - name: perf-smoke (T2 ack/broadcast p95 floor-check)
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build perf-smoke
       - name: replay-verifier skeleton
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
       - name: logs on failure
