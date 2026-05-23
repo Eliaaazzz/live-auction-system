@@ -5,6 +5,17 @@ local state_key, lb_key, stream_key, dedupe_key = KEYS[1], KEYS[2], KEYS[3], KEY
 local userId, clientBidId, displayName, pub = ARGV[1], ARGV[2], ARGV[4], ARGV[5]
 local amount = tonumber(ARGV[3])
 
+-- 0. type-guard every key BEFORE any write (Lua has no rollback; RFC v2 boundary 2).
+-- A wrong-typed key must fail the script before it mutates seq/price/leaderboard.
+local function bad_type(key, want)
+  local t = redis.call('TYPE', key).ok
+  return t ~= 'none' and t ~= want
+end
+if bad_type(state_key, 'hash') or bad_type(lb_key, 'zset')
+   or bad_type(stream_key, 'stream') or bad_type(dedupe_key, 'hash') then
+  return {'ERR_INTERNAL', 'key_type'}
+end
+
 -- 1. dedupe: retry returns the original ack (NOT an error)
 local cached = redis.call('HGET', dedupe_key, clientBidId)
 if cached then return {'DUPLICATE', cached} end

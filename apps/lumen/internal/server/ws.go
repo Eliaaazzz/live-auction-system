@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -182,23 +183,17 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, d.AmountCents, c.userID)
 		if err != nil {
-			// Transport/script error (Redis down, NOSCRIPT, ...). Don't mislabel
-			// it as a business ERR_AUCTION_PAUSED; surface a distinct internal code.
 			log.Printf("place_bid %s: %v", c.aid, err)
-			c.push(rejected(c.aid, model.CodeErrInternal))
+			c.push(rejected(c.aid, bidErrCode(err)))
 			return
 		}
 		switch code {
-		case model.CodeOKAccepted:
-			// broadcast (incl. this sender) happens via the Pub/Sub subscriber.
-		case model.CodeDuplicate:
-			// replay the cached ack directly to the retrying sender.
-			var bad model.BidAcceptedData
-			if json.Unmarshal([]byte(payload), &bad) == nil {
-				if out, err := model.NewEnvelope(model.TypeBidAccepted, c.aid, bad.Seq, bad); err == nil {
-					c.push(out)
-				}
-			}
+		case model.CodeOKAccepted, model.CodeDuplicate:
+			// Ack the originating socket DIRECTLY (reliable), independent of the
+			// Pub/Sub room broadcast that the subscriber fans out to observers.
+			// (A slow sender's queue could drop the broadcast copy.) Clients
+			// dedupe by seq, so the sender seeing both ack + broadcast is fine.
+			c.push(bidAccepted(c.aid, payload))
 		default:
 			c.push(rejected(c.aid, code))
 		}
@@ -208,4 +203,21 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 func rejected(aid, code string) model.Envelope {
 	env, _ := model.NewEnvelope(model.TypeBidRejected, aid, 0, model.BidRejectedData{Code: code})
 	return env
+}
+
+func bidAccepted(aid, payload string) model.Envelope {
+	var bad model.BidAcceptedData
+	_ = json.Unmarshal([]byte(payload), &bad)
+	env, _ := model.NewEnvelope(model.TypeBidAccepted, aid, bad.Seq, bad)
+	return env
+}
+
+// bidErrCode honours the frozen boundary "Redis down -> ERR_AUCTION_PAUSED": a
+// NOSCRIPT (flushed script cache) is a genuine internal/dispatcher fault, but
+// any other EVALSHA transport error means Redis is effectively unavailable.
+func bidErrCode(err error) string {
+	if strings.Contains(strings.ToUpper(err.Error()), "NOSCRIPT") {
+		return model.CodeErrInternal
+	}
+	return model.CodeErrPaused
 }

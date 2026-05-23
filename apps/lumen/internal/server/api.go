@@ -105,8 +105,10 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ProductID string      `json:"productId"`
-		Rules     model.Rules `json:"rules"`
+		ProductID      string          `json:"productId"`
+		Rules          model.Rules     `json:"rules"`
+		FactsConfirmed bool            `json:"factsConfirmed"`
+		ConfirmedFacts json.RawMessage `json:"confirmedFacts"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -116,7 +118,7 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := "auc_" + newID()
-	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules); err != nil {
+	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -154,7 +156,13 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("id")
-	if !s.ownsAuction(w, r, aid, userID) {
+	a, ok := s.ownsAuction(w, r, aid, userID)
+	if !ok {
+		return
+	}
+	// §spec: seller must confirm AI facts before the auction can be frozen/started.
+	if !a.FactsConfirmed {
+		writeJSON(w, http.StatusConflict, map[string]string{"code": model.CodeErrFacts})
 		return
 	}
 	rules, err := s.st.GetRules(r.Context(), aid)
@@ -183,7 +191,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("id")
-	if !s.ownsAuction(w, r, aid, userID) {
+	if _, ok := s.ownsAuction(w, r, aid, userID); !ok {
 		return
 	}
 	var body struct {
@@ -220,25 +228,56 @@ func (s *Server) handleEventsCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"count": n})
 }
 
-// --- helpers ---
-
-// ownsAuction enforces §8: seller actions verify server-side ownership; the
-// client-supplied identity is never trusted.
-func (s *Server) ownsAuction(w http.ResponseWriter, r *http.Request, aid, userID string) bool {
+// GET /api/auctions/{id}/evidence -> T1 evidence stub (real hash chain = T4).
+func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
+	aid := r.PathValue("id")
 	a, err := s.st.GetAuction(r.Context(), aid)
 	if err == store.ErrNotFound {
 		writeErr(w, http.StatusNotFound, "auction not found")
-		return false
+		return
 	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
-		return false
+		return
+	}
+	snap, _ := s.st.Snapshot(r.Context(), aid)
+	status := snap.Status
+	if status == "" {
+		status = a.Status
+	}
+	n, _ := s.st.CountEvents(r.Context(), aid)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auctionId":         aid,
+		"status":            status,
+		"currentPriceCents": snap.CurrentPriceCents,
+		"winnerId":          snap.WinnerID,
+		"seq":               snap.Seq,
+		"eventsCount":       n,
+		"factsConfirmed":    a.FactsConfirmed,
+		"eventsHash":        nil, // hash chain is computed by the Persistence Worker in T4
+		"note":              "T1 evidence stub; events_hash chain lands in T4",
+	})
+}
+
+// --- helpers ---
+
+// ownsAuction enforces §8: seller actions verify server-side ownership; the
+// client-supplied identity is never trusted. Returns the auction on success.
+func (s *Server) ownsAuction(w http.ResponseWriter, r *http.Request, aid, userID string) (store.Auction, bool) {
+	a, err := s.st.GetAuction(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "auction not found")
+		return a, false
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return a, false
 	}
 	if a.SellerID != userID {
 		writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
-		return false
+		return a, false
 	}
-	return true
+	return a, true
 }
 
 func (s *Server) authUser(r *http.Request) (string, bool) {

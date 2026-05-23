@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS auctions (
   current_price_cents BIGINT      NOT NULL DEFAULT 0,
   winner_id           VARCHAR(64) NULL,
   seq                 BIGINT      NOT NULL DEFAULT 0,
+  facts_confirmed     TINYINT(1)  NOT NULL DEFAULT 0,
+  confirmed_facts_json JSON       NULL,
   start_at            DATETIME    NULL,
   end_at              DATETIME    NULL,
   finished_at         DATETIME    NULL,
