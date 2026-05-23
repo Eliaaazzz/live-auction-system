@@ -12,6 +12,9 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrNotAllowed is returned when a caller tries to operate on another owner's row.
+var ErrNotAllowed = errors.New("not allowed")
+
 func (s *Store) UpsertUser(ctx context.Context, id, nickname, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO users (id, nickname, role, created_at) VALUES (?, ?, ?, ?)
@@ -38,6 +41,17 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+
+	var productSellerID string
+	if err = tx.QueryRowContext(ctx, `SELECT seller_id FROM products WHERE id = ?`, productID).Scan(&productSellerID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	if productSellerID != sellerID {
+		return ErrNotAllowed
+	}
 
 	var facts any
 	if confirmedFacts != "" {

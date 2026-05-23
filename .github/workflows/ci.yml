@@ -54,9 +54,15 @@ jobs:
       - name: seed
         run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen seed
       - name: e2e-dummy-bid (T1 acceptance)
-        run: docker compose -f infra/docker-compose.yml --profile tools run --rm e2e
+        run: |
+          set -euo pipefail
+          out="$(docker compose -f infra/docker-compose.yml --profile tools run --rm --build e2e)"
+          echo "$out"
+          aid="$(printf '%s\n' "$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"
+          test -n "$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }
+          echo "VERIFY_AID=$aid" >> "$GITHUB_ENV"
       - name: replay-verifier skeleton
-        run: docker compose -f infra/docker-compose.yml --profile tools run --rm verifier
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

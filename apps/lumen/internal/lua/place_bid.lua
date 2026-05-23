@@ -17,8 +17,16 @@ if bad_type(state_key, 'hash') or bad_type(lb_key, 'zset')
 end
 
 -- 1. dedupe: retry returns the original ack (NOT an error)
+local function ensure_dedupe_ttl()
+  if redis.call('TTL', dedupe_key) < 0 then
+    redis.call('EXPIRE', dedupe_key, 86400)
+  end
+end
 local cached = redis.call('HGET', dedupe_key, clientBidId)
-if cached then return {'DUPLICATE', cached} end
+if cached then
+  ensure_dedupe_ttl()
+  return {'DUPLICATE', cached}
+end
 
 -- 2. state guards
 local s = redis.call('HMGET', state_key, 'status', 'endAtMs', 'paused')
