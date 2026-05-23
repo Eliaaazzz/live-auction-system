@@ -35,7 +35,9 @@ jobs:
           if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua banned"; exit 1; fi
       - name: no leaked DOUBAO_ENDPOINT_ID (scans tracked files incl. binaries)
         run: |
-          if git grep -n 'ep-20260514111437-7crsm'; then echo "FAIL: leaked endpoint id"; exit 1; fi
+          # split the literal so this guard file does not match itself
+          PAT='ep-20260514111437''-7crsm'
+          if git grep -n "$PAT"; then echo "FAIL: leaked endpoint id"; exit 1; fi
       - name: contracts present
         run: |
           for f in ws-envelope redis-keys error-codes db-schema ai-events; do

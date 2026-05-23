@@ -39,5 +39,5 @@ fmt:
 
 guard:            ## cheap CI guards (git grep scans tracked files incl. binaries)
 	@if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua naming is banned (V9)"; exit 1; fi
-	@if git grep -n 'ep-20260514111437-7crsm'; then echo "FAIL: leaked DOUBAO_ENDPOINT_ID present"; exit 1; fi
+	@PAT='ep-20260514111437''-7crsm'; if git grep -n "$$PAT"; then echo "FAIL: leaked DOUBAO_ENDPOINT_ID present"; exit 1; fi
 	@echo "guards passed"
