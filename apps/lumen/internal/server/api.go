@@ -123,12 +123,25 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
 }
 
-// GET /api/auctions/{id} -> room snapshot from Redis.
+// GET /api/auctions/{id} -> room snapshot from Redis (404 if unknown).
 func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
-	snap, err := s.st.Snapshot(r.Context(), r.PathValue("id"))
+	aid := r.PathValue("id")
+	a, err := s.st.GetAuction(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "auction not found")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	snap, err := s.st.Snapshot(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if snap.Status == "" { // not yet frozen: no Redis state, fall back to MySQL status
+		snap.Status = a.Status
 	}
 	writeJSON(w, http.StatusOK, snap)
 }
@@ -149,7 +162,7 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "rules not found")
 		return
 	}
-	code, seq, err := s.st.FreezeRules(r.Context(), aid, rules)
+	code, err := s.st.FreezeRules(r.Context(), aid, rules)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -159,7 +172,7 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled)
-	writeJSON(w, http.StatusOK, map[string]any{"code": code, "seq": seq})
+	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
 
 // POST /api/auctions/{id}/start {durationMs?} -> start_auction.lua (SCHEDULED -> LIVE).
@@ -184,7 +197,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			body.DurationMs = 60_000
 		}
 	}
-	code, seq, endAtMs, err := s.st.StartAuction(r.Context(), aid, body.DurationMs)
+	code, endAtMs, err := s.st.StartAuction(r.Context(), aid, body.DurationMs)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -194,7 +207,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.st.UpdateAuctionStatus(r.Context(), aid, model.StateLive)
-	writeJSON(w, http.StatusOK, map[string]any{"code": code, "seq": seq, "endAtMs": endAtMs})
+	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
 }
 
 // GET /api/auctions/{id}/events-count -> {count} (MySQL projection; for e2e/verify).

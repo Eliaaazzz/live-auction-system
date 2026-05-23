@@ -8,6 +8,6 @@ if status ~= 'SCHEDULED' then return {'ERR_BAD_STATE', status or 'UNKNOWN'} end
 local t = redis.call('TIME')
 local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 local endAtMs = now + tonumber(ARGV[1])
-local seq = redis.call('HINCRBY', state_key, 'seq', 1)
+-- do NOT touch `seq` (bid-event sequence); see freeze_rules.lua.
 redis.call('HMSET', state_key, 'status', 'LIVE', 'endAtMs', endAtMs)
-return {'OK_LIVE', seq, endAtMs}
+return {'OK_LIVE', endAtMs}

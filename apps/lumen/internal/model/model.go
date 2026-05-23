@@ -51,6 +51,7 @@ const (
 	CodeErrBadState = "ERR_BAD_STATE"
 	CodeErrNotAllow = "ERR_NOT_ALLOWED"
 	CodeErrPaused   = "ERR_AUCTION_PAUSED"
+	CodeErrInternal = "ERR_INTERNAL" // dispatcher/store transport error (wire-only)
 )
 
 // Envelope is the WS message frame. Money fields inside Data are strings.

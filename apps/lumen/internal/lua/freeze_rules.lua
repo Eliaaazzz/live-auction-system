@@ -6,8 +6,11 @@ local status = redis.call('HGET', state_key, 'status')
 -- absent state == not-yet-frozen (auction is DRAFT in MySQL); any non-DRAFT is illegal
 if status and status ~= 'DRAFT' then return {'ERR_BAD_STATE', status} end
 
+-- NB: do NOT touch the `seq` counter here. `seq` is the bid-event sequence
+-- (Stream ID source); freeze/start are state transitions, not events, so the
+-- first accepted bid must be seq=1 with no gap. seq is left unset until the
+-- first place_bid HINCRBY (which initialises 0 -> 1).
 local r = cjson.decode(ARGV[1])
-local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 redis.call('HMSET', state_key,
   'status', 'SCHEDULED',
   'startPriceCents', r.startPriceCents or 0,
@@ -18,5 +21,6 @@ redis.call('HMSET', state_key,
   'extendSec', r.extendSec or 0,
   'extendCount', 0,
   'winnerId', '',
+  'seq', 0,
   'paused', 'false')
-return {'OK_FROZEN', seq}
+return {'OK_FROZEN'}

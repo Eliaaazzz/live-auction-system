@@ -5,7 +5,7 @@ COMPOSE := docker compose -f infra/docker-compose.yml
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d --build --wait --wait-timeout 300
 	@echo "admin:  http://localhost:8080/admin"
 	@echo "mobile: http://localhost:8080/room?auction=auc_demo"
 
@@ -37,7 +37,7 @@ test:
 fmt:
 	gofmt -l -w .
 
-guard:            ## cheap CI guards
-	@! grep -rIn --include='*.lua' '_v2' . || (echo "FAIL: *_v2.lua naming is banned (V9)"; exit 1)
-	@! grep -rIn 'ep-20260514111437-7crsm' . || (echo "FAIL: leaked DOUBAO_ENDPOINT_ID present"; exit 1)
+guard:            ## cheap CI guards (git grep scans tracked files incl. binaries)
+	@if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua naming is banned (V9)"; exit 1; fi
+	@if git grep -n 'ep-20260514111437-7crsm'; then echo "FAIL: leaked DOUBAO_ENDPOINT_ID present"; exit 1; fi
 	@echo "guards passed"

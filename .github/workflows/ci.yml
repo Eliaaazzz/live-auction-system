@@ -13,8 +13,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
-      - name: tidy
-        run: go mod tidy
+      - name: tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || { echo "go.mod/go.sum not tidy — run 'go mod tidy' and commit"; exit 1; }
       - name: gofmt
         run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt' && exit 1)
       - name: vet
@@ -30,10 +32,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: no *_v2.lua naming (V9)
         run: |
-          if grep -rIn --include='*.lua' '_v2' .; then echo "FAIL: *_v2.lua banned"; exit 1; fi
-      - name: no leaked DOUBAO_ENDPOINT_ID
+          if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua banned"; exit 1; fi
+      - name: no leaked DOUBAO_ENDPOINT_ID (scans tracked files incl. binaries)
         run: |
-          if grep -rIn 'ep-20260514111437-7crsm' .; then echo "FAIL: leaked endpoint id"; exit 1; fi
+          if git grep -n 'ep-20260514111437-7crsm'; then echo "FAIL: leaked endpoint id"; exit 1; fi
       - name: contracts present
         run: |
           for f in ws-envelope redis-keys error-codes db-schema ai-events; do
@@ -43,15 +45,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: build + start stack
-        run: docker compose -f infra/docker-compose.yml up -d --build redis mysql ai-sidecar lumen
-      - name: wait for lumen healthy
-        run: |
-          for i in $(seq 1 60); do
-            if curl -sf http://localhost:8080/healthz >/dev/null; then echo "healthy"; exit 0; fi
-            sleep 2
-          done
-          echo "lumen never became healthy"; docker compose -f infra/docker-compose.yml logs; exit 1
+      - name: build + start stack (wait for healthchecks)
+        run: docker compose -f infra/docker-compose.yml up -d --build --wait --wait-timeout 300 redis mysql ai-sidecar lumen
+      - name: sanity healthz
+        run: curl -sf http://localhost:8080/healthz
       - name: seed
         run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen seed
       - name: e2e-dummy-bid (T1 acceptance)
