@@ -24,9 +24,23 @@ groups:
       - record: lumen:broadcast_p99_1m
         expr: histogram_quantile(0.99, sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m])))
 
+      # Hammer p50/p95/p99 — V9 §4.2 target p95 < 500ms (floor 2s)
+      - record: lumen:hammer_p50_1m
+        expr: histogram_quantile(0.50, sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m])))
       - record: lumen:hammer_p95_1m
         expr: histogram_quantile(0.95, sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m])))
+      - record: lumen:hammer_p99_1m
+        expr: histogram_quantile(0.99, sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m])))
 
+      # Catchup p50/p95/p99 — V9 §4.2 target p95 < 1s for 200-event catchup (floor 3s)
+      - record: lumen:catchup_p50_1m
+        expr: histogram_quantile(0.50, sum by (le) (rate(lumen_ws_catchup_duration_seconds_bucket[1m])))
+      - record: lumen:catchup_p95_1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_ws_catchup_duration_seconds_bucket[1m])))
+      - record: lumen:catchup_p99_1m
+        expr: histogram_quantile(0.99, sum by (le) (rate(lumen_ws_catchup_duration_seconds_bucket[1m])))
+
+      # place_bid.lua p99 — V9 §4.2 hot-path budget < 5ms (gate for ack p95 < 80ms)
       - record: lumen:script_p99_1m
         expr: histogram_quantile(0.99, sum by (le, script) (rate(lumen_bidengine_lua_duration_seconds_bucket[1m])))
 
@@ -41,8 +55,13 @@ groups:
       - record: lumen:bid_reject_rate_1m
         expr: sum by (code) (rate(lumen_bidengine_return_code_total{script="place_bid", code=~"ERR_.*"}[1m]))
 
-      # Active counts
+      # Active counts — 500/50 load-test scoring dimension
       - record: lumen:active_connections
-        expr: sum by (mode) (lumen_ws_connections)
+        expr: sum(lumen_ws_connections)
       - record: lumen:active_auctions
         expr: sum(lumen_ws_connections_per_room > 0)  # heuristic; real source = LIVE auctions from API
+      # Active bidders = distinct userIds with at least one accepted bid in the last 1m.
+      # Backend should emit `lumen_active_bidders` as a gauge updated on each bid;
+      # until then this expr is a placeholder using bid acceptance rate as a proxy.
+      - record: lumen:active_bidders_1m
+        expr: count(count by (user_id) (increase(lumen_bidengine_bids_per_user_total[1m]) > 0)) or vector(0)

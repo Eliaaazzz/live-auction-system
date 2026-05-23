@@ -85,6 +85,42 @@ groups:
           summary: "Lua execution errors detected (target = 0)"
           description: "Could be schema drift, OOM, or unhandled return."
 
+      # Per V9 §4.2 hot-path budget: place_bid.lua p99 < 5ms (gate for ack p95 < 80ms)
+      - alert: LuaScriptBudgetBreached
+        expr: lumen:script_p99_1m{script="place_bid"} > 0.005
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "place_bid.lua p99 > 5ms (hot-path budget breached)"
+          description: "ack p95 < 80ms is at risk — Lua exec time dominates the budget."
+
+      - alert: LuaScriptBudgetCritical
+        expr: lumen:script_p99_1m{script="place_bid"} > 0.010
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "place_bid.lua p99 > 10ms (2x budget)"
+
+      # Per V9 §4.2: catchup 200 events p95 < 1s gate; 3s floor.
+      - alert: CatchupLatencyHigh
+        expr: lumen:catchup_p95_1m > 1
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Catchup p95 > 1s (gate breached)"
+          target: "p95 < 1s gate; < 3s floor per V9 §4.2"
+
+      - alert: CatchupLatencyFloor
+        expr: lumen:catchup_p95_1m > 3
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Catchup p95 > 3s (floor breached)"
+
       # Redis is on the hot path. Down = ERR_AUCTION_PAUSED for all bids.
       - alert: RedisDown
         expr: up{job="redis"} == 0
@@ -95,29 +131,36 @@ groups:
           summary: "Redis down — auctions paused"
           runbook: "docs/runbook.md#redis-recovery"
 
-      - alert: GatewayDown
-        expr: up{job="lumen-gateway"} == 0
+      # T1 default (single lumen process): use job=lumen. T5+ split-mode topology
+      # uses per-mode jobs (lumen-bid-engine, lumen-gateway, lumen-timer); uncomment
+      # the T5 alerts below when prometheus.yml multi-process scrape stanzas are
+      # un-commented. Keeping them commented avoids red panels in T1 single-binary.
+      - alert: LumenDown
+        expr: up{job="lumen"} == 0
         for: 30s
         labels:
           severity: critical
         annotations:
-          summary: "Gateway instance {{ $labels.instance }} down"
+          summary: "lumen process down — all auctions paused"
 
-      - alert: BidEngineDown
-        expr: up{job="lumen-bid-engine"} == 0
-        for: 30s
-        labels:
-          severity: critical
-        annotations:
-          summary: "Bid engine down — no bids accepted"
-
-      - alert: TimerDown
-        expr: up{job="lumen-timer"} == 0
-        for: 60s
-        labels:
-          severity: critical
-        annotations:
-          summary: "Timer worker down — auctions won't auto-hammer"
+      # ─── T5+ multi-process alerts (commented; un-comment when split topology lands)
+      # - alert: GatewayDown
+      #   expr: up{job="lumen-gateway"} == 0
+      #   for: 30s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Gateway instance {{ $labels.instance }} down" }
+      #
+      # - alert: BidEngineDown
+      #   expr: up{job="lumen-bid-engine"} == 0
+      #   for: 30s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Bid engine down — no bids accepted" }
+      #
+      # - alert: TimerDown
+      #   expr: up{job="lumen-timer"} == 0
+      #   for: 60s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Timer worker down — auctions won't auto-hammer" }
 
   # ─────────────────────────────────────────────────────────────────────
   - name: lumen_capacity

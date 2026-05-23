@@ -73,18 +73,18 @@ After `make up`, dashboards are at http://localhost:3000 (anon Viewer enabled fo
 
 ## Per-binary `/metrics` endpoint convention
 
-Each lumen mode exposes Prometheus metrics on its own port (per `apps/lumen/internal/metrics/`):
+**T1 (per PR #19): single lumen process, `--mode=all`, port 8080.** Prometheus scrapes a single `lumen:8080` target. The per-mode ports below are the T5+ split-topology target inventory (commented out in `prometheus.yml` until compose splits modes into separate services — keeps T1 from showing red GatewayDown alerts on phantom scrape targets):
 
-| Mode | Port |
+| Mode (T5+ split-process) | Port |
 |---|---|
 | api | 8085 |
 | gateway | 8081 |
 | bid-engine | 8082 |
 | timer | 8083 |
-| pg-writer | 8084 |
-| ai-sidecar | 9090 |
+| persistence (subcommand `--mode=pg-writer`) | 8084 |
+| ai-sidecar (separate process) | 9090 |
 
-These are the targets in `prometheus/prometheus.yml`.
+The subcommand keeps its `--mode=pg-writer` name (matches PR #19 `apps/lumen/cmd/lumen/main.go`). User-facing language is **Persistence Worker** / **MySQL projection**.
 
 ## Dashboards shipped
 
