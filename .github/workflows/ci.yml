@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: tidy is clean
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum || { echo "go.mod/go.sum not tidy — run 'go mod tidy' and commit"; exit 1; }
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt' && exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test ./...
+
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no *_v2.lua naming (V9)
+        run: |
+          if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua banned"; exit 1; fi
+      - name: no real DOUBAO endpoint id (pattern-based; placeholder allowlisted)
+        run: |
+          # match a real ep-<digits> id; the ep-xxxx placeholder has no digits, and
+          # this regex contains no secret literal (so the guard can't match itself).
+          if git grep -nE 'ep-[0-9]{8}'; then echo "FAIL: real DOUBAO endpoint id present"; exit 1; fi
+      - name: contracts present
+        run: |
+          for f in ws-envelope redis-keys error-codes db-schema ai-events; do
+            test -f "proto/$f.md" || (echo "missing proto/$f.md"; exit 1); done
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + start stack (wait for healthchecks)
+        run: docker compose -f infra/docker-compose.yml up -d --build --wait --wait-timeout 300 redis mysql ai-sidecar lumen
+      - name: sanity healthz
+        run: curl -sf http://localhost:8080/healthz
+      - name: seed
+        run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen seed
+      - name: e2e-dummy-bid (T1 acceptance)
+        run: |
+          set -euo pipefail
+          out="$(docker compose -f infra/docker-compose.yml --profile tools run --rm --build e2e)"
+          echo "$out"
+          aid="$(printf '%s\n' "$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"
+          test -n "$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }
+          echo "VERIFY_AID=$aid" >> "$GITHUB_ENV"
+      - name: replay-verifier skeleton
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
+      - name: logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs
+      - name: teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v

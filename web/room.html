@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Room (T1)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 32px auto; padding: 0 16px; }
+    #price { font-size: 40px; font-weight: 700; }
+    #status { color: #64748b; }
+    button { padding: 10px 18px; font-size: 16px; cursor: pointer; }
+    input { padding: 8px; font-size: 16px; width: 140px; }
+    #feed { margin-top: 16px; font-family: ui-monospace, monospace; font-size: 13px; color: #334155; }
+    .conn { color: #16a34a; } .down { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h1>Auction room</h1>
+  <div>auction: <code id="aid"></code> · <span id="conn" class="down">connecting…</span></div>
+  <p>current price: <span id="price">—</span> <small>cents</small></p>
+  <p id="status">—</p>
+  <input id="amount" type="number" value="11000" />
+  <button id="bid">Place bid</button>
+  <button id="evidence">Show evidence</button>
+  <pre id="evidence-out" style="background:#f1f5f9;padding:8px;border-radius:6px;font-size:12px;overflow:auto"></pre>
+  <div id="feed"></div>
+
+  <script>
+    const qs = new URLSearchParams(location.search);
+    const aid = qs.get('auction') || 'auc_demo';
+    document.getElementById('aid').textContent = aid;
+
+    const feed = (m) => {
+      const d = document.createElement('div');
+      d.textContent = new Date().toLocaleTimeString() + '  ' + m;
+      document.getElementById('feed').prepend(d);
+    };
+
+    let ws;
+    let lastSeq = 0; // dedupe: the sender receives both a direct ack and the broadcast
+    async function connect() {
+      const s = await (await fetch('/api/dev-login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: 'Buyer ' + Math.floor(Math.random() * 1000), role: 'user' }),
+      })).json();
+
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(proto + '://' + location.host + '/ws?token=' + encodeURIComponent(s.token));
+
+      ws.onopen = () => {
+        document.getElementById('conn').textContent = 'connected as ' + s.userId;
+        document.getElementById('conn').className = 'conn';
+        ws.send(JSON.stringify({ type: 'ROOM_JOIN', auctionId: aid, serverTimeMs: Date.now(), data: { auctionId: aid } }));
+      };
+      ws.onclose = () => {
+        document.getElementById('conn').textContent = 'disconnected';
+        document.getElementById('conn').className = 'down';
+      };
+      ws.onmessage = (ev) => {
+        const env = JSON.parse(ev.data);
+        if (env.type === 'ROOM_SNAPSHOT') {
+          render(env.data.currentPriceCents, env.data.status, env.seq);
+          feed('snapshot: ' + (env.data.status || '—'));
+        } else if (env.type === 'BID_ACCEPTED') {
+          if (env.seq && env.seq <= lastSeq) return; // already applied (dedupe ack vs broadcast)
+          lastSeq = env.seq || lastSeq;
+          render(env.data.amountCents, env.data.status, env.seq);
+          feed('BID_ACCEPTED seq=' + env.seq + ' by ' + env.data.userId + ' @ ' + env.data.amountCents);
+        } else if (env.type === 'BID_REJECTED') {
+          feed('BID_REJECTED: ' + env.data.code);
+        }
+      };
+    }
+
+    function render(price, status, seq) {
+      if (price) document.getElementById('price').textContent = price;
+      document.getElementById('status').textContent = 'status: ' + (status || '—') + ' · seq: ' + (seq || 0);
+    }
+
+    document.getElementById('bid').onclick = () => {
+      if (!ws || ws.readyState !== 1) { feed('not connected'); return; }
+      const amount = String(document.getElementById('amount').value || '11000');
+      const clientBidId = 'cb_' + Date.now() + '_' + Math.random().toString(16).slice(2);
+      ws.send(JSON.stringify({ type: 'BID_PLACE', auctionId: aid, serverTimeMs: Date.now(), data: { clientBidId, amountCents: amount } }));
+      feed('sent BID_PLACE @ ' + amount);
+    };
+
+    document.getElementById('evidence').onclick = async () => {
+      try {
+        const ev = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/evidence')).json();
+        document.getElementById('evidence-out').textContent = JSON.stringify(ev, null, 2);
+      } catch (e) {
+        document.getElementById('evidence-out').textContent = String(e);
+      }
+    };
+
+    connect();
+  </script>
+</body>
+</html>
