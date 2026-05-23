@@ -57,22 +57,48 @@
     {
       "id": 12,
       "type": "stat",
-      "title": "WS connections (total)",
+      "title": "WS connections / target 500",
+      "description": "V9 §4.2 P0 gate: 500 connected sustained 60s+. Threshold lights up green at 500.",
       "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "sum(lumen_ws_connections)", "refId": "A" }
-      ]
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 500 }
+            ]
+          }
+        }
+      }
     },
     {
       "id": 13,
       "type": "stat",
-      "title": "Bids/sec (1m)",
+      "title": "Active bidders (1m) / target 50",
+      "description": "V9 §4.2 P0 gate: 50 active bidders sustained 60s+. Red below target only when load-test profile expects it; green during demo idle is fine.",
       "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "lumen:bid_rate_1m", "refId": "A" }
-      ]
+        { "expr": "lumen:active_bidders_1m", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 50 }
+            ]
+          }
+        }
+      }
     },
     {
       "id": 14,
@@ -108,8 +134,8 @@
       "id": 21,
       "type": "timeseries",
       "title": "ack p50 / p95 / p99",
-      "description": "V9 §4.2: p95 < 80ms gate, < 200ms floor. Threshold lines at both.",
-      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "description": "V9 §4.2: p95 < 80ms gate (yellow), < 200ms floor (red).",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "lumen:ack_p50_1m", "refId": "p50", "legendFormat": "p50" },
@@ -135,8 +161,8 @@
       "id": 22,
       "type": "timeseries",
       "title": "broadcast p50 / p95 / p99",
-      "description": "V9 §4.2: p95 < 150ms gate, < 500ms floor.",
-      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "description": "V9 §4.2: p95 < 150ms gate (yellow), < 500ms floor (red).",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         { "expr": "lumen:broadcast_p50_1m", "refId": "p50", "legendFormat": "p50" },
@@ -160,15 +186,55 @@
     {
       "id": 23,
       "type": "timeseries",
-      "title": "hammer p95 vs detection-lag p95",
-      "description": "V9 §4.2: hammer p95 < 500ms; detection-lag ≤ 120ms feeds into it.",
-      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "title": "hammer p50 / p95 / p99 (+ detection-lag)",
+      "description": "V9 §4.2: hammer p95 < 500ms gate (yellow), < 2s floor (red). detection-lag is the timer scan portion (≤120ms budget).",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 6 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
-        { "expr": "lumen:hammer_p95_1m", "refId": "hammer", "legendFormat": "hammer p95 (s)" },
-        { "expr": "lumen:detection_lag_p95_1m / 1000", "refId": "lag", "legendFormat": "detection-lag p95 (s)" }
+        { "expr": "lumen:hammer_p50_1m", "refId": "p50", "legendFormat": "hammer p50" },
+        { "expr": "lumen:hammer_p95_1m", "refId": "p95", "legendFormat": "hammer p95" },
+        { "expr": "lumen:hammer_p99_1m", "refId": "p99", "legendFormat": "hammer p99" },
+        { "expr": "lumen:detection_lag_p95_1m / 1000", "refId": "lag", "legendFormat": "detection-lag p95" }
       ],
-      "fieldConfig": { "defaults": { "unit": "s" } }
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "catchup p50 / p95 / p99 (200 events)",
+      "description": "V9 §4.2: p95 < 1s gate (yellow), < 3s floor (red). Triggered by ROOM_JOIN with lastSeq < high water; XRANGE replay duration.",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:catchup_p50_1m", "refId": "p50", "legendFormat": "p50" },
+        { "expr": "lumen:catchup_p95_1m", "refId": "p95", "legendFormat": "p95" },
+        { "expr": "lumen:catchup_p99_1m", "refId": "p99", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1.0 },
+              { "color": "red", "value": 3.0 }
+            ]
+          }
+        }
+      }
     },
     {
       "type": "row",
