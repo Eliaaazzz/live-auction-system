@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: tidy
+        run: go mod tidy
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt' && exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: build
+        run: go build ./...
+      - name: test
+        run: go test ./...
+
+  guards:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no *_v2.lua naming (V9)
+        run: |
+          if grep -rIn --include='*.lua' '_v2' .; then echo "FAIL: *_v2.lua banned"; exit 1; fi
+      - name: no leaked DOUBAO_ENDPOINT_ID
+        run: |
+          if grep -rIn 'ep-20260514111437-7crsm' .; then echo "FAIL: leaked endpoint id"; exit 1; fi
+      - name: contracts present
+        run: |
+          for f in ws-envelope redis-keys error-codes db-schema ai-events; do
+            test -f "proto/$f.md" || (echo "missing proto/$f.md"; exit 1); done
+
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build + start stack
+        run: docker compose -f infra/docker-compose.yml up -d --build redis mysql ai-sidecar lumen
+      - name: wait for lumen healthy
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/healthz >/dev/null; then echo "healthy"; exit 0; fi
+            sleep 2
+          done
+          echo "lumen never became healthy"; docker compose -f infra/docker-compose.yml logs; exit 1
+      - name: seed
+        run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen seed
+      - name: e2e-dummy-bid (T1 acceptance)
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm e2e
+      - name: replay-verifier skeleton
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm verifier
+      - name: logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs
+      - name: teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
