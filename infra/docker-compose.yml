@@ -23,11 +23,13 @@ services:
     volumes:
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
     ports: ["3306:3306"]
+    # -h 127.0.0.1 forces TCP so health only flips after the REAL server listens
+    # on 3306 (the first-run init temp server uses a socket on port 0).
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-prootpw"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpw"]
       interval: 5s
       timeout: 5s
-      retries: 30
+      retries: 40
 
   ai-sidecar:
     build:
