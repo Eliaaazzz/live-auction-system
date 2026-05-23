@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Auction — T1</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 680px; margin: 48px auto; padding: 0 16px; line-height: 1.6; }
+    a { color: #2563eb; }
+    code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Lumen Auction — T1 demo</h1>
+  <p>Thinnest end-to-end pipe: <code>seller publish → AI facts (mock) → freeze → start → bid → broadcast → persist</code>.</p>
+  <ul>
+    <li><a href="/admin.html">Admin (seller)</a> — run the seller flow, get a room link</li>
+    <li><a href="/room.html?auction=auc_demo">Room (buyer)</a> — join &amp; bid (open the generated link in two tabs)</li>
+  </ul>
+  <p>T1 proves the wire, not concurrency-correctness (that is T2). See issue #17.</p>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Admin (T1)</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px; }
+    button { padding: 8px 14px; margin: 4px 0; cursor: pointer; }
+    #log { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; height: 320px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
+    .ok { color: #4ade80; } .err { color: #f87171; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h1>Admin — seller flow (T1)</h1>
+  <p>Runs: dev-login → product → AI facts (mock) → auction → freeze → start. Then open the room link in two tabs.</p>
+  <button id="run">Run full seller flow</button>
+  <p id="roomlink"></p>
+  <div id="log"></div>
+
+  <script>
+    const log = (msg, cls) => {
+      const el = document.getElementById('log');
+      const line = document.createElement('div');
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      el.appendChild(line);
+      el.scrollTop = el.scrollHeight;
+    };
+
+    async function api(path, token, body) {
+      const res = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(path + ' -> ' + res.status + ' ' + JSON.stringify(data));
+      return data;
+    }
+
+    document.getElementById('run').onclick = async () => {
+      try {
+        const s = await api('/api/dev-login', '', { nickname: 'Seller ' + Date.now(), role: 'seller' });
+        log('dev-login: ' + s.userId, 'ok');
+        const p = await api('/api/products', s.token, { name: 'Vintage Watch', imageUrl: 'https://example.com/w.jpg', description: 'demo' });
+        log('product: ' + p.productId, 'ok');
+        const facts = await api('/api/facts/draft', s.token, { productId: p.productId, imageUrls: ['https://example.com/w.jpg'] });
+        log('AI facts (mock): ' + facts.highRiskFieldsDisclaimer, 'ok');
+        const a = await api('/api/auctions', s.token, {
+          productId: p.productId,
+          rules: { startPriceCents: 10000, incrementCents: 1000, capPriceCents: 1000000, durationSec: 300, extendWindowSec: 10, extendSec: 10 },
+        });
+        log('auction: ' + a.auctionId, 'ok');
+        const f = await api('/api/auctions/' + a.auctionId + '/freeze', s.token);
+        log('freeze: ' + f.code, 'ok');
+        const st = await api('/api/auctions/' + a.auctionId + '/start', s.token, { durationMs: 300000 });
+        log('start: ' + st.code + ' endAtMs=' + st.endAtMs, 'ok');
+        const url = '/room.html?auction=' + a.auctionId;
+        document.getElementById('roomlink').innerHTML =
+          'Room link (open in 2 tabs): <a href="' + url + '" target="_blank">' + url + '</a>';
+        log('DONE — auction is LIVE.', 'ok');
+      } catch (e) {
+        log(String(e), 'err');
+      }
+    };
+  </script>
+</body>
+</html>
