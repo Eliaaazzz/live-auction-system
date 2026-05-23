@@ -1,0 +1,48 @@
+{
+  "description": "Chaos drill state — which fault is currently injected. Source: tools/chaos-runner publishes lumen_chaos_active gauge. Maps to rubric 异常兜底.",
+  "editable": false,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "type": "state-timeline",
+      "title": "Active chaos phase",
+      "description": "Each row = one phase. Bar shows when it was injected.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen_chaos_active", "legendFormat": "{{phase}}", "refId": "A" }
+      ],
+      "options": { "showValue": "always" }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Drills run (last 24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(increase(lumen_chaos_active[24h]) > bool 0)", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Drill artifacts (latest)",
+      "description": "Each row links to a chaos-run-<phase>-<timestamp>.json artifact in docs/demo/chaos-recordings/.",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen_chaos_active", "format": "table", "refId": "A" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["lumen", "chaos", "rubric:异常兜底"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "title": "Lumen Auction — Chaos",
+  "uid": "lumen-chaos",
+  "version": 1
+}

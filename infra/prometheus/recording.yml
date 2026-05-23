@@ -1,0 +1,48 @@
+# Pre-aggregated metrics for the auction-realtime dashboard.
+# Recording rules pay the histogram_quantile cost once per evaluation period
+# instead of every panel render. Makes the dashboard responsive under load.
+
+groups:
+  - name: lumen_rollups
+    interval: 30s
+    rules:
+
+      # SLO percentiles (1m and 5m windows)
+      - record: lumen:ack_p50_1m
+        expr: histogram_quantile(0.50, sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m])))
+      - record: lumen:ack_p95_1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m])))
+      - record: lumen:ack_p99_1m
+        expr: histogram_quantile(0.99, sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m])))
+      - record: lumen:ack_p95_5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[5m])))
+
+      - record: lumen:broadcast_p50_1m
+        expr: histogram_quantile(0.50, sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m])))
+      - record: lumen:broadcast_p95_1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m])))
+      - record: lumen:broadcast_p99_1m
+        expr: histogram_quantile(0.99, sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m])))
+
+      - record: lumen:hammer_p95_1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m])))
+
+      - record: lumen:script_p99_1m
+        expr: histogram_quantile(0.99, sum by (le, script) (rate(lumen_bidengine_lua_duration_seconds_bucket[1m])))
+
+      - record: lumen:detection_lag_p95_1m
+        expr: histogram_quantile(0.95, sum by (le) (rate(lumen_timer_detection_lag_ms_bucket[1m])))
+
+      # Throughput
+      - record: lumen:bid_rate_1m
+        expr: sum(rate(lumen_bidengine_return_code_total{script="place_bid"}[1m]))
+      - record: lumen:bid_accept_rate_1m
+        expr: sum(rate(lumen_bidengine_return_code_total{script="place_bid", code="OK_ACCEPTED"}[1m]))
+      - record: lumen:bid_reject_rate_1m
+        expr: sum by (code) (rate(lumen_bidengine_return_code_total{script="place_bid", code=~"ERR_.*"}[1m]))
+
+      # Active counts
+      - record: lumen:active_connections
+        expr: sum by (mode) (lumen_ws_connections)
+      - record: lumen:active_auctions
+        expr: sum(lumen_ws_connections_per_room > 0)  # heuristic; real source = LIVE auctions from API
