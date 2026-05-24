@@ -1,0 +1,7 @@
+# Codex-PM project lock — pins infrastructure version this project was set up against.
+# codex-supervisor will warn if wrapper API differs by major version.
+wrapper_api = "1"
+manifest_version = "2026-05-12"
+handoff_mode = "run-directory"
+required_profiles = ["full", "readonly", "priority"]
+validated_at = "2026-05-20"

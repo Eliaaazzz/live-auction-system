@@ -8,9 +8,10 @@
 /dist/
 vendor/
 
-# env / secrets
+# env / secrets — never commit real values; use .env.example as template
 .env
 .env.local
+.env.*.local
 *.local
 .e2e-auction-id
 
@@ -21,8 +22,19 @@ web/dist/
 # demo assets (fetched, not committed — #14)
 web/public/demo/*.mp4
 
-# editor / OS
+# Build output
+build/
+out/
+
+# Logs / Coverage
+coverage/
+*.log
+
+# Editor / OS
 .DS_Store
 .idea/
 .vscode/
 *.swp
+
+# Private session/memory notes — local only, never commit (PR #13 review #2)
+docs/team-memory/
