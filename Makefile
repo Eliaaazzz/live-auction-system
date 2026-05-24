@@ -2,7 +2,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke verify verify-evidence build vet test fmt guard
+.PHONY: up up-obs down logs seed e2e-dummy-bid perf-smoke verify verify-evidence build vet test fmt guard
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -10,8 +10,15 @@ up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
 	@echo "admin:  http://localhost:8080/admin.html"
 	@echo "mobile: http://localhost:8080/room.html?auction=auc_demo"
 
-down:             ## stop stack + wipe volumes
-	$(COMPOSE) down -v
+up-obs:           ## up + observability profile (prometheus, grafana, exporters)
+	$(COMPOSE) --profile observability up -d --build --wait --wait-timeout 300
+	@echo "admin:    http://localhost:8080/admin.html"
+	@echo "mobile:   http://localhost:8080/room.html?auction=auc_demo"
+	@echo "grafana:  http://localhost:3000 (anon viewer)"
+	@echo "prom:     http://localhost:9090"
+
+down:             ## stop stack + wipe volumes (sweeps all profiles)
+	$(COMPOSE) --profile observability --profile tools down -v
 
 logs:
 	$(COMPOSE) logs -f lumen

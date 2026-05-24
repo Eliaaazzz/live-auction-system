@@ -27,13 +27,14 @@ services:
       - '--web.enable-lifecycle'
     ports:
       - "9090:9090"
+    profiles: ["observability"]
     depends_on:
-      - lumen-bid-engine
-      - lumen-gateway
+      - lumen
       - ai-sidecar
 
   grafana:
     image: grafana/grafana:11.2.0
+    profiles: ["observability"]
     volumes:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
@@ -52,6 +53,7 @@ services:
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.62.0
+    profiles: ["observability"]
     environment:
       - REDIS_ADDR=redis://redis:6379
     ports:
@@ -59,6 +61,7 @@ services:
 
   mysqld-exporter:
     image: prom/mysqld-exporter:v0.15.1
+    profiles: ["observability"]
     environment:
       - DATA_SOURCE_NAME=lumen:lumen@(mysql:3306)/lumen
     ports:
@@ -69,7 +72,7 @@ volumes:
   grafana-data:
 ```
 
-After `make up`, dashboards are at http://localhost:3000 (anon Viewer enabled for demo).
+**Opt-in via profile** (`make up-obs` or `docker compose --profile observability up -d --wait`) — the default `make up` keeps the T1 stack lean (redis + mysql + ai-sidecar + lumen). After `--profile observability`, dashboards are at http://localhost:3000 (anon Viewer enabled for demo).
 
 ## Per-binary `/metrics` endpoint convention
 
@@ -105,17 +108,30 @@ Two tiers (per `prometheus/alerts.yml`):
 
 P0 has no alertmanager wired — alerts surface as red/yellow panels in Grafana. P1 stretch: Slack webhook.
 
+## What works today vs pending app instrumentation
+
+**Working today** (`make up-obs` → 3/3 scrape targets green):
+- `prometheus-self`, `redis` (via redis-exporter), `mysql` (via mysqld-exporter)
+- All 4 dashboards load; Redis / MySQL / infra-base panels show real data
+- `auction-realtime.json` panels referencing `lumen_*` metrics show "no data" until lumen exposes `/metrics`
+
+**Pending app instrumentation** (commented out in `prometheus/prometheus.yml`):
+- `lumen` scrape target — needs `promhttp.HandlerFor(reg, ...)` in `apps/lumen/cmd/lumen/main.go` (T-later; not blocking)
+- `ai-sidecar` scrape target — needs same in `apps/ai-sidecar/cmd/sidecar/main.go`
+
+When those binaries add a `/metrics` handler, uncomment the corresponding `scrape_configs` block in `prometheus.yml` (clearly labeled). Leaving them off avoids RED "scrape target down" state on the panels that already work.
+
 ## Verification
 
 ```bash
-# After `make up`:
-curl -s http://localhost:9090/-/healthy   # Prometheus
-curl -s http://localhost:3000/api/health  # Grafana
+# After `make up-obs` (the observability profile):
+curl -sf http://localhost:9090/-/healthy   # Prometheus → "Prometheus Server is Healthy."
+curl -sf http://localhost:3000/api/health  # Grafana → {"database":"ok",...}
 
-# Confirm metrics scraping:
+# Confirm scraping (expect 3 up):
 curl -s http://localhost:9090/api/v1/targets | jq '.data.activeTargets[] | {job, health}'
 
-# Confirm alerts loaded:
+# Alerts loaded:
 curl -s http://localhost:9090/api/v1/rules | jq '.data.groups[].rules[].name'
 
 # Open dashboards:

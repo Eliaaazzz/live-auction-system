@@ -104,3 +104,68 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
       redis: {condition: service_healthy}
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Observability profile — opt-in via `make up-obs` or
+  # `docker compose --profile observability up -d --wait`.
+  # Default `make up` keeps the T1 stack lean (redis + mysql + ai-sidecar + lumen).
+  # ─────────────────────────────────────────────────────────────────────
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./prometheus/recording.yml:/etc/prometheus/recording.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.enable-lifecycle'
+    ports: ["9090:9090"]
+    depends_on:
+      lumen: {condition: service_healthy}
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:11.2.0
+    volumes:
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=lumen
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=5s
+    ports: ["3000:3000"]
+    depends_on:
+      - prometheus
+
+  redis-exporter:
+    profiles: ["observability"]
+    image: oliver006/redis_exporter:v1.62.0
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+    ports: ["9121:9121"]
+    depends_on:
+      redis: {condition: service_healthy}
+
+  mysqld-exporter:
+    profiles: ["observability"]
+    image: prom/mysqld-exporter:v0.15.1
+    command:
+      - --config.my-cnf=/etc/mysqld_exporter.my.cnf
+      - --mysqld.address=mysql:3306
+    volumes:
+      - ./mysql/mysqld_exporter.my.cnf:/etc/mysqld_exporter.my.cnf:ro
+    ports: ["9104:9104"]
+    depends_on:
+      mysql: {condition: service_healthy}
+
+volumes:
+  prometheus-data:
+  grafana-data:
