@@ -252,6 +252,23 @@ func (s *Server) handleEventsCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"count": n})
 }
 
+// clampLeaderboardN parses the ?n= leaderboard size, clamping to [1,100] and
+// defaulting to 10 for missing/invalid input (lenient query param — a bad n is
+// not worth a 400; the cap bounds the Redis ZREVRANGE).
+func clampLeaderboardN(q string) int {
+	if q == "" {
+		return 10
+	}
+	v, err := strconv.Atoi(q)
+	if err != nil || v <= 0 {
+		return 10
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
 // GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, amountCents}]}.
 // Top-n bidders by accepted max amount (Redis ZSET), money as string. n clamps to [1,100].
 // Requires a valid token: the bidder list (userId + amount) is room-scoped data, not
@@ -262,16 +279,7 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aid := r.PathValue("id")
-	n := 10
-	if q := r.URL.Query().Get("n"); q != "" {
-		if v, err := strconv.Atoi(q); err == nil && v > 0 {
-			if v > 100 {
-				v = 100
-			}
-			n = v
-		}
-	}
-	lb, err := s.st.Leaderboard(r.Context(), aid, n)
+	lb, err := s.st.Leaderboard(r.Context(), aid, clampLeaderboardN(r.URL.Query().Get("n")))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

@@ -163,6 +163,41 @@ func TestRulesValidate(t *testing.T) {
 	}
 }
 
+// HT-090 (review doc): Cents.Scan must reject invalid SQL bytes, not silently 0.
+func TestHiddenCentsScanInvalidBytes(t *testing.T) {
+	var c Cents
+	if err := c.Scan([]byte("not-a-number")); err == nil {
+		t.Fatalf("Cents.Scan([]byte bad) must error, got nil and value=%d", int64(c))
+	}
+	// valid bytes still scan.
+	if err := c.Scan([]byte("4200")); err != nil || c != 4200 {
+		t.Fatalf("Cents.Scan([]byte \"4200\")=%d err=%v want 4200/nil", int64(c), err)
+	}
+}
+
+// HT-001 (review doc): pin the canonical auction-status constant values so an
+// accidental rename (or a drift toward #2's BIDDING/HAMMERED) is caught. Team
+// decision: #1 LIVE/SOLD/NO_BID is canonical for T2; #2's order/auction split is
+// adopted separately (ORDER_CREATED moving to order lifecycle).
+func TestHiddenStateMachineCanonicalConstants(t *testing.T) {
+	want := map[string]string{
+		StateDraft: "DRAFT", StateScheduled: "SCHEDULED", StateLive: "LIVE",
+		StateSold: "SOLD", StateNoBid: "NO_BID", StateCancelled: "CANCELLED",
+		StateOrderCreated: "ORDER_CREATED",
+	}
+	for got, exp := range want {
+		if got != exp {
+			t.Errorf("auction-status constant drifted: %q want %q", got, exp)
+		}
+	}
+	// no V8 / #2 names leaked into the terminal set.
+	for _, banned := range []string{"BIDDING", "HAMMERED", "PASSED", "RESERVE_NOT_MET"} {
+		if IsTerminal(banned) {
+			t.Errorf("%q must not be a recognized terminal state under #1", banned)
+		}
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
 }
