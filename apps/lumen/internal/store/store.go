@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ type Store struct {
 	shaPlaceBid string
 	shaFreeze   string
 	shaStart    string
+	shaClose    string
+	shaCancel   string
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -107,6 +110,12 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	if s.shaStart, err = s.rdb.ScriptLoad(ctx, lua.StartAuction).Result(); err != nil {
 		return fmt.Errorf("load start_auction.lua: %w", err)
 	}
+	if s.shaClose, err = s.rdb.ScriptLoad(ctx, lua.CloseAuction).Result(); err != nil {
+		return fmt.Errorf("load close_auction.lua: %w", err)
+	}
+	if s.shaCancel, err = s.rdb.ScriptLoad(ctx, lua.CancelAuction).Result(); err != nil {
+		return fmt.Errorf("load cancel_auction.lua: %w", err)
+	}
 	return nil
 }
 
@@ -172,6 +181,40 @@ func (s *Store) ScanEventStreamAIDs(ctx context.Context) ([]string, error) {
 	}
 }
 
+func aidFromStateKey(k string) string {
+	const prefix, suffix = "auction:{", "}:state"
+	if !strings.HasPrefix(k, prefix) || !strings.HasSuffix(k, suffix) || len(k) <= len(prefix)+len(suffix) {
+		return ""
+	}
+	return k[len(prefix) : len(k)-len(suffix)]
+}
+
+// ScanStateAIDs returns every auction id that has a state Hash (frozen/live/terminal)
+// by SCANning the keyspace. The Timer Worker uses this to reconcile the active index —
+// re-tracking any LIVE auction missing from auction:active (e.g. a TrackActive that
+// failed right after start_auction committed LIVE). Unlike ScanEventStreamAIDs this
+// also finds a LIVE auction that has no bids yet (no events Stream), so the hammer is
+// never silently lost.
+func (s *Store) ScanStateAIDs(ctx context.Context) ([]string, error) {
+	var aids []string
+	var cursor uint64
+	for {
+		keys, cur, err := s.rdb.Scan(ctx, cursor, "auction:{*}:state", 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if aid := aidFromStateKey(k); aid != "" {
+				aids = append(aids, aid)
+			}
+		}
+		cursor = cur
+		if cursor == 0 {
+			return aids, nil
+		}
+	}
+}
+
 // --- Lua dispatch ---
 
 func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...interface{}) ([]interface{}, error) {
@@ -200,7 +243,8 @@ func (s *Store) FreezeRules(ctx context.Context, aid, sellerID string, rules mod
 	return luaStr(arr[0]), nil
 }
 
-// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns endAtMs.
+// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns
+// endAtMs and registers the auction in the Timer Worker's active index.
 func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) (string, int64, error) {
 	arr, err := s.eval(ctx, s.shaStart, []string{stateKey(aid)}, durationMs)
 	if err != nil {
@@ -208,9 +252,76 @@ func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) 
 	}
 	c := luaStr(arr[0])
 	if c == model.CodeOKLive {
+		endAtMs := luaInt(arr[1])
+		// Best-effort registration in the Timer index. start_auction.lua already
+		// committed LIVE atomically, so a ZADD failure here must NOT fail the start
+		// (the seller would otherwise see a 500 for an auction that is actually live,
+		// and a retry hits ERR_BAD_STATE — orphaning it from the hammer forever).
+		// The Timer's reconcile re-tracks any LIVE auction missing from the index,
+		// and close_auction re-checks Redis TIME regardless, so a missing/stale entry
+		// only delays the hammer — never causes a wrong one.
+		if err := s.TrackActive(ctx, aid, endAtMs); err != nil {
+			log.Printf("StartAuction %s: track active failed (timer reconcile will recover): %v", aid, err)
+		}
+		return c, endAtMs, nil
+	}
+	return c, 0, nil
+}
+
+// activeKey is the global Timer Worker index (member=auctionId, score=endAtMs).
+// It is NOT auction-tagged (one ZSET for all auctions), so the Lua hot-path
+// scripts never touch it — the Go layer maintains it; close_auction re-checks
+// Redis TIME so a stale score only costs a retry, never a premature hammer.
+const activeKey = "auction:active"
+
+// TrackActive registers/refreshes an auction in the Timer Worker index.
+func (s *Store) TrackActive(ctx context.Context, aid string, endAtMs int64) error {
+	return s.rdb.ZAdd(ctx, activeKey, redis.Z{Score: float64(endAtMs), Member: aid}).Err()
+}
+
+// UntrackActive removes an auction from the Timer Worker index (after close/cancel).
+func (s *Store) UntrackActive(ctx context.Context, aid string) error {
+	return s.rdb.ZRem(ctx, activeKey, aid).Err()
+}
+
+// DueAuctions returns auction ids whose endAtMs <= nowMs (hammer candidates).
+func (s *Store) DueAuctions(ctx context.Context, nowMs int64) ([]string, error) {
+	return s.rdb.ZRangeByScore(ctx, activeKey, &redis.ZRangeBy{
+		Min: "-inf", Max: strconv.FormatInt(nowMs, 10),
+	}).Result()
+}
+
+// RedisNowMs returns the authoritative Redis clock in milliseconds.
+func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
+	t, err := s.rdb.Time(ctx).Result()
+	if err != nil {
+		return 0, err
+	}
+	return t.UnixMilli(), nil
+}
+
+// CloseAuction runs close_auction.lua (Timer hammer). Returns the code and, on
+// ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
+// (anti-snipe may have moved it forward since the scan).
+func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
+	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	if err != nil {
+		return "", 0, err
+	}
+	c := luaStr(arr[0])
+	if c == model.CodeErrNotDue && len(arr) >= 2 {
 		return c, luaInt(arr[1]), nil
 	}
 	return c, 0, nil
+}
+
+// CancelAuction runs cancel_auction.lua (seller/admin cancel of SCHEDULED/LIVE).
+func (s *Store) CancelAuction(ctx context.Context, aid, callerID string) (string, error) {
+	arr, err := s.eval(ctx, s.shaCancel, []string{stateKey(aid), streamKey(aid)}, callerID, PubChannel(aid))
+	if err != nil {
+		return "", err
+	}
+	return luaStr(arr[0]), nil
 }
 
 // PlaceBid runs place_bid.lua. Returns code, seq (on accept) and the JSON event

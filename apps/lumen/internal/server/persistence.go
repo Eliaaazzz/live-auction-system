@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
@@ -41,6 +42,16 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 				log.Printf("persistence insert %s seq=%d: %v (will retry on next sweep)", aid, e.Seq, err)
 				break
 			}
+			// Project the terminal auction.status from the Stream event — the single
+			// source for SOLD/NO_BID/CANCELLED (covers cap-hit SOLD via place_bid, the
+			// Timer hammer, and cancel). DRAFT/SCHEDULED/LIVE are set by their handlers
+			// (they emit no Stream event). On error, stop so the next sweep retries.
+			if status := terminalStatus(e.Type); status != "" {
+				if err := st.UpdateAuctionStatus(ctx, aid, status); err != nil {
+					log.Printf("persistence status %s seq=%d -> %s: %v (will retry)", aid, e.Seq, status, err)
+					break
+				}
+			}
 			lastID[aid] = e.ID
 		}
 	}
@@ -73,4 +84,18 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 			}
 		}
 	}
+}
+
+// terminalStatus maps a terminal Stream event type to the auctions.status it
+// projects, or "" for non-terminal events.
+func terminalStatus(eventType string) string {
+	switch eventType {
+	case model.TypeAuctionSold:
+		return model.StateSold
+	case model.TypeAuctionNoBid:
+		return model.StateNoBid
+	case model.TypeAuctionCancelled:
+		return model.StateCancelled
+	}
+	return ""
 }

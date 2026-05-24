@@ -33,7 +33,8 @@ type WsEnvelope<T = unknown> = {
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
-| `AUCTION_NO_BID` / `AUCTION_CANCELLED` | terminal events (T3) |
+| `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
+| `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
 | `PONG` | `{}` | heartbeat response |
 
 `amountCents` is a **string** in every payload above (money-as-string boundary). All these events carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets both a direct `BID_ACCEPTED` ack and the Pub/Sub broadcast — and out-of-order frames).

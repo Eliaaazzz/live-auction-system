@@ -33,34 +33,40 @@ func IsTerminal(s string) bool {
 
 // WS message types (SCREAMING_SNAKE — proto/ws-envelope.md).
 const (
-	TypeRoomJoin        = "ROOM_JOIN"
-	TypeBidPlace        = "BID_PLACE"
-	TypePing            = "PING"
-	TypeRoomSnapshot    = "ROOM_SNAPSHOT"
-	TypeBidAccepted     = "BID_ACCEPTED"
-	TypeBidRejected     = "BID_REJECTED"
-	TypeAuctionExtended = "AUCTION_EXTENDED" // anti-snipe extension (event, not a state)
-	TypeAuctionSold     = "AUCTION_SOLD"     // terminal: cap-hit / hammer
-	TypePong            = "PONG"
+	TypeRoomJoin         = "ROOM_JOIN"
+	TypeBidPlace         = "BID_PLACE"
+	TypePing             = "PING"
+	TypeRoomSnapshot     = "ROOM_SNAPSHOT"
+	TypeBidAccepted      = "BID_ACCEPTED"
+	TypeBidRejected      = "BID_REJECTED"
+	TypeAuctionExtended  = "AUCTION_EXTENDED"  // anti-snipe extension (event, not a state)
+	TypeAuctionSold      = "AUCTION_SOLD"      // terminal: cap-hit / hammer
+	TypeAuctionNoBid     = "AUCTION_NO_BID"    // terminal: timer closed with no bids (T3)
+	TypeAuctionCancelled = "AUCTION_CANCELLED" // terminal: seller/admin cancel (T3)
+	TypePong             = "PONG"
 )
 
 // Wire / result codes (proto/error-codes.md). T1 subset + T2 (OK_EXTENDED/OK_SOLD).
 const (
-	CodeOKAccepted  = "OK_ACCEPTED"
-	CodeOKExtended  = "OK_EXTENDED" // accepted + endAtMs extended (anti-snipe)
-	CodeOKSold      = "OK_SOLD"     // accepted + terminal SOLD (cap-hit buy-now)
-	CodeOKFrozen    = "OK_FROZEN"
-	CodeOKLive      = "OK_LIVE"
-	CodeDuplicate   = "DUPLICATE"
-	CodeErrNotLive  = "ERR_NOT_LIVE"
-	CodeErrAfterEnd = "ERR_AFTER_END"
-	CodeErrTooLow   = "ERR_TOO_LOW"
-	CodeErrBadState = "ERR_BAD_STATE"
-	CodeErrNotAllow = "ERR_NOT_ALLOWED"
-	CodeErrPaused   = "ERR_AUCTION_PAUSED"
-	CodeErrInternal = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
-	CodeErrFacts    = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
-	CodeErrBadInput = "ERR_BAD_INPUT"           // malformed client message (missing/invalid fields)
+	CodeOKAccepted         = "OK_ACCEPTED"
+	CodeOKExtended         = "OK_EXTENDED"  // accepted + endAtMs extended (anti-snipe)
+	CodeOKSold             = "OK_SOLD"      // accepted + terminal SOLD (cap-hit) / hammer (T3)
+	CodeOKNoBid            = "OK_NO_BID"    // close_auction: timer closed, no bids (T3)
+	CodeOKCancelled        = "OK_CANCELLED" // cancel_auction: terminal cancel (T3)
+	CodeOKFrozen           = "OK_FROZEN"
+	CodeOKLive             = "OK_LIVE"
+	CodeDuplicate          = "DUPLICATE"
+	CodeErrNotLive         = "ERR_NOT_LIVE"
+	CodeErrAfterEnd        = "ERR_AFTER_END"
+	CodeErrTooLow          = "ERR_TOO_LOW"
+	CodeErrBadState        = "ERR_BAD_STATE"
+	CodeErrNotAllow        = "ERR_NOT_ALLOWED"
+	CodeErrNotDue          = "ERR_NOT_DUE"          // close_auction before expiry (engine retries) (T3)
+	CodeErrAlreadyTerminal = "ERR_ALREADY_TERMINAL" // close/cancel on a terminal auction (engine no-op) (T3)
+	CodeErrPaused          = "ERR_AUCTION_PAUSED"
+	CodeErrInternal        = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
+	CodeErrFacts           = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
+	CodeErrBadInput        = "ERR_BAD_INPUT"           // malformed client message (missing/invalid fields)
 )
 
 // SchemaVersion is the WS wire-protocol schema version, stamped onto every
@@ -144,6 +150,22 @@ type AuctionSoldData struct {
 	Seq          int64  `json:"seq"`
 	WinnerID     string `json:"winnerId"`
 	AmountCents  string `json:"amountCents"`
+	Status       string `json:"status"`
+	ServerTimeMs int64  `json:"serverTimeMs"`
+}
+
+// AuctionNoBidData is the terminal NO_BID event payload (Timer closed a live
+// auction that received no bids, T3).
+type AuctionNoBidData struct {
+	Seq          int64  `json:"seq"`
+	Status       string `json:"status"`
+	ServerTimeMs int64  `json:"serverTimeMs"`
+}
+
+// AuctionCancelledData is the terminal CANCELLED event payload (seller/admin
+// cancel, T3).
+type AuctionCancelledData struct {
+	Seq          int64  `json:"seq"`
 	Status       string `json:"status"`
 	ServerTimeMs int64  `json:"serverTimeMs"`
 }

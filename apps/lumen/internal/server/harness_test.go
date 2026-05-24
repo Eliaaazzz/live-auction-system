@@ -35,6 +35,7 @@ func startTestServer(t *testing.T) (string, *Server) {
 	ctx, cancel := context.WithCancel(context.Background())
 	go srv.hub.subscribe(ctx, st)
 	go runPersistenceWorker(ctx, st)
+	go runTimerWorker(ctx, st)
 
 	mux := http.NewServeMux()
 	srv.routes(mux)

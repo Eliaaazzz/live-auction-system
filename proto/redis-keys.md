@@ -17,7 +17,11 @@ auction:{<aid>}:events       Stream durable ordered log; Stream ID = <seq>-0
 auction:{<aid>}:pub          Pub/Sub wakeup hint only (non-authoritative); on a hint
                                     the gateway reads the Stream and fans out — a forged
                                     pub message not backed by the Stream is never broadcast
-auction:active               ZSET   member=auctionId score=endAtMs (Timer Worker, T3)
+auction:active               ZSET   member=auctionId score=endAtMs (Timer Worker index).
+                                    Global (not {<aid>}-tagged), so the Lua hot path never
+                                    touches it; Go maintains it (StartAuction ZADD, Timer
+                                    ZREM on close, cancel ZREM). close_auction re-checks
+                                    Redis TIME, so a stale score only costs a retry.
 ```
 
 ## P0 Lua scripts
@@ -31,7 +35,7 @@ Seller ownership is enforced in **Go** (authoritative against MySQL); `sellerId`
 
 ### `start_auction.lua(KEYS=[state], ARGV=[durationMs])`  — **NEW contract (all-member approve)**
 `SCHEDULED → LIVE`. Sets `endAtMs = redisNow + durationMs`, `status=LIVE`; **does NOT consume the bid `seq`**. Type-guards `state` before write.
-Returns: `OK_LIVE(endAtMs)` · `ERR_BAD_STATE(status | 'key_type')`.
+Returns: `OK_LIVE(endAtMs)` · `ERR_BAD_STATE(status | 'key_type')`. On `OK_LIVE` the Go layer `ZADD`s the auction into `auction:active` for the Timer Worker.
 
 ### `place_bid.lua` — **T2 atomic core (all-member approve: Lua return)**
 `EVALSHA KEYS=[state, leaderboard, events, dedupe:{userId}] ARGV=[userId, clientBidId, amountCents, displayName, pubChannel]`
@@ -69,3 +73,16 @@ Returns:
 **Pub/Sub fanout message** (`auction:{<aid>}:pub`, non-authoritative): `{type, seq, data}` (`PubMessage`) — `type` is the wire type (`BID_ACCEPTED` / `AUCTION_EXTENDED` / `AUCTION_SOLD`), `data` is that type's payload. The gateway subscriber re-emits it as a WS envelope verbatim; the durable Stream remains the source of truth.
 
 Invariants (frozen, RFC v2): single `seq` (`HINCRBY state seq`); Stream ID `<seq>-0`; Redis TIME authoritative, boundary `>=`; dedupe Hash returns original ack on retry; AOF everysec, Redis down → `ERR_AUCTION_PAUSED`. **`event_hash` is NOT computed in Lua** — Persistence Worker computes it on the MySQL projection (T4).
+
+### `close_auction.lua(KEYS=[state, events], ARGV=[pubChannel])` — **T3 (all-member approve: Lua return)**
+Timer Worker-triggered hammer — does NOT depend on the next bid. type-guard → require `status==LIVE` (else `ERR_ALREADY_TERMINAL`) → Redis TIME re-check `now >= endAtMs` (else `ERR_NOT_DUE(endAtMs, now)`; an anti-snipe extension since the scan lands here) → stream/state seq preflight → `HINCRBY seq` → set terminal status + emit one event:
+- winner present (`winnerId != ''`) → `status=SOLD`, `AUCTION_SOLD` at `<seq>-0` → `OK_SOLD(seq, soldJson)`
+- no winner → `status=NO_BID`, `AUCTION_NO_BID` at `<seq>-0` → `OK_NO_BID(seq, noBidJson)`
+
+Returns: `OK_SOLD` · `OK_NO_BID` · `ERR_NOT_DUE(endAtMs, now)` · `ERR_ALREADY_TERMINAL(status)` · `ERR_INTERNAL('key_type' | 'seq_stream_mismatch')`. Reuses the single `seq` + `<seq>-0` invariants; the terminal event publishes a wakeup so the gateway fans it out from the Stream.
+
+### `cancel_auction.lua(KEYS=[state, events], ARGV=[callerId, pubChannel])` — **T3 (all-member approve: Lua return)**
+Seller/admin cancel of a non-terminal **frozen** auction (SCHEDULED/LIVE; an unfrozen DRAFT has no Redis state and is a MySQL-only status flip in Go). type-guard → reject terminal/absent (`ERR_ALREADY_TERMINAL`) → `callerId == state.sellerId` else `ERR_NOT_ALLOWED('not_owner')` (defensive; Go also verifies vs MySQL) → seq preflight → `HINCRBY seq` → `status=CANCELLED`, `AUCTION_CANCELLED` at `<seq>-0` → `OK_CANCELLED(seq, cancelJson)`.
+Returns: `OK_CANCELLED` · `ERR_NOT_ALLOWED('not_owner')` · `ERR_ALREADY_TERMINAL(status)` · `ERR_INTERNAL(...)`.
+
+**Terminal status projection (T3):** `auctions.status` for SOLD/NO_BID/CANCELLED is projected by the **Persistence Worker** from the Stream terminal event (single source — covers cap-hit SOLD via `place_bid`, the Timer hammer, and cancel). `freeze`/`start` statuses (SCHEDULED/LIVE) are set by their REST handlers (they emit no Stream event).

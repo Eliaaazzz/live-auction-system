@@ -45,6 +45,10 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	case "all", "pg-writer":
 		go runPersistenceWorker(ctx, st)
 	}
+	switch mode {
+	case "all", "timer":
+		go runTimerWorker(ctx, st)
+	}
 
 	mux := http.NewServeMux()
 	s.routes(mux)
@@ -76,6 +80,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auctions/{id}/evidence", s.handleEvidence)
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
+	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
 	mux.HandleFunc("GET /ws", s.handleWS)
 
 	webDir := os.Getenv("WEB_DIR")

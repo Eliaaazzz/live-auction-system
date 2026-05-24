@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -240,6 +241,56 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
+}
+
+// POST /api/auctions/{id}/cancel -> CANCELLED. §8: seller-only (ownsAuction).
+// DRAFT (unfrozen, no Redis state/room) is a MySQL-only status flip; SCHEDULED/LIVE
+// go through cancel_auction.lua (Redis transition + AUCTION_CANCELLED event, which
+// the persistence worker projects to auctions.status — set synchronously here too
+// for immediate REST consistency).
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	a, ok := s.ownsAuction(w, r, aid, userID)
+	if !ok {
+		return
+	}
+	if model.IsTerminal(a.Status) {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": model.CodeErrAlreadyTerminal})
+		return
+	}
+	if a.Status == model.StateDraft {
+		// unfrozen: no Redis room/stream — just flip the MySQL status.
+		if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
+		return
+	}
+	code, err := s.st.CancelAuction(r.Context(), aid, userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if code != model.CodeOKCancelled {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
+		return
+	}
+	// drop from the Timer index; on failure the Timer self-heals (next scan finds
+	// it, CloseAuction returns ERR_ALREADY_TERMINAL, and it untracks then).
+	if err := s.st.UntrackActive(r.Context(), aid); err != nil {
+		log.Printf("cancel %s: untrack active failed (timer will self-heal): %v", aid, err)
+	}
+	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
 
 // GET /api/auctions/{id}/events-count -> {count} (MySQL projection; for e2e/verify).
