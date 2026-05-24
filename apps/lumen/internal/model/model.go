@@ -33,18 +33,22 @@ func IsTerminal(s string) bool {
 
 // WS message types (SCREAMING_SNAKE — proto/ws-envelope.md).
 const (
-	TypeRoomJoin     = "ROOM_JOIN"
-	TypeBidPlace     = "BID_PLACE"
-	TypePing         = "PING"
-	TypeRoomSnapshot = "ROOM_SNAPSHOT"
-	TypeBidAccepted  = "BID_ACCEPTED"
-	TypeBidRejected  = "BID_REJECTED"
-	TypePong         = "PONG"
+	TypeRoomJoin        = "ROOM_JOIN"
+	TypeBidPlace        = "BID_PLACE"
+	TypePing            = "PING"
+	TypeRoomSnapshot    = "ROOM_SNAPSHOT"
+	TypeBidAccepted     = "BID_ACCEPTED"
+	TypeBidRejected     = "BID_REJECTED"
+	TypeAuctionExtended = "AUCTION_EXTENDED" // anti-snipe extension (event, not a state)
+	TypeAuctionSold     = "AUCTION_SOLD"     // terminal: cap-hit / hammer
+	TypePong            = "PONG"
 )
 
-// Wire / result codes (proto/error-codes.md). T1 subset + the frozen set.
+// Wire / result codes (proto/error-codes.md). T1 subset + T2 (OK_EXTENDED/OK_SOLD).
 const (
 	CodeOKAccepted  = "OK_ACCEPTED"
+	CodeOKExtended  = "OK_EXTENDED" // accepted + endAtMs extended (anti-snipe)
+	CodeOKSold      = "OK_SOLD"     // accepted + terminal SOLD (cap-hit buy-now)
 	CodeOKFrozen    = "OK_FROZEN"
 	CodeOKLive      = "OK_LIVE"
 	CodeDuplicate   = "DUPLICATE"
@@ -56,8 +60,13 @@ const (
 	CodeErrPaused   = "ERR_AUCTION_PAUSED"
 	CodeErrInternal = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
 	CodeErrFacts    = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
-	CodeErrBadInput = "ERR_BAD_INPUT"           // malformed client message (missing fields)
+	CodeErrBadInput = "ERR_BAD_INPUT"           // malformed client message (missing/invalid fields)
 )
+
+// SchemaVersion is the WS wire-protocol schema version, stamped onto every
+// outgoing envelope so clients can detect a protocol mismatch and evolve safely.
+// Bump on a breaking envelope change (all-member approve).
+const SchemaVersion = 1
 
 // Envelope is the WS message frame. Money fields inside Data are strings.
 type Envelope struct {
@@ -67,6 +76,16 @@ type Envelope struct {
 	Seq          int64           `json:"seq,omitempty"`
 	ServerTimeMs int64           `json:"serverTimeMs"`
 	Data         json.RawMessage `json:"data,omitempty"`
+}
+
+// MarshalJSON stamps schemaVersion onto every outgoing envelope (one place, so no
+// construction site can forget it). Clients ignore the field if they don't need it.
+func (e Envelope) MarshalJSON() ([]byte, error) {
+	type alias Envelope // avoid recursion
+	return json.Marshal(struct {
+		SchemaVersion int `json:"schemaVersion"`
+		alias
+	}{SchemaVersion: SchemaVersion, alias: alias(e)})
 }
 
 // NewEnvelope builds an Envelope, JSON-encoding data into Data.
@@ -97,16 +116,47 @@ type BidPlaceData struct {
 }
 
 type BidAcceptedData struct {
-	Seq         int64  `json:"seq"`
-	UserID      string `json:"userId"`
-	DisplayName string `json:"displayName"`
-	AmountCents string `json:"amountCents"`
-	EndAtMs     int64  `json:"endAtMs"`
-	Status      string `json:"status"`
+	Seq          int64  `json:"seq"`
+	UserID       string `json:"userId"`
+	DisplayName  string `json:"displayName"`
+	AmountCents  string `json:"amountCents"`
+	EndAtMs      int64  `json:"endAtMs"`
+	Status       string `json:"status"`
+	ServerTimeMs int64  `json:"serverTimeMs"` // Redis TIME at adjudication (Lua-authoritative)
 }
 
 type BidRejectedData struct {
 	Code string `json:"code"`
+}
+
+// AuctionExtendedData is the anti-snipe event payload: the new endAtMs and the
+// running extension count. It is an event, not a state (the auction stays LIVE).
+type AuctionExtendedData struct {
+	Seq          int64 `json:"seq"`
+	EndAtMs      int64 `json:"endAtMs"`
+	ExtendCount  int64 `json:"extendCount"`
+	ServerTimeMs int64 `json:"serverTimeMs"`
+}
+
+// AuctionSoldData is the terminal SOLD event payload (cap-hit buy-now in T2; the
+// Timer Worker hammer reuses it in T3).
+type AuctionSoldData struct {
+	Seq          int64  `json:"seq"`
+	WinnerID     string `json:"winnerId"`
+	AmountCents  string `json:"amountCents"`
+	Status       string `json:"status"`
+	ServerTimeMs int64  `json:"serverTimeMs"`
+}
+
+// PubMessage is the Pub/Sub fanout envelope written by the Lua hot-path scripts
+// and consumed by the gateway subscriber. It carries the wire type so one
+// channel can fan out BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD without the
+// subscriber re-deriving the type. The Stream remains the durable source of
+// truth; this is only a fanout hint (RFC v2 boundary: Pub/Sub non-authoritative).
+type PubMessage struct {
+	Type string          `json:"type"`
+	Seq  int64           `json:"seq"`
+	Data json.RawMessage `json:"data"`
 }
 
 type RoomSnapshotData struct {
@@ -124,6 +174,13 @@ type RoomSnapshotData struct {
 // SQL (driver.Valuer + sql.Scanner). UnmarshalJSON also accepts a bare number
 // so older clients don't break.
 type Cents int64
+
+// MaxMoneyCents bounds every money value. Above 2^53-1 the value is not exactly
+// representable as a float64, and the hot path passes through Lua numbers and
+// Redis ZSET scores (both float64) — so amounts above this would lose integer
+// precision in price/leaderboard. ~9.0e15 cents (~$90T) is far beyond any real
+// auction. Enforced at the gateway, REST rules, and defensively in Lua.
+const MaxMoneyCents Cents = 1<<53 - 1 // 9007199254740991
 
 func (c Cents) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.Quote(strconv.FormatInt(int64(c), 10))), nil
@@ -151,7 +208,10 @@ func (c *Cents) Scan(v any) error {
 	case int64:
 		*c = Cents(x)
 	case []byte:
-		n, _ := strconv.ParseInt(string(x), 10, 64)
+		n, err := strconv.ParseInt(string(x), 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid cents bytes %q: %w", x, err)
+		}
 		*c = Cents(n)
 	case nil:
 		*c = 0
@@ -170,4 +230,46 @@ type Rules struct {
 	DurationSec     int64 `json:"durationSec"`
 	ExtendWindowSec int64 `json:"extendWindowSec"`
 	ExtendSec       int64 `json:"extendSec"`
+	// MaxExtensions caps anti-snipe extensions to bound an auction's lifetime
+	// (two bidders bouncing the price inside the window could otherwise extend
+	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
+	// accepted as a normal bid (no endAtMs bump, no AUCTION_EXTENDED).
+	MaxExtensions int64 `json:"maxExtensions"`
+}
+
+// Validate enforces the rule-DSL invariants the Lua hot path assumes, so a
+// misconfigured auction is rejected at creation rather than producing a live but
+// unwinnable room. `capPriceCents == 0` means "no buy-now ceiling".
+func (r Rules) Validate() error {
+	switch {
+	case r.StartPriceCents < 0:
+		return fmt.Errorf("startPriceCents must be >= 0")
+	case r.IncrementCents <= 0:
+		// increment 0 would let bids "win" at the current price (no real raise).
+		return fmt.Errorf("incrementCents must be > 0")
+	case r.CapPriceCents < 0:
+		return fmt.Errorf("capPriceCents must be >= 0")
+	case r.CapPriceCents > 0 && r.CapPriceCents <= r.StartPriceCents:
+		// cap is "buy it now"; it must sit above the start price. A cap below the
+		// first increment is allowed (the cap-aware required price lets a buy-now
+		// bid reach it — see place_bid.lua), so only require cap > start.
+		return fmt.Errorf("capPriceCents must be > startPriceCents (or 0 for no cap)")
+	case r.StartPriceCents > MaxMoneyCents || r.IncrementCents > MaxMoneyCents || r.CapPriceCents > MaxMoneyCents:
+		return fmt.Errorf("money fields must be <= MaxMoneyCents (%d)", int64(MaxMoneyCents))
+	case r.CapPriceCents == 0 && r.StartPriceCents > MaxMoneyCents-r.IncrementCents:
+		// No cap: the first required bid is startPrice+increment and must be
+		// reachable (<= MaxMoneyCents), else every bid is rejected and the auction
+		// is unwinnable. (Written as subtraction to avoid overflow; both operands
+		// are already <= MaxMoneyCents at this point.) With a cap the required price
+		// clamps to the cap, so cap-below-first-increment stays valid — don't
+		// blanket-reject it here.
+		return fmt.Errorf("startPriceCents + incrementCents must be <= MaxMoneyCents when capPriceCents is 0")
+	case r.DurationSec <= 0:
+		return fmt.Errorf("durationSec must be > 0")
+	case r.ExtendWindowSec < 0 || r.ExtendSec < 0:
+		return fmt.Errorf("extendWindowSec and extendSec must be >= 0")
+	case r.MaxExtensions < 0:
+		return fmt.Errorf("maxExtensions must be >= 0 (0 = unlimited)")
+	}
+	return nil
 }

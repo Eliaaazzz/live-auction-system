@@ -3,15 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Lumen Room (T1)</title>
+  <title>Lumen Room (T2)</title>
   <style>
-    body { font-family: system-ui, sans-serif; max-width: 520px; margin: 32px auto; padding: 0 16px; }
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 32px auto; padding: 0 16px; }
     #price { font-size: 40px; font-weight: 700; }
-    #status { color: #64748b; }
+    #status, #countdown { color: #64748b; }
+    #sold { display: none; font-weight: 700; color: #b45309; margin: 8px 0; }
     button { padding: 10px 18px; font-size: 16px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
     input { padding: 8px; font-size: 16px; width: 140px; }
     #feed { margin-top: 16px; font-family: ui-monospace, monospace; font-size: 13px; color: #334155; }
     .conn { color: #16a34a; } .down { color: #dc2626; }
+    ol#leaderboard { padding-left: 22px; font-family: ui-monospace, monospace; font-size: 13px; }
   </style>
 </head>
 <body>
@@ -19,9 +22,15 @@
   <div>auction: <code id="aid"></code> · <span id="conn" class="down">connecting…</span></div>
   <p>current price: <span id="price">—</span> <small>cents</small></p>
   <p id="status">—</p>
+  <p id="countdown">—</p>
+  <p id="sold">SOLD</p>
   <input id="amount" type="number" value="11000" />
   <button id="bid">Place bid</button>
   <button id="evidence">Show evidence</button>
+
+  <h3>Leaderboard</h3>
+  <ol id="leaderboard"><li>—</li></ol>
+
   <pre id="evidence-out" style="background:#f1f5f9;padding:8px;border-radius:6px;font-size:12px;overflow:auto"></pre>
   <div id="feed"></div>
 
@@ -36,13 +45,57 @@
       document.getElementById('feed').prepend(d);
     };
 
+    // seq-guard: mirror of apps/lumen/internal/seqguard (V9 §4.1). Applies events
+    // strictly in order; drops duplicates (direct ack vs broadcast) and stale frames.
+    function makeSeqGuard(last) {
+      let cur = last > 0 ? last : 0;
+      return {
+        apply(s) { if (!s || s <= 0) return true; if (s <= cur) return false; cur = s; return true; },
+        last() { return cur; },
+      };
+    }
+    let guard = makeSeqGuard(0);
+
+    let authToken = '';
+    let endAtMs = 0, clockOffsetMs = 0, terminal = false;
+    function syncClock(env) { if (env.serverTimeMs) clockOffsetMs = env.serverTimeMs - Date.now(); }
+    setInterval(() => {
+      if (!endAtMs || terminal) return;
+      const remain = Math.max(0, endAtMs - (Date.now() + clockOffsetMs));
+      document.getElementById('countdown').textContent = 'ends in ' + (remain / 1000).toFixed(1) + 's';
+    }, 100);
+
+    async function refreshLeaderboard() {
+      if (!authToken) return;
+      try {
+        const r = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/leaderboard?n=5',
+          { headers: { Authorization: 'Bearer ' + authToken } })).json();
+        const ol = document.getElementById('leaderboard');
+        ol.innerHTML = '';
+        (r.leaderboard || []).forEach((e) => {
+          const li = document.createElement('li');
+          li.textContent = e.userId + '  —  ' + e.amountCents;
+          ol.appendChild(li);
+        });
+        if (!ol.children.length) ol.innerHTML = '<li>—</li>';
+      } catch (_) { /* leaderboard is best-effort UI */ }
+    }
+
+    function markTerminal(label) {
+      terminal = true;
+      document.getElementById('sold').style.display = 'block';
+      document.getElementById('sold').textContent = label;
+      document.getElementById('bid').disabled = true;
+      document.getElementById('countdown').textContent = 'ended';
+    }
+
     let ws;
-    let lastSeq = 0; // dedupe: the sender receives both a direct ack and the broadcast
     async function connect() {
       const s = await (await fetch('/api/dev-login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nickname: 'Buyer ' + Math.floor(Math.random() * 1000), role: 'user' }),
       })).json();
+      authToken = s.token;
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(proto + '://' + location.host + '/ws?token=' + encodeURIComponent(s.token));
@@ -53,21 +106,45 @@
         ws.send(JSON.stringify({ type: 'ROOM_JOIN', auctionId: aid, serverTimeMs: Date.now(), data: { auctionId: aid } }));
       };
       ws.onclose = () => {
-        document.getElementById('conn').textContent = 'disconnected';
         document.getElementById('conn').className = 'down';
+        // The server drops a slow/stuck client instead of silently losing critical
+        // events; auto-reconnect + ROOM_SNAPSHOT re-syncs state (catchup is T5).
+        if (terminal) { document.getElementById('conn').textContent = 'disconnected'; return; }
+        document.getElementById('conn').textContent = 'disconnected — reconnecting…';
+        setTimeout(connect, 1000);
       };
       ws.onmessage = (ev) => {
         const env = JSON.parse(ev.data);
-        if (env.type === 'ROOM_SNAPSHOT') {
-          render(env.data.currentPriceCents, env.data.status, env.seq);
-          feed('snapshot: ' + (env.data.status || '—'));
-        } else if (env.type === 'BID_ACCEPTED') {
-          if (env.seq && env.seq <= lastSeq) return; // already applied (dedupe ack vs broadcast)
-          lastSeq = env.seq || lastSeq;
-          render(env.data.amountCents, env.data.status, env.seq);
-          feed('BID_ACCEPTED seq=' + env.seq + ' by ' + env.data.userId + ' @ ' + env.data.amountCents);
-        } else if (env.type === 'BID_REJECTED') {
-          feed('BID_REJECTED: ' + env.data.code);
+        syncClock(env);
+        switch (env.type) {
+          case 'ROOM_SNAPSHOT':
+            guard = makeSeqGuard(env.seq || 0); // prime cursor to snapshot seq
+            if (env.data.endAtMs) endAtMs = env.data.endAtMs;
+            if (env.data.status === 'SOLD') markTerminal('SOLD');
+            render(env.data.currentPriceCents, env.data.status, env.seq);
+            feed('snapshot: ' + (env.data.status || '—'));
+            refreshLeaderboard();
+            break;
+          case 'BID_ACCEPTED':
+            if (!guard.apply(env.seq)) return; // duplicate (ack vs broadcast) / stale
+            if (env.data.endAtMs) endAtMs = env.data.endAtMs;
+            render(env.data.amountCents, env.data.status, env.seq);
+            feed('BID_ACCEPTED seq=' + env.seq + ' by ' + env.data.userId + ' @ ' + env.data.amountCents);
+            refreshLeaderboard();
+            break;
+          case 'AUCTION_EXTENDED':
+            if (!guard.apply(env.seq)) return;
+            if (env.data.endAtMs) endAtMs = env.data.endAtMs;
+            feed('AUCTION_EXTENDED seq=' + env.seq + ' endAtMs=' + env.data.endAtMs + ' (#' + env.data.extendCount + ')');
+            break;
+          case 'AUCTION_SOLD':
+            if (!guard.apply(env.seq)) return;
+            markTerminal('SOLD to ' + env.data.winnerId + ' @ ' + env.data.amountCents);
+            feed('AUCTION_SOLD seq=' + env.seq + ' winner=' + env.data.winnerId);
+            break;
+          case 'BID_REJECTED':
+            feed('BID_REJECTED: ' + env.data.code); // unordered control frame
+            break;
         }
       };
     }

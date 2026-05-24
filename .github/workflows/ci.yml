@@ -8,11 +8,50 @@ on:
 jobs:
   go:
     runs-on: ubuntu-latest
+    services:
+      # Redis + MySQL are provided so EVERY integration test runs as a real gate —
+      # nothing is skipped in CI (redis-backed Lua hot path; MySQL-backed
+      # persistence worker + in-process server harness for the REST/WS tests).
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: rootpw
+          MYSQL_DATABASE: lumen
+          MYSQL_USER: lumen
+          MYSQL_PASSWORD: lumen
+        ports:
+          - 3306:3306
+        # -h 127.0.0.1 forces TCP so health only flips after the REAL server listens.
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -prootpw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 40
+    env:
+      REDIS_ADDR: 127.0.0.1:6379
+      MYSQL_DSN: "lumen:lumen@tcp(127.0.0.1:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.22"
+      - name: load MySQL schema
+        run: |
+          sudo apt-get update && sudo apt-get install -y default-mysql-client
+          for i in $(seq 1 30); do
+            if mysql -h 127.0.0.1 -P 3306 -ulumen -plumen lumen -e "SELECT 1" >/dev/null 2>&1; then break; fi
+            echo "waiting for mysql ($i)"; sleep 2
+          done
+          mysql -h 127.0.0.1 -P 3306 -ulumen -plumen lumen < infra/mysql/init/01-schema.sql
       - name: tidy is clean
         run: |
           go mod tidy
@@ -23,8 +62,14 @@ jobs:
         run: go vet ./...
       - name: build
         run: go build ./...
-      - name: test
-        run: go test ./...
+      - name: test (race + redis + mysql integration; no test skipped)
+        run: |
+          set -euo pipefail
+          go test -race -v ./... 2>&1 | tee /tmp/gotest.txt
+          if grep -q -- '--- SKIP' /tmp/gotest.txt; then
+            echo "FAIL: a test was SKIPPED in CI (all infra must be provided so nothing skips)";
+            grep -- '--- SKIP' /tmp/gotest.txt; exit 1
+          fi
 
   guards:
     runs-on: ubuntu-latest
@@ -61,6 +106,8 @@ jobs:
           aid="$(printf '%s\n' "$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"
           test -n "$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }
           echo "VERIFY_AID=$aid" >> "$GITHUB_ENV"
+      - name: perf-smoke (T2 ack/broadcast p95 floor-check)
+        run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build perf-smoke
       - name: replay-verifier skeleton
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
       - name: logs on failure
