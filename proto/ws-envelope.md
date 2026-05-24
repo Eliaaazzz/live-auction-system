@@ -28,7 +28,7 @@ type WsEnvelope<T = unknown> = {
 | type | data | purpose |
 |---|---|---|
 | `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq }` | room state on join |
-| `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`) |
+| `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
@@ -47,6 +47,9 @@ type WsEnvelope<T = unknown> = {
 - **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
 - **Anti-snipe is bounded** by `maxExtensions` (rule DSL; `0` = unlimited). Past the cap an in-window bid is a normal `BID_ACCEPTED` with no `AUCTION_EXTENDED` and no `endAtMs` change.
 - A `DUPLICATE` retry on the **same** socket after an extension replays the cached `BID_ACCEPTED` (which already carries the extended `endAtMs`) but **not** the separate `AUCTION_EXTENDED` event; the canonical recovery for a missed event is reconnect + `lastSeq` catchup (T5).
+- **Seller self-bid is rejected** (`BID_REJECTED{ERR_NOT_ALLOWED}`): the seller id is frozen into Redis state and checked on the hot path (anti shill-bidding).
+- **Money is bounded by `MaxMoneyCents` (2^53-1)** and stored as exact decimal strings; larger amounts are rejected (`ERR_BAD_INPUT` at the gateway, `ERR_TOO_LOW` defensively in Lua) because float64 (Lua / JS / Redis ZSET score) can't represent them exactly.
+- **Critical-event backpressure**: a client whose send buffer fills is dropped (connection closed) rather than silently losing a `BID_ACCEPTED` / `AUCTION_*` event; the client auto-reconnects and re-syncs via `ROOM_SNAPSHOT`. Full priority-queue separation (chat/presence vs critical) + `lastSeq` catchup land in T5.
 
 ## T1 / T2 subset
 

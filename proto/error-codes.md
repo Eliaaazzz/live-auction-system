@@ -20,9 +20,9 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 | `ERR_AUCTION_PAUSED` | place_bid | Redis-back recovery in progress | `BID_REJECTED {code: ERR_AUCTION_PAUSED}` |
 | `ERR_NOT_DUE` | close_auction (T3) | called before expiry | engine retries (not surfaced) |
 | `ERR_ALREADY_TERMINAL` | close/cancel (T3) | already terminal | engine no-op (not surfaced) |
-| `ERR_NOT_ALLOWED` | cancel_auction (T3) | caller not owner/admin | `OPERATION_REJECTED {code: ERR_NOT_ALLOWED}` |
+| `ERR_NOT_ALLOWED` | place_bid (seller self-bid, T2) / cancel_auction (T3) | seller bidding own auction, or caller not owner/admin | `BID_REJECTED {code: ERR_NOT_ALLOWED}` (bid) / `OPERATION_REJECTED {code: ERR_NOT_ALLOWED}` (cancel) |
 | `ERR_BAD_STATE` | start_auction / freeze_rules | wrong source state | `OPERATION_REJECTED {code: ERR_BAD_STATE}` |
-| `ERR_INTERNAL` | place_bid type-guard / Go dispatcher | wrong-typed key (`'key_type'`) or NOSCRIPT — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
+| `ERR_INTERNAL` | place_bid type-guard / preflight / Go dispatcher | wrong-typed key (`'key_type'`), stream/state seq desync (`'seq_stream_mismatch'`), or NOSCRIPT — distinct from the business `ERR_AUCTION_PAUSED` | `BID_REJECTED {code: ERR_INTERNAL}` |
 | `ERR_FACTS_NOT_CONFIRMED` | REST `freeze` handler | seller has not confirmed the AI facts draft | `409 {code: ERR_FACTS_NOT_CONFIRMED}` |
 | `ERR_BAD_INPUT` | WS gateway | malformed `BID_PLACE` (missing clientBidId/amount) | `BID_REJECTED {code: ERR_BAD_INPUT}` |
 
@@ -34,6 +34,6 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 
 T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_BAD_STATE`, `ERR_INTERNAL`, `ERR_FACTS_NOT_CONFIRMED`, `ERR_BAD_INPUT`.
 
-**T2 adds** `OK_EXTENDED` (anti-snipe) and `OK_SOLD` (cap-hit / buy-now) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive `amountCents` (validated at the gateway before the Lua call); below-increment / over-cap remain `ERR_TOO_LOW`.
+**T2 adds** `OK_EXTENDED` (anti-snipe) and `OK_SOLD` (cap-hit / buy-now) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive / `> MaxMoneyCents` (2^53-1) `amountCents` (validated + canonicalized at the gateway before the Lua call); below-required / over-cap / over-MaxMoneyCents remain `ERR_TOO_LOW` (Lua defensive boundary). `place_bid` also surfaces `ERR_NOT_ALLOWED` (seller self-bid → `BID_REJECTED`) and `ERR_INTERNAL{'seq_stream_mismatch'}` (stream/state desync preflight).
 
 The rest (`OK_NO_BID`, `OK_CANCELLED`, `ERR_NOT_DUE`, `ERR_ALREADY_TERMINAL`, `ERR_NOT_ALLOWED`) are authored here and exercised by their gating T-steps (T3).
