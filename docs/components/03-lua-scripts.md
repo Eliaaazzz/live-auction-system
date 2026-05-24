@@ -59,7 +59,9 @@ Two namespaces (per V9 §6 reconciliation):
 
 ## `place_bid.lua` — full pseudocode
 
-> **Updated v2 per PDGGK review of PR #16**: canonical Redis key names from `proto/redis-keys.md` (materialized in PR #19); single Stream entry per `seq` (no `<seq>-1` synthetic suffix — see `extended` flag inside payload); dedupe Hash keyed on `userId` with `clientBidId` as Hash field; `pubChannel` passed as ARGV[5] (matches PR #19 `apps/lumen/internal/lua/place_bid.lua`); type-guards before any write (V9 §0 boundary 2).
+> **Updated v3 (post-T2 PR #26 implementation)** — canonical Redis key names from `proto/redis-keys.md` (materialized in PR #19); **secondary events (`AUCTION_EXTENDED` / `AUCTION_SOLD`) take their own `seq`** so every Stream entry is uniquely `<seq>-0` (no `<seq>-1` synthetic suffix, V9 §0 b3 honored); dedupe Hash keyed on `userId` with `clientBidId` as Hash field; `pubChannel` passed as ARGV[5] (matches PR #19 `apps/lumen/internal/lua/place_bid.lua`); type-guards before any write (V9 §0 boundary 2). T2 cap-aware required-price clamp + MAX_MONEY ceiling included.
+>
+> Design history (recorded for future readers): v1 used `<seq>-1` synthetic suffix → wrong (violated `<seq>-0` invariant); v2 used single Stream entry with `extended:true` payload flag → wrong (FE has to synthesize event; Replay Verifier needs special case); v3 = T2's double-entry-with-separate-seq → right (uniform Stream shape, FE handlers stay simple, 1:1 MySQL projection in T4).
 
 ```lua
 -- KEYS[1] = auction:{<aid>}:state         Hash: status, currentPriceCents, winnerId, minIncrementCents, capPriceCents, endAtMs, antiSnipeMs, extendCount, seq, paused
@@ -101,18 +103,26 @@ if cached then
   return {'DUPLICATE', cached}
 end
 
--- 2. Load state
+-- 2. Load state (T2: extendWindowSec + extendSec are SEPARATE fields, and
+--    maxExtensions bounds the anti-snipe runaway). amountStr is preserved
+--    as a string so we write money exactly (Lua number→ZSET-score is a
+--    double; values past 2^53 lose precision). MAX_MONEY = 2^53-1.
+local MAX_MONEY  = 9007199254740991
+local amount_str = ARGV[3]
 local s = redis.call('HMGET', state_key,
   'status', 'currentPriceCents', 'incrementCents', 'capPriceCents',
-  'endAtMs', 'antiSnipeMs', 'extendCount', 'paused')
-local status     = s[1]
-local current    = tonumber(s[2]) or 0
-local increment  = tonumber(s[3]) or 0
-local cap        = tonumber(s[4]) or 0
-local end_at_ms  = tonumber(s[5]) or 0
-local snipe_ms   = tonumber(s[6]) or 0
-local extend_cnt = tonumber(s[7]) or 0
-local paused     = s[8]
+  'endAtMs', 'extendWindowSec', 'extendSec', 'extendCount', 'maxExtensions', 'paused')
+local status          = s[1]
+local current         = tonumber(s[2])  or 0
+local increment       = tonumber(s[3])  or 0
+local cap             = tonumber(s[4])  or 0
+local end_at_ms       = tonumber(s[5])  or 0
+local extend_win_sec  = tonumber(s[6])  or 0
+local extend_sec      = tonumber(s[7])  or 0
+local extend_cnt      = tonumber(s[8])  or 0
+local max_extensions  = tonumber(s[9])  or 0
+local paused          = s[10]
+local snipe_ms        = extend_win_sec * 1000  -- T2 "in the window" comparison
 
 -- 3. Guards
 if paused == 'true' then return {'ERR_AUCTION_PAUSED'} end
@@ -124,71 +134,80 @@ local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 if now_ms >= end_at_ms then return {'ERR_AFTER_END', end_at_ms, now_ms} end
 
 -- 5. Amount validation — single ERR_TOO_LOW per #14 challenge #2 (no split into
---    ERR_INCREMENT/ERR_OVER_CAP; cap-hit is OK_SOLD success, not error)
-if not amount or amount < (current + increment) or amount > cap then
-  return {'ERR_TOO_LOW', current, increment, cap}
-end
+--    ERR_INCREMENT/ERR_OVER_CAP). Cap-aware required price: a buy-now bid that
+--    reaches the cap must be acceptable even when current+increment overshoots.
+--    cap == 0 means no buy-now ceiling (validated at Rules.Validate).
+local required = current + increment
+if cap > 0 and required > cap then required = cap end
+if not amount or amount <= 0 or amount > MAX_MONEY then return {'ERR_TOO_LOW', amount or 0, 0} end
+if amount < required then return {'ERR_TOO_LOW', amount, required} end
+if cap > 0 and amount > cap then return {'ERR_TOO_LOW', amount, required} end
 
--- 6. Allocate seq (HINCRBY is atomic in single-threaded Redis); only writer of seq
+-- 6. Decide branches BEFORE any mutation (validate-before-write; Lua no-rollback).
+--    Anti-snipe only fires when not a cap-hit AND under the extension cap.
+local cap_hit = cap > 0 and amount >= cap
+local extend  = (not cap_hit) and snipe_ms > 0 and extend_sec * 1000 > 0
+                and (end_at_ms - now_ms) <= snipe_ms
+                and (max_extensions <= 0 or extend_cnt < max_extensions)
+
+-- 7. Allocate the primary seq for the BID_ACCEPTED event.
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
+redis.call('HMSET', state_key, 'currentPriceCents', amount_str, 'winnerId', userId)
+redis.call('ZADD', lb_key, 'GT', amount_str, userId)
 
--- 7. Anti-snipe: if within last antiSnipeMs, extend in-place — NO separate Stream
---    entry (drops the v1 <seq>-1 synthetic suffix which violated the frozen
---    Stream ID = <seq>-0 rule per PDGGK review). The extension is signaled
---    via `extended: true` + `newEndAtMs` fields in the BID_ACCEPTED payload below.
-local extended = false
+-- 8. Apply extension or cap-hit state transitions.
 local new_end_at_ms = end_at_ms
-if (end_at_ms - now_ms) <= snipe_ms then
-  new_end_at_ms = now_ms + snipe_ms
-  extend_cnt = extend_cnt + 1
-  redis.call('HMSET', state_key, 'endAtMs', new_end_at_ms, 'extendCount', extend_cnt)
-  extended = true
+local new_extend_cnt = extend_cnt
+if extend then
+  new_end_at_ms = end_at_ms + extend_sec * 1000
+  new_extend_cnt = redis.call('HINCRBY', state_key, 'extendCount', 1)
+  redis.call('HSET', state_key, 'endAtMs', new_end_at_ms)
 end
-
--- 8. Cap hit → terminal SOLD in same script (atomic with winning bid)
-local cap_hit = (amount == cap)
-local final_status = cap_hit and 'SOLD' or 'LIVE'
-local update_fields = {'currentPriceCents', amount, 'winnerId', userId}
 if cap_hit then
-  table.insert(update_fields, 'status')
-  table.insert(update_fields, 'SOLD')
+  redis.call('HSET', state_key, 'status', 'SOLD')
 end
-redis.call('HMSET', state_key, unpack(update_fields))
 
--- 9. Leaderboard
-redis.call('ZADD', lb_key, amount, userId)
-
--- 10. Single Stream entry per seq (no <seq>-1 collision). Type = AUCTION_SOLD on
---     cap-hit, else BID_ACCEPTED. The `extended` + `newEndAtMs` + `extendCount`
---     fields in the payload tell the client an anti-snipe extension occurred —
---     FE can synthesize a UI-level "AUCTION_EXTENDED" toast from these fields
---     without needing a separate Stream entry.
-local payload = cjson.encode({
-  seq = seq, userId = userId, displayName = displayName,
-  amountCents = ARGV[3], serverTimeMs = now_ms,
-  endAtMs = new_end_at_ms, extendCount = extend_cnt, extended = extended,
-  status = final_status,
-})
-local stream_type = cap_hit and 'AUCTION_SOLD' or 'BID_ACCEPTED'
+-- 9. Emit BID_ACCEPTED at <seq>-0 + cache ack + Pub/Sub fanout hint.
+local bid = {
+  seq = seq, userId = userId, displayName = displayName, amountCents = amount_str,
+  endAtMs = new_end_at_ms, status = (cap_hit and 'SOLD' or 'LIVE'), serverTimeMs = now_ms,
+}
+local bidJson = cjson.encode(bid)
 redis.call('XADD', stream_key, seq .. '-0',
-  'type', stream_type, 'seq', seq, 'payload', payload)
-
--- 11. Cache ack into dedupe Hash + ensure TTL
-redis.call('HSET', dedupe_key, clientBidId, payload)
+  'type', 'BID_ACCEPTED', 'seq', seq, 'payload', bidJson)
+redis.call('HSET', dedupe_key, clientBidId, bidJson)
 redis.call('EXPIRE', dedupe_key, 86400)
+redis.call('PUBLISH', pub, cjson.encode({type = 'BID_ACCEPTED', seq = seq, data = bid}))
 
--- 12. Pub/Sub fanout hint — canonical channel "auction:<aid>:pub" passed as ARGV[5]
-redis.call('PUBLISH', pub, payload)
-
--- 13. Return — ack code only signals to dispatcher; payload carries all detail
-local ack_code = cap_hit and 'OK_SOLD' or 'OK_ACCEPTED'
-return {ack_code, seq, payload}
+-- 10. Secondary event takes ITS OWN seq → unique <seq>-0 (no <seq>-1 collision).
+--     This is the v3 design (per T2 PR #26 implementation): clean Stream shape,
+--     FE handlers stay simple, 1:1 Stream→MySQL projection in T4.
+if extend then
+  local seq2 = redis.call('HINCRBY', state_key, 'seq', 1)
+  local ext = {seq = seq2, endAtMs = new_end_at_ms, extendCount = new_extend_cnt, serverTimeMs = now_ms}
+  local extJson = cjson.encode(ext)
+  redis.call('XADD', stream_key, seq2 .. '-0',
+    'type', 'AUCTION_EXTENDED', 'seq', seq2, 'payload', extJson)
+  redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_EXTENDED', seq = seq2, data = ext}))
+  return {'OK_EXTENDED', seq, bidJson, seq2, extJson}
+end
+if cap_hit then
+  local seq2 = redis.call('HINCRBY', state_key, 'seq', 1)
+  local sold = {seq = seq2, winnerId = userId, amountCents = amount_str, status = 'SOLD', serverTimeMs = now_ms}
+  local soldJson = cjson.encode(sold)
+  redis.call('XADD', stream_key, seq2 .. '-0',
+    'type', 'AUCTION_SOLD', 'seq', seq2, 'payload', soldJson)
+  redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_SOLD', seq = seq2, data = sold}))
+  return {'OK_SOLD', seq, bidJson, seq2, soldJson}
+end
+return {'OK_ACCEPTED', seq, bidJson}
 ```
 
 **Notes / design calls inside the script:**
 
-- **No separate `AUCTION_EXTENDED` Stream entry**: anti-snipe extension is encoded as `extended: true` + `newEndAtMs` fields inside the `BID_ACCEPTED` payload. FE synthesizes a UI toast from the flag. This keeps the V9 §0 boundary 3 invariant "Stream ID = `<seq>-0`" intact (no `<seq>-1` collision) and means clients dedupe purely by `seq`. Replay Verifier still reproduces full state from Stream alone.
-- **No `OK_EXTENDED` Lua return code in T1**: the wire/ack is always `OK_ACCEPTED` for an accepted bid; the `extended` flag is a payload field, not a separate code. `proto/error-codes.md` lists `OK_EXTENDED` as a *T2+* reservation if we ever want a distinct dispatcher branch.
+- **Secondary events take their own `seq`**: anti-snipe extension emits `AUCTION_EXTENDED` at `seq+1` (not `seq`); cap-hit emits `AUCTION_SOLD` at `seq+1`. Every Stream entry retains a unique `<seq>-0` ID — V9 §0 boundary 3 honored without the `<seq>-1` synthetic suffix. Replay Verifier reads each entry as a single event of one type (no special-case for "BID_ACCEPTED carrying an extension flag"); 1:1 Stream→MySQL projection in T4 stays trivial.
+- **`OK_EXTENDED` is a T2 return code (not a t-later reservation)**: T2's `place_bid.lua` returns 5-element `{OK_EXTENDED, seq, bidJson, seq2, extJson}`. The dispatcher delivers `BID_ACCEPTED` directly to the originating socket; the `AUCTION_EXTENDED` event reaches the room via Pub/Sub fanout. Same pattern for `OK_SOLD` cap-hit.
+- **`MaxExtensions` caps the anti-snipe runaway**: `extend` branch additionally guards on `(maxExtensions <= 0 or curExtendCount < maxExtensions)`. Past the cap, an in-window bid is `OK_ACCEPTED` (no `endAtMs` bump, no `AUCTION_EXTENDED`). Bounds auction lifetime; default `0` = unlimited for back-compat (see `proto/db-schema.md` `auction_rules.max_extensions`).
 - **Cap-hit terminal inside place_bid**: the bid that hits cap *is* the closing bid. We change `status → SOLD` in the same script so no race window between accept and hammer. Order Service is triggered by the `AUCTION_SOLD` stream event regardless of who emitted it (place_bid or close_auction).
 - **HMAC / hash chain NOT computed here.** Per #14 challenge 3: the `event_hash` is computed by Persistence Worker on Stream→MySQL projection. Lua only writes the event payload to Stream.
 
@@ -340,7 +359,8 @@ Ownership is enforced in Go (`s.ownsAuction` reads from MySQL — authoritative)
 | `TestPlaceBid_BelowIncrement` | `ERR_TOO_LOW`; no Stream entry; no seq increment |
 | `TestPlaceBid_AboveCap` | `ERR_TOO_LOW`; no entry |
 | `TestPlaceBid_AtCap` | `OK_SOLD`; state = `SOLD`; Stream has `AUCTION_SOLD` |
-| `TestPlaceBid_AntiSnipe_Extend` | `OK_ACCEPTED`; endAtMs increased; **single** stream entry (`<seq>-0` `BID_ACCEPTED` with `extended:true` + `newEndAtMs` fields in payload); extendCount += 1 |
+| `TestPlaceBid_AntiSnipe_Extend` | `OK_EXTENDED`; endAtMs increased; **two** stream entries (`<seq>-0` BID_ACCEPTED + `<seq+1>-0` AUCTION_EXTENDED, each uniquely identified); extendCount += 1 |
+| `TestPlaceBid_AntiSnipeRespectsMaxExtensions` | with `MaxExtensions=N`: first N in-window bids return `OK_EXTENDED`; N+1th in-window bid returns `OK_ACCEPTED` with no endAtMs bump (auction lifetime bounded) |
 | `TestPlaceBid_AfterEnd_ReturnsERR_AFTER_END` | bid at `endAtMs + 1ms`; returns `ERR_AFTER_END` |
 | `TestPlaceBid_DedupeReplay` | same `(userId, clientBidId)` twice → second returns `DUPLICATE` with byte-identical cached ack |
 | `TestPlaceBid_Paused` | `paused = 'true'` → `ERR_AUCTION_PAUSED` |
@@ -358,7 +378,7 @@ Coverage target: **≥95%** per V9 §9. Run via `tools/lua-harness/` (Go + minir
 
 ## NEEDS HUMAN REVIEW
 
-1. ~~**Anti-snipe stream-id `<seq>-1` collision**~~ — **RESOLVED v2**: dropped the synthetic suffix. Single Stream entry per seq, `extended` is a payload field. Aligns with V9 §0 boundary 3.
+1. ~~**Anti-snipe stream-id `<seq>-1` collision**~~ — **RESOLVED v3** (T2 PR #26 implementation): secondary events take their own seq, NOT `<seq>-1`. Single Stream entry per seq preserved. Honest design history: v1 used `<seq>-1` (wrong — boundary 3 violation); v2 (my PR #16 v2 patch) used single entry with `extended:true` flag (wrong — FE has to synthesize event, Verifier special-case); v3 (T2's chosen) = double-entry-with-separate-seq (right). My v2 patch was reversed by Eliaaazzz's T2 implementation; I conceded on PR #26 review. Docs now match T2.
 2. **Cap-hit terminal in `place_bid.lua`**: alternative is to let `close_auction.lua` handle all terminals (cap-hit just sets a "pending close" flag, Timer Worker picks it up on next scan). Trade-off: simpler invariants vs. extra latency on cap-hit announcement. Current choice (terminal in place_bid) prioritizes user-perceived speed. Flag for @Eliaaazzz T2 design.
 3. ~~**`PUBLISH` channel naming**~~ — **RESOLVED v2**: canonical `auction:{<aid>}:pub`, passed by dispatcher as ARGV[5] (or ARGV[1] for close/cancel which take fewer args). Matches PR #19 `place_bid.lua` ARGV[5].
 4. **`maxmemory-policy`**: must be `noeviction` per script assumptions. Add to `infra/redis/redis.conf` review.
