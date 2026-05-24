@@ -14,7 +14,9 @@ auction:{<aid>}:state        Hash   status,currentPriceCents,winnerId,endAtMs,se
 auction:{<aid>}:leaderboard  ZSET   member=userId  score=accepted max amountCents
 auction:{<aid>}:dedupe:{uid} Hash   clientBidId -> result json   (TTL 24h)
 auction:{<aid>}:events       Stream durable ordered log; Stream ID = <seq>-0
-auction:{<aid>}:pub          Pub/Sub wakeup + room fanout only (not authoritative)
+auction:{<aid>}:pub          Pub/Sub wakeup hint only (non-authoritative); on a hint
+                                    the gateway reads the Stream and fans out — a forged
+                                    pub message not backed by the Stream is never broadcast
 auction:active               ZSET   member=auctionId score=endAtMs (Timer Worker, T3)
 ```
 

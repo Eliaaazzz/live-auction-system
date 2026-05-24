@@ -32,6 +32,27 @@ func TestNewEnvelope(t *testing.T) {
 	}
 }
 
+// HT-002 (review doc): every outgoing envelope carries a schemaVersion for
+// wire-protocol evolution. (channel routing is a separate T5 backpressure item.)
+func TestHiddenEnvelopeCarriesSchemaVersion(t *testing.T) {
+	env, err := NewEnvelope(TypeBidAccepted, "auc_1", 7, BidAcceptedData{Seq: 7, AmountCents: "100"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(string(b), `"schemaVersion":1`) {
+		t.Fatalf("envelope missing schemaVersion: %s", b)
+	}
+	// still decodes back to the typed fields (schemaVersion is ignored on decode).
+	var got Envelope
+	if err := json.Unmarshal(b, &got); err != nil || got.Type != TypeBidAccepted || got.Seq != 7 {
+		t.Fatalf("decode=%+v err=%v", got, err)
+	}
+}
+
 func TestNewEnvelopeMarshalError(t *testing.T) {
 	// a value that cannot be JSON-marshaled surfaces the error.
 	if _, err := NewEnvelope(TypePong, "", 0, make(chan int)); err == nil {

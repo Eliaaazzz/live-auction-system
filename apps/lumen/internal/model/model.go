@@ -63,6 +63,11 @@ const (
 	CodeErrBadInput = "ERR_BAD_INPUT"           // malformed client message (missing/invalid fields)
 )
 
+// SchemaVersion is the WS wire-protocol schema version, stamped onto every
+// outgoing envelope so clients can detect a protocol mismatch and evolve safely.
+// Bump on a breaking envelope change (all-member approve).
+const SchemaVersion = 1
+
 // Envelope is the WS message frame. Money fields inside Data are strings.
 type Envelope struct {
 	Type         string          `json:"type"`
@@ -71,6 +76,16 @@ type Envelope struct {
 	Seq          int64           `json:"seq,omitempty"`
 	ServerTimeMs int64           `json:"serverTimeMs"`
 	Data         json.RawMessage `json:"data,omitempty"`
+}
+
+// MarshalJSON stamps schemaVersion onto every outgoing envelope (one place, so no
+// construction site can forget it). Clients ignore the field if they don't need it.
+func (e Envelope) MarshalJSON() ([]byte, error) {
+	type alias Envelope // avoid recursion
+	return json.Marshal(struct {
+		SchemaVersion int `json:"schemaVersion"`
+		alias
+	}{SchemaVersion: SchemaVersion, alias: alias(e)})
 }
 
 // NewEnvelope builds an Envelope, JSON-encoding data into Data.
