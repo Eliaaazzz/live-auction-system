@@ -18,7 +18,7 @@ import (
 func TestT2HiddenFactsGateFreezeRequiresConfirmedFacts(t *testing.T) {
 	target := os.Getenv("TARGET")
 	if target == "" {
-		t.Skip("set TARGET=http://localhost:8080 against a running stack to run facts-gate hidden test")
+		target, _ = startTestServer(t) // in-process stack so this never skips in CI
 	}
 	hc := &http.Client{Timeout: 5 * time.Second}
 	seller, err := devLogin(hc, target, "Hidden Facts Seller", "seller")

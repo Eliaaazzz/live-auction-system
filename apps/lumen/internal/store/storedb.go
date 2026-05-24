@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -121,14 +122,40 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
+// DIFFERENT payload than the one being projected — a tamper/bug signal, not the
+// normal idempotent re-projection. The full hash chain lands in T4; this is the
+// lightweight integrity tripwire.
+var ErrEventPayloadMismatch = errors.New("event payload mismatch for existing (auction_id, seq)")
+
 // InsertEvent projects one Stream event into auction_events. Idempotent via
-// UNIQUE(auction_id, seq) (INSERT IGNORE). Hash chain is added in T4.
+// UNIQUE(auction_id, seq): a re-projection of the same (seq, payload) is a no-op,
+// but a DIFFERENT payload for an existing seq returns ErrEventPayloadMismatch
+// rather than being silently swallowed by INSERT IGNORE.
 func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventType, payload string) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT IGNORE INTO auction_events (auction_id, seq, event_type, payload_json, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		aid, seq, eventType, payload, time.Now().UTC())
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil // freshly inserted
+	}
+	// Row already exists: confirm it's an identical re-projection. MySQL JSON
+	// comparison normalizes key order/whitespace, so this only trips on a genuine
+	// different-payload-for-same-seq, not on cjson formatting differences.
+	var diff int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT payload_json <> CAST(? AS JSON) FROM auction_events WHERE auction_id = ? AND seq = ?`,
+		payload, aid, seq).Scan(&diff); err != nil {
+		return err
+	}
+	if diff == 1 {
+		return fmt.Errorf("%w: aid=%s seq=%d", ErrEventPayloadMismatch, aid, seq)
+	}
+	return nil
 }
 
 func (s *Store) CountEvents(ctx context.Context, aid string) (int, error) {

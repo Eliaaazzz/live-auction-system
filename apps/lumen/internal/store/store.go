@@ -140,6 +140,38 @@ func AIDFromPubChannel(ch string) string {
 	return ch[len(prefix) : len(ch)-len(suffix)]
 }
 
+func aidFromStreamKey(k string) string {
+	const prefix, suffix = "auction:{", "}:events"
+	if !strings.HasPrefix(k, prefix) || !strings.HasSuffix(k, suffix) || len(k) <= len(prefix)+len(suffix) {
+		return ""
+	}
+	return k[len(prefix) : len(k)-len(suffix)]
+}
+
+// ScanEventStreamAIDs returns every auction id that has an events Stream, by
+// SCANning the keyspace. The Persistence Worker uses this to sweep the canonical
+// Stream independently of Pub/Sub hints (at-least-once projection: survives a
+// worker that started after the publish, a dropped hint, or a process restart).
+func (s *Store) ScanEventStreamAIDs(ctx context.Context) ([]string, error) {
+	var aids []string
+	var cursor uint64
+	for {
+		keys, cur, err := s.rdb.Scan(ctx, cursor, "auction:{*}:events", 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if aid := aidFromStreamKey(k); aid != "" {
+				aids = append(aids, aid)
+			}
+		}
+		cursor = cur
+		if cursor == 0 {
+			return aids, nil
+		}
+	}
+}
+
 // --- Lua dispatch ---
 
 func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...interface{}) ([]interface{}, error) {
