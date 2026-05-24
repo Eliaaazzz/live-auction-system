@@ -40,42 +40,50 @@ func extendOnEverythingRules() model.Rules {
 	return r
 }
 
-// --- 1. No MaxExtensions cap — documents current behavior ---
+// --- 1. MaxExtensions caps the anti-snipe runaway ---
 
-// TestPlaceBid_NoExtensionCap_AllowsRunaway documents that T2 has NO upper
-// bound on the number of anti-snipe extensions. Two bidders ratcheting +1
-// increment within the extend window can extend the auction indefinitely.
-//
-// If/when a MaxExtensions rule field lands, this test must update to assert
-// the cap takes effect. Until then it stands as a tripwire so the issue isn't
-// forgotten.
-func TestPlaceBid_NoExtensionCap_AllowsRunaway(t *testing.T) {
+// TestPlaceBid_MaxExtensionsCapsRunaway: REFRESHED from the original no-cap
+// tripwire now that the MaxExtensions field landed (PR #26 review finding #1).
+// With MaxExtensions=3, the first 3 in-window bids extend (OK_EXTENDED), then
+// further in-window bids are normal OK_ACCEPTED — no endAtMs bump, no
+// AUCTION_EXTENDED. Two bidders can no longer ratchet the auction forever.
+func TestPlaceBid_MaxExtensionsCapsRunaway(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	r := extendOnEverythingRules()
 	r.IncrementCents = 1 // ratchet by minimum
+	r.MaxExtensions = 3
 	aid := liveAuction(t, s, r, 60_000)
 
-	const N = 50 // 50 extensions is plenty to demonstrate; production would cap ~3-10
+	endBefore, _ := s.rdb.HGet(ctx, stateKey(aid), "endAtMs").Int64()
+	const N = 8 // more than the cap
+	extended := 0
 	for i := 0; i < N; i++ {
-		amt := strconv.Itoa(10001 + i)     // 10001, 10002, 10003, ...
+		amt := strconv.Itoa(10001 + i)     // 10001, 10002, ... (increment=1)
 		uid := "u" + strconv.Itoa(1+(i%2)) // bounce between u1 / u2
-		cb := "cb_" + strconv.Itoa(i)
-		code, _, _, err := s.PlaceBid(ctx, aid, uid, cb, amt, uid)
+		code, _, _, err := s.PlaceBid(ctx, aid, uid, "cb_"+strconv.Itoa(i), amt, uid)
 		if err != nil {
 			t.Fatalf("bid %d: err=%v", i, err)
 		}
-		if code != model.CodeOKExtended {
-			t.Fatalf("bid %d: code=%s want OK_EXTENDED (extension cap should have engaged?)", i, code)
+		switch code {
+		case model.CodeOKExtended:
+			extended++
+		case model.CodeOKAccepted: // accepted past the extension cap
+		default:
+			t.Fatalf("bid %d: code=%s want OK_EXTENDED or OK_ACCEPTED", i, code)
 		}
 	}
-	got, _ := s.rdb.HGet(ctx, stateKey(aid), "extendCount").Int64()
-	if got != N {
-		t.Fatalf("extendCount=%d want %d (no cap enforced)", got, N)
+	if extended != 3 {
+		t.Fatalf("extended=%d want 3 (MaxExtensions cap)", extended)
 	}
-	// If/when MaxExtensions is added, replace the want above with the cap and
-	// assert post-cap bids are accepted as OK_ACCEPTED (not OK_EXTENDED) and
-	// emit only BID_ACCEPTED (no AUCTION_EXTENDED secondary event).
+	if got, _ := s.rdb.HGet(ctx, stateKey(aid), "extendCount").Int64(); got != 3 {
+		t.Fatalf("extendCount=%d want 3 (capped)", got)
+	}
+	// endAtMs moved by exactly 3 × extendSec (30s), then stopped.
+	endAfter, _ := s.rdb.HGet(ctx, stateKey(aid), "endAtMs").Int64()
+	if endAfter != endBefore+3*30_000 {
+		t.Fatalf("endAtMs=%d want %d (3×30s then capped)", endAfter, endBefore+3*30_000)
+	}
 }
 
 // --- 2. DUPLICATE retry does NOT replay the secondary event ---

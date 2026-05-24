@@ -59,9 +59,13 @@ func TestT2HiddenStreamIDConflictDoesNotDirtyWrite(t *testing.T) {
 	}).Err(); err != nil {
 		t.Fatal(err)
 	}
+	// RECONCILED with the M1 fix: the original expected a raw XADD error AFTER
+	// dirty writes. place_bid.lua now preflights stream-vs-state seq lockstep
+	// BEFORE any mutation, so a desynced stream (last id 1-0 while state.seq=0)
+	// returns a clean ERR_INTERNAL with no dirty write — the guarantee this wants.
 	code, seq, payload, err := s.PlaceBid(ctx, aid, "u1", "xadd_conflict_cb", "11000", "U1")
-	if err == nil {
-		t.Fatalf("expected XADD ID conflict error, got code=%s seq=%d payload=%q", code, seq, payload)
+	if err != nil || code != model.CodeErrInternal || seq != 0 || payload != "" {
+		t.Fatalf("XADD desync: code=%s seq=%d payload=%q err=%v want ERR_INTERNAL/0/empty (clean preflight)", code, seq, payload, err)
 	}
 	snap, snapErr := s.Snapshot(ctx, aid)
 	if snapErr != nil {
