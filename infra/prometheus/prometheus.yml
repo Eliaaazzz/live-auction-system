@@ -29,20 +29,8 @@ alerting:
 
 scrape_configs:
   # ─────────────────────────────────────────────────────────────────────
-  # T1 default: single lumen process exposes all modes' metrics on :8080
+  # Active scrape targets — exporters that already expose /metrics today.
   # ─────────────────────────────────────────────────────────────────────
-  - job_name: lumen
-    scrape_interval: 5s
-    static_configs:
-      - targets: ['lumen:8080']
-        labels: { mode: all }
-
-  - job_name: ai-sidecar
-    scrape_interval: 10s
-    static_configs:
-      - targets: ['ai-sidecar:9090']
-
-  # Cold path — capacity / health (only when exporters are deployed)
   - job_name: redis
     scrape_interval: 30s
     static_configs:
@@ -57,6 +45,26 @@ scrape_configs:
     scrape_interval: 30s
     static_configs:
       - targets: ['localhost:9090']
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Pending app instrumentation — uncomment when the binaries actually
+  # expose /metrics. Today (T1/T2) neither does:
+  #   - lumen: returns 404 on /metrics (no promhttp handler wired in
+  #     apps/lumen/cmd/lumen/main.go yet)
+  #   - ai-sidecar: listens on its app port only, no metrics endpoint
+  # Leaving these commented avoids RED "scrape target down" status in
+  # the dashboard panels that already work (Redis + MySQL).
+  # ─────────────────────────────────────────────────────────────────────
+  # - job_name: lumen
+  #   scrape_interval: 5s
+  #   static_configs:
+  #     - targets: ['lumen:8080']
+  #       labels: { mode: all }
+  #
+  # - job_name: ai-sidecar
+  #   scrape_interval: 10s
+  #   static_configs:
+  #     - targets: ['ai-sidecar:9090']
 
   # ─────────────────────────────────────────────────────────────────────
   # T5+ multi-process topology (per-mode containers). Uncomment when
