@@ -50,11 +50,15 @@ func (g *Guard) Apply(s int64) bool {
 // Gap returns how many events would be skipped by jumping to seq s from the
 // current cursor (s - last - 1), or 0 if s is the next contiguous event or a
 // duplicate/out-of-order/control frame. T5 uses gap > 200 → snapshot fallback.
+//
+// Compares with `s <= g.last` rather than `s > g.last+1` so it does not overflow
+// when g.last == math.MaxInt64 (a duplicate at max-int must report 0, not -1).
+// g.last is always >= 0, so s - g.last - 1 cannot overflow for any valid s.
 func (g *Guard) Gap(s int64) int64 {
-	if s > g.last+1 {
-		return s - g.last - 1
+	if s <= g.last {
+		return 0
 	}
-	return 0
+	return s - g.last - 1
 }
 
 // Last returns the highest applied sequence.

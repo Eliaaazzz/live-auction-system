@@ -46,7 +46,7 @@ func Seed(ctx context.Context, cfg config.Config) error {
 	// Drive auc_demo to LIVE directly via the store (no dev-login needed) so the
 	// documented two-tab demo link /room.html?auction=auc_demo is bid-able
 	// immediately. Long duration (1h) keeps it live for the demo session.
-	if code, err := st.FreezeRules(ctx, "auc_demo", rules); err != nil {
+	if code, err := st.FreezeRules(ctx, "auc_demo", "seller_demo", rules); err != nil {
 		return err
 	} else if code != model.CodeOKFrozen {
 		log.Printf("seed: freeze auc_demo returned %s", code)

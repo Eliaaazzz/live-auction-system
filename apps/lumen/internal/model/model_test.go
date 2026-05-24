@@ -137,12 +137,21 @@ func TestRulesValidate(t *testing.T) {
 	if err := noCap.Validate(); err != nil {
 		t.Fatalf("no-cap rules rejected: %v", err)
 	}
+	// cap above start but below the first increment is valid (buy-now reachable via
+	// the cap-aware required price). Pins the relaxed cap rule (was cap>=start+inc).
+	capBelowIncrement := Rules{StartPriceCents: 10000, IncrementCents: 5000, CapPriceCents: 12000, DurationSec: 60}
+	if err := capBelowIncrement.Validate(); err != nil {
+		t.Fatalf("cap-below-first-increment rules rejected: %v", err)
+	}
 	bad := map[string]Rules{
 		"negative start":      {StartPriceCents: -1, IncrementCents: 1000, DurationSec: 60},
 		"zero increment":      {StartPriceCents: 10000, IncrementCents: 0, DurationSec: 60},
 		"negative increment":  {StartPriceCents: 10000, IncrementCents: -5, DurationSec: 60},
 		"negative cap":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: -1, DurationSec: 60},
-		"cap below 1st bid":   {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10500, DurationSec: 60},
+		"cap equals start":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10000, DurationSec: 60},
+		"cap below start":     {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 9000, DurationSec: 60},
+		"money over max":      {StartPriceCents: MaxMoneyCents + 1, IncrementCents: 1000, DurationSec: 60},
+		"cap over max":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: MaxMoneyCents + 1, DurationSec: 60},
 		"zero duration":       {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 0},
 		"negative extend win": {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, ExtendWindowSec: -1},
 		"negative maxExt":     {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, MaxExtensions: -1},

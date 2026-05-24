@@ -56,10 +56,10 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.rooms[aid] {
-		select {
-		case c.send <- msg:
-		default: // slow client: drop rather than block the room (full backpressure = T5)
-		}
+		// critical room events: enqueue or drop the slow client (it reconnects +
+		// re-snapshots) rather than silently lose the event. close() defers the
+		// hub.leave to the read goroutine, so it can't deadlock under this RLock.
+		c.trySend(msg)
 	}
 }
 
@@ -110,19 +110,54 @@ func decodePub(aid, payload string) (model.Envelope, bool) {
 	}, true
 }
 
-// Conn is one WS client connection with a serialized write pump.
+// Conn is one WS client connection with a serialized write pump. Shutdown is
+// signalled by closing `done` (once); `send` is never closed, so concurrent
+// senders (direct ack + Pub/Sub broadcast) can't panic on a closed channel.
 type Conn struct {
 	ws          *websocket.Conn
 	send        chan []byte
+	done        chan struct{}
+	closeOnce   sync.Once
 	userID      string
 	displayName string // human nickname, resolved at connect (falls back to userID)
 	aid         string
 }
 
+// close tears the connection down exactly once: signal writePump via done and
+// close the socket (which unblocks the read loop). Nil-safe for unit-test Conns.
+func (c *Conn) close() {
+	c.closeOnce.Do(func() {
+		if c.done != nil {
+			close(c.done)
+		}
+		if c.ws != nil {
+			_ = c.ws.Close()
+		}
+	})
+}
+
+// trySend enqueues a frame, or — if the send buffer is full — drops the whole
+// connection (close → client reconnects and re-syncs via ROOM_SNAPSHOT) rather
+// than silently losing a critical event (BID_ACCEPTED / AUCTION_*). Full
+// priority-queue backpressure (separating chat/presence from critical) is T5.
+func (c *Conn) trySend(b []byte) {
+	select {
+	case c.send <- b:
+	default:
+		c.close()
+	}
+}
+
 func (c *Conn) writePump() {
-	for msg := range c.send {
-		_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+	for {
+		select {
+		case msg := <-c.send:
+			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+				c.close()
+				return
+			}
+		case <-c.done:
 			return
 		}
 	}
@@ -133,10 +168,7 @@ func (c *Conn) push(env model.Envelope) {
 	if err != nil {
 		return
 	}
-	select {
-	case c.send <- b:
-	default:
-	}
+	c.trySend(b)
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -164,12 +196,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if nick, err := s.st.UserNickname(r.Context(), userID); err == nil && nick != "" {
 		display = nick
 	}
-	c := &Conn{ws: ws, send: make(chan []byte, 64), userID: userID, displayName: display}
+	c := &Conn{ws: ws, send: make(chan []byte, 64), done: make(chan struct{}), userID: userID, displayName: display}
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
-		close(c.send)
-		_ = ws.Close()
+		c.close()
 	}()
 
 	for {
@@ -240,12 +271,11 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		switch code {
 		case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold, model.CodeDuplicate:
 			// Ack the originating socket directly, in addition to the Pub/Sub room
-			// broadcast the subscriber fans out to observers. push is best-effort
-			// (drops if the send buffer is full), but for a responsive client the
-			// 64-slot buffer makes the direct ack effectively reliable; the client
-			// also receives the broadcast copy and dedupes by seq. OK_EXTENDED/
-			// OK_SOLD ack the bid here; their AUCTION_EXTENDED / AUCTION_SOLD event
-			// reaches the room (incl. this socket) via Pub/Sub.
+			// broadcast the subscriber fans out to observers. trySend enqueues or, if
+			// the buffer is full, drops the connection so the client reconnects and
+			// re-syncs (never silently loses a critical ack). The client also gets
+			// the broadcast copy and dedupes by seq. OK_EXTENDED/OK_SOLD ack the bid
+			// here; their AUCTION_EXTENDED / AUCTION_SOLD reaches the room via Pub/Sub.
 			c.push(bidAccepted(c.aid, payload))
 		default:
 			c.push(rejected(c.aid, code))
@@ -265,7 +295,7 @@ func rejected(aid, code string) model.Envelope {
 // canonical, since place_bid.lua echoes the amount string verbatim.
 func canonicalAmount(s string) (string, bool) {
 	n, err := strconv.ParseInt(s, 10, 64)
-	if err != nil || n <= 0 {
+	if err != nil || n <= 0 || n > int64(model.MaxMoneyCents) {
 		return "", false
 	}
 	return strconv.FormatInt(n, 10), true

@@ -183,7 +183,7 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "rules not found")
 		return
 	}
-	code, err := s.st.FreezeRules(r.Context(), aid, rules)
+	code, err := s.st.FreezeRules(r.Context(), aid, a.SellerID, rules)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

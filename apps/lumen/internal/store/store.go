@@ -47,7 +47,38 @@ func New(ctx context.Context, redisAddr, mysqlDSN string) (*Store, error) {
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
+	if err := s.migrate(ctx); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// migrate applies idempotent schema migrations that the first-init DDL
+// (infra/mysql/init) does NOT cover on a pre-existing volume — docker init SQL
+// runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
+// ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
+func (s *Store) migrate(ctx context.Context) error {
+	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+}
+
+// ensureColumn adds table.column with the given DDL if it is absent. table,
+// column and ddl are trusted constants (never user input), so the formatted
+// ALTER is safe.
+func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+		table, column).Scan(&n); err != nil {
+		return fmt.Errorf("check column %s.%s: %w", table, column, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 func pingWithRetry(ctx context.Context, name string, ping func(context.Context) error) error {
@@ -126,10 +157,11 @@ func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...int
 	return arr, nil
 }
 
-// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). Returns the result code.
-func (s *Store) FreezeRules(ctx context.Context, aid string, rules model.Rules) (string, error) {
+// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). sellerID is copied into
+// the state Hash so the hot path can reject seller self-bids. Returns the code.
+func (s *Store) FreezeRules(ctx context.Context, aid, sellerID string, rules model.Rules) (string, error) {
 	rj, _ := json.Marshal(rules)
-	arr, err := s.eval(ctx, s.shaFreeze, []string{stateKey(aid)}, string(rj))
+	arr, err := s.eval(ctx, s.shaFreeze, []string{stateKey(aid)}, string(rj), sellerID)
 	if err != nil {
 		return "", err
 	}

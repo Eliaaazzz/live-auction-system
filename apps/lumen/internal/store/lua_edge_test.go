@@ -176,6 +176,50 @@ func TestPlaceBidStoresAmountVerbatim(t *testing.T) {
 	}
 }
 
+// Seller may not bid on their own auction (anti shill-bidding; review F7/H4).
+func TestPlaceBidSellerCannotBidOwnAuction(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000) // owner = sellerTestID
+
+	code, seq, _, err := s.PlaceBid(ctx, aid, sellerTestID, "cb1", "11000", "Seller")
+	if err != nil || code != model.CodeErrNotAllow || seq != 0 {
+		t.Fatalf("seller self-bid: code=%s seq=%d err=%v want ERR_NOT_ALLOWED/0", code, seq, err)
+	}
+	if got, _ := s.rdb.HGet(ctx, stateKey(aid), "seq").Int64(); got != 0 {
+		t.Fatalf("seller self-bid advanced seq=%d want 0", got)
+	}
+	// a different user bids normally.
+	code, seq, _, err = s.PlaceBid(ctx, aid, "buyer1", "cb2", "11000", "Buyer")
+	if err != nil || code != model.CodeOKAccepted || seq != 1 {
+		t.Fatalf("buyer bid: code=%s seq=%d err=%v want OK_ACCEPTED/1", code, seq, err)
+	}
+}
+
+// cap-aware required price: a bid exactly at cap must close even when
+// current+increment overshoots the cap (review F2). Without the fix this is
+// rejected as ERR_TOO_LOW and the cap becomes unreachable.
+func TestPlaceBidCapReachableWhenIncrementOvershoots(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.StartPriceCents, r.IncrementCents, r.CapPriceCents = 10000, 7000, 20000
+	aid := liveAuction(t, s, r, 60_000)
+
+	if code, seq, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "17000", "U1"); err != nil || code != model.CodeOKAccepted || seq != 1 {
+		t.Fatalf("bid1: code=%s seq=%d err=%v want OK_ACCEPTED/1", code, seq, err)
+	}
+	// current=17000, current+increment=24000 > cap=20000; a bid at cap must SOLD.
+	code, seq, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "20000", "U2")
+	if err != nil || code != model.CodeOKSold || seq != 2 {
+		t.Fatalf("cap bid: code=%s seq=%d err=%v want OK_SOLD/2", code, seq, err)
+	}
+	snap, _ := s.Snapshot(ctx, aid)
+	if snap.CurrentPriceCents != "20000" || snap.WinnerID != "u2" || snap.Status != model.StateSold {
+		t.Fatalf("snapshot=%+v want price=20000 winner=u2 SOLD", snap)
+	}
+}
+
 func contains(s, sub string) bool {
 	for i := 0; i+len(sub) <= len(s); i++ {
 		if s[i:i+len(sub)] == sub {

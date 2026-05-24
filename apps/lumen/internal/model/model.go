@@ -160,6 +160,13 @@ type RoomSnapshotData struct {
 // so older clients don't break.
 type Cents int64
 
+// MaxMoneyCents bounds every money value. Above 2^53-1 the value is not exactly
+// representable as a float64, and the hot path passes through Lua numbers and
+// Redis ZSET scores (both float64) — so amounts above this would lose integer
+// precision in price/leaderboard. ~9.0e15 cents (~$90T) is far beyond any real
+// auction. Enforced at the gateway, REST rules, and defensively in Lua.
+const MaxMoneyCents Cents = 1<<53 - 1 // 9007199254740991
+
 func (c Cents) MarshalJSON() ([]byte, error) {
 	return []byte(strconv.Quote(strconv.FormatInt(int64(c), 10))), nil
 }
@@ -186,7 +193,10 @@ func (c *Cents) Scan(v any) error {
 	case int64:
 		*c = Cents(x)
 	case []byte:
-		n, _ := strconv.ParseInt(string(x), 10, 64)
+		n, err := strconv.ParseInt(string(x), 10, 64)
+		if err != nil {
+			return fmt.Errorf("invalid cents bytes %q: %w", x, err)
+		}
 		*c = Cents(n)
 	case nil:
 		*c = 0
@@ -224,9 +234,13 @@ func (r Rules) Validate() error {
 		return fmt.Errorf("incrementCents must be > 0")
 	case r.CapPriceCents < 0:
 		return fmt.Errorf("capPriceCents must be >= 0")
-	case r.CapPriceCents > 0 && r.CapPriceCents < r.StartPriceCents+r.IncrementCents:
-		// the first valid bid is startPrice+increment; a cap below that is unwinnable.
-		return fmt.Errorf("capPriceCents must be >= startPriceCents + incrementCents (or 0 for no cap)")
+	case r.CapPriceCents > 0 && r.CapPriceCents <= r.StartPriceCents:
+		// cap is "buy it now"; it must sit above the start price. A cap below the
+		// first increment is allowed (the cap-aware required price lets a buy-now
+		// bid reach it — see place_bid.lua), so only require cap > start.
+		return fmt.Errorf("capPriceCents must be > startPriceCents (or 0 for no cap)")
+	case r.StartPriceCents > MaxMoneyCents || r.IncrementCents > MaxMoneyCents || r.CapPriceCents > MaxMoneyCents:
+		return fmt.Errorf("money fields must be <= MaxMoneyCents (%d)", int64(MaxMoneyCents))
 	case r.DurationSec <= 0:
 		return fmt.Errorf("durationSec must be > 0")
 	case r.ExtendWindowSec < 0 || r.ExtendSec < 0:

@@ -12,12 +12,12 @@ import (
 func TestCanonicalAmount(t *testing.T) {
 	// valid inputs canonicalize to plain decimal (no leading zeros / plus sign).
 	ok := map[string]string{
-		"1":                   "1",
-		"11000":               "11000",
-		"9223372036854775807": "9223372036854775807", // int64 max
-		"0123":                "123",                 // leading zero
-		"+123":                "123",                 // leading plus
-		"007":                 "7",
+		"1":                "1",
+		"11000":            "11000",
+		"9007199254740991": "9007199254740991", // MaxMoneyCents (2^53-1)
+		"0123":             "123",              // leading zero
+		"+123":             "123",              // leading plus
+		"007":              "7",
 	}
 	for in, want := range ok {
 		got, valid := canonicalAmount(in)
@@ -26,6 +26,8 @@ func TestCanonicalAmount(t *testing.T) {
 		}
 	}
 	bad := []string{"", "0", "-1", "abc", "1.5", "11000 ", " 11000", "0x10", "1e3",
+		"9007199254740992",    // MaxMoneyCents+1 (loses float64 precision)
+		"9223372036854775807", // int64 max, > MaxMoneyCents
 		"9223372036854775808"} // int64 overflow
 	for _, s := range bad {
 		if _, valid := canonicalAmount(s); valid {

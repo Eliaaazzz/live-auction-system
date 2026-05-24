@@ -106,8 +106,12 @@
         ws.send(JSON.stringify({ type: 'ROOM_JOIN', auctionId: aid, serverTimeMs: Date.now(), data: { auctionId: aid } }));
       };
       ws.onclose = () => {
-        document.getElementById('conn').textContent = 'disconnected';
         document.getElementById('conn').className = 'down';
+        // The server drops a slow/stuck client instead of silently losing critical
+        // events; auto-reconnect + ROOM_SNAPSHOT re-syncs state (catchup is T5).
+        if (terminal) { document.getElementById('conn').textContent = 'disconnected'; return; }
+        document.getElementById('conn').textContent = 'disconnected — reconnecting…';
+        setTimeout(connect, 1000);
       };
       ws.onmessage = (ev) => {
         const env = JSON.parse(ev.data);

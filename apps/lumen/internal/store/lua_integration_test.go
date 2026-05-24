@@ -28,6 +28,10 @@ import (
 
 var aidCounter int64
 
+// sellerTestID is the auction owner used by liveAuction; tests bid as other ids,
+// so the seller-self-bid guard never trips unless a test deliberately bids as it.
+const sellerTestID = "seller_test"
+
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
 	addr := os.Getenv("REDIS_ADDR")
@@ -70,7 +74,7 @@ func liveAuction(t *testing.T, s *Store, r model.Rules, durationMs int64) string
 	ctx := context.Background()
 	aid := newAID(t)
 	t.Cleanup(func() { cleanupAID(s, aid) })
-	if code, err := s.FreezeRules(ctx, aid, r); err != nil || code != model.CodeOKFrozen {
+	if code, err := s.FreezeRules(ctx, aid, sellerTestID, r); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze: code=%s err=%v", code, err)
 	}
 	if code, _, err := s.StartAuction(ctx, aid, durationMs); err != nil || code != model.CodeOKLive {
@@ -172,7 +176,7 @@ func TestPlaceBidNotLiveWhenScheduled(t *testing.T) {
 	ctx := context.Background()
 	aid := newAID(t)
 	t.Cleanup(func() { cleanupAID(s, aid) })
-	if code, err := s.FreezeRules(ctx, aid, defaultRules()); err != nil || code != model.CodeOKFrozen {
+	if code, err := s.FreezeRules(ctx, aid, sellerTestID, defaultRules()); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze: code=%s err=%v", code, err)
 	}
 	// SCHEDULED (not started) => bids rejected ERR_NOT_LIVE.
@@ -643,11 +647,11 @@ func TestFreezeStartReturnCodes(t *testing.T) {
 	aid := newAID(t)
 	t.Cleanup(func() { cleanupAID(s, aid) })
 
-	if code, err := s.FreezeRules(ctx, aid, defaultRules()); err != nil || code != model.CodeOKFrozen {
+	if code, err := s.FreezeRules(ctx, aid, sellerTestID, defaultRules()); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze fresh: code=%s err=%v", code, err)
 	}
 	// freezing again (now SCHEDULED) is illegal.
-	if code, err := s.FreezeRules(ctx, aid, defaultRules()); err != nil || code != model.CodeErrBadState {
+	if code, err := s.FreezeRules(ctx, aid, sellerTestID, defaultRules()); err != nil || code != model.CodeErrBadState {
 		t.Fatalf("re-freeze: code=%s err=%v want ERR_BAD_STATE", code, err)
 	}
 	if code, _, err := s.StartAuction(ctx, aid, 60_000); err != nil || code != model.CodeOKLive {
