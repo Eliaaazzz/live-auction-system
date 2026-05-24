@@ -17,7 +17,8 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/tools/chaos-runner/internal/invariants"
 )
 
-// Snapshot mirrors the shape returned by GET /api/auctions/{id}/snapshot.
+// Snapshot mirrors the RoomSnapshot shape returned by GET /api/auctions/{id}.
+// (T2 route — no /snapshot suffix; fixed in PR #24 per PDGGK CR.)
 type Snapshot struct {
 	Status            string `json:"status"`
 	CurrentPriceCents string `json:"currentPriceCents"`
@@ -112,11 +113,13 @@ func Write(path string, r *Recorder) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// GetSnapshot calls the snapshot endpoint. Lives in artifact so both the
-// orchestrator and the invariants can share it.
+// GetSnapshot calls the auction read endpoint. Lives in artifact so both the
+// orchestrator and the invariants can share it. Route is GET /api/auctions/{id}
+// per T2 server (NOT /snapshot — caught by PDGGK PR #24 review). The handler
+// returns the same RoomSnapshot shape regardless.
 func GetSnapshot(ctx context.Context, baseURL, aid string) (*Snapshot, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/auctions/%s/snapshot", baseURL, aid), nil)
+		fmt.Sprintf("%s/api/auctions/%s", baseURL, aid), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +130,7 @@ func GetSnapshot(ctx context.Context, baseURL, aid string) (*Snapshot, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("snapshot status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GET /api/auctions/%s status %d", aid, resp.StatusCode)
 	}
 	var s Snapshot
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {

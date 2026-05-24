@@ -130,12 +130,16 @@ internal/
 
 ---
 
-## Known gaps (resolved in follow-ups, NOT this skeleton)
+## Known gaps (PR #24 CR follow-up status)
 
-1. **Bid generator drives REST not WS.** PR #19 T1 trunk only has WS bid path (no `POST /api/auctions/{id}/bid` endpoint). The `steadyBidder` in this skeleton hits the (non-existent) REST endpoint and records `STUB_NO_ENDPOINT` synthetic codes. The AI drill invariants still work (`latency_envelope` has samples; `seq_no_gap` reads from snapshot endpoint which DOES exist). **Follow-up**: replace REST driving with a minimal WS bidder in `internal/orchestrator/bidgen.go` after T1 merges and the auction endpoints stabilize.
-2. **7 of 8 phases stubbed.** Implementations land per-phase as the team ratifies which to keep. Standard 5 are uncontroversial; the 3 diversification phases need explicit team vote on this PR.
-3. **Toxiproxy needs compose wiring.** `infra/toxiproxy/toxiproxy.json` ships in this PR; compose stanza to actually run toxiproxy alongside lumen lands when first network-phase implementation needs it (likely `redis` phase).
-4. **No `make chaos PHASE=ai` target yet.** Follow-up Makefile additions land with first compose integration.
+1. ~~Bid generator drives REST not WS~~ — **FIXED** (PDGGK PR #24 CR 🔴 #2). `steadyBidder` now dev-logins → opens WS → `ROOM_JOIN` → fires real `BID_PLACE` envelopes via gorilla/websocket. Records OK_ACCEPTED on `BID_ACCEPTED`, the wire code on `BID_REJECTED`, `ERR_TIMEOUT` if no ack within 2s, `ERR_WS_READ` if the connection drops. Initial snapshot drives the amount progression (`startPrice + n*increment`). The AI drill now actually proves "AI down → bid acceptance continues" via the real WS hot path.
+2. ~~Snapshot URL wrong~~ — **FIXED** (PDGGK PR #24 CR 🔴 #2). `GetSnapshot` now hits `GET /api/auctions/{id}` (T2 route; no `/snapshot` suffix). Pinned by hidden test `TestHiddenGetSnapshotUsesLumenAuctionRoute`.
+3. ~~undo called twice on happy path~~ — **FIXED** (PDGGK PR #24 CR 🟠). Orchestrator wraps `rawUndo` in `sync.Once`; explicit happy-path call + defer safety net now collapse to a single execution.
+4. ~~Latency envelope passes on zero samples~~ — **FIXED** (PDGGK PR #24 CR 🟠 #3). `LatencyEnvelope` now FAILS if zero samples OR zero `OK_ACCEPTED` recorded — drill can't silently green with broken bidgen. Pinned by 3 hidden tests in `latency_envelope_hidden_test.go`.
+5. **4 of 5 standard phases stubbed** (PDGGK PR #24 CR 🔴 #1). Only `ai` is wired end-to-end. `redis`/`mysql`/`ws`/`timer` return `ErrNotImplemented`; specs in `internal/phases/stubs.go`. Toxiproxy compose wiring (PR #24 CR 🟠 #4) is the gate for `redis`/`mysql` to become runnable — follow-up PR.
+6. **3 diversification phases (`slowclient`/`schrodinger`/`tamper`) remain proposed probes**, not part of V9 acceptance set. Per PDGGK CR: "keep the 3 NEW probes only if they do not displace the standard five recordings."
+7. **Verifier/tamper claims are ahead of trunk** (PDGGK PR #24 CR 🟡 #5). Current `verify.go` is a count skeleton; hash-chain fields are nullable T4 work. `tamper` phase stays as proposed future probe, NOT a T9 acceptance item.
+8. **No `make chaos PHASE=ai` target yet.** Follow-up with Toxiproxy compose wiring.
 
 ---
 

@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/tools/chaos-runner/internal/artifact"
@@ -62,8 +63,12 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// ── (2) Steady-bid generator (background) ───────────────────────────
 	bidCtx, bidCancel := context.WithCancel(ctx)
 	defer bidCancel()
+	bidDone := make(chan struct{})
 	bidgen := newSteadyBidder(cfg.LumenBaseURL, cfg.TargetAID, cfg.BidRate, rec)
-	go bidgen.Run(bidCtx)
+	go func() {
+		defer close(bidDone)
+		bidgen.Run(bidCtx)
+	}()
 
 	// ── (3) Inject + always-undo ────────────────────────────────────────
 	logger.Info("inject")
@@ -73,12 +78,27 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		ToxiproxyURL:   cfg.ToxiproxyURL,
 		ComposeProject: "infra",
 	}
-	undo, err := cfg.Phase.Inject(ctx, env)
+	rawUndo, err := cfg.Phase.Inject(ctx, env)
 	if err != nil {
 		_ = bidCancel
 		return nil, fmt.Errorf("phase.Inject: %w", err)
 	}
+	// PDGGK PR #24 CR: previous code called undo twice on happy path (defer +
+	// explicit). For phases whose uninject isn't idempotent (toxiproxy
+	// re-enable, container restart that races with another caller), a double
+	// call can mask recovery failures or flip state twice. sync.Once collapses
+	// both call sites to a single execution; the defer becomes a no-op once
+	// the explicit happy-path call ran.
+	var (
+		undoOnce sync.Once
+		undoErr  error
+	)
+	undo := func(c context.Context) error {
+		undoOnce.Do(func() { undoErr = rawUndo(c) })
+		return undoErr
+	}
 	// Uninject is mandatory — defer makes sure it runs even on panic/error.
+	// (When the explicit undo on line 110 succeeded, this defer is a no-op.)
 	defer func() {
 		if err := undo(context.Background()); err != nil {
 			logger.Error("uninject_failed", "err", err)
@@ -93,16 +113,13 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		logger.Warn("ctx_cancelled_during_hold")
 	}
 
-	// ── (5) Uninject (via defer above) ──────────────────────────────────
+	// ── (5) Uninject (explicit happy path — defer is the safety net) ───
 	rec.UninjectedAt = time.Now().UTC()
-	logger.Info("uninject_about_to_run_via_defer")
-
-	// Run undo NOW so subsequent recovery wait observes the lifted fault.
-	// Defer is the safety net; this explicit call is the happy path.
+	logger.Info("uninject")
 	if err := undo(ctx); err != nil {
 		logger.Error("uninject_explicit_failed", "err", err)
 		rec.UninjectError = err.Error()
-		// Don't return — defer will try again, and invariants need to run.
+		// Don't return — invariants still need to run on whatever state we have.
 	}
 
 	// ── (6) Recovery wait ───────────────────────────────────────────────
@@ -113,8 +130,16 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		logger.Warn("ctx_cancelled_during_recovery")
 	}
 
-	// ── (7) Stop steady-bid generator ───────────────────────────────────
+	// ── (7) Stop steady-bid generator AND wait for it to exit, so we read
+	//        rec.AckLatencies after all writes are flushed (previously the
+	//        invariant context captured a partial/stale slice → p50/p95/p99
+	//        showed 0 even with 100+ real samples).
 	bidCancel()
+	select {
+	case <-bidDone:
+	case <-time.After(3 * time.Second):
+		logger.Warn("bidgen did not exit within 3s; reading possibly-stale recorder state")
+	}
 
 	// ── (8) Post-snapshot ───────────────────────────────────────────────
 	post, err := snapshot(ctx, cfg.LumenBaseURL, cfg.TargetAID)

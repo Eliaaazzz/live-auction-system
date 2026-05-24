@@ -39,10 +39,22 @@ func (l *LatencyEnvelope) Description() string {
 func (l *LatencyEnvelope) Check(ctx context.Context) Result {
 	samples, ok := ctx.Value(latencyKey(l.env.DuringEventsKey)).([]time.Duration)
 	if !ok || len(samples) == 0 {
-		// No samples = either steady-bid generator wasn't running or all bids
-		// were rejected. Other invariants will catch the rejection case; here
-		// it's not a fail, it's "no data" → skip.
-		return Pass(l, "no during-drill bid samples (steady-bid may have been gated off)")
+		// Per PDGGK PR #24 CR 🟠 #3: "weak green artifacts". Zero samples now
+		// FAILS rather than silently passes — for phases where bidding should
+		// continue (ai, mysql, ws, timer, tamper) a zero-sample run means the
+		// bidgen never connected or every attempt errored before reaching the
+		// recorder. Phases that expect zero-bid (none today; reserved for
+		// future "client-only" probes) can override with a phase-specific
+		// invariant set.
+		return Fail(l, "zero during-drill bid samples — bidgen never recorded; AI drill cannot prove bid continuity (PR #24 CR 🟠 #3)")
+	}
+	// Stronger: at least one OK_ACCEPTED is required to claim "bidding worked".
+	// Drilling samples without any successful accept passes only the noise
+	// floor; real evidence needs the success signal.
+	acceptedKey := eventCountKey(l.env.DuringEventsKey, "BID_ACCEPTED")
+	accepted, _ := ctx.Value(acceptedKey).(int)
+	if accepted == 0 {
+		return Fail(l, "zero OK_ACCEPTED during drill (samples=%d, all rejects/timeouts) — bidding did not continue; AI drill claim unverified", len(samples))
 	}
 	tolerance, ok := ctx.Value(toleranceKey(l.env.DuringEventsKey)).(time.Duration)
 	if !ok {
