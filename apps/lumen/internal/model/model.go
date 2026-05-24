@@ -256,6 +256,14 @@ func (r Rules) Validate() error {
 		return fmt.Errorf("capPriceCents must be > startPriceCents (or 0 for no cap)")
 	case r.StartPriceCents > MaxMoneyCents || r.IncrementCents > MaxMoneyCents || r.CapPriceCents > MaxMoneyCents:
 		return fmt.Errorf("money fields must be <= MaxMoneyCents (%d)", int64(MaxMoneyCents))
+	case r.CapPriceCents == 0 && r.StartPriceCents > MaxMoneyCents-r.IncrementCents:
+		// No cap: the first required bid is startPrice+increment and must be
+		// reachable (<= MaxMoneyCents), else every bid is rejected and the auction
+		// is unwinnable. (Written as subtraction to avoid overflow; both operands
+		// are already <= MaxMoneyCents at this point.) With a cap the required price
+		// clamps to the cap, so cap-below-first-increment stays valid — don't
+		// blanket-reject it here.
+		return fmt.Errorf("startPriceCents + incrementCents must be <= MaxMoneyCents when capPriceCents is 0")
 	case r.DurationSec <= 0:
 		return fmt.Errorf("durationSec must be > 0")
 	case r.ExtendWindowSec < 0 || r.ExtendSec < 0:
