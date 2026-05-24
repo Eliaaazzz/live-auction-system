@@ -1,0 +1,48 @@
+flowchart TB
+  subgraph Client["Client Layer"]
+    Seller["Seller / Admin PC"]
+    Bidder["Mobile H5 Bidder"]
+    Bot["Load Bot"]
+  end
+
+  subgraph Edge["Edge Layer"]
+    Gateway["Nginx / API Gateway"]
+    Rest["REST BFF"]
+    Ws["WebSocket Gateway\nroom isolation / heartbeat / lastSeq"]
+  end
+
+  subgraph Core["Core Layer"]
+    Auction["Auction Service\nfreeze / start / cancel"]
+    Bid["Bid Engine\nplace_bid.lua"]
+    Timer["Timer Worker\nclose_auction.lua"]
+    Order["Order Service\nidempotent order"]
+    Persist["Persistence Worker\nStream to MySQL"]
+    Metrics["Metrics API / Dashboard"]
+    AI["AI Sidecar\nVLM facts / LLM text"]
+    Replay["Replay Verifier\nStream / Redis / MySQL"]
+  end
+
+  subgraph Data["Data Layer"]
+    Redis["Redis Hot Path\nstate / leaderboard / dedupe / Stream / PubSub"]
+    MySQL["MySQL Facts Store\nusers / products / auctions / bids / orders / events / ai_usage_logs"]
+  end
+
+  Seller -->|"REST product / rules / start / cancel"| Gateway
+  Bidder -->|"WebSocket ROOM_JOIN / BID_PLACE"| Ws
+  Bot -->|"WS load 500+50 / 1k+100"| Ws
+  Gateway --> Rest
+  Rest --> Auction
+  Rest -. "confirmed facts only" .-> AI
+  Ws -->|"bid command"| Bid
+  Bid -->|"atomic write"| Redis
+  Timer -->|"scan auction:active; now >= ends_at_ms"| Redis
+  Redis -->|"Pub/Sub wakeup"| Ws
+  Ws -->|"room broadcast"| Bidder
+  Redis -->|"Stream ID = seq-0"| Persist
+  Persist --> MySQL
+  Order --> MySQL
+  Metrics --> Redis
+  Metrics --> MySQL
+  Replay --> Redis
+  Replay --> MySQL
+  AI -. "non-adjudicating" .-> Rest

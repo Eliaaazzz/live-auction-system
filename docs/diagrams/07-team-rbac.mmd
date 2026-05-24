@@ -1,0 +1,58 @@
+%% NOTE: A/B/C 是 V8 §5 提供的角色框架；具体人员认领待 Sprint 0 issue #10 拍板。
+%% 当前为占位 (TBD)。三方在 #10 comment 区拍完 Q3+Q6 后会更新本图标注实际姓名。
+flowchart LR
+  subgraph Team["Delivery Owners (待 #10 拍板)"]
+    A["A: Realtime Engineer (TBD)"]
+    B["B: Product Engineer (TBD)"]
+    C["C: Infra + AI + QA (TBD)"]
+  end
+
+  subgraph System["Owned Surfaces"]
+    WS["WS Gateway"]
+    BE["Bid Engine"]
+    TW["Timer Worker"]
+    LUA["Redis Lua"]
+    RV["Replay Verifier"]
+    CRUD["Product CRUD"]
+    RULES["Rules DSL"]
+    UI["Room UI"]
+    CARD["Evidence Card UI"]
+    SQL["MySQL Schema"]
+    AI["AI Sidecar"]
+    CI["Docker / CI"]
+    MET["Metrics Dashboard"]
+    LOAD["Load Test"]
+    DEMO["Demo / Fallback"]
+  end
+
+  subgraph Users["Runtime Roles"]
+    Seller["Seller"]
+    Bidder["Bidder"]
+    Operator["Admin / Operator"]
+  end
+
+  A --> WS
+  A --> BE
+  A --> TW
+  A --> LUA
+  A --> RV
+  B --> CRUD
+  B --> RULES
+  B --> UI
+  B --> CARD
+  B --> SQL
+  C --> AI
+  C --> CI
+  C --> MET
+  C --> LOAD
+  C --> DEMO
+
+  Seller -->|"create product"| CRUD
+  Seller -->|"confirm AI facts"| AI
+  Seller -->|"freeze rules / start / cancel"| RULES
+  Bidder -->|"join room"| WS
+  Bidder -->|"place bid"| BE
+  Bidder -->|"view result / mock pay"| UI
+  Operator -->|"view metrics"| MET
+  Operator -->|"run verifier"| RV
+  Operator -->|"run fallback checks"| DEMO

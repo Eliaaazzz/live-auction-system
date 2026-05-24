@@ -1,0 +1,25 @@
+stateDiagram-v2
+  [*] --> DRAFT
+  DRAFT --> SCHEDULED: facts confirmed / freeze_rules
+  SCHEDULED --> LIVE: start_auction
+
+  LIVE --> LIVE: bid.accepted
+  LIVE --> LIVE: anti_snipe_extended / ends_at_ms updated
+  LIVE --> SOLD: cap reached
+  LIVE --> SOLD: now >= ends_at_ms / highest bid exists
+  LIVE --> NO_BID: now >= ends_at_ms / no accepted bid
+  LIVE --> CANCELLED: abnormal_cancel
+
+  SOLD --> ORDER_CREATED: order.created
+
+  DRAFT --> CANCELLED: cancel
+  SCHEDULED --> CANCELLED: cancel
+
+  NO_BID --> [*]
+  ORDER_CREATED --> [*]
+  CANCELLED --> [*]
+
+  note right of LIVE
+    No EXTENDED state.
+    Extension is an event while status remains LIVE.
+  end note

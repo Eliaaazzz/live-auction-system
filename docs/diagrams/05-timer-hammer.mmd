@@ -1,0 +1,37 @@
+sequenceDiagram
+  participant T as Timer Worker
+  participant Z as Redis auction:active ZSET
+  participant L as Redis Lua close_auction.lua
+  participant S as Redis Stream
+  participant P as Redis PubSub
+  participant W as WS Gateway
+  participant O as Order Service
+  participant M as MySQL
+  participant E as Evidence Generator
+
+  T->>Z: ZRANGEBYSCORE endAtMs <= now
+  Z-->>T: candidate auction ids
+  loop each candidate
+    T->>L: EVAL close_auction.lua(auctionId)
+    L->>L: Redis TIME, close only when now >= ends_at_ms
+    alt not due after re-check
+      L-->>T: ERR_NOT_DUE(msRemaining)
+    else already terminal
+      L-->>T: ERR_ALREADY_TERMINAL(status)
+    else highest bid exists
+      L->>S: XADD auction.hammered seq-0
+      L->>P: PUBLISH AUCTION_SOLD
+      L-->>T: OK_SOLD(seq, winnerId, finalAmount)
+      P-->>W: room wakeup
+      W-->>W: broadcast AUCTION_SOLD
+      O->>M: create order with UNIQUE(auction_id)
+      E->>S: replay auction events
+      E->>M: write evidence card events_hash
+    else no bid
+      L->>S: XADD auction.no_bid seq-0
+      L->>P: PUBLISH AUCTION_NO_BID
+      L-->>T: OK_NO_BID(seq)
+      P-->>W: room wakeup
+      W-->>W: broadcast AUCTION_NO_BID
+    end
+  end
