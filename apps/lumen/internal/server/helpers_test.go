@@ -68,35 +68,6 @@ func TestRejectedAndAcceptedEnvelopes(t *testing.T) {
 	}
 }
 
-func TestDecodePub(t *testing.T) {
-	// BID_ACCEPTED fanout
-	bid := model.BidAcceptedData{Seq: 4, UserID: "u1", AmountCents: "13000", Status: model.StateLive}
-	raw, _ := json.Marshal(bid)
-	pm, _ := json.Marshal(model.PubMessage{Type: model.TypeBidAccepted, Seq: 4, Data: raw})
-	env, ok := decodePub("auc_1", string(pm))
-	if !ok || env.Type != model.TypeBidAccepted || env.AuctionID != "auc_1" || env.Seq != 4 {
-		t.Fatalf("bid pub decode: ok=%v env=%+v", ok, env)
-	}
-	var got model.BidAcceptedData
-	if err := json.Unmarshal(env.Data, &got); err != nil || got.AmountCents != "13000" {
-		t.Fatalf("bid data=%+v err=%v", got, err)
-	}
-
-	// AUCTION_EXTENDED fanout keeps its type
-	ext, _ := json.Marshal(model.PubMessage{Type: model.TypeAuctionExtended, Seq: 5, Data: json.RawMessage(`{"endAtMs":1700}`)})
-	if env, ok := decodePub("auc_1", string(ext)); !ok || env.Type != model.TypeAuctionExtended || env.Seq != 5 {
-		t.Fatalf("extended pub decode: ok=%v env=%+v", ok, env)
-	}
-
-	// malformed / typeless are skipped
-	if _, ok := decodePub("auc_1", "not json"); ok {
-		t.Error("malformed pub should be skipped")
-	}
-	if _, ok := decodePub("auc_1", `{"seq":1,"data":{}}`); ok {
-		t.Error("typeless pub should be skipped")
-	}
-}
-
 func TestSlug(t *testing.T) {
 	cases := map[string]string{
 		"Hello World": "hello_world",

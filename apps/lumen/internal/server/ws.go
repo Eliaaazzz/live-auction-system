@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -24,6 +25,17 @@ const maxWSFrameBytes = 32 * 1024
 // maxClientBidIDLen bounds the client-supplied idempotency key. It becomes a
 // Redis hash field name in the dedupe Hash, so cap it well below the frame limit.
 const maxClientBidIDLen = 128
+
+// catchupMaxGap is the largest ROOM_JOIN lastSeq delta replayed from the Stream;
+// past it the client gets a snapshot instead (cheaper than a huge replay).
+const catchupMaxGap = 200
+
+// fanoutSweepInterval is the backstop cadence for Stream-driven broadcast (a lost
+// Pub/Sub wakeup can't permanently stall the room).
+const fanoutSweepInterval = 2 * time.Second
+
+// streamIDForSeq returns the XRANGE-exclusive lower bound for "events after seq".
+func streamIDForSeq(seq int64) string { return fmt.Sprintf("%d-0", seq) }
 
 // Hub tracks room membership and fans out broadcasts. The bid path is decoupled
 // from the broadcast path via Redis Pub/Sub (subscribe), so adding gateways at
@@ -63,51 +75,65 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 	}
 }
 
-// subscribe consumes the Pub/Sub fanout hints and broadcasts BID_ACCEPTED to the
-// matching room. Runs for the lifetime of ctx.
+// roomAIDs snapshots the auction ids with at least one connection.
+func (h *Hub) roomAIDs() []string {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	aids := make([]string, 0, len(h.rooms))
+	for aid := range h.rooms {
+		aids = append(aids, aid)
+	}
+	return aids
+}
+
+// subscribe drives room broadcast from the **canonical Redis Stream**. Pub/Sub is
+// only a wakeup hint (RFC v2: non-authoritative) — on a hint, or on a periodic
+// backstop tick, the gateway reads the Stream from the room's last-broadcast seq
+// and fans out those events. A forged/stale Pub/Sub message not backed by the
+// Stream therefore can never reach clients. Runs for the lifetime of ctx in a
+// single goroutine (lastSeq needs no lock).
 func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
 	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
+
+	lastSeq := make(map[string]int64)
+	fanout := func(aid string) {
+		events, _, err := st.ReadEventsAfter(ctx, aid, streamIDForSeq(lastSeq[aid]))
+		if err != nil {
+			log.Printf("fanout read %s: %v", aid, err)
+			return
+		}
+		for _, e := range events {
+			env := model.Envelope{
+				Type: e.Type, AuctionID: aid, Seq: e.Seq,
+				ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
+			}
+			b, _ := json.Marshal(env)
+			h.broadcast(aid, b)
+			lastSeq[aid] = e.Seq
+		}
+	}
+
+	ticker := time.NewTicker(fanoutSweepInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-ticker.C:
+			for _, aid := range h.roomAIDs() { // backstop: independent of Pub/Sub delivery
+				fanout(aid)
+			}
 		case msg, ok := <-ch:
 			if !ok {
 				return
 			}
-			aid := store.AIDFromPubChannel(msg.Channel)
-			if aid == "" {
-				continue
+			if aid := store.AIDFromPubChannel(msg.Channel); aid != "" {
+				fanout(aid) // wakeup hint: read + broadcast the authoritative Stream
 			}
-			env, ok := decodePub(aid, msg.Payload)
-			if !ok {
-				continue
-			}
-			b, _ := json.Marshal(env)
-			h.broadcast(aid, b)
 		}
 	}
-}
-
-// decodePub turns a Pub/Sub fanout payload (a typed model.PubMessage written by
-// the Lua hot path) into the WS envelope to broadcast to the room. One channel
-// fans out BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD; type + seq are
-// forwarded verbatim and data is already the wire payload. Returns ok=false for
-// a malformed or typeless message (the subscriber skips it).
-func decodePub(aid, payload string) (model.Envelope, bool) {
-	var pm model.PubMessage
-	if err := json.Unmarshal([]byte(payload), &pm); err != nil || pm.Type == "" {
-		return model.Envelope{}, false
-	}
-	return model.Envelope{
-		Type:         pm.Type,
-		AuctionID:    aid,
-		Seq:          pm.Seq,
-		ServerTimeMs: time.Now().UnixMilli(),
-		Data:         pm.Data,
-	}, true
 }
 
 // Conn is one WS client connection with a serialized write pump. Shutdown is
@@ -239,6 +265,21 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		if err != nil {
 			log.Printf("snapshot %s: %v", d.AuctionID, err)
 			return
+		}
+		// Catchup: replay the missed Stream events (seq > lastSeq) before the
+		// snapshot when the gap is small. An up-to-date client (lastSeq >= seq) or
+		// a gap > catchupMaxGap falls back to the snapshot only (proto: gap > 200 →
+		// snapshot). lastSeq 0 with a small backlog replays the whole short history.
+		// Catchup reads the authoritative Stream, not Pub/Sub.
+		if snap.Seq > d.LastSeq && snap.Seq-d.LastSeq <= catchupMaxGap {
+			if events, _, err := s.st.ReadEventsAfter(ctx, d.AuctionID, streamIDForSeq(d.LastSeq)); err == nil {
+				for _, e := range events {
+					c.push(model.Envelope{
+						Type: e.Type, AuctionID: d.AuctionID, Seq: e.Seq,
+						ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
+					})
+				}
+			}
 		}
 		if out, err := model.NewEnvelope(model.TypeRoomSnapshot, d.AuctionID, snap.Seq, snap); err == nil {
 			c.push(out)
