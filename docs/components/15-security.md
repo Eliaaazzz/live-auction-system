@@ -253,7 +253,7 @@ gitleaks protect --staged --no-banner --redact
 
 ### ⚠️ Existing leak
 
-Per V9 §8: `.env.example` in PR #13 has a real `DOUBAO_ENDPOINT_ID=ep-20260514111437-7crsm`. Already in git history — can't unleak with a `.env.example` rewrite. Actions required:
+Per V9 §8: `.env.example` in PR #13 committed a real `DOUBAO_ENDPOINT_ID` (an `ep-<digits>-<suffix>` value — redacted here as `ep-<redacted>` so this doc doesn't re-introduce the literal and trip the `ep-[0-9]{8}` secret guard). Already in git history — can't unleak with a `.env.example` rewrite. Actions required:
 
 1. **Treat as compromised**. Endpoint ID alone isn't a credential, but combined with the APIKey (also in spec PDF — likely shared), the pair could let an outsider call our quota.
 2. Run `gitleaks --redact -r . --baseline-path .gitleaks-baseline.json` to seed a baseline so the new CI gate doesn't fail on the historical leak.

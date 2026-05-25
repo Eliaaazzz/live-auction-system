@@ -156,8 +156,8 @@ func TestCancelAuctionContractMatchesImplementation(t *testing.T) {
 		"ARGV[2] = pubChannel",
 		"'OK_CANCELLED', seq",
 		"'ERR_NOT_ALLOWED', 'not_owner'",
-		"FAIL CLOSED",  // the fail-closed comment in the actual Lua
-		"DRAFT",        // mentions the Go-only DRAFT path
+		"FAIL CLOSED", // the fail-closed comment in the actual Lua
+		"DRAFT",       // mentions the Go-only DRAFT path
 	} {
 		if !strings.Contains(code, want) {
 			t.Errorf("cancel_auction.lua pseudocode is missing v3 contract marker %q (PR #16 CR Eliaaazzz 5/25)", want)
