@@ -267,9 +267,10 @@ func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventT
 		return tx.Commit() // already chained
 	}
 	var prev sql.NullString
+	var prevSeq sql.NullInt64
 	err = tx.QueryRowContext(ctx,
-		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1 FOR UPDATE`,
-		aid, seq).Scan(&prev)
+		`SELECT seq, event_hash FROM auction_events WHERE auction_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1 FOR UPDATE`,
+		aid, seq).Scan(&prevSeq, &prev)
 	if errors.Is(err, sql.ErrNoRows) {
 		if seq > 1 {
 			return fmt.Errorf("%w: aid=%s seq=%d", ErrPreviousEventHashMissing, aid, seq)
@@ -277,8 +278,15 @@ func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventT
 	} else if err != nil {
 		return err
 	}
-	if err == nil && (!prev.Valid || prev.String == "") {
-		return fmt.Errorf("%w: aid=%s seq=%d", ErrPreviousEventHashMissing, aid, seq)
+	// Contiguity guard (TC-T4-112 / Eliaaazzz #35 2nd-pass): the chain must link to the
+	// IMMEDIATELY-prior seq, not just the highest seq below this one. If the closest
+	// existing row is < seq-1, then seq-1 hasn't been projected yet — transient (the
+	// worker projects in seq order, so seq-1 arrives next sweep). Chaining across the
+	// gap would build e.g. 1->3, which VerifyEvidenceChain used to still accept → a
+	// false green for a dropped event, defeating the tamper-evidence point. An unchained
+	// prev (empty hash) is the documented crash-window retry.
+	if err == nil && (prevSeq.Int64 != seq-1 || !prev.Valid || prev.String == "") {
+		return fmt.Errorf("%w: aid=%s seq=%d (closest prior seq=%d, want %d)", ErrPreviousEventHashMissing, aid, seq, prevSeq.Int64, seq-1)
 	}
 	h := s.evidenceHash(prev.String, seq, eventType, payloadNorm.String)
 	if _, err := tx.ExecContext(ctx,
@@ -303,6 +311,7 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 	}
 	defer rows.Close()
 	prev := ""
+	var expectedSeq int64 = 1
 	for rows.Next() {
 		var seq int64
 		var eventType string
@@ -310,6 +319,10 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 		if err := rows.Scan(&seq, &eventType, &payload, &eventHash, &prevHash); err != nil {
 			return false, 0, err
 		}
+		if seq != expectedSeq {
+			return false, seq, nil // non-contiguous seq: a projection gap/skip (missing event) — defense-in-depth over fillEventHash's contiguity guard (TC-T4-112)
+		}
+		expectedSeq = seq + 1
 		if prevHash.String != prev {
 			return false, seq, nil // chain link broken (prev_hash doesn't match the running head)
 		}
