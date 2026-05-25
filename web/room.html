@@ -81,12 +81,13 @@
       } catch (_) { /* leaderboard is best-effort UI */ }
     }
 
-    function markTerminal(label) {
+    function markTerminal(label, statusText) {
       terminal = true;
       document.getElementById('sold').style.display = 'block';
       document.getElementById('sold').textContent = label;
       document.getElementById('bid').disabled = true;
       document.getElementById('countdown').textContent = 'ended';
+      if (statusText) document.getElementById('status').textContent = statusText;
     }
 
     let ws;
@@ -121,8 +122,10 @@
             if ((env.seq || 0) < guard.last()) return; // stale snapshot after a newer event
             guard = makeSeqGuard(env.seq || 0); // prime cursor to snapshot seq
             if (env.data.endAtMs) endAtMs = env.data.endAtMs;
-            if (env.data.status === 'SOLD') markTerminal('SOLD');
             render(env.data.currentPriceCents, env.data.status, env.seq);
+            if (env.data.status === 'SOLD') markTerminal('SOLD', 'status: SOLD · seq: ' + env.seq);
+            else if (env.data.status === 'NO_BID') markTerminal('NO BID', 'status: NO_BID · seq: ' + env.seq);
+            else if (env.data.status === 'CANCELLED') markTerminal('CANCELLED by seller', 'status: CANCELLED · seq: ' + env.seq);
             feed('snapshot: ' + (env.data.status || '—'));
             refreshLeaderboard();
             break;
@@ -140,10 +143,21 @@
             break;
           case 'AUCTION_SOLD':
             if (!guard.apply(env.seq)) return;
-            markTerminal('SOLD to ' + env.data.winnerId + ' @ ' + env.data.amountCents);
+            markTerminal('SOLD to ' + env.data.winnerId + ' @ ' + env.data.amountCents, 'status: SOLD · seq: ' + env.seq);
             feed('AUCTION_SOLD seq=' + env.seq + ' winner=' + env.data.winnerId);
             break;
+          case 'AUCTION_NO_BID':
+            if (!guard.apply(env.seq)) return;
+            markTerminal('NO BID (timer hammer, no bidders)', 'status: NO_BID · seq: ' + env.seq);
+            feed('AUCTION_NO_BID seq=' + env.seq);
+            break;
+          case 'AUCTION_CANCELLED':
+            if (!guard.apply(env.seq)) return;
+            markTerminal('CANCELLED by seller', 'status: CANCELLED · seq: ' + env.seq);
+            feed('AUCTION_CANCELLED seq=' + env.seq);
+            break;
           case 'BID_REJECTED':
+            // ERR_TOO_LOW covers both below-required AND over-cap (proto error-codes.md §3).
             feed('BID_REJECTED: ' + env.data.code); // unordered control frame
             break;
         }
