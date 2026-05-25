@@ -184,17 +184,40 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "rules not found")
 		return
 	}
-	code, err := s.st.FreezeRules(r.Context(), aid, a.SellerID, rules)
+	var code string
+	err = s.st.WithAuctionTransitionLock(r.Context(), aid, func() error {
+		cur, err := s.st.GetAuction(r.Context(), aid)
+		if err != nil {
+			return err
+		}
+		if cur.SellerID != userID {
+			code = model.CodeErrNotAllow
+			return nil
+		}
+		if model.IsTerminal(cur.Status) {
+			code = model.CodeErrAlreadyTerminal
+			return nil
+		}
+		if cur.Status != model.StateDraft {
+			code = model.CodeErrBadState
+			return nil
+		}
+		if !cur.FactsConfirmed {
+			code = model.CodeErrFacts
+			return nil
+		}
+		code, err = s.st.FreezeRules(r.Context(), aid, cur.SellerID, rules)
+		if err != nil || code != model.CodeOKFrozen {
+			return err
+		}
+		return s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled)
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if code != model.CodeOKFrozen {
 		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
-		return
-	}
-	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
@@ -264,29 +287,57 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.Status == model.StateDraft {
-		// unfrozen: no Redis room/stream — flip the MySQL status, but only if it is
-		// STILL DRAFT. A concurrent freeze can move it to SCHEDULED between ownsAuction's
-		// read above and here (TOCTOU); an unconditional write would clobber SCHEDULED
-		// with CANCELLED, splitting MySQL(CANCELLED) from Redis(SCHEDULED) and stranding
-		// the auction. The conditional write no-ops in that case — we re-read and fall
-		// through to the frozen Lua cancel path on the real state. (TC-T3-100)
-		ok, err := s.st.UpdateAuctionStatusIf(r.Context(), aid, model.StateCancelled, model.StateDraft)
+		var localCode string
+		var localHTTP int
+		useLuaCancel := false
+		err := s.st.WithAuctionTransitionLock(r.Context(), aid, func() error {
+			cur, err := s.st.GetAuction(r.Context(), aid)
+			if err != nil {
+				return err
+			}
+			if cur.SellerID != userID {
+				localHTTP, localCode = http.StatusForbidden, model.CodeErrNotAllow
+				return nil
+			}
+			if model.IsTerminal(cur.Status) {
+				localHTTP, localCode = http.StatusConflict, model.CodeErrAlreadyTerminal
+				return nil
+			}
+			if cur.Status != model.StateDraft {
+				useLuaCancel = true
+				return nil
+			}
+			// Freeze writes Redis before projecting MySQL to SCHEDULED. If cancel sees
+			// MySQL=DRAFT during that window, a MySQL-only cancel would split the state.
+			// Treat any existing Redis state as frozen and use cancel_auction.lua.
+			snap, err := s.st.Snapshot(r.Context(), aid)
+			if err != nil {
+				return err
+			}
+			if snap.Status != "" {
+				useLuaCancel = true
+				return nil
+			}
+			ok, err := s.st.UpdateAuctionStatusIf(r.Context(), aid, model.StateCancelled, model.StateDraft)
+			if err != nil {
+				return err
+			}
+			if ok {
+				localHTTP, localCode = http.StatusOK, model.CodeOKCancelled
+				return nil
+			}
+			useLuaCancel = true
+			return nil
+		})
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		if ok {
-			writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
+		if localCode != "" {
+			writeJSON(w, localHTTP, map[string]any{"code": localCode})
 			return
 		}
-		// no longer DRAFT — a concurrent freeze won the race. Re-read and handle on the
-		// current state instead of clobbering it.
-		a, ok = s.ownsAuction(w, r, aid, userID)
-		if !ok {
-			return
-		}
-		if model.IsTerminal(a.Status) {
-			writeJSON(w, http.StatusConflict, map[string]any{"code": model.CodeErrAlreadyTerminal})
+		if !useLuaCancel {
 			return
 		}
 		// falls through to cancel_auction.lua below (now SCHEDULED/LIVE in Redis).

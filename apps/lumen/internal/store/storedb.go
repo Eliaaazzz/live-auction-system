@@ -142,6 +142,34 @@ func (s *Store) UpdateAuctionStatusIf(ctx context.Context, id, status, expected 
 	return n == 1, nil
 }
 
+// WithAuctionTransitionLock serializes DRAFT edge transitions that span MySQL and
+// Redis (currently freeze vs DRAFT cancel). The lock is advisory, so every
+// participant in that cross-store transition must opt in.
+func (s *Store) WithAuctionTransitionLock(ctx context.Context, aid string, fn func() error) error {
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	lockName := "auction_transition:" + aid
+	var got sql.NullInt64
+	if err := conn.QueryRowContext(ctx, `SELECT GET_LOCK(?, 5)`, lockName).Scan(&got); err != nil {
+		return err
+	}
+	if !got.Valid || got.Int64 != 1 {
+		return fmt.Errorf("auction transition lock timeout: %s", aid)
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		var released sql.NullInt64
+		_ = conn.QueryRowContext(releaseCtx, `SELECT RELEASE_LOCK(?)`, lockName).Scan(&released)
+	}()
+
+	return fn()
+}
+
 // ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
 // DIFFERENT payload than the one being projected — a tamper/bug signal, not the
 // normal idempotent re-projection. The full hash chain lands in T4; this is the

@@ -70,6 +70,47 @@ func TestT3CancelDraftConditionalUpdateGuardsTOCTOU(t *testing.T) {
 	}
 }
 
+func TestT3CancelDraftPathHonorsRedisFrozenWindow(t *testing.T) {
+	target, srv := startTestServer(t)
+	ctx := context.Background()
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	seller, err := devLogin(hc, target, "T3 TC100 Redis Window Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aid, err := createAuction(hc, target, seller.Token, productID) // MySQL DRAFT
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := srv.st.GetRules(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the exact freeze window: Redis is already SCHEDULED, but the REST
+	// handler has not yet projected auctions.status from DRAFT to SCHEDULED.
+	if code, err := srv.st.FreezeRules(ctx, aid, seller.UserID, rules); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("redis-only freeze: code=%s err=%v", code, err)
+	}
+	if a, err := srv.st.GetAuction(ctx, aid); err != nil || a.Status != model.StateDraft {
+		t.Fatalf("precondition: MySQL status=%q err=%v, want DRAFT", a.Status, err)
+	}
+
+	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/cancel", seller.Token, nil, model.CodeOKCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if snap, err := srv.st.Snapshot(ctx, aid); err != nil || snap.Status != model.StateCancelled {
+		t.Fatalf("Redis status=%q err=%v, want CANCELLED via cancel_auction.lua", snap.Status, err)
+	}
+	if a, err := srv.st.GetAuction(ctx, aid); err != nil || a.Status != model.StateCancelled {
+		t.Fatalf("MySQL status=%q err=%v, want CANCELLED", a.Status, err)
+	}
+}
+
 // TC-T3-104 — close_auction ERR_INTERNAL must not spin the Timer forever. With a
 // corrupted state/stream seq alignment, close_auction returns ERR_INTERNAL; the Timer
 // previously fell through with no untrack, re-hammering every 100ms. closeDue now
