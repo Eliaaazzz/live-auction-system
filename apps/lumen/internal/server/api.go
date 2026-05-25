@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
@@ -117,6 +119,10 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "productId required")
 		return
 	}
+	if err := body.Rules.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	id := "auc_" + newID()
 	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
 		if err == store.ErrNotFound {
@@ -178,7 +184,7 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "rules not found")
 		return
 	}
-	code, err := s.st.FreezeRules(r.Context(), aid, rules)
+	code, err := s.st.FreezeRules(r.Context(), aid, a.SellerID, rules)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -237,6 +243,56 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
 }
 
+// POST /api/auctions/{id}/cancel -> CANCELLED. §8: seller-only (ownsAuction).
+// DRAFT (unfrozen, no Redis state/room) is a MySQL-only status flip; SCHEDULED/LIVE
+// go through cancel_auction.lua (Redis transition + AUCTION_CANCELLED event, which
+// the persistence worker projects to auctions.status — set synchronously here too
+// for immediate REST consistency).
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	a, ok := s.ownsAuction(w, r, aid, userID)
+	if !ok {
+		return
+	}
+	if model.IsTerminal(a.Status) {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": model.CodeErrAlreadyTerminal})
+		return
+	}
+	if a.Status == model.StateDraft {
+		// unfrozen: no Redis room/stream — just flip the MySQL status.
+		if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
+		return
+	}
+	code, err := s.st.CancelAuction(r.Context(), aid, userID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if code != model.CodeOKCancelled {
+		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
+		return
+	}
+	// drop from the Timer index; on failure the Timer self-heals (next scan finds
+	// it, CloseAuction returns ERR_ALREADY_TERMINAL, and it untracks then).
+	if err := s.st.UntrackActive(r.Context(), aid); err != nil {
+		log.Printf("cancel %s: untrack active failed (timer will self-heal): %v", aid, err)
+	}
+	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"code": code})
+}
+
 // GET /api/auctions/{id}/events-count -> {count} (MySQL projection; for e2e/verify).
 func (s *Server) handleEventsCount(w http.ResponseWriter, r *http.Request) {
 	n, err := s.st.CountEvents(r.Context(), r.PathValue("id"))
@@ -245,6 +301,41 @@ func (s *Server) handleEventsCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"count": n})
+}
+
+// clampLeaderboardN parses the ?n= leaderboard size, clamping to [1,100] and
+// defaulting to 10 for missing/invalid input (lenient query param — a bad n is
+// not worth a 400; the cap bounds the Redis ZREVRANGE).
+func clampLeaderboardN(q string) int {
+	if q == "" {
+		return 10
+	}
+	v, err := strconv.Atoi(q)
+	if err != nil || v <= 0 {
+		return 10
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, amountCents}]}.
+// Top-n bidders by accepted max amount (Redis ZSET), money as string. n clamps to [1,100].
+// Requires a valid token: the bidder list (userId + amount) is room-scoped data, not
+// public the way the single current price is — so unlike GET /auctions/{id} it is gated.
+func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	lb, err := s.st.Leaderboard(r.Context(), aid, clampLeaderboardN(r.URL.Query().Get("n")))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
 }
 
 // GET /api/auctions/{id}/evidence -> T1 evidence stub (real hash chain = T4).

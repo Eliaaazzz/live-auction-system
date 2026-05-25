@@ -2,7 +2,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
 
-.PHONY: up down logs seed e2e-dummy-bid verify build vet test fmt guard
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke verify build vet test fmt guard
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -26,6 +26,9 @@ e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	aid="$$(printf '%s\n' "$$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"; \
 	test -n "$$aid" || { echo "missing E2E_AUCTION_ID from e2e output"; exit 1; }; \
 	printf '%s\n' "$$aid" > $(E2E_AID_FILE)
+
+perf-smoke:       ## T2 perf floor-check: ack/broadcast p95 vs §4.2 fallback budgets
+	$(COMPOSE) --profile tools run --rm --build perf-smoke
 
 verify:           ## replay-verifier skeleton: expect "consistent"
 	@aid="$(VERIFY_AID)"; \

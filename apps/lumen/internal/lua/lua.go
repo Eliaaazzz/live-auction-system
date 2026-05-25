@@ -1,6 +1,6 @@
 // Package lua embeds the Redis Lua scripts so they ship inside the binary and
 // are loaded via SCRIPT LOAD at startup. Redis Lua is the only writer of hot
-// keys. T1 ships freeze/start/place_bid; close/cancel land in T3.
+// keys. T1 ships freeze/start/place_bid; T3 adds close/cancel.
 package lua
 
 import _ "embed"
@@ -13,3 +13,9 @@ var FreezeRules string
 
 //go:embed start_auction.lua
 var StartAuction string
+
+//go:embed close_auction.lua
+var CloseAuction string
+
+//go:embed cancel_auction.lua
+var CancelAuction string

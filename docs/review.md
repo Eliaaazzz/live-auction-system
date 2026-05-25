@@ -1,8 +1,3 @@
 # PR Review
 
-1. Parse full diff; scan every file.
-2. Rank risk: contracts, auth, data, Lua, CI.
-3. Check software engineering principles, design patterns, code quality.
-4. Review as Security, Correctness, API compatibility, Performance, Test coverage.
-5. Pull callers/tests; check contract drift.
-6. Run stated commands; report coverage, blockers, uncertainty.
+全扫diff；排风险；读调用/测试；查契约漂移；拉PR实跑；审正确/性能/安全/API；AI补边界/隐藏测；评论附测试文件+阻塞。

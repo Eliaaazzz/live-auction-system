@@ -6,6 +6,7 @@ Materialized from PR #13 `docs/ws-protocol.md`. Encoding: **JSON-only** in T1 (m
 
 ```ts
 type WsEnvelope<T = unknown> = {
+  schemaVersion: number   // wire-protocol version (currently 1); clients detect mismatch
   type: string            // SCREAMING_SNAKE, see tables below
   auctionId?: string
   requestId?: string
@@ -19,24 +20,44 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_JOIN` | `{ auctionId, lastSeq? }` | join room; `lastSeq` requests catchup (catchup itself is T5) |
+| `ROOM_JOIN` | `{ auctionId, lastSeq? }` | join room; `lastSeq` replays the missed Stream delta (then `ROOM_SNAPSHOT`); gap > 200 → snapshot only |
 | `BID_PLACE` | `{ clientBidId, amountCents: string }` | submit a bid |
 | `PING` | `{}` | heartbeat |
 
 ## Server → Client
 
-| type | purpose |
-|---|---|
-| `ROOM_SNAPSHOT` | current price, winner, `endAtMs`, `seq`, status on join |
-| `BID_ACCEPTED` | accepted ack: `seq`, `amountCents`, `endAtMs`, `status` |
-| `BID_REJECTED` | `{ code }` machine-readable (see `error-codes.md`) |
-| `AUCTION_EXTENDED` | anti-snipe extension (event, **not** a state) — emitted from T2/T3 |
-| `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` | terminal events (T3) |
-| `PONG` | heartbeat response |
+| type | data | purpose |
+|---|---|---|
+| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq }` | room state on join |
+| `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
+| `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
+| `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
+| `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
+| `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
+| `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
+| `PONG` | `{}` | heartbeat response |
 
-## T1 subset
+`amountCents` is a **string** in every payload above (money-as-string boundary). All these events carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets both a direct `BID_ACCEPTED` ack and the Pub/Sub broadcast — and out-of-order frames).
 
-T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. Backpressure channels (critical/presence/chat/ai), catchup, and the terminal/extended events are wired in their gating T-steps (T2/T3/T5).
+## Leaderboard (REST, additive)
+
+`GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
+
+## Semantics / known limitations (T2)
+
+- **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
+- **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
+- **Anti-snipe is bounded** by `maxExtensions` (rule DSL; `0` = unlimited). Past the cap an in-window bid is a normal `BID_ACCEPTED` with no `AUCTION_EXTENDED` and no `endAtMs` change.
+- A `DUPLICATE` retry on the **same** socket after an extension replays the cached `BID_ACCEPTED` (which already carries the extended `endAtMs`) but **not** the separate `AUCTION_EXTENDED` event; the canonical recovery for a missed event is reconnect + `lastSeq` catchup (implemented in T2: `ROOM_JOIN{lastSeq}` → XRANGE delta replay + snapshot fallback; multi-gateway fanout is T5).
+- **Broadcast is Stream-authoritative**: on a Pub/Sub wakeup the gateway reads the canonical Redis Stream from the room's last-broadcast seq and fans out those events. Pub/Sub is a non-authoritative hint — a forged/stale message not backed by the Stream is never broadcast.
+- **Every envelope carries `schemaVersion`** (currently `1`) so clients can detect a wire-protocol mismatch; bump on a breaking change (all-member approve).
+- **Seller self-bid is rejected** (`BID_REJECTED{ERR_NOT_ALLOWED}`): the seller id is frozen into Redis state and checked on the hot path (anti shill-bidding).
+- **Money is bounded by `MaxMoneyCents` (2^53-1)** and stored as exact decimal strings; larger amounts are rejected (`ERR_BAD_INPUT` at the gateway, `ERR_TOO_LOW` defensively in Lua) because float64 (Lua / JS / Redis ZSET score) can't represent them exactly.
+- **Critical-event backpressure**: a client whose send buffer fills is dropped (connection closed) rather than silently losing a `BID_ACCEPTED` / `AUCTION_*` event; the client auto-reconnects and re-syncs via `ROOM_SNAPSHOT`. Full priority-queue separation (chat/presence vs critical) + `lastSeq` catchup land in T5.
+
+## T1 / T2 subset
+
+T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) + `AUCTION_SOLD` (cap-hit) broadcasts, the client `seq-guard`, Stream-authoritative broadcast, `lastSeq` catchup, and `schemaVersion`. Backpressure **channels** (critical/presence/chat/ai split) and multi-gateway fanout are wired in their gating T-steps (T5); the remaining terminal events land in T3.
 
 ## Countdown
 
