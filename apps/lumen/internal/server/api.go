@@ -184,17 +184,40 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "rules not found")
 		return
 	}
-	code, err := s.st.FreezeRules(r.Context(), aid, a.SellerID, rules)
+	var code string
+	err = s.st.WithAuctionTransitionLock(r.Context(), aid, func() error {
+		cur, err := s.st.GetAuction(r.Context(), aid)
+		if err != nil {
+			return err
+		}
+		if cur.SellerID != userID {
+			code = model.CodeErrNotAllow
+			return nil
+		}
+		if model.IsTerminal(cur.Status) {
+			code = model.CodeErrAlreadyTerminal
+			return nil
+		}
+		if cur.Status != model.StateDraft {
+			code = model.CodeErrBadState
+			return nil
+		}
+		if !cur.FactsConfirmed {
+			code = model.CodeErrFacts
+			return nil
+		}
+		code, err = s.st.FreezeRules(r.Context(), aid, cur.SellerID, rules)
+		if err != nil || code != model.CodeOKFrozen {
+			return err
+		}
+		return s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled)
+	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if code != model.CodeOKFrozen {
 		writeJSON(w, http.StatusConflict, map[string]any{"code": code})
-		return
-	}
-	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateScheduled); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
@@ -264,13 +287,60 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.Status == model.StateDraft {
-		// unfrozen: no Redis room/stream — just flip the MySQL status.
-		if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+		var localCode string
+		var localHTTP int
+		useLuaCancel := false
+		err := s.st.WithAuctionTransitionLock(r.Context(), aid, func() error {
+			cur, err := s.st.GetAuction(r.Context(), aid)
+			if err != nil {
+				return err
+			}
+			if cur.SellerID != userID {
+				localHTTP, localCode = http.StatusForbidden, model.CodeErrNotAllow
+				return nil
+			}
+			if model.IsTerminal(cur.Status) {
+				localHTTP, localCode = http.StatusConflict, model.CodeErrAlreadyTerminal
+				return nil
+			}
+			if cur.Status != model.StateDraft {
+				useLuaCancel = true
+				return nil
+			}
+			// Freeze writes Redis before projecting MySQL to SCHEDULED. If cancel sees
+			// MySQL=DRAFT during that window, a MySQL-only cancel would split the state.
+			// Treat any existing Redis state as frozen and use cancel_auction.lua.
+			snap, err := s.st.Snapshot(r.Context(), aid)
+			if err != nil {
+				return err
+			}
+			if snap.Status != "" {
+				useLuaCancel = true
+				return nil
+			}
+			ok, err := s.st.UpdateAuctionStatusIf(r.Context(), aid, model.StateCancelled, model.StateDraft)
+			if err != nil {
+				return err
+			}
+			if ok {
+				localHTTP, localCode = http.StatusOK, model.CodeOKCancelled
+				return nil
+			}
+			useLuaCancel = true
+			return nil
+		})
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
-		return
+		if localCode != "" {
+			writeJSON(w, localHTTP, map[string]any{"code": localCode})
+			return
+		}
+		if !useLuaCancel {
+			return
+		}
+		// falls through to cancel_auction.lua below (now SCHEDULED/LIVE in Redis).
 	}
 	code, err := s.st.CancelAuction(r.Context(), aid, userID)
 	if err != nil {
