@@ -98,3 +98,96 @@ func TestMaxExtensionsDocumented(t *testing.T) {
 		t.Error("docs/components/03-lua-scripts.md must document the MaxExtensions cap (PR #26 finding #1)")
 	}
 }
+
+// TestCloseAuctionContractMatchesImplementation asserts the close_auction.lua
+// pseudocode block uses the actual KEYS/ARGV layout + payload field names from
+// the materialized T3 implementation. Per Eliaaazzz PR #16 CR 5/25 02:25: the
+// v2 doc had `KEYS[2] = leaderboard` + payload `winnerUserId` / `finalPriceCents`,
+// none of which exist in the real Lua. This test pins the v3 contract so a
+// future doc edit can't silently drift.
+func TestCloseAuctionContractMatchesImplementation(t *testing.T) {
+	lua := readDoc(t, "docs/components/03-lua-scripts.md")
+	code := extractLuaCodeBlock(lua, "## `close_auction.lua`")
+	if code == "" {
+		t.Fatal("could not extract close_auction.lua pseudocode block")
+	}
+
+	for _, want := range []string{
+		"KEYS[1] = auction:{<aid>}:state",
+		"KEYS[2] = auction:{<aid>}:events",
+		"ARGV[1] = pubChannel",
+		"'OK_SOLD', seq",
+		"'OK_NO_BID', seq",
+		"'ERR_NOT_DUE'",
+		"winnerId = winner",
+		"amountCents = priceStr",
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("close_auction.lua pseudocode is missing v3 contract marker %q (PR #16 CR Eliaaazzz 5/25)", want)
+		}
+	}
+
+	for _, bad := range []string{
+		"KEYS[2] = auction:{<aid>}:leaderboard",
+		"KEYS[3] = auction:{<aid>}:events",
+		"winnerUserId",
+		"finalPriceCents",
+	} {
+		if strings.Contains(code, bad) {
+			t.Errorf("close_auction.lua pseudocode still contains v2 drift marker %q (PR #16 CR Eliaaazzz 5/25)", bad)
+		}
+	}
+}
+
+// TestCancelAuctionContractMatchesImplementation asserts cancel_auction.lua's
+// doc reflects the T3 fail-CLOSED ownership check + DRAFT-handled-in-Go split.
+// v2 doc said "DRAFT goes through Lua" + "ownership pre-checked in Go" — both
+// wrong vs the implementation (DRAFT is Go-only; Lua does its own fail-closed
+// check inside the script). Per Eliaaazzz PR #16 CR 5/25 02:25.
+func TestCancelAuctionContractMatchesImplementation(t *testing.T) {
+	lua := readDoc(t, "docs/components/03-lua-scripts.md")
+	code := extractLuaCodeBlock(lua, "## `cancel_auction.lua`")
+	if code == "" {
+		t.Fatal("could not extract cancel_auction.lua pseudocode block")
+	}
+
+	for _, want := range []string{
+		"ARGV[1] = callerId",
+		"ARGV[2] = pubChannel",
+		"'OK_CANCELLED', seq",
+		"'ERR_NOT_ALLOWED', 'not_owner'",
+		"FAIL CLOSED",  // the fail-closed comment in the actual Lua
+		"DRAFT",        // mentions the Go-only DRAFT path
+	} {
+		if !strings.Contains(code, want) {
+			t.Errorf("cancel_auction.lua pseudocode is missing v3 contract marker %q (PR #16 CR Eliaaazzz 5/25)", want)
+		}
+	}
+	// v2 had payload fields `reason = ARGV[3]` + `actorUserId = ARGV[2]` that
+	// don't exist in the implementation. Reject them in the pseudocode.
+	if strings.Contains(code, "reason = ARGV[3]") || strings.Contains(code, "actorUserId = ARGV[2]") {
+		t.Error("cancel_auction.lua pseudocode still describes reason/actorUserId payload fields that don't exist (PR #16 CR Eliaaazzz 5/25)")
+	}
+}
+
+// extractLuaCodeBlock returns the contents of the first ```lua ... ``` fenced
+// block found after `afterMarker`. Used by the contract tests so they pin the
+// pseudocode only, not the surrounding changelog prose (which legitimately
+// describes v2 drift in the "Updated v3" banner).
+func extractLuaCodeBlock(s, afterMarker string) string {
+	idx := strings.Index(s, afterMarker)
+	if idx < 0 {
+		return ""
+	}
+	rest := s[idx:]
+	open := strings.Index(rest, "```lua\n")
+	if open < 0 {
+		return ""
+	}
+	body := rest[open+len("```lua\n"):]
+	closeIdx := strings.Index(body, "\n```")
+	if closeIdx < 0 {
+		return ""
+	}
+	return body[:closeIdx]
+}

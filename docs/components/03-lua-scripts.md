@@ -213,112 +213,156 @@ return {'OK_ACCEPTED', seq, bidJson}
 
 ## `close_auction.lua` — full pseudocode
 
+> **Updated v3 (post-T3 PR #29 / rollup #31)**: signature + return shape + payload field names synced to the materialized implementation in `apps/lumen/internal/lua/close_auction.lua`. v2 doc had a third KEYS slot for `leaderboard` (not read by close) and used payload fields `winnerUserId` / `finalPriceCents` (real fields are `winnerId` / `amountCents`). Per [Eliaaazzz PR #16 CR 5/25 02:25](https://github.com/Eliaaazzz/live-auction-system/pull/16#pullrequestreview-4353172832).
+
 ```lua
 -- KEYS[1] = auction:{<aid>}:state
--- KEYS[2] = auction:{<aid>}:leaderboard
--- KEYS[3] = auction:{<aid>}:events
--- ARGV[1] = pubChannel = "auction:<aid>:pub"
+-- KEYS[2] = auction:{<aid>}:events       -- NO leaderboard key; close doesn't read it
+-- ARGV[1] = pubChannel = "auction:{<aid>}:pub"
+--
+-- Returns (proto/error-codes.md):
+--   {'OK_SOLD', seq, soldJson}            -- terminal SOLD, AUCTION_SOLD event @ <seq>-0
+--   {'OK_NO_BID', seq, noBidJson}         -- terminal NO_BID, AUCTION_NO_BID event @ <seq>-0
+--   {'ERR_NOT_DUE', endAtMs, now}         -- now < endAtMs (anti-snipe moved it forward; engine retries)
+--   {'ERR_ALREADY_TERMINAL', status}      -- not LIVE (engine no-ops, Timer untracks)
+--   {'ERR_INTERNAL', 'key_type' | 'seq_stream_mismatch'}
 
-local state_key  = KEYS[1]
-local lb_key     = KEYS[2]
-local stream_key = KEYS[3]
+local state_key, stream_key = KEYS[1], KEYS[2]
+local pub = ARGV[1]
 
-local s = redis.call('HMGET', state_key,
-  'status', 'currentPriceCents', 'winnerId', 'endAtMs')
-local status   = s[1]
-local current  = tonumber(s[2]) or 0
-local top_user = s[3]
-local end_at_ms = tonumber(s[4]) or 0
-
--- Terminal guard (idempotent: timer may fire stale)
-if status == 'SOLD' or status == 'NO_BID' or status == 'CANCELLED' or status == 'ORDER_CREATED' then
-  return {'ERR_ALREADY_TERMINAL', status}
+-- (1) Type-guards on both keys before any write
+local function bad_type(key, want)
+  local t = redis.call('TYPE', key).ok
+  return t ~= 'none' and t ~= want
 end
-if status ~= 'LIVE' then
-  return {'ERR_NOT_LIVE', status}
+if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream') then
+  return {'ERR_INTERNAL', 'key_type'}
 end
 
--- Re-check time (timer scan + engine dispatch lag could mean now < endAtMs)
+local s = redis.call('HMGET', state_key, 'status', 'endAtMs', 'currentPriceCents', 'winnerId', 'seq')
+local status    = s[1]
+local endAtMs   = tonumber(s[2]) or 0
+local priceStr  = s[3] or '0'
+local winner    = s[4]
+local stateSeq  = tonumber(s[5]) or 0
+
+-- (2) Only a LIVE auction is hammerable. Anything else is a Timer no-op.
+if status ~= 'LIVE' then return {'ERR_ALREADY_TERMINAL', status or 'UNKNOWN'} end
+
+-- (3) Redis TIME is authoritative; boundary is `now >= endAtMs`. An anti-snipe
+-- extension since the Timer scan lands here as ERR_NOT_DUE so the engine
+-- refreshes the score and re-polls at the new time.
 local t = redis.call('TIME')
-local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-if now_ms < end_at_ms then
-  return {'ERR_NOT_DUE', end_at_ms, now_ms}
-end
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
+if now < endAtMs then return {'ERR_NOT_DUE', endAtMs, now} end
 
+-- (4) Validate-before-write seq preflight (Lua has no rollback). Stream's
+-- last seq must match state.seq; otherwise the `<seq>-0` XADD would error
+-- AFTER the HINCRBY, leaving status inconsistent.
+local last = redis.call('XREVRANGE', stream_key, '+', '-', 'COUNT', 1)
+local lastStreamSeq = 0
+if last[1] then lastStreamSeq = tonumber(string.match(last[1][1], '^(%d+)')) or 0 end
+if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
+
+-- (5) Commit terminal state + Stream entry at <seq>-0.
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
-
--- Determine SOLD vs NO_BID
-local has_bid = top_user and top_user ~= ''
-local final_status = has_bid and 'SOLD' or 'NO_BID'
-
-redis.call('HSET', state_key, 'status', final_status)
-
-local payload = cjson.encode({
-  seq = seq,
-  status = final_status,
-  winnerUserId = top_user or '',
-  finalPriceCents = tostring(current),
-  serverTimeMs = now_ms,
-  endAtMs = end_at_ms,
-})
-
-local stream_type = has_bid and 'AUCTION_SOLD' or 'AUCTION_NO_BID'
-redis.call('XADD', stream_key, seq .. '-0',
-  'type', stream_type,
-  'seq', seq,
-  'payload', payload)
-
-redis.call('PUBLISH', ARGV[1], payload)  -- ARGV[1] = "auction:<aid>:pub"
-
-return {has_bid and 'OK_SOLD' or 'OK_NO_BID', payload}
+if winner and winner ~= '' then
+  redis.call('HSET', state_key, 'status', 'SOLD')
+  local sold = {
+    seq = seq, winnerId = winner, amountCents = priceStr,
+    status = 'SOLD', serverTimeMs = now,
+  }
+  local soldJson = cjson.encode(sold)
+  redis.call('XADD', stream_key, seq .. '-0', 'type', 'AUCTION_SOLD', 'seq', seq, 'payload', soldJson)
+  redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_SOLD', seq = seq, data = sold}))
+  return {'OK_SOLD', seq, soldJson}
+end
+redis.call('HSET', state_key, 'status', 'NO_BID')
+local nb = {seq = seq, status = 'NO_BID', serverTimeMs = now}
+local nbJson = cjson.encode(nb)
+redis.call('XADD', stream_key, seq .. '-0', 'type', 'AUCTION_NO_BID', 'seq', seq, 'payload', nbJson)
+redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_NO_BID', seq = seq, data = nb}))
+return {'OK_NO_BID', seq, nbJson}
 ```
 
-> KEYS updated to canonical names; `close_auction.lua` should take `pubChannel` as ARGV[1] (consistent with `place_bid.lua` ARGV[5] convention) rather than parse the key name.
+**Notes:**
+- `winnerId` (not `winnerUserId`) and `amountCents` (not `finalPriceCents`) — proto/ws-envelope.md `AuctionSoldData` shape, reused from T2's cap-hit SOLD path so cap-hit and Timer-hammer emit identical event payloads.
+- `OK_SOLD` / `OK_NO_BID` returns a 3-tuple `(code, seq, json)`. The seq is broken out so the Go dispatcher doesn't have to re-parse the JSON.
+- `OK_SOLD` shape exactly matches T2's `place_bid.lua` cap-hit SOLD return so the Stream-first persistence projection is a single code path.
 
 ## `cancel_auction.lua` — pseudocode
+
+> **Updated v3 (post-T3 PR #29 / rollup #31)**: DRAFT is handled in Go (`apps/lumen/internal/server/api.go::handleCancel` DRAFT branch does a MySQL-only status flip) NOT in Lua — DRAFT has no Redis state. The v2 doc said "DRAFT goes through Lua" which is wrong. Ownership check is **fail-CLOSED** inside Lua (v2's "ownership pre-checked in Go layer" is insufficient: a corrupt state Hash with empty/absent `sellerId` would let anyone cancel, the exact fail-open class `TestT3CancelFailClosedOnEmptySeller` covers). Per [Eliaaazzz PR #16 CR 5/25 02:25](https://github.com/Eliaaazzz/live-auction-system/pull/16#pullrequestreview-4353172832).
 
 ```lua
 -- KEYS[1] = auction:{<aid>}:state
 -- KEYS[2] = auction:{<aid>}:events
--- ARGV[1] = pubChannel    = "auction:<aid>:pub"
--- ARGV[2] = actorUserId   (for audit; ownership pre-checked in Go layer)
--- ARGV[3] = reason        (string)
+-- ARGV[1] = callerId    -- the user attempting the cancel; checked against state.sellerId
+-- ARGV[2] = pubChannel  = "auction:{<aid>}:pub"
+--
+-- Returns (proto/error-codes.md):
+--   {'OK_CANCELLED', seq, cancelJson}     -- terminal CANCELLED, AUCTION_CANCELLED event @ <seq>-0
+--   {'ERR_NOT_ALLOWED', 'not_owner'}      -- callerId != state.sellerId, OR sellerId empty/absent (FAIL-CLOSED)
+--   {'ERR_ALREADY_TERMINAL', status}      -- already terminal, or no Redis state (unfrozen DRAFT — handle in Go)
+--   {'ERR_INTERNAL', 'key_type' | 'seq_stream_mismatch'}
 
-local state_key  = KEYS[1]
-local stream_key = KEYS[2]
+local state_key, stream_key = KEYS[1], KEYS[2]
+local callerId, pub = ARGV[1], ARGV[2]
 
-local status = redis.call('HGET', state_key, 'status')
-if status == 'SOLD' or status == 'NO_BID' or status == 'CANCELLED' or status == 'ORDER_CREATED' then
-  return {'ERR_ALREADY_TERMINAL', status}
+-- (1) Type-guards
+local function bad_type(key, want)
+  local t = redis.call('TYPE', key).ok
+  return t ~= 'none' and t ~= want
 end
-if status ~= 'DRAFT' and status ~= 'SCHEDULED' and status ~= 'LIVE' then
-  return {'ERR_NOT_ALLOWED', status or 'UNKNOWN'}
+if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream') then
+  return {'ERR_INTERNAL', 'key_type'}
 end
 
+local s = redis.call('HMGET', state_key, 'status', 'sellerId', 'seq')
+local status   = s[1]
+local sellerId = s[2]
+local stateSeq = tonumber(s[3]) or 0
+
+-- (2) No Redis state (unfrozen DRAFT) OR already terminal → engine no-op.
+-- DRAFT path is handled in Go: apps/lumen/internal/server/api.go::handleCancel
+-- DRAFT branch does a MySQL-only status flip; no Lua involvement.
+local function is_terminal(st)
+  return st == 'SOLD' or st == 'NO_BID' or st == 'CANCELLED' or st == 'ORDER_CREATED'
+end
+if not status or status == false or is_terminal(status) then
+  return {'ERR_ALREADY_TERMINAL', status or 'UNKNOWN'}
+end
+
+-- (3) Ownership — FAIL CLOSED. A frozen auction always has sellerId (freeze_rules
+-- copies it in), so missing/empty sellerId means corrupt state → reject. Contrast
+-- place_bid's seller-self-bid check which fails OPEN (there the safe default is
+-- "accept the bid"; here the safe default is "deny the terminal-writing op").
+if not sellerId or sellerId == '' or callerId ~= sellerId then
+  return {'ERR_NOT_ALLOWED', 'not_owner'}
+end
+
+-- (4) Seq preflight (same no-dirty-write invariant as close_auction).
+local last = redis.call('XREVRANGE', stream_key, '+', '-', 'COUNT', 1)
+local lastStreamSeq = 0
+if last[1] then lastStreamSeq = tonumber(string.match(last[1][1], '^(%d+)')) or 0 end
+if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
+
+-- (5) Commit CANCELLED + Stream entry.
+local t = redis.call('TIME')
+local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 redis.call('HSET', state_key, 'status', 'CANCELLED')
-
-local t = redis.call('TIME')
-local now_ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
-
-local payload = cjson.encode({
-  seq = seq,
-  status = 'CANCELLED',
-  reason = ARGV[3],
-  actorUserId = ARGV[2],
-  serverTimeMs = now_ms,
-  fromStatus = status,
-})
-
-redis.call('XADD', stream_key, seq .. '-0',
-  'type', 'AUCTION_CANCELLED',
-  'seq', seq,
-  'payload', payload)
-
-redis.call('PUBLISH', ARGV[1], payload)
-
-return {'OK_CANCELLED', payload}
+local c = {seq = seq, status = 'CANCELLED', serverTimeMs = now}
+local cJson = cjson.encode(c)
+redis.call('XADD', stream_key, seq .. '-0', 'type', 'AUCTION_CANCELLED', 'seq', seq, 'payload', cJson)
+redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_CANCELLED', seq = seq, data = c}))
+return {'OK_CANCELLED', seq, cJson}
 ```
+
+**Notes:**
+- Cancel is **NOT a hammer** — cancelling a LIVE auction that has a leading bid still emits `AUCTION_CANCELLED` (not `AUCTION_SOLD`); the leading bidder is not awarded the item. Pinned by `TestT3CancelLiveWithBidsGoesCancelledNotSold`.
+- The `actorUserId` + `reason` payload fields the v2 doc described do not currently exist; if a future T needs an audit trail, they land via an explicit contract change.
+- `pubChannel` is `ARGV[2]` (not `ARGV[1]`) here because the caller id comes first — it's the **input** that the Lua needs to validate, while `pubChannel` is a routing detail. Contrast `close_auction.lua` which has no caller id and puts `pubChannel` at `ARGV[1]`.
 
 ## `start_auction.lua` and `freeze_rules.lua` — short specs
 
