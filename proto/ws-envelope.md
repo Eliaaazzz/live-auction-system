@@ -53,11 +53,11 @@ type WsEnvelope<T = unknown> = {
 - **Every envelope carries `schemaVersion`** (currently `1`) so clients can detect a wire-protocol mismatch; bump on a breaking change (all-member approve).
 - **Seller self-bid is rejected** (`BID_REJECTED{ERR_NOT_ALLOWED}`): the seller id is frozen into Redis state and checked on the hot path (anti shill-bidding).
 - **Money is bounded by `MaxMoneyCents` (2^53-1)** and stored as exact decimal strings; larger amounts are rejected (`ERR_BAD_INPUT` at the gateway, `ERR_TOO_LOW` defensively in Lua) because float64 (Lua / JS / Redis ZSET score) can't represent them exactly.
-- **Critical-event backpressure**: a client whose send buffer fills is dropped (connection closed) rather than silently losing a `BID_ACCEPTED` / `AUCTION_*` event; the client auto-reconnects and re-syncs via `ROOM_SNAPSHOT`. Full priority-queue separation (chat/presence vs critical) + `lastSeq` catchup land in T5.
+- **Backpressure — two-lane (T5)**: each connection has a **CRITICAL** lane (bid acks, `AUCTION_*` terminals, `ROOM_SNAPSHOT`, catchup) and a **BEST-EFFORT** lane (`PONG`; future presence/chat). A full critical lane **force-closes** the connection (client reconnects + re-syncs via catchup/`ROOM_SNAPSHOT` — never a silent loss of a critical event); a full best-effort lane **drops the individual frame** and keeps the connection. The critical lane is drained with priority, and all sends are non-blocking so one slow client never stalls the room broadcast.
 
 ## T1 / T2 subset
 
-T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) + `AUCTION_SOLD` (cap-hit) broadcasts, the client `seq-guard`, Stream-authoritative broadcast, `lastSeq` catchup, and `schemaVersion`. Backpressure **channels** (critical/presence/chat/ai split) and multi-gateway fanout are wired in their gating T-steps (T5); the remaining terminal events land in T3.
+T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) + `AUCTION_SOLD` (cap-hit) broadcasts, the client `seq-guard`, Stream-authoritative broadcast, `lastSeq` catchup, and `schemaVersion`. **T3** lands the remaining terminal events. **T5** lands the two-lane backpressure split (critical vs best-effort) and validates multi-gateway fanout (each gateway fans out the canonical Stream to its own room members; no shared in-process hub).
 
 ## Countdown
 
