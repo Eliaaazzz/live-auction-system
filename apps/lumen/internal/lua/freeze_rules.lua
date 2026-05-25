@@ -1,6 +1,8 @@
 -- freeze_rules.lua : DRAFT -> SCHEDULED, copies frozen rules into state Hash.
--- KEYS[1]=state   ARGV[1]=rulesJson
--- Ownership is enforced in Go (authoritative against MySQL); T1 lua is state-only.
+-- KEYS[1]=state   ARGV[1]=rulesJson   ARGV[2]=sellerId
+-- Ownership is enforced in Go (authoritative against MySQL); sellerId is also
+-- copied into the state Hash so place_bid.lua can reject seller self-bids on the
+-- hot path without a MySQL lookup.
 local state_key = KEYS[1]
 -- type-guard before any write (Lua has no rollback; RFC v2 boundary 2)
 local kt = redis.call('TYPE', state_key).ok
@@ -22,8 +24,10 @@ redis.call('HMSET', state_key,
   'capPriceCents', r.capPriceCents or 0,
   'extendWindowSec', r.extendWindowSec or 0,
   'extendSec', r.extendSec or 0,
+  'maxExtensions', r.maxExtensions or 0,
   'extendCount', 0,
   'winnerId', '',
+  'sellerId', ARGV[2] or '',
   'seq', 0,
   'paused', 'false')
 return {'OK_FROZEN'}
