@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Demo Bots</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px; }
+    .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+    label { font-size: 14px; color: #475569; }
+    input { padding: 6px 8px; font-size: 14px; }
+    button { padding: 8px 14px; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #status { font-size: 18px; font-weight: 600; margin: 12px 0; }
+    .bot { background: #f1f5f9; padding: 8px 10px; border-radius: 6px; margin: 4px 0; font-family: ui-monospace, monospace; font-size: 13px; }
+    .bot.live { border-left: 4px solid #16a34a; }
+    .bot.lost { border-left: 4px solid #94a3b8; }
+    .bot.err  { border-left: 4px solid #dc2626; }
+    #log { background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: 8px; height: 280px; overflow: auto; font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Demo bot pool</h1>
+  <p>Spawns N virtual buyers in this page. Each one logs in, joins the room, and bids <code>current + increment + jitter</code> at a random cadence. Open <code>room.html?auction=&lt;id&gt;</code> in another tab to watch the climb.</p>
+
+  <div class="row">
+    <label>auction id <input id="aid" size="32" placeholder="auc_xxxxxxxxxxxxxxxx" /></label>
+  </div>
+  <div class="row">
+    <label>bots <input id="n" type="number" value="3" min="1" max="20" style="width:60px" /></label>
+    <label>min interval (ms) <input id="lo" type="number" value="800" style="width:80px" /></label>
+    <label>max interval (ms) <input id="hi" type="number" value="2200" style="width:80px" /></label>
+    <button id="start">Start bots</button>
+    <button id="stop" disabled>Stop bots</button>
+  </div>
+
+  <p id="status">idle</p>
+  <div id="bots"></div>
+  <div id="log"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const log = (m) => {
+      const d = document.createElement('div');
+      d.textContent = new Date().toLocaleTimeString() + '  ' + m;
+      $('log').prepend(d);
+    };
+
+    // Prefill aid from ?auction=... so admin.html can deep-link here later.
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('auction')) $('aid').value = qs.get('auction');
+
+    let bots = []; // {idx, ws, token, userId, row, alive, timer}
+    let sharedState = { currentCents: 0, increment: 0, cap: 0, endAtMs: 0, terminal: false };
+
+    function rand(lo, hi) { return Math.floor(lo + Math.random() * (hi - lo)); }
+
+    // Try to read rules so we know increment + cap. Falls back to defaults if the
+    // endpoint isn't reachable (the bot will still climb, just blindly).
+    async function loadRules(aid) {
+      try {
+        const r = await fetch('/api/auctions/' + aid);
+        if (!r.ok) return false;
+        const a = await r.json();
+        sharedState.increment = parseInt(a.rules?.incrementCents || '1000', 10);
+        sharedState.cap = parseInt(a.rules?.capPriceCents || '0', 10);
+        sharedState.currentCents = parseInt(a.currentPriceCents || a.rules?.startPriceCents || '10000', 10);
+        log(`loaded rules: increment=${sharedState.increment} cap=${sharedState.cap} start≈${sharedState.currentCents}`);
+        return true;
+      } catch (e) {
+        log('loadRules: ' + e);
+        return false;
+      }
+    }
+
+    async function spawnBot(idx, aid) {
+      const row = document.createElement('div');
+      row.className = 'bot live';
+      row.textContent = `bot#${idx}: logging in…`;
+      $('bots').appendChild(row);
+
+      const bot = { idx, row, alive: true, ws: null, token: '', userId: '', timer: null };
+
+      const s = await (await fetch('/api/dev-login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nickname: 'Bot ' + idx, role: 'user' }),
+      })).json();
+      bot.token = s.token; bot.userId = s.userId;
+      row.textContent = `bot#${idx}: ${bot.userId} · connecting…`;
+
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      bot.ws = new WebSocket(proto + '://' + location.host + '/ws?token=' + encodeURIComponent(bot.token));
+
+      bot.ws.onopen = () => {
+        row.textContent = `bot#${idx}: ${bot.userId} · joined`;
+        bot.ws.send(JSON.stringify({ type: 'ROOM_JOIN', auctionId: aid, serverTimeMs: Date.now(), data: { auctionId: aid } }));
+        scheduleBid(bot, aid);
+      };
+      bot.ws.onmessage = (ev) => {
+        const env = JSON.parse(ev.data);
+        switch (env.type) {
+          case 'ROOM_SNAPSHOT':
+            if (env.data.currentPriceCents) sharedState.currentCents = parseInt(env.data.currentPriceCents, 10);
+            if (env.data.endAtMs) sharedState.endAtMs = env.data.endAtMs;
+            if (['SOLD','NO_BID','CANCELLED'].includes(env.data.status)) terminateAll(env.data.status);
+            break;
+          case 'BID_ACCEPTED':
+            if (env.data.amountCents) sharedState.currentCents = parseInt(env.data.amountCents, 10);
+            if (env.data.endAtMs) sharedState.endAtMs = env.data.endAtMs;
+            if (env.data.userId === bot.userId) {
+              row.textContent = `bot#${idx}: WON the bid @ ${env.data.amountCents}`;
+            }
+            break;
+          case 'AUCTION_EXTENDED':
+            if (env.data.endAtMs) sharedState.endAtMs = env.data.endAtMs;
+            log(`AUCTION_EXTENDED #${env.data.extendCount}`);
+            break;
+          case 'AUCTION_SOLD':     terminateAll('SOLD to ' + env.data.winnerId + ' @ ' + env.data.amountCents); break;
+          case 'AUCTION_NO_BID':   terminateAll('NO_BID'); break;
+          case 'AUCTION_CANCELLED':terminateAll('CANCELLED by seller'); break;
+          case 'BID_REJECTED':
+            log(`bot#${idx} rejected: ${env.data.code}`);
+            break;
+        }
+      };
+      bot.ws.onerror = () => { row.className = 'bot err'; row.textContent = `bot#${idx}: ws error`; };
+      bot.ws.onclose = () => { bot.alive = false; clearTimeout(bot.timer); };
+
+      return bot;
+    }
+
+    function scheduleBid(bot, aid) {
+      if (!bot.alive || sharedState.terminal) return;
+      const delay = rand(parseInt($('lo').value, 10), parseInt($('hi').value, 10));
+      bot.timer = setTimeout(() => placeBid(bot, aid), delay);
+    }
+
+    function placeBid(bot, aid) {
+      if (!bot.alive || sharedState.terminal || !bot.ws || bot.ws.readyState !== 1) return;
+      // current + increment + small jitter so two bots don't always pick the same cents
+      const jitter = rand(0, Math.max(1, Math.floor(sharedState.increment * 0.3)));
+      let amount = sharedState.currentCents + sharedState.increment + jitter;
+      // never exceed cap (would be ERR_TOO_LOW per protocol; cap-hit is amount === cap)
+      if (sharedState.cap > 0 && amount > sharedState.cap) amount = sharedState.cap;
+      const env = {
+        type: 'BID_PLACE', auctionId: aid, serverTimeMs: Date.now(),
+        data: { clientBidId: 'cb_' + bot.idx + '_' + Date.now(), amountCents: String(amount) },
+      };
+      try {
+        bot.ws.send(JSON.stringify(env));
+        bot.row.textContent = `bot#${bot.idx}: ${bot.userId} · tried ${amount} (cur=${sharedState.currentCents})`;
+      } catch (_) {}
+      scheduleBid(bot, aid);
+    }
+
+    function terminateAll(reason) {
+      if (sharedState.terminal) return;
+      sharedState.terminal = true;
+      $('status').textContent = 'done — ' + reason;
+      bots.forEach(b => {
+        b.alive = false;
+        clearTimeout(b.timer);
+        if (b.ws && b.ws.readyState === 1) b.ws.close();
+        if (b.row.className !== 'bot err') b.row.className = 'bot lost';
+      });
+      $('start').disabled = false;
+      $('stop').disabled = true;
+      log('TERMINAL: ' + reason);
+    }
+
+    $('start').onclick = async () => {
+      const aid = $('aid').value.trim();
+      if (!aid) { alert('auction id required'); return; }
+      $('start').disabled = true;
+      $('stop').disabled = false;
+      $('status').textContent = 'running…';
+      $('bots').innerHTML = '';
+      bots = [];
+      sharedState = { currentCents: 0, increment: 1000, cap: 0, endAtMs: 0, terminal: false };
+      await loadRules(aid);
+      const n = Math.min(20, Math.max(1, parseInt($('n').value, 10)));
+      for (let i = 1; i <= n; i++) {
+        const b = await spawnBot(i, aid);
+        bots.push(b);
+        await new Promise(r => setTimeout(r, 200)); // small stagger so logins don't all collide
+      }
+      log(`spawned ${n} bots on ${aid}`);
+    };
+
+    $('stop').onclick = () => terminateAll('stopped by user');
+  </script>
+</body>
+</html>
