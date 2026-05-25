@@ -57,25 +57,45 @@ func hammerDue(ctx context.Context, st *store.Store) {
 		return
 	}
 	for _, aid := range due {
-		code, endAtMs, err := st.CloseAuction(ctx, aid)
-		if err != nil {
-			log.Printf("timer close %s: %v", aid, err)
-			continue
+		closeDue(ctx, st, aid)
+	}
+}
+
+// closeDue closes one due auction and reconciles the active index by the result.
+// Split out from hammerDue so the per-auction outcome handling — in particular the
+// ERR_INTERNAL self-defense below — is unit-testable without the global due scan
+// (which on shared Redis would also touch other tests' auctions).
+func closeDue(ctx context.Context, st *store.Store, aid string) {
+	code, endAtMs, err := st.CloseAuction(ctx, aid)
+	if err != nil {
+		log.Printf("timer close %s: %v", aid, err)
+		return
+	}
+	switch code {
+	case model.CodeOKSold, model.CodeOKNoBid, model.CodeErrAlreadyTerminal:
+		// hammered (or already terminal, e.g. a cap-hit SOLD) → drop it.
+		if err := st.UntrackActive(ctx, aid); err != nil {
+			log.Printf("timer untrack %s: %v", aid, err)
 		}
-		switch code {
-		case model.CodeOKSold, model.CodeOKNoBid, model.CodeErrAlreadyTerminal:
-			// hammered (or already terminal, e.g. a cap-hit SOLD) → drop it.
-			if err := st.UntrackActive(ctx, aid); err != nil {
-				log.Printf("timer untrack %s: %v", aid, err)
+	case model.CodeErrNotDue:
+		// anti-snipe moved endAtMs forward since the scan; refresh the score
+		// so we re-poll at the new time instead of every tick.
+		if endAtMs > 0 {
+			if err := st.TrackActive(ctx, aid, endAtMs); err != nil {
+				log.Printf("timer retrack %s endAtMs=%d: %v", aid, endAtMs, err)
 			}
-		case model.CodeErrNotDue:
-			// anti-snipe moved endAtMs forward since the scan; refresh the score
-			// so we re-poll at the new time instead of every tick.
-			if endAtMs > 0 {
-				if err := st.TrackActive(ctx, aid, endAtMs); err != nil {
-					log.Printf("timer retrack %s endAtMs=%d: %v", aid, endAtMs, err)
-				}
-			}
+		}
+	case model.CodeErrInternal:
+		// data corruption (seq_stream_mismatch / key_type): re-hammering every 100ms
+		// can't fix it and just floods logs with no operator signal. Untrack to break the
+		// tight loop and emit one ERROR; the reconcile re-tracks it (still LIVE in the
+		// authoritative state Hash), so it re-probes at the slow cadence (surfacing the
+		// ERROR) instead of 10x/s — bounded log volume + a human-actionable signal. The
+		// underlying corruption still needs an operator; this just stops the storm.
+		// (TC-T3-104)
+		log.Printf("ERROR timer close %s: ERR_INTERNAL (state/stream corruption); untracking to stop the 100ms retry loop, reconcile will re-probe in %s", aid, reconcileInterval)
+		if err := st.UntrackActive(ctx, aid); err != nil {
+			log.Printf("timer untrack %s after ERR_INTERNAL: %v", aid, err)
 		}
 	}
 }
