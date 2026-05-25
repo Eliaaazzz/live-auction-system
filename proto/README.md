@@ -4,11 +4,11 @@ Per [Plan V9 §6](../../../issues/1): all cross-component coupling converges her
 
 Materialized from PR #13 canonical `docs/*` (the SoT). Where this folder and `docs/` overlap, **`proto/` is canonical** and `docs/` should become a pointer (link-check enforced once #13 merges).
 
-| File | Bounds | T1 status |
+| File | Bounds | status |
 |---|---|---|
-| [`ws-envelope.md`](ws-envelope.md) | WS message types + envelope + money-as-string | consumed by T1 |
-| [`redis-keys.md`](redis-keys.md) | hash-tag keys + Lua signatures/returns | consumed by T1 (incl. **new** `start_auction`/`freeze_rules` returns) |
-| [`error-codes.md`](error-codes.md) | Lua-internal ↔ wire code mapping | consumed by T1 |
+| [`ws-envelope.md`](ws-envelope.md) | WS message types + envelope + money-as-string | T1; **T2** adds `AUCTION_EXTENDED`/`AUCTION_SOLD` + seq-guard + leaderboard |
+| [`redis-keys.md`](redis-keys.md) | hash-tag keys + Lua signatures/returns | T1; **T2** materialized `place_bid` atomic return shape + `PubMessage` |
+| [`error-codes.md`](error-codes.md) | Lua-internal ↔ wire code mapping | T1; **T2** adds `OK_EXTENDED`/`OK_SOLD` |
 | [`db-schema.md`](db-schema.md) | MySQL tables + constraints | consumed by T1 (hash fields land T4) |
 | [`ai-events.md`](ai-events.md) | VLM facts mock schema | consumed by T1 (real Doubao T7) |
 

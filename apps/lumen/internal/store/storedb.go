@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -21,6 +22,17 @@ func (s *Store) UpsertUser(ctx context.Context, id, nickname, role string) error
 		 ON DUPLICATE KEY UPDATE nickname = VALUES(nickname), role = VALUES(role)`,
 		id, nickname, role, time.Now().UTC())
 	return err
+}
+
+// UserNickname returns the display nickname for a user id, or "" if not found.
+// Used by the WS gateway to label bids with the human name rather than the id.
+func (s *Store) UserNickname(ctx context.Context, id string) (string, error) {
+	var nickname string
+	err := s.db.QueryRowContext(ctx, `SELECT nickname FROM users WHERE id = ?`, id).Scan(&nickname)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return nickname, err
 }
 
 func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL, description string) error {
@@ -64,9 +76,9 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec); err != nil {
+		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -95,9 +107,9 @@ func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
 	var r model.Rules
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec
+		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions
 		 FROM auction_rules WHERE auction_id = ?`, aid).
-		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec)
+		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -110,14 +122,40 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
+// DIFFERENT payload than the one being projected — a tamper/bug signal, not the
+// normal idempotent re-projection. The full hash chain lands in T4; this is the
+// lightweight integrity tripwire.
+var ErrEventPayloadMismatch = errors.New("event payload mismatch for existing (auction_id, seq)")
+
 // InsertEvent projects one Stream event into auction_events. Idempotent via
-// UNIQUE(auction_id, seq) (INSERT IGNORE). Hash chain is added in T4.
+// UNIQUE(auction_id, seq): a re-projection of the same (seq, payload) is a no-op,
+// but a DIFFERENT payload for an existing seq returns ErrEventPayloadMismatch
+// rather than being silently swallowed by INSERT IGNORE.
 func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventType, payload string) error {
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT IGNORE INTO auction_events (auction_id, seq, event_type, payload_json, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		aid, seq, eventType, payload, time.Now().UTC())
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil // freshly inserted
+	}
+	// Row already exists: confirm it's an identical re-projection. MySQL JSON
+	// comparison normalizes key order/whitespace, so this only trips on a genuine
+	// different-payload-for-same-seq, not on cjson formatting differences.
+	var diff int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT payload_json <> CAST(? AS JSON) FROM auction_events WHERE auction_id = ? AND seq = ?`,
+		payload, aid, seq).Scan(&diff); err != nil {
+		return err
+	}
+	if diff == 1 {
+		return fmt.Errorf("%w: aid=%s seq=%d", ErrEventPayloadMismatch, aid, seq)
+	}
+	return nil
 }
 
 func (s *Store) CountEvents(ctx context.Context, aid string) (int, error) {

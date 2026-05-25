@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ type Store struct {
 	shaPlaceBid string
 	shaFreeze   string
 	shaStart    string
+	shaClose    string
+	shaCancel   string
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -47,7 +50,38 @@ func New(ctx context.Context, redisAddr, mysqlDSN string) (*Store, error) {
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
+	if err := s.migrate(ctx); err != nil {
+		return nil, err
+	}
 	return s, nil
+}
+
+// migrate applies idempotent schema migrations that the first-init DDL
+// (infra/mysql/init) does NOT cover on a pre-existing volume — docker init SQL
+// runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
+// ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
+func (s *Store) migrate(ctx context.Context) error {
+	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+}
+
+// ensureColumn adds table.column with the given DDL if it is absent. table,
+// column and ddl are trusted constants (never user input), so the formatted
+// ALTER is safe.
+func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.columns
+		 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`,
+		table, column).Scan(&n); err != nil {
+		return fmt.Errorf("check column %s.%s: %w", table, column, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)); err != nil {
+		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
 }
 
 func pingWithRetry(ctx context.Context, name string, ping func(context.Context) error) error {
@@ -75,6 +109,12 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	}
 	if s.shaStart, err = s.rdb.ScriptLoad(ctx, lua.StartAuction).Result(); err != nil {
 		return fmt.Errorf("load start_auction.lua: %w", err)
+	}
+	if s.shaClose, err = s.rdb.ScriptLoad(ctx, lua.CloseAuction).Result(); err != nil {
+		return fmt.Errorf("load close_auction.lua: %w", err)
+	}
+	if s.shaCancel, err = s.rdb.ScriptLoad(ctx, lua.CancelAuction).Result(); err != nil {
+		return fmt.Errorf("load cancel_auction.lua: %w", err)
 	}
 	return nil
 }
@@ -109,6 +149,72 @@ func AIDFromPubChannel(ch string) string {
 	return ch[len(prefix) : len(ch)-len(suffix)]
 }
 
+func aidFromStreamKey(k string) string {
+	const prefix, suffix = "auction:{", "}:events"
+	if !strings.HasPrefix(k, prefix) || !strings.HasSuffix(k, suffix) || len(k) <= len(prefix)+len(suffix) {
+		return ""
+	}
+	return k[len(prefix) : len(k)-len(suffix)]
+}
+
+// ScanEventStreamAIDs returns every auction id that has an events Stream, by
+// SCANning the keyspace. The Persistence Worker uses this to sweep the canonical
+// Stream independently of Pub/Sub hints (at-least-once projection: survives a
+// worker that started after the publish, a dropped hint, or a process restart).
+func (s *Store) ScanEventStreamAIDs(ctx context.Context) ([]string, error) {
+	var aids []string
+	var cursor uint64
+	for {
+		keys, cur, err := s.rdb.Scan(ctx, cursor, "auction:{*}:events", 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if aid := aidFromStreamKey(k); aid != "" {
+				aids = append(aids, aid)
+			}
+		}
+		cursor = cur
+		if cursor == 0 {
+			return aids, nil
+		}
+	}
+}
+
+func aidFromStateKey(k string) string {
+	const prefix, suffix = "auction:{", "}:state"
+	if !strings.HasPrefix(k, prefix) || !strings.HasSuffix(k, suffix) || len(k) <= len(prefix)+len(suffix) {
+		return ""
+	}
+	return k[len(prefix) : len(k)-len(suffix)]
+}
+
+// ScanStateAIDs returns every auction id that has a state Hash (frozen/live/terminal)
+// by SCANning the keyspace. The Timer Worker uses this to reconcile the active index —
+// re-tracking any LIVE auction missing from auction:active (e.g. a TrackActive that
+// failed right after start_auction committed LIVE). Unlike ScanEventStreamAIDs this
+// also finds a LIVE auction that has no bids yet (no events Stream), so the hammer is
+// never silently lost.
+func (s *Store) ScanStateAIDs(ctx context.Context) ([]string, error) {
+	var aids []string
+	var cursor uint64
+	for {
+		keys, cur, err := s.rdb.Scan(ctx, cursor, "auction:{*}:state", 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if aid := aidFromStateKey(k); aid != "" {
+				aids = append(aids, aid)
+			}
+		}
+		cursor = cur
+		if cursor == 0 {
+			return aids, nil
+		}
+	}
+}
+
 // --- Lua dispatch ---
 
 func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...interface{}) ([]interface{}, error) {
@@ -126,17 +232,19 @@ func (s *Store) eval(ctx context.Context, sha string, keys []string, args ...int
 	return arr, nil
 }
 
-// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). Returns the result code.
-func (s *Store) FreezeRules(ctx context.Context, aid string, rules model.Rules) (string, error) {
+// FreezeRules runs freeze_rules.lua (DRAFT -> SCHEDULED). sellerID is copied into
+// the state Hash so the hot path can reject seller self-bids. Returns the code.
+func (s *Store) FreezeRules(ctx context.Context, aid, sellerID string, rules model.Rules) (string, error) {
 	rj, _ := json.Marshal(rules)
-	arr, err := s.eval(ctx, s.shaFreeze, []string{stateKey(aid)}, string(rj))
+	arr, err := s.eval(ctx, s.shaFreeze, []string{stateKey(aid)}, string(rj), sellerID)
 	if err != nil {
 		return "", err
 	}
 	return luaStr(arr[0]), nil
 }
 
-// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns endAtMs.
+// StartAuction runs start_auction.lua (SCHEDULED -> LIVE). On OK_LIVE returns
+// endAtMs and registers the auction in the Timer Worker's active index.
 func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) (string, int64, error) {
 	arr, err := s.eval(ctx, s.shaStart, []string{stateKey(aid)}, durationMs)
 	if err != nil {
@@ -144,9 +252,76 @@ func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) 
 	}
 	c := luaStr(arr[0])
 	if c == model.CodeOKLive {
+		endAtMs := luaInt(arr[1])
+		// Best-effort registration in the Timer index. start_auction.lua already
+		// committed LIVE atomically, so a ZADD failure here must NOT fail the start
+		// (the seller would otherwise see a 500 for an auction that is actually live,
+		// and a retry hits ERR_BAD_STATE — orphaning it from the hammer forever).
+		// The Timer's reconcile re-tracks any LIVE auction missing from the index,
+		// and close_auction re-checks Redis TIME regardless, so a missing/stale entry
+		// only delays the hammer — never causes a wrong one.
+		if err := s.TrackActive(ctx, aid, endAtMs); err != nil {
+			log.Printf("StartAuction %s: track active failed (timer reconcile will recover): %v", aid, err)
+		}
+		return c, endAtMs, nil
+	}
+	return c, 0, nil
+}
+
+// activeKey is the global Timer Worker index (member=auctionId, score=endAtMs).
+// It is NOT auction-tagged (one ZSET for all auctions), so the Lua hot-path
+// scripts never touch it — the Go layer maintains it; close_auction re-checks
+// Redis TIME so a stale score only costs a retry, never a premature hammer.
+const activeKey = "auction:active"
+
+// TrackActive registers/refreshes an auction in the Timer Worker index.
+func (s *Store) TrackActive(ctx context.Context, aid string, endAtMs int64) error {
+	return s.rdb.ZAdd(ctx, activeKey, redis.Z{Score: float64(endAtMs), Member: aid}).Err()
+}
+
+// UntrackActive removes an auction from the Timer Worker index (after close/cancel).
+func (s *Store) UntrackActive(ctx context.Context, aid string) error {
+	return s.rdb.ZRem(ctx, activeKey, aid).Err()
+}
+
+// DueAuctions returns auction ids whose endAtMs <= nowMs (hammer candidates).
+func (s *Store) DueAuctions(ctx context.Context, nowMs int64) ([]string, error) {
+	return s.rdb.ZRangeByScore(ctx, activeKey, &redis.ZRangeBy{
+		Min: "-inf", Max: strconv.FormatInt(nowMs, 10),
+	}).Result()
+}
+
+// RedisNowMs returns the authoritative Redis clock in milliseconds.
+func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
+	t, err := s.rdb.Time(ctx).Result()
+	if err != nil {
+		return 0, err
+	}
+	return t.UnixMilli(), nil
+}
+
+// CloseAuction runs close_auction.lua (Timer hammer). Returns the code and, on
+// ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
+// (anti-snipe may have moved it forward since the scan).
+func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
+	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	if err != nil {
+		return "", 0, err
+	}
+	c := luaStr(arr[0])
+	if c == model.CodeErrNotDue && len(arr) >= 2 {
 		return c, luaInt(arr[1]), nil
 	}
 	return c, 0, nil
+}
+
+// CancelAuction runs cancel_auction.lua (seller/admin cancel of SCHEDULED/LIVE).
+func (s *Store) CancelAuction(ctx context.Context, aid, callerID string) (string, error) {
+	arr, err := s.eval(ctx, s.shaCancel, []string{stateKey(aid), streamKey(aid)}, callerID, PubChannel(aid))
+	if err != nil {
+		return "", err
+	}
+	return luaStr(arr[0]), nil
 }
 
 // PlaceBid runs place_bid.lua. Returns code, seq (on accept) and the JSON event
@@ -158,13 +333,47 @@ func (s *Store) PlaceBid(ctx context.Context, aid, userID, clientBidID, amountCe
 		return "", 0, "", err
 	}
 	switch c := luaStr(arr[0]); c {
-	case model.CodeOKAccepted:
+	case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold:
+		// All three accept the bid; the secondary AUCTION_EXTENDED/AUCTION_SOLD
+		// event (arr[3..4]) is delivered to the room via Pub/Sub, so the gateway
+		// only needs the bid ack (arr[1..2]) for the originating socket.
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
 		return c, luaInt(arr[1]), luaStr(arr[2]), nil
 	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
 		return c, 0, luaStr(arr[1]), nil
 	default:
 		return c, 0, "", nil
 	}
+}
+
+// LeaderEntry is one leaderboard row (highest accepted bid per user).
+type LeaderEntry struct {
+	UserID      string `json:"userId"`
+	AmountCents string `json:"amountCents"`
+}
+
+// Leaderboard returns the top-n bidders by accepted max amount, descending.
+// Money is a string at the boundary (proto/ws-envelope.md money-as-string).
+func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEntry, error) {
+	if n <= 0 {
+		n = 10
+	}
+	z, err := s.rdb.ZRevRangeWithScores(ctx, lbKey(aid), 0, int64(n-1)).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LeaderEntry, 0, len(z))
+	for _, m := range z {
+		uid, _ := m.Member.(string)
+		// scores are integer cents stored via ZADD; format without exponent/decimal.
+		out = append(out, LeaderEntry{UserID: uid, AmountCents: strconv.FormatInt(int64(m.Score), 10)})
+	}
+	return out, nil
 }
 
 // Snapshot returns the current room state from the Redis state Hash.

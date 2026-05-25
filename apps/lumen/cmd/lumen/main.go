@@ -4,6 +4,7 @@
 //	lumen seed
 //	lumen verify [--auction <id>]
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
+//	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
 package main
 
 import (
@@ -60,6 +61,15 @@ func main() {
 			log.Fatalf("e2e: %v", err)
 		}
 
+	case "perf-smoke":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunPerfSmoke(target); err != nil {
+			log.Fatalf("perf-smoke: %v", err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -75,5 +85,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|e2e> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|e2e|perf-smoke> [flags]")
 }
