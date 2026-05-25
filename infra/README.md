@@ -9,68 +9,22 @@ Currently shipped:
 
 ## Wiring into `docker-compose.yml` (already in this PR)
 
-This PR already adds the four observability services to `infra/docker-compose.yml` under `profiles: [observability]` (≈ lines 98–150). They are dormant on default `make up` and activate via `make up-obs` / `docker compose --profile observability up -d --wait`. The snippet below is the exact text now present; it is reproduced here as documentation, not a TODO:
+This PR already adds the four observability services to `infra/docker-compose.yml` under `profiles: [observability]` (search `^  prometheus:` to land at the block). They are dormant on default `make up` and activate via `make up-obs` / `docker compose --profile observability up -d --wait`.
 
-```yaml
-services:
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
-      - ./prometheus/recording.yml:/etc/prometheus/recording.yml:ro
-      - prometheus-data:/prometheus
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=7d'
-      - '--web.enable-lifecycle'
-    ports:
-      - "9090:9090"
-    profiles: ["observability"]
-    depends_on:
-      - lumen
-      - ai-sidecar
+> **Authoritative source = the YAML file itself**, not a snippet here. An earlier revision of this README inlined a snippet that drifted from the file (`depends_on: ai-sidecar` instead of `lumen: service_healthy`; `DATA_SOURCE_NAME` env instead of `--config.my-cnf` + `--mysqld.address`). To prevent that class of drift, this section now points at the file and only summarises what's there.
 
-  grafana:
-    image: grafana/grafana:11.2.0
-    profiles: ["observability"]
-    volumes:
-      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./grafana/provisioning:/etc/grafana/provisioning/dashboards:ro
-      - grafana-data:/var/lib/grafana
-    environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=lumen
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      - GF_DASHBOARDS_MIN_REFRESH_INTERVAL=5s
-    ports:
-      - "3000:3000"
-    depends_on:
-      - prometheus
+**Summary of what gets added** (4 services + 2 volumes, all profile-gated):
 
-  redis-exporter:
-    image: oliver006/redis_exporter:v1.62.0
-    profiles: ["observability"]
-    environment:
-      - REDIS_ADDR=redis://redis:6379
-    ports:
-      - "9121:9121"
+| Service | Image | Port | Depends on | Notes |
+|---|---|---|---|---|
+| `prometheus` | `prom/prometheus:v2.54.1` | `9090` | `lumen: service_healthy` | mounts `prometheus.yml` + `alerts.yml` + `recording.yml`; 7-day TSDB retention |
+| `grafana` | `grafana/grafana:11.2.0` | `3000` | `prometheus` | anon Viewer enabled for demo; admin/lumen for editing; auto-provisions the 4 dashboards |
+| `redis-exporter` | `oliver006/redis_exporter:v1.62.0` | `9121` | `redis: service_healthy` | env `REDIS_ADDR=redis://redis:6379` |
+| `mysqld-exporter` | `prom/mysqld-exporter:v0.15.1` | `9104` | `mysql: service_healthy` | uses `--config.my-cnf=/etc/mysqld_exporter.my.cnf` + `--mysqld.address=mysql:3306` (v0.15+ dropped the `DATA_SOURCE_NAME` env); mounts `./mysql/mysqld_exporter.my.cnf:ro` |
+| volume `prometheus-data` | — | — | — | TSDB persistence |
+| volume `grafana-data` | — | — | — | dashboard/datasource provisioning + grafana state |
 
-  mysqld-exporter:
-    image: prom/mysqld-exporter:v0.15.1
-    profiles: ["observability"]
-    environment:
-      - DATA_SOURCE_NAME=lumen:lumen@(mysql:3306)/lumen
-    ports:
-      - "9104:9104"
-
-volumes:
-  prometheus-data:
-  grafana-data:
-```
+For the full YAML, open `infra/docker-compose.yml` and read the `prometheus:` / `grafana:` / `redis-exporter:` / `mysqld-exporter:` blocks. **Don't copy this README into another compose file** — point at the real one instead.
 
 **Opt-in via profile** (`make up-obs` or `docker compose --profile observability up -d --wait`) — the default `make up` keeps the T1 stack lean (redis + mysql + ai-sidecar + lumen). After `--profile observability`, dashboards are at http://localhost:3000 (anon Viewer enabled for demo).
 
