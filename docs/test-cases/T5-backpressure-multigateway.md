@@ -1,16 +1,17 @@
 # T5 测试用例 — Backpressure Channel Split + Multi-Gateway Fanout (PR #38)
 
 > Author: @fariZzzz (per [Workflow v2 global-scope review #15](https://github.com/Eliaaazzz/live-auction-system/issues/15)).
-> Target: `elia/T5-multigateway-backpressure` at commit `a4c31a9`; based on `main` (now T1+T2+T3+T3-followup).
+> Target: `elia/T5-multigateway-backpressure` at commit `fe90763` (current HEAD). Drafted v1 against `a4c31a9`; v2 reflects post-review fixes.
+> Based on `main` (now T1+T2+T3+T3-followup, post #31/#33 rollups).
 > Authored **before** the substantive PR #38 review per the team's "test cases first" precedent ([#30 T3](https://github.com/Eliaaazzz/live-auction-system/pull/30) → [#35 T4](https://github.com/Eliaaazzz/live-auction-system/pull/35)).
 >
 > Schema:每条用例必须包含 `编号 / 标题 / 前置条件 / 测试步骤 / 输入数据 / 预期结果 / 优先级`. 用例分两类:
-> - **覆盖型 (Coverage, TC-T5-001…010)** — 对应 PR #38 现有的 3 个 `_test.go` 用例 + 推断出来的合约级用例
+> - **覆盖型 (Coverage, TC-T5-001…010)** — 对应 PR #38 现有的 5 个 `_test.go` 用例(v1 = 3,v2 + 2)+ 推断出来的合约级用例
 > - **缺口型 (Gap probes, TC-T5-100…109)** — PR #38 未覆盖、但根据架构推理出的边界场景
 >
 > 优先级:**P0** 系统不可用 / 数据丢失 · **P1** 关键路径错误 · **P2** 自愈但可观测性差 · **P3** 极端/性能
 >
-> 注:CRITICAL lane = `send chan []byte, cap=64`(bid acks, AUCTION_*, ROOM_SNAPSHOT, catchup);LOSSY lane = `lossy chan []byte, cap=16`(PONG;未来 presence/chat)。`writePump` critical-first 优先级。
+> 注:CRITICAL lane = `send chan []byte, cap=sendBufFrames=256`(bid acks, AUCTION_* events incl. AUCTION_EXTENDED, ROOM_SNAPSHOT, catchup);LOSSY lane = `lossy chan []byte, cap=16`(PONG;未来 presence/chat)。`writePump` **best-effort** critical-first 优先级(单 in-flight lossy 帧 delay bound,Go select 是 pseudo-random fairness)。**Invariant**: `sendBufFrames > catchupMaxGap` (256 > 200) — pinned in `TestT5CatchupFitsInSendBuffer`。
 
 ---
 
@@ -26,25 +27,28 @@
 | TC-T5-004 | CRITICAL frame drain 优先于 LOSSY (writePump priority) | (隐含,未独立测) | P1 |
 | TC-T5-005 | force-close 后 hub.leave 通过 read goroutine 触发,无死锁 | (隐含在 broadcast 注释) | P1 |
 | TC-T5-006 | close() 幂等 — 多次调用安全 (closeOnce + send 通道不 close) | (隐含,未独立测) | P1 |
-| TC-T5-007 | concurrent trySend + trySendLossy 在同 Conn 无 panic / race | (未测) | P0 (race) |
-| TC-T5-008 | force-closed Conn 后续 trySend → 不 panic (channel 永不 close) | (未测) | P0 |
+| TC-T5-007 | concurrent trySend + trySendLossy 在同 Conn 无 panic / race | (probed -race,passed) | P0 (race) |
+| TC-T5-008 | force-closed Conn 后续 trySend → 不 panic + 不入队 (`fe90763` 加 leading done-check) | `TestT5TrySendAfterCloseDoesNotEnqueue` (v2 新加) | P0 |
+| TC-T5-011 | catchup 200 帧填入 critical lane(cap=256)→ no force-close,no drop | `TestT5CatchupFitsInSendBuffer` (v2 新加;invariant `sendBufFrames > catchupMaxGap`) | P0 |
 | TC-T5-009 | ws.go `eventsUpToSnapshot` filter 仍工作 (T2 PR #31 fix 没被 T5 破坏) | `TestT2HiddenCatchupDoesNotReplayPastSnapshotSeq` | P0 (回归) |
 | TC-T5-010 | hub.broadcast 在 RLock 期间调用 trySend → 不死锁,即使 trySend 触发 close | (隐含,未独立测) | P0 |
 
-### 缺口型 (10) — PR #38 未覆盖
+### 缺口型 (10) — 状态映射(v2 起部分已修)
 
-| ID | 标题 | 风险 | P |
+| ID | 标题 | v2 状态 (`fe90763`) | P |
 |---|---|---|---|
-| TC-T5-100 | 单个慢 client 真的不阻塞其他人 (n-1 fast + 1 frozen client,broadcast 延迟测量) | T5 价值核心,需 quantitative 证据 | P1 |
-| TC-T5-101 | hub.broadcast 在 trySend 触发 close() 时,Conn 在 hub.rooms 里残留(close 不调 leave) | 内存泄漏 / 后续 broadcast 仍 enqueue 已死 conn | P1 |
-| TC-T5-102 | 大量 LOSSY 帧涌入 + 1 个 critical 帧 → critical 是否真的优先? (writePump select 公平性) | priority 不能保证(Go select 是 pseudo-random) | P1 |
-| TC-T5-103 | bufferedAmount 1MB/4MB threshold (V9 §0 ⑧) — 当前未实现,PR body 承认 T8 | T8 perf gate,需文档明确 | P2 |
-| TC-T5-104 | multi-gateway under load (200 events catchup < 1s concurrently) | T8 perf gate | P2 |
-| TC-T5-105 | gateway A 死掉时,其在 hub.rooms 中的 conn 是否被清理? | gateway 进程崩溃后 stale conn 残留 | P1 |
-| TC-T5-106 | trySend 时 done 已 closed → 仍写入 send channel,channel 不会 panic 但堆积 | 内存堆积 | P2 |
-| TC-T5-107 | catchup 帧 (≤ snap.Seq) 与 fanout 帧 (> snap.Seq) 都用 CRITICAL lane — 同 64 cap 是否够? | catchup 200 + fanout burst 可超 64 | P1 |
-| TC-T5-108 | PubSub 转发的 AUCTION_EXTENDED 帧用 trySend (CRITICAL),但它本质是 "事件" — 一致性? | 与 T2 anti-snipe 设计 alignment | P3 |
-| TC-T5-109 | force-close 触发 hub.leave 的 "deferred to read goroutine" 路径在 reconnect-storm 下是否回收够快 | n × close-leave-rejoin cycle | P3 |
+| TC-T5-100 | 单个慢 client 真的不阻塞其他人 (n-1 fast + 1 frozen client,broadcast 延迟测量) | 仍 open — T5 价值核心 quantitative 验证,需 follow-up | P1 |
+| TC-T5-101 | hub.broadcast 在 trySend 触发 close() 时,Conn 在 hub.rooms 里残留 | **✅ FIXED in `fe90763`** — `trySend`/`trySendLossy` 加 leading `<-c.done` non-blocking 检查,post-close 帧直接 drop 不入队。Pinned 在 `TestT5TrySendAfterCloseDoesNotEnqueue` | P1 (resolved) |
+| TC-T5-102 | 大量 LOSSY 帧涌入 + 1 个 critical 帧 → critical 是否真的优先? (writePump select 公平性) | **✅ DOC TIGHTENED in `fe90763`** — `writePump` 注释 + `ws-envelope.md §Backpressure` 改为 "best-effort priority",显式说明 "critical frame 可被 1 个 in-flight lossy write delay (Go select pseudo-random fairness)"。Strict priority 仍 out-of-scope | P1 (doc-resolved) |
+| TC-T5-103 | bufferedAmount 1MB/4MB threshold (V9 §0 ⑧) — 当前未实现,PR body 承认 T8 | 仍 deferred 到 T8 | P2 |
+| TC-T5-104 | multi-gateway under load (200 events catchup < 1s concurrently) | 仍 deferred 到 T8 | P2 |
+| TC-T5-105 | gateway A 死掉时,其在 hub.rooms 中的 conn 是否被清理? | 仍 open — 进程崩溃场景需 chaos test | P1 |
+| TC-T5-106 | trySend 在 done closed 后仍入队 | **✅ FIXED in `fe90763`** — 与 TC-T5-101 同 patch,leading done-check 阻止入队 | P2 (resolved) |
+| TC-T5-107 | catchup 200 帧 + fanout burst 可能超 critical cap | **✅ FIXED in `fe90763`** — `sendBufFrames=256` 替换原 cap=64;invariant `sendBufFrames > catchupMaxGap` pinned 在 `TestT5CatchupFitsInSendBuffer`。**Was P1 correctness bug;现已闭环** | P1 (resolved) |
+| TC-T5-108 | PubSub 转发的 AUCTION_EXTENDED 帧分类 | **✅ DOC FIXED in `fe90763`** — `ws-envelope.md` 现在明确 "`AUCTION_*` events incl. `AUCTION_EXTENDED`" 在 critical lane | P3 (resolved) |
+| TC-T5-109 | force-close 触发 hub.leave 的 "deferred to read goroutine" 路径在 reconnect-storm 下是否回收够快 | 仍 open — T9 chaos drill 议题 | P3 |
+
+**Summary**: v1 raised 10 gap probes;v2 `fe90763` 闭了 **5 个** (101, 102 doc, 106, 107, 108)。剩余 P1 是 TC-T5-100 (quantitative slow-client SLO) + TC-T5-105 (stale conn after gateway-crash);T8 deferred (103, 104);T9 deferred (109)。
 
 ---
 
@@ -167,7 +171,13 @@
 - **优先级**: P1
 - **是否已测**: ❌(单帧 force-close 测了,但 quantitative 多 client 没测)
 
-### TC-T5-101 — force-close 与 hub.rooms 清理的窗口期
+### TC-T5-101 — force-close 与 hub.rooms 清理的窗口期 ✅ FIXED in `fe90763`
+
+- **v1 场景 (against `a4c31a9`)**: `Conn.close()` 不调 `hub.leave`,leave 依赖 read goroutine 的 defer。close 与 leave 之间,broadcast 仍会 trySend 到死 conn → 帧累积在 send buffer 永不被消费
+- **v2 fix**: `trySend` + `trySendLossy` 都加 leading `<-c.done` non-blocking check,post-close 帧直接 drop 不入队。Pinned 在新测 `TestT5TrySendAfterCloseDoesNotEnqueue`:close 后 100 次 trySend + 100 次 trySendLossy,两条 buffer 都保持 len=0
+- **现状**: RESOLVED
+
+(原 v1 分析,保留以便对比):
 
 - **前置条件**: Conn close 后 hub.leave 未触发
 - **测试步骤**:
@@ -180,7 +190,13 @@
 - **优先级**: P1
 - **是否已测**: ❌
 
-### TC-T5-102 — writePump priority 不公平 (Go select 是 pseudo-random)
+### TC-T5-102 — writePump priority 不公平 ✅ DOC TIGHTENED in `fe90763`
+
+- **v1 分析**: 单 critical 帧若到达时 lossy buffer 也有 pending,Go select 是 pseudo-random,critical 顶多被 1 个 lossy 帧 delay
+- **v2 fix**: 文档/注释从 "drained with priority" 改为 "**best-effort priority**",显式 bound: "a pending critical frame pre-empts a pending lossy one in the leading non-blocking poll; under Go's pseudo-random select fairness a critical frame can be delayed by at most one in-flight lossy write" (`ws.go` writePump comment + `proto/ws-envelope.md §Backpressure`)。Strict priority (additional non-blocking critical poll after each lossy write) 仍 deferred 因为 v0 scale 不必要
+- **现状**: 文档对齐 implementation,不 overclaim。RESOLVED at doc level
+
+(原 v1 分析,保留以便对比):
 
 - **场景**: writePump 第一个 select 是 critical-first(只看 c.done 和 c.send,default 后跳出)。第二个 select 是 c.done / c.send / c.lossy 三向(random)
 - **问题**: 如果 critical buffer 经常空,但 lossy 持续涌入,critical 一进来时 writePump 已经在第二个 select 等 lossy,会 random 选哪个
@@ -195,7 +211,7 @@
 - **PR body 承认**: "bufferedAmount 1MB/4MB thresholds (RFC §0 ⑧) ... T8 load-tested items"
 - **当前**: 没有 bufferedAmount 监控 / 强制断连
 - **风险**: 64-cap channel + 64-byte frame ≈ 4KB per conn — 远低于 RFC 的 1MB threshold,但 channel 满即 close,所以实际生效的是 channel cap,不是 byte threshold
-- **建议**: doc 应明确 "PR #38 用 channel cap 64 作为 backpressure 边界,不是 byte threshold。如果将来支持大帧(>1KB),需要 byte-based threshold 替换"
+- **建议**: doc 应明确 "PR #38 v2 用 channel cap **256** 作为 backpressure 边界,不是 byte threshold。如果将来支持大帧(>1KB),需要 byte-based threshold 替换"
 - **优先级**: P2
 - **是否已测**: ❌(deferred to T8)
 
@@ -216,7 +232,13 @@
 - **优先级**: P1
 - **是否已测**: ❌(进程崩溃场景需 chaos test,不是 unit)
 
-### TC-T5-106 — trySend 在 done closed 后仍入队
+### TC-T5-106 — trySend 在 done closed 后仍入队 ✅ FIXED in `fe90763`
+
+- 与 TC-T5-101 同 patch (leading `<-c.done` non-blocking check in `trySend`/`trySendLossy`)
+- 现在 post-close 帧 drop 不入队;Pinned 在 `TestT5TrySendAfterCloseDoesNotEnqueue`
+- RESOLVED
+
+(原 v1 分析,保留以便对比):
 
 - **前置条件**: c.close() 已跑(done closed,send 仍打开)
 - **测试**: trySend([]byte("late"))
@@ -225,22 +247,18 @@
 - **优先级**: P2 (内存,极小;但 cleanup 应该确定)
 - **是否已测**: ❌
 
-### TC-T5-107 — catchup 200 帧 + fanout burst 可能超 critical cap 64
+### TC-T5-107 — catchup 200 帧 vs critical lane cap ✅ FIXED in `fe90763`
 
-- **场景**: 客户端 lastSeq=0,auction 已有 200 events,catchup 一次性 push 200 帧(均经 CRITICAL lane)
-- **当前实现**: 200 帧 > cap 64 → 立即 force-close,client 看不到 ROOM_SNAPSHOT,reconnect,可能进入死循环
-- **预期(我担心)**: 这不是理论 — `catchupMaxGap=200` 直接对接 `send cap=64`,数学上必然失败
-- **现实**: writePump 持续 drain,可能赶上 enqueue。但如果 client 慢,200 写 64 cap 必然满
-- **建议**: 要么 catchup 用大 cap(e.g. send cap=256),要么 catchup 分批 + 间隔 ack
-- **优先级**: P1
-- **是否已测**: ❌
+- **v1 场景 (against `a4c31a9` cap=64)**: 客户端 lastSeq=0,auction 已有 200 events,catchup 一次性 push 200 帧(均经 CRITICAL lane)。 200 帧 > cap 64 → 必然 trip trySend force-close,client 看不到 ROOM_SNAPSHOT,reconnect 进入死循环
+- **本地验证 (v1)**: probe 跑 `make(chan, 64)` + 无 drain 的 200 trySend → 第 65 次精确触发 force-close ✓
+- **v2 fix (`fe90763`)**: 引入 `sendBufFrames = 256` 常量,`Conn.send` 使用之。Pinned **invariant** `sendBufFrames > catchupMaxGap` 在新测 `TestT5CatchupFitsInSendBuffer` 中: 跑 200 frame replay → 不 force-close + 不 drop。Compile-test 风格的 `if sendBufFrames <= catchupMaxGap { t.Fatalf(...) }` 防止未来重构动一个常量不动另一个
+- **现状**: P1 correctness bug RESOLVED;T8 perf 时可考虑大 chain auctions (>200 events) 的 paced-catchup 优化但非 correctness 关切
 
-### TC-T5-108 — AUCTION_EXTENDED 走 CRITICAL — 一致性
+### TC-T5-108 — AUCTION_EXTENDED 走 CRITICAL ✅ DOC FIXED in `fe90763`
 
-- **AUCTION_EXTENDED** 在 PR #38 没显式列在 CRITICAL/LOSSY 分类,但 ws.go 显示所有 enqueue 通过 c.push() → trySend → CRITICAL。 OK,默认。
-- **预期**: 文档 / wire 表里明确 AUCTION_EXTENDED 是 critical(它含 endAtMs,客户端必须收到才能更新 timer)
-- **优先级**: P3 (文档)
-- **是否已测**: ✅(via TestT2 anti-snipe path)
+- **v1 状态**: code 通过 `c.push() → trySend → CRITICAL` 实际走 critical lane,但 `ws-envelope.md` 表述为 "`AUCTION_*` terminals" 只覆盖 SOLD/NO_BID/CANCELLED — AUCTION_EXTENDED 分类含糊
+- **v2 fix**: `proto/ws-envelope.md §Backpressure` 改为 "`AUCTION_*` events incl. `AUCTION_EXTENDED`",显式说明 AUCTION_EXTENDED 在 critical lane(它含 endAtMs,客户端必须收到才能 update timer)
+- 现状: RESOLVED
 
 ### TC-T5-109 — reconnect-storm 下 close-leave-rejoin 速度
 
@@ -253,13 +271,17 @@
 
 ## 3. 执行计划
 
-- **覆盖型 (TC-T5-001..010)**:
-  - 3 个已实现 (TC-T5-001/002/003)
-  - 7 个建议补 — 尤其 TC-T5-007 (race), TC-T5-008 (post-close trySend), TC-T5-010 (broadcast deadlock)
+- **覆盖型 (TC-T5-001..011)**:
+  - **v1: 3 个已实现** (TC-T5-001/002/003)
+  - **v2 `fe90763`: + 2 个** (TC-T5-008 `TestT5TrySendAfterCloseDoesNotEnqueue`,TC-T5-011 `TestT5CatchupFitsInSendBuffer`)
+  - 5 个仍建议补 — TC-T5-004 (writePump priority quantitative), TC-T5-005 (close-vs-leave window timing), TC-T5-006 (close 幂等独立测), TC-T5-007 (concurrent race 独立测), TC-T5-010 (broadcast-触发-close 在 RLock 内无死锁)
 - **缺口型 (TC-T5-100..109)**:
-  - **P1 建议本 PR 或 T5-followup**: 100 (quantitative slow-client), 101 (close-leave window), 102 (priority fairness), 105 (stale conn), 107 (catchup > cap)
-  - **P2/P3 deferred to T8/T9**: 103 (bufferedAmount), 104 (multi-gateway load), 106 (post-close trySend cleanup), 108 (doc), 109 (reconnect storm)
+  - **✅ RESOLVED in `fe90763`**: TC-T5-101 (close-leave window via leading done-check), TC-T5-102 (priority wording → "best-effort"), TC-T5-106 (post-close drop, same patch as 101), TC-T5-107 (catchup>cap via sendBufFrames=256 + invariant test), TC-T5-108 (AUCTION_EXTENDED doc classification)
+  - **仍 open — P1 建议 T5-followup**: TC-T5-100 (quantitative slow-client SLO), TC-T5-105 (gateway-crash stale conn)
+  - **Deferred to T8 perf**: TC-T5-103 (bufferedAmount), TC-T5-104 (multi-gateway under load)
+  - **Deferred to T9 chaos**: TC-T5-109 (reconnect storm)
 
 ## 4. 评审历史
 
-- v1 (2026-05-25, @fariZzzz) — 初稿,基于 commit `a4c31a9`
+- v1 (2026-05-25, @fariZzzz) — 初稿,基于 commit `a4c31a9`,标记 3 P1 (107 cap, 101 close-leave, 102 priority doc) + 1 P3 (108 doc)
+- v2 (2026-05-25, @fariZzzz) — 对齐 `fe90763`: 5 缺口型 resolved (101/102/106/107/108);新加 2 覆盖型 (TC-T5-008/011 对应 `TestT5TrySendAfterCloseDoesNotEnqueue` + `TestT5CatchupFitsInSendBuffer`);invariant `sendBufFrames > catchupMaxGap` pinned 在测试。 Eliaaazzz PR #39 CR 要求 doc 反映 current head 而非 v1 head — 本次更新满足
