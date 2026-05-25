@@ -19,7 +19,7 @@ sequenceDiagram
     W-->>C: CATCHUP_EVENTS(seq...)
     W-->>C: ROOM_SNAPSHOT(seq=currentSeq)
   else stream trimmed or gap > 200
-    W->>API: GET /auctions/{id}/snapshot
+    W->>API: GET /api/auctions/{id}
     API-->>W: authoritative snapshot
     W-->>C: ROOM_SNAPSHOT(snapshot)
   end
