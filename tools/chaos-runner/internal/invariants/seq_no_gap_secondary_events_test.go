@@ -16,50 +16,50 @@ import (
 )
 
 type seqNoGapScenario struct {
-	name             string
-	preSeq, postSeq  int64
-	accepted         int
-	terminal         int
-	seqConsuming     int
-	wantPass         bool
-	wantInMsg        string // substring that should appear in the result message
+	name            string
+	preSeq, postSeq int64
+	accepted        int
+	terminal        int
+	seqConsuming    int
+	wantPass        bool
+	wantInMsg       string // substring that should appear in the result message
 }
 
 func TestSeqNoGapHandlesSecondaryEvents(t *testing.T) {
 	cases := []seqNoGapScenario{
 		{
-			name:         "happy_no_extensions",
-			preSeq:       100, postSeq: 110,
-			accepted:     10, terminal: 0, seqConsuming: 10,
-			wantPass:     true,
-			wantInMsg:    "100 → 110 across 10 seq-consuming",
+			name:   "happy_no_extensions",
+			preSeq: 100, postSeq: 110,
+			accepted: 10, terminal: 0, seqConsuming: 10,
+			wantPass:  true,
+			wantInMsg: "100 → 110 across 10 seq-consuming",
 		},
 		{
-			name:         "anti_snipe_3_extensions_OLD_FORMULA_WOULD_RED",
-			preSeq:       100, postSeq: 116, // 10 accepts + 3 EXTENDED + 3 SOLD-secondary edge = 16 seqs
-			accepted:     10, terminal: 0, seqConsuming: 16,
-			wantPass:     true,
-			wantInMsg:    "100 → 116 across 16 seq-consuming",
+			name:   "anti_snipe_3_extensions_OLD_FORMULA_WOULD_RED",
+			preSeq: 100, postSeq: 116, // 10 accepts + 3 EXTENDED + 3 SOLD-secondary edge = 16 seqs
+			accepted: 10, terminal: 0, seqConsuming: 16,
+			wantPass:  true,
+			wantInMsg: "100 → 116 across 16 seq-consuming",
 		},
 		{
-			name:         "timer_hammer_after_accepts",
-			preSeq:       100, postSeq: 111, // 10 accepts + 1 SOLD-from-hammer = 11
-			accepted:     10, terminal: 1, seqConsuming: 11,
-			wantPass:     true,
+			name:   "timer_hammer_after_accepts",
+			preSeq: 100, postSeq: 111, // 10 accepts + 1 SOLD-from-hammer = 11
+			accepted: 10, terminal: 1, seqConsuming: 11,
+			wantPass: true,
 		},
 		{
-			name:         "real_gap_detected",
-			preSeq:       100, postSeq: 113, // observed 10, but state advanced 13 → gap somewhere
-			accepted:     10, terminal: 0, seqConsuming: 10,
-			wantPass:     false,
-			wantInMsg:    "seq=113 after drill, expected 110",
+			name:   "real_gap_detected",
+			preSeq: 100, postSeq: 113, // observed 10, but state advanced 13 → gap somewhere
+			accepted: 10, terminal: 0, seqConsuming: 10,
+			wantPass:  false,
+			wantInMsg: "seq=113 after drill, expected 110",
 		},
 		{
-			name:         "cap_hit_emits_secondary_SOLD",
-			preSeq:       100, postSeq: 112, // 10 accepts + 1 cap-hit SOLD secondary + 1 cancel? actually scenario is 10 BID_ACCEPTED + 1 AUCTION_SOLD secondary = 11
-			accepted:     10, terminal: 0, seqConsuming: 11,
-			wantPass:     false, // 102 expected, 112 observed → would fail (gap of 1)
-			wantInMsg:    "seq=112 after drill, expected 111",
+			name:   "cap_hit_emits_secondary_SOLD",
+			preSeq: 100, postSeq: 112, // 10 accepts + 1 cap-hit SOLD secondary + 1 cancel? actually scenario is 10 BID_ACCEPTED + 1 AUCTION_SOLD secondary = 11
+			accepted: 10, terminal: 0, seqConsuming: 11,
+			wantPass:  false, // 102 expected, 112 observed → would fail (gap of 1)
+			wantInMsg: "seq=112 after drill, expected 111",
 		},
 	}
 

@@ -46,9 +46,9 @@ type Recorder struct {
 	Bids []BidRecord `json:"bids"`
 
 	// Aggregated counts (derived from Bids; convenience for fast scanning)
-	AcceptedCount           int            `json:"accepted_count"`
-	AcceptedDuringInjection int            `json:"accepted_during_injection"`
-	TerminalCount           int            `json:"terminal_count"`
+	AcceptedCount           int `json:"accepted_count"`
+	AcceptedDuringInjection int `json:"accepted_during_injection"`
+	TerminalCount           int `json:"terminal_count"`
 	// SeqConsumingObserved counts every Stream-bearing event the bidder
 	// observed during the drill (BID_ACCEPTED + AUCTION_EXTENDED +
 	// AUCTION_SOLD + AUCTION_NO_BID + AUCTION_CANCELLED). Each of these
