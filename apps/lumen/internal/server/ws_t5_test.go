@@ -85,6 +85,48 @@ func TestT5MultiGatewayFanout(t *testing.T) {
 	assertConnReceives(t, cB, model.TypeBidAccepted, 4*time.Second)
 }
 
+// Catchup pre-condition: the per-conn CRITICAL buffer must exceed catchupMaxGap,
+// otherwise a slow client's full Stream replay will trip trySend's force-close
+// (after exactly cap(send)+1 trySends), looping the just-reconnected client back
+// into the very reconnect cycle catchup exists to break. Pins the invariant so a
+// future refactor that re-tunes one constant without the other fails CI loudly.
+func TestT5CatchupFitsInSendBuffer(t *testing.T) {
+	if sendBufFrames <= catchupMaxGap {
+		t.Fatalf("sendBufFrames=%d must exceed catchupMaxGap=%d (catchup replay would force-close)", sendBufFrames, catchupMaxGap)
+	}
+	c := &Conn{send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
+	for i := 0; i < catchupMaxGap; i++ {
+		c.trySend([]byte("catchup-event"))
+	}
+	select {
+	case <-c.done:
+		t.Fatalf("a full catchupMaxGap replay must NOT force-close (sendBufFrames=%d catchupMaxGap=%d)", sendBufFrames, catchupMaxGap)
+	default: // still open, as expected
+	}
+	if got := len(c.send); got != catchupMaxGap {
+		t.Fatalf("buffered=%d want %d (no drops, no loss)", got, catchupMaxGap)
+	}
+}
+
+// trySend MUST drop frames once close() has fired: hub.leave runs in the read
+// goroutine's defer, so there's a window where the conn still sits in hub.rooms
+// and would otherwise accumulate dead-conn frames in the buffer (stale memory,
+// and arbitrarily many re-broadcasts call trySend on the same closed conn).
+func TestT5TrySendAfterCloseDoesNotEnqueue(t *testing.T) {
+	c := &Conn{send: make(chan []byte, 8), lossy: make(chan []byte, 4), done: make(chan struct{})}
+	c.close()
+	for i := 0; i < 100; i++ {
+		c.trySend([]byte("post-close"))
+		c.trySendLossy([]byte("post-close"))
+	}
+	if got := len(c.send); got != 0 {
+		t.Fatalf("post-close critical buffered=%d want 0 (frames must drop, not accumulate)", got)
+	}
+	if got := len(c.lossy); got != 0 {
+		t.Fatalf("post-close lossy buffered=%d want 0 (frames must drop, not accumulate)", got)
+	}
+}
+
 // assertConnReceives drains the conn's critical lane until it sees an envelope of the
 // given type, or fails after d.
 func assertConnReceives(t *testing.T, c *Conn, typ string, d time.Duration) {
