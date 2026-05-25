@@ -7,9 +7,9 @@ Currently shipped:
 - `grafana/` — dashboards (JSON) + datasource + provisioning
 - *(future)* `toxiproxy/`, `redis/`, `mysql/`, `nginx/` — land in their respective scope PRs
 
-## Wiring into `docker-compose.yml`
+## Wiring into `docker-compose.yml` (already in this PR)
 
-When Eliaaazzz's T1 PR creates `infra/docker-compose.yml`, the observability bits drop in as:
+This PR already adds the four observability services to `infra/docker-compose.yml` under `profiles: [observability]` (≈ lines 98–150). They are dormant on default `make up` and activate via `make up-obs` / `docker compose --profile observability up -d --wait`. The snippet below is the exact text now present; it is reproduced here as documentation, not a TODO:
 
 ```yaml
 services:
