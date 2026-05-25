@@ -286,9 +286,18 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.UntrackActive(r.Context(), aid); err != nil {
 		log.Printf("cancel %s: untrack active failed (timer will self-heal): %v", aid, err)
 	}
+	// MySQL status is a projection, not the source of truth: cancel_auction.lua has
+	// already committed CANCELLED to Redis + the AUCTION_CANCELLED event to the Stream
+	// (the canonical log), so the persistence worker's Stream-first sweep will set
+	// auctions.status=CANCELLED even if this synchronous write fails. Log and still
+	// return 200 — the cancel succeeded in the authoritative store; a 500 here would
+	// report failure for a committed cancel that cannot be cleanly retried (a retry
+	// hits ERR_ALREADY_TERMINAL). Eventual consistency is pinned by
+	// TestT3CancelEventualConsistencyFromStream (TC-T3-101). (Contrast the DRAFT path
+	// above, which has no Redis/Stream commit, so its MySQL write IS the operation and
+	// still 500s on failure.)
 	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
+		log.Printf("cancel %s: status projection write failed (persistence worker self-heals from Stream): %v", aid, err)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
