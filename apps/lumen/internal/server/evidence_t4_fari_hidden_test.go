@@ -52,10 +52,12 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			wantStatus:  model.StateNoBid, wantPrice: "", wantWinner: "", wantSeq: 1,
 		},
 		{
-			name:        "cancelled terminal — even with a prior bid, no winner carried",
+			// TC-T4-111: a cancelled auction is not a sale — winner+price are cleared
+			// (fixed per @fariZzzz #45 finding; was carrying the last pre-cancel bid).
+			name:        "cancelled terminal — even with a prior bid, no winner/price carried",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionCancelled, map[string]any{"seq": 2})},
-			wantStatus:  model.StateCancelled, wantPrice: "11000", wantWinner: "u1", wantSeq: 2,
+			wantStatus:  model.StateCancelled, wantPrice: "", wantWinner: "", wantSeq: 2,
 		},
 		{
 			name:        "sold terminal, no order yet — from AUCTION_SOLD payload",

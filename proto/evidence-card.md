@@ -31,6 +31,8 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
 }
 ```
 
+**Non-sale terminals** (`NO_BID`, `CANCELLED`) carry **no `winnerId` and empty `currentPriceCents`** — they are not sales (T3 TC-T3-013), so a cancelled/passed card can't be misread as a win. Only `SOLD` / `ORDER_CREATED` cards carry a winner + price.
+
 `EvidenceEvent`:
 
 ```jsonc

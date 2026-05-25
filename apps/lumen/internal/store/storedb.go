@@ -232,7 +232,16 @@ func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventTyp
 // that column — hash byte-identical input regardless of cjson key order/whitespace.
 func (s *Store) evidenceHash(prevHash string, seq int64, eventType, payload string) string {
 	mac := hmac.New(sha256.New, s.evidenceKey)
-	fmt.Fprintf(mac, "%s\n%d\n%s\n%s", prevHash, seq, eventType, payload)
+	// Byte-identical to fmt.Fprintf("%s\n%d\n%s\n%s", ...) but zero-alloc (no reflection)
+	// — matters on a long VerifyEvidenceChain (1 HMAC/row). Output is unchanged, so this
+	// does not invalidate existing chains. (@fariZzzz #34 second-pass §4.)
+	mac.Write([]byte(prevHash))
+	mac.Write([]byte{'\n'})
+	mac.Write(strconv.AppendInt(nil, seq, 10))
+	mac.Write([]byte{'\n'})
+	mac.Write([]byte(eventType))
+	mac.Write([]byte{'\n'})
+	mac.Write([]byte(payload))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

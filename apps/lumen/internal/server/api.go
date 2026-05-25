@@ -506,7 +506,13 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 		case model.TypeAuctionNoBid:
 			out.Status = model.StateNoBid
 		case model.TypeAuctionCancelled:
+			// A cancelled auction has no winner and no sale (T3 TC-T3-013): clear the
+			// last-bid winner/price so the evidence card can't be misread as a sale.
+			// Consistent with NO_BID — only SOLD / ORDER_CREATED carry winner+price.
+			// (Addresses @fariZzzz #45 TC-T4-111 finding.)
 			out.Status = model.StateCancelled
+			out.WinnerID = ""
+			out.CurrentPriceCents = ""
 		}
 	}
 	if hasOrder {
