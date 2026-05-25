@@ -223,7 +223,7 @@ func Handler() http.Handler {
 }
 ```
 
-Every binary mode exposes `/metrics` on its own port (8081 gateway, 8082 engine, 8083 timer, 8084 pg-writer, 8085 api).
+Every binary mode exposes `/metrics` on its own port (8081 gateway, 8082 engine, 8083 timer, 8084 pg-writer, 8085 api). **Status: target design — not wired in T1–T5.** No `promhttp` handler exists in `apps/lumen/cmd/lumen/main.go` yet, so this section describes the intended layout, not current reality. #18 `prometheus.yml` accordingly comments out the lumen/ai-sidecar scrape jobs (active scrapes today = redis/mysql exporters + prometheus-self) to avoid RED down-targets. Materialize when the metrics package lands.
 
 ## Structured logging (`slog`)
 

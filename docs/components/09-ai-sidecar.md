@@ -61,7 +61,7 @@ Mirrors `proto/ai-events.md`. Sidecar exposes HTTP (not WS) — gateway calls si
 | `POST` | `/facts/draft` | Generate facts draft from image URLs |
 | `POST` | `/auctioneer/trigger` | Fire a trigger (opening/big_jump/cold_30s/hammered) |
 | `GET` | `/healthz` | Health + Doubao reachability |
-| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/metrics` | Prometheus metrics — **planned, not wired in T1–T5** (sidecar serves its app port only today; #18 `prometheus.yml` keeps the ai-sidecar scrape commented) |
 
 ### `POST /facts/draft` request
 

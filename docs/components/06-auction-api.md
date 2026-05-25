@@ -70,7 +70,7 @@ apps/lumen/internal/api/
 | `POST` | `/dev-login` | Issue JWT for seeded user | dev env only |
 | `POST` | `/uploads` | Upload image (returns URL) | any logged-in |
 | `GET` | `/healthz` | Health check | none |
-| `GET` | `/metrics` | Prometheus metrics | none (locked down at deploy) |
+| `GET` | `/metrics` | Prometheus metrics — **planned, not wired in T1–T5** (no `promhttp` handler in `main.go` yet; #18 `prometheus.yml` keeps the lumen scrape commented so it doesn't 404/redden) | none (locked down at deploy) |
 
 ## Key types
 
