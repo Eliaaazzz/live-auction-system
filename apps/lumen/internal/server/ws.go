@@ -37,6 +37,16 @@ const fanoutSweepInterval = 2 * time.Second
 // streamIDForSeq returns the XRANGE-exclusive lower bound for "events after seq".
 func streamIDForSeq(seq int64) string { return fmt.Sprintf("%d-0", seq) }
 
+func eventsUpToSnapshot(events []store.StreamEvent, snapshotSeq int64) []store.StreamEvent {
+	out := make([]store.StreamEvent, 0, len(events))
+	for _, e := range events {
+		if e.Seq <= snapshotSeq {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Hub tracks room membership and fans out broadcasts. The bid path is decoupled
 // from the broadcast path via Redis Pub/Sub (subscribe), so adding gateways at
 // T5 needs no re-plumbing.
@@ -273,7 +283,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// Catchup reads the authoritative Stream, not Pub/Sub.
 		if snap.Seq > d.LastSeq && snap.Seq-d.LastSeq <= catchupMaxGap {
 			if events, _, err := s.st.ReadEventsAfter(ctx, d.AuctionID, streamIDForSeq(d.LastSeq)); err == nil {
-				for _, e := range events {
+				for _, e := range eventsUpToSnapshot(events, snap.Seq) {
 					c.push(model.Envelope{
 						Type: e.Type, AuctionID: d.AuctionID, Seq: e.Seq,
 						ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),

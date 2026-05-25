@@ -118,6 +118,7 @@
         syncClock(env);
         switch (env.type) {
           case 'ROOM_SNAPSHOT':
+            if ((env.seq || 0) < guard.last()) return; // stale snapshot after a newer event
             guard = makeSeqGuard(env.seq || 0); // prime cursor to snapshot seq
             if (env.data.endAtMs) endAtMs = env.data.endAtMs;
             if (env.data.status === 'SOLD') markTerminal('SOLD');

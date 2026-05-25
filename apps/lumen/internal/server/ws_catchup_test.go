@@ -112,3 +112,15 @@ func TestT2HiddenRoomJoinLastSeqCatchup(t *testing.T) {
 		t.Fatalf("catchup did not replay missed events: seen=%v want seq 1 and 2", seen)
 	}
 }
+
+func TestT2HiddenCatchupDoesNotReplayPastSnapshotSeq(t *testing.T) {
+	events := []store.StreamEvent{
+		{Seq: 1, Type: model.TypeBidAccepted},
+		{Seq: 2, Type: model.TypeBidAccepted},
+		{Seq: 3, Type: model.TypeBidAccepted},
+	}
+	got := eventsUpToSnapshot(events, 2)
+	if len(got) != 2 || got[0].Seq != 1 || got[1].Seq != 2 {
+		t.Fatalf("bounded catchup=%+v, want seq 1 and 2 only", got)
+	}
+}
