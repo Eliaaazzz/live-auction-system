@@ -122,6 +122,26 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// UpdateAuctionStatusIf performs a status-conditional update and reports whether it
+// applied (RowsAffected == 1). It is the compare-and-set guard for the DRAFT cancel
+// TOCTOU: a plain UpdateAuctionStatus would clobber a status a concurrent transition
+// moved the row to between the caller's read and write. With `WHERE status = expected`
+// the write no-ops (ok == false) when the row is no longer in the expected state, so
+// the caller can re-read and re-dispatch instead of corrupting it. (TC-T3-100)
+func (s *Store) UpdateAuctionStatusIf(ctx context.Context, id, status, expected string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET status = ?, updated_at = ? WHERE id = ? AND status = ?`,
+		status, time.Now().UTC(), id, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 // ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
 // DIFFERENT payload than the one being projected — a tamper/bug signal, not the
 // normal idempotent re-projection. The full hash chain lands in T4; this is the

@@ -264,13 +264,32 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.Status == model.StateDraft {
-		// unfrozen: no Redis room/stream — just flip the MySQL status.
-		if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
+		// unfrozen: no Redis room/stream — flip the MySQL status, but only if it is
+		// STILL DRAFT. A concurrent freeze can move it to SCHEDULED between ownsAuction's
+		// read above and here (TOCTOU); an unconditional write would clobber SCHEDULED
+		// with CANCELLED, splitting MySQL(CANCELLED) from Redis(SCHEDULED) and stranding
+		// the auction. The conditional write no-ops in that case — we re-read and fall
+		// through to the frozen Lua cancel path on the real state. (TC-T3-100)
+		ok, err := s.st.UpdateAuctionStatusIf(r.Context(), aid, model.StateCancelled, model.StateDraft)
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
-		return
+		if ok {
+			writeJSON(w, http.StatusOK, map[string]any{"code": model.CodeOKCancelled})
+			return
+		}
+		// no longer DRAFT — a concurrent freeze won the race. Re-read and handle on the
+		// current state instead of clobbering it.
+		a, ok = s.ownsAuction(w, r, aid, userID)
+		if !ok {
+			return
+		}
+		if model.IsTerminal(a.Status) {
+			writeJSON(w, http.StatusConflict, map[string]any{"code": model.CodeErrAlreadyTerminal})
+			return
+		}
+		// falls through to cancel_auction.lua below (now SCHEDULED/LIVE in Redis).
 	}
 	code, err := s.st.CancelAuction(r.Context(), aid, userID)
 	if err != nil {
