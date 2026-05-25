@@ -23,7 +23,22 @@ groups:
           runbook: "docs/runbook.md#seq-gap"
           description: "Stream events are non-monotonic. Replay Verifier will fail."
 
-      # Per V9 §4.2: ack p95 floor = 200ms; gate = 80ms. Above floor = page.
+      # Per V9 §4.2: ack p95 gate = 80ms, floor = 200ms. Two-tier alerting:
+      #   warn  at SLO×1.25 (100ms) — meaningful early-warning (PDGGK PR #18 CR P0-3)
+      #   crit  at floor    (200ms) — paging breach, back-stops the warn tier
+      - alert: AckLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m]))
+          ) > 0.1
+        for: 2m
+        labels:
+          severity: warn
+          rubric: 系统可用性
+        annotations:
+          summary: "bid ack p95 > 100ms (SLO×1.25 — early warning)"
+          target: "p95 < 80ms gate per V9 §4.2"
+
       - alert: AckLatencyAboveFloor
         expr: |
           histogram_quantile(0.95,
@@ -37,6 +52,19 @@ groups:
           summary: "bid ack p95 > 200ms (floor breached)"
           target: "p95 < 80ms gate; < 200ms floor per V9 §4.2"
 
+      - alert: BroadcastLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m]))
+          ) > 0.2
+        for: 2m
+        labels:
+          severity: warn
+          rubric: 系统可用性
+        annotations:
+          summary: "broadcast p95 > 200ms (SLO×1.33 — early warning)"
+          target: "p95 < 150ms gate per V9 §4.2"
+
       - alert: BroadcastLatencyAboveFloor
         expr: |
           histogram_quantile(0.95,
@@ -49,6 +77,18 @@ groups:
         annotations:
           summary: "broadcast p95 > 500ms (floor breached)"
           target: "p95 < 150ms gate; < 500ms floor per V9 §4.2"
+
+      - alert: HammerLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m]))
+          ) > 0.7
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "hammer p95 > 700ms (SLO×1.4 — early warning)"
+          target: "p95 < 500ms gate per V9 §4.2"
 
       - alert: HammerLatencyAboveFloor
         expr: |
