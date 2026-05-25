@@ -23,14 +23,42 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/tools/chaos-runner/internal/orchestrator"
 	"github.com/Eliaaazzz/live-auction-system/tools/chaos-runner/internal/phases"
 )
+
+// isLocalTarget returns true if u points at a host that's plausibly a local
+// dev / CI stack: localhost, 127.0.0.0/8, ::1, *.local. Anything else (or any
+// URL without an explicit scheme + host) is rejected unless
+// --allow-non-local-target is set.
+func isLocalTarget(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		// Reject garbage / scheme-less inputs — drilling against an unparseable
+		// target would just fail confusingly later, and we don't want to
+		// silently treat them as "safe local".
+		return false
+	}
+	h := u.Hostname()
+	switch h {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0":
+		return true
+	}
+	if strings.HasSuffix(h, ".local") {
+		return true
+	}
+	if strings.HasPrefix(h, "127.") {
+		return true
+	}
+	return false
+}
 
 func main() {
 	var (
@@ -42,11 +70,30 @@ func main() {
 		outDir     = flag.String("out", "docs/demo/chaos-recordings", "artifact output directory")
 		composeURL = flag.String("compose-base", "http://localhost:8080", "lumen base URL (T1 single-binary topology)")
 		toxiURL    = flag.String("toxiproxy", "http://localhost:8474", "toxiproxy admin API (network-level faults)")
+		allowProd  = flag.Bool("allow-non-local-target", false, "ALLOW running drills against non-localhost targets (DANGEROUS — runs dev-login + bids against the supplied host)")
 	)
 	flag.Parse()
 
 	if *phaseName == "" {
 		fmt.Fprintln(os.Stderr, "missing --phase; see --help")
+		os.Exit(2)
+	}
+
+	// PDGGK PR #24 CR P1-4: chaos-runner dev-logins + drives BID_PLACE against
+	// whatever host you point it at. Server-side EnableDevLogin=false is a
+	// backstop, but the runner itself should refuse to point at anything
+	// non-local without an explicit opt-in flag. Prevents the "I forgot to
+	// flip --compose-base after demo" production incident.
+	if !*allowProd && !isLocalTarget(*composeURL) {
+		fmt.Fprintf(os.Stderr,
+			"refusing to run chaos drill against non-local target %q (use --allow-non-local-target to override)\n",
+			*composeURL)
+		os.Exit(2)
+	}
+	if !*allowProd && !isLocalTarget(*toxiURL) {
+		fmt.Fprintf(os.Stderr,
+			"refusing to run chaos drill against non-local toxiproxy %q (use --allow-non-local-target to override)\n",
+			*toxiURL)
 		os.Exit(2)
 	}
 

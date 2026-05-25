@@ -56,6 +56,19 @@ func (l *LatencyEnvelope) Check(ctx context.Context) Result {
 	if accepted == 0 {
 		return Fail(l, "zero OK_ACCEPTED during drill (samples=%d, all rejects/timeouts) — bidding did not continue; AI drill claim unverified", len(samples))
 	}
+	// PDGGK PR #24 CR P1-2: aggregate accepts is too weak — recovery-only
+	// success would pass even though "AI down → bids continued" was the
+	// claim we wanted to prove. Require ≥1 accept *during the injection
+	// window itself* for phases where bidding should be unaffected by the
+	// fault (ai, ws, timer — listed in env.AcceptDuringInjectionRequiredFor;
+	// network/data phases set this to nil so they exempt out).
+	if l.env.RequireAcceptDuringInjection {
+		duringKey := eventCountKey(l.env.DuringEventsKey, "BID_ACCEPTED_INJECTION_WINDOW")
+		duringAccepts, _ := ctx.Value(duringKey).(int)
+		if duringAccepts == 0 {
+			return Fail(l, "zero OK_ACCEPTED inside the injection window (total accepts=%d arrived only after uninject) — bidding did NOT continue under fault (PR #24 CR P1-2)", accepted)
+		}
+	}
 	tolerance, ok := ctx.Value(toleranceKey(l.env.DuringEventsKey)).(time.Duration)
 	if !ok {
 		tolerance = 200 * time.Millisecond // V9 §4.2 ack p95 floor

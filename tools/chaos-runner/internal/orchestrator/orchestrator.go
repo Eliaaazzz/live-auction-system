@@ -72,7 +72,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 
 	// ── (3) Inject + always-undo ────────────────────────────────────────
 	logger.Info("inject")
-	rec.InjectedAt = time.Now().UTC()
+	rec.SetInjectedAt(time.Now().UTC())
 	env := phases.Env{
 		LumenBaseURL:   cfg.LumenBaseURL,
 		ToxiproxyURL:   cfg.ToxiproxyURL,
@@ -102,7 +102,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	defer func() {
 		if err := undo(context.Background()); err != nil {
 			logger.Error("uninject_failed", "err", err)
-			rec.UninjectError = err.Error()
+			rec.SetUninjectError(err.Error())
 		}
 	}()
 
@@ -114,11 +114,14 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	}
 
 	// ── (5) Uninject (explicit happy path — defer is the safety net) ───
-	rec.UninjectedAt = time.Now().UTC()
+	// SetUninjectedAt routes through the recorder mutex (PDGGK CR P1-3): the
+	// bidder goroutine reads UninjectedAt in RecordBid to classify "during
+	// injection" samples; a plain assignment here would race with that read.
+	rec.SetUninjectedAt(time.Now().UTC())
 	logger.Info("uninject")
 	if err := undo(ctx); err != nil {
 		logger.Error("uninject_explicit_failed", "err", err)
-		rec.UninjectError = err.Error()
+		rec.SetUninjectError(err.Error())
 		// Don't return — invariants still need to run on whatever state we have.
 	}
 
@@ -146,7 +149,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if err != nil {
 		// Post-snapshot failure is recoverable for the artifact — record the
 		// error and proceed with whatever invariants can run without it.
-		rec.PostSnapshotError = err.Error()
+		rec.SetPostSnapshotError(err.Error())
 		logger.Warn("post-snapshot failed", "err", err)
 	} else {
 		rec.PostSnapshot = post
@@ -214,6 +217,11 @@ func buildInvariantContext(parent context.Context, rec *artifact.Recorder, recov
 		c = context.WithValue(c, evtKey("during", "BID_REJECTED::"+code), n)
 	}
 	c = context.WithValue(c, evtKey("during", "BID_ACCEPTED"), rec.AcceptedCount)
+	// PDGGK PR #24 CR P1-2: surface accepts-during-injection so invariants can
+	// prove "bidding continued under fault" rather than aggregating across the
+	// whole drill (which silently passes when 0 accepts happen during inject
+	// but recovery accepts arrive post-uninject).
+	c = context.WithValue(c, evtKey("during", "BID_ACCEPTED_INJECTION_WINDOW"), rec.AcceptedDuringInjection)
 	c = context.WithValue(c, evtKey("during", "TERMINAL"), rec.TerminalCount)
 	if rec.FirstOKAfterUninject != nil {
 		c = context.WithValue(c, recKey("during", "first_ok_after_uninject"), rec.FirstOKAfterUninject)

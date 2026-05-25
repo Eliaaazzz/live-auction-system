@@ -46,9 +46,10 @@ type Recorder struct {
 	Bids []BidRecord `json:"bids"`
 
 	// Aggregated counts (derived from Bids; convenience for fast scanning)
-	AcceptedCount    int            `json:"accepted_count"`
-	TerminalCount    int            `json:"terminal_count"`
-	RejectCodeCounts map[string]int `json:"reject_code_counts"`
+	AcceptedCount           int            `json:"accepted_count"`
+	AcceptedDuringInjection int            `json:"accepted_during_injection"`
+	TerminalCount           int            `json:"terminal_count"`
+	RejectCodeCounts        map[string]int `json:"reject_code_counts"`
 
 	// Latencies (parallel to Bids; pre-computed for invariants)
 	AckLatencies []time.Duration `json:"-"`
@@ -76,6 +77,10 @@ func NewRecorder(phase, aid string) *Recorder {
 }
 
 // RecordBid is called by bidgen on every attempt — concurrent-safe.
+// Per PDGGK PR #24 CR P1-2: also tracks AcceptedDuringInjection so the
+// LatencyEnvelope invariant can prove "bidding continued under fault" rather
+// than aggregating across the whole drill (which silently passes when 0
+// accepts happen during inject but recovery accepts a flurry post-uninject).
 func (r *Recorder) RecordBid(at time.Time, code string, dur time.Duration, errMsg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -83,9 +88,15 @@ func (r *Recorder) RecordBid(at time.Time, code string, dur time.Duration, errMs
 		At: at, Code: code, Duration: dur.String(), Error: errMsg,
 	})
 	r.AckLatencies = append(r.AckLatencies, dur)
+	inInjectionWindow := !r.InjectedAt.IsZero() &&
+		(r.UninjectedAt.IsZero() || at.Before(r.UninjectedAt)) &&
+		!at.Before(r.InjectedAt)
 	switch {
 	case code == "OK_ACCEPTED":
 		r.AcceptedCount++
+		if inInjectionWindow {
+			r.AcceptedDuringInjection++
+		}
 		// First OK after uninject? (Uninject timestamp may not be set yet if
 		// bid was during inject phase — skip in that case.)
 		if !r.UninjectedAt.IsZero() && at.After(r.UninjectedAt) && r.FirstOKAfterUninject == nil {
@@ -97,6 +108,39 @@ func (r *Recorder) RecordBid(at time.Time, code string, dur time.Duration, errMs
 	default:
 		r.RejectCodeCounts[code]++
 	}
+}
+
+// SetInjectedAt / SetUninjectedAt are the only safe writers for the timestamp
+// fields the bidder goroutine reads in RecordBid. Per PDGGK PR #24 CR P1-3:
+// before this, orchestrator.go wrote rec.UninjectedAt directly while the
+// bidder goroutine read it under the recorder mutex — a real data race that
+// would trip `-race`. Wrapping the writes routes them through the same mutex.
+func (r *Recorder) SetInjectedAt(t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.InjectedAt = t
+}
+
+func (r *Recorder) SetUninjectedAt(t time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.UninjectedAt = t
+}
+
+// SetUninjectError + SetPostSnapshotError mirror the same pattern for the
+// other orchestrator-written fields. (Pre-snapshot and PostSnapshot pointer
+// fields are set before / after bidder activity respectively, so a plain
+// assignment is fine for them.)
+func (r *Recorder) SetUninjectError(msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.UninjectError = msg
+}
+
+func (r *Recorder) SetPostSnapshotError(msg string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.PostSnapshotError = msg
 }
 
 // Write serializes the recorder to JSON at path. Creates parent dirs.

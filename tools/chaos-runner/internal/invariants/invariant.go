@@ -45,7 +45,18 @@ func Fail(i Invariant, msg string, args ...any) Result {
 // Per-phase invariant selection. The orchestrator calls this to pick which
 // invariants apply to a given drill. Phase-agnostic invariants (e.g. seq
 // monotonicity post-drill) run for every phase.
+//
+// Per PDGGK PR #24 CR P1-2: for phases where bidding is supposed to remain
+// unaffected by the fault (ai / ws / timer / mysql / tamper), the latency
+// envelope demands ≥1 OK_ACCEPTED *inside the injection window*, not just
+// across the drill. Network phases (redis, schrodinger) where partial pause
+// is the documented degrade do NOT require during-window accepts.
 func For(phaseName string, env Env) []Invariant {
+	switch phaseName {
+	case "ai", "ws", "timer", "mysql", "tamper":
+		env.RequireAcceptDuringInjection = true
+	}
+
 	common := []Invariant{
 		NewSeqNoGap(env),
 		NewRecoveryWithin(env),
@@ -54,18 +65,10 @@ func For(phaseName string, env Env) []Invariant {
 	}
 	// Per-phase additions
 	switch phaseName {
-	case "ai":
-		// AI is non-authoritative — bid acceptance must continue throughout.
-		// No degrade invariant for AI phase (ExpectedDegradeWireCodes() = nil).
-		return common
 	case "redis":
 		return append(common, NewDegradeExpected(env, "ERR_AUCTION_PAUSED"))
-	case "ws":
-		// Catchup correctness for the reconnect case will be a future invariant.
-		return common
-	default:
-		return common
 	}
+	return common
 }
 
 // Env is the runtime context invariants need. Kept separate from the
@@ -80,4 +83,9 @@ type Env struct {
 	PostSnapshotKey     string
 	DuringEventsKey     string
 	RecoveryDeadlineKey string
+
+	// RequireAcceptDuringInjection — set by For() per phase. When true,
+	// LatencyEnvelope.Check fails if zero OK_ACCEPTED arrived inside
+	// the injection window (PR #24 CR P1-2).
+	RequireAcceptDuringInjection bool
 }

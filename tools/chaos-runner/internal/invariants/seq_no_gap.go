@@ -2,10 +2,7 @@ package invariants
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"time"
 )
 
 // SeqNoGap — across the full drill window, the auction's seq advances
@@ -48,34 +45,7 @@ func (s *SeqNoGap) Check(ctx context.Context) Result {
 		preSeq, postSeq, accepted, terminal))
 }
 
-// fetchSnapshot helper used by NewRecoveryWithin + NewVerifierConsistent below.
-// Lives here because all 3 invariants hit the same endpoint.
-type snapshot struct {
-	Status            string `json:"status"`
-	CurrentPriceCents string `json:"currentPriceCents"`
-	WinnerID          string `json:"winnerId"`
-	Seq               int64  `json:"seq"`
-	ServerTimeMs      int64  `json:"serverTimeMs"`
-}
-
-func getSnapshot(ctx context.Context, baseURL, aid string) (*snapshot, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		fmt.Sprintf("%s/api/auctions/%s/snapshot", baseURL, aid), nil)
-	if err != nil {
-		return nil, err
-	}
-	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("snapshot returned %d", resp.StatusCode)
-	}
-	var s snapshot
-	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
-		return nil, fmt.Errorf("decode snapshot: %w", err)
-	}
-	return &s, nil
-}
+// (Earlier versions of this file kept an unused getSnapshot helper that hit
+// `/api/auctions/{id}/snapshot` — the deprecated T1 route. Deleted in PR #24
+// v3 per PDGGK CR P1-1; the canonical reader is `artifact.GetSnapshot` which
+// hits the T2 route `/api/auctions/{id}`.)
