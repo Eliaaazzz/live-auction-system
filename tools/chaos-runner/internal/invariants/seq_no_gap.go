@@ -29,20 +29,39 @@ func (s *SeqNoGap) Check(ctx context.Context) Result {
 	if !ok {
 		return Fail(s, "post-drill snapshot seq missing from context")
 	}
-	accepted, _ := ctx.Value(eventCountKey(s.env.DuringEventsKey, "BID_ACCEPTED")).(int)
-	terminal, _ := ctx.Value(eventCountKey(s.env.DuringEventsKey, "TERMINAL")).(int) // SOLD/NO_BID/CANCELLED
 
-	// Per docs/components/03-lua-scripts.md (v2 — anti-snipe single Stream
-	// entry): every accepted bid is exactly one seq tick. Terminal events
-	// (close_auction / cancel_auction) consume one seq each. freeze/start
-	// do NOT consume seq.
-	expected := preSeq + int64(accepted) + int64(terminal)
+	// Eliaaazzz PR #24 CR 5/25: the prior formula
+	//   expected = preSeq + accepted + terminal
+	// undercounted because T2 emits secondary AUCTION_EXTENDED at its own
+	// seq on every anti-snipe extension, and a cap-hit emits AUCTION_SOLD at
+	// its own seq alongside the BID_ACCEPTED. The bidder's readPump observes
+	// these room broadcasts but does not return them to the fire-loop, so
+	// neither `accepted` nor `terminal` counts them — a correct anti-snipe
+	// auction would red on a stale "seq advanced past expected" diagnostic.
+	//
+	// Fix: count every Stream-bearing event the bidder observes via
+	// RecordSeqConsumingEvent (BID_ACCEPTED + AUCTION_EXTENDED + AUCTION_SOLD
+	// + AUCTION_NO_BID + AUCTION_CANCELLED — exactly the set that emits one
+	// XADD at <seq>-0 each). The invariant becomes
+	//   postSeq - preSeq == seqConsumingObserved
+	// which holds for any correct auction regardless of anti-snipe activity
+	// or cap behavior.
+	seqConsuming, _ := ctx.Value(eventCountKey(s.env.DuringEventsKey, "SEQ_CONSUMING_OBSERVED")).(int)
+	expected := preSeq + int64(seqConsuming)
 	if postSeq != expected {
-		return Fail(s, "seq=%d after drill, expected %d (pre=%d + accepted=%d + terminal=%d)",
-			postSeq, expected, preSeq, accepted, terminal)
+		// Diagnostic also includes the legacy breakdown so a failure tells
+		// you whether the gap is at the secondary-event layer (extended/cap
+		// SOLD vs accepted+terminal split).
+		accepted, _ := ctx.Value(eventCountKey(s.env.DuringEventsKey, "BID_ACCEPTED")).(int)
+		terminal, _ := ctx.Value(eventCountKey(s.env.DuringEventsKey, "TERMINAL")).(int)
+		return Fail(s,
+			"seq=%d after drill, expected %d (pre=%d + seq_consuming_observed=%d) "+
+				"[breakdown: accepted=%d terminal=%d secondary=%d]",
+			postSeq, expected, preSeq, seqConsuming,
+			accepted, terminal, seqConsuming-accepted-terminal)
 	}
-	return Pass(s, fmt.Sprintf("seq went %d → %d across %d accepted + %d terminal events",
-		preSeq, postSeq, accepted, terminal))
+	return Pass(s, fmt.Sprintf("seq advanced %d → %d across %d seq-consuming Stream events (BID_ACCEPTED + AUCTION_EXTENDED + AUCTION_SOLD + AUCTION_NO_BID + AUCTION_CANCELLED)",
+		preSeq, postSeq, seqConsuming))
 }
 
 // (Earlier versions of this file kept an unused getSnapshot helper that hit

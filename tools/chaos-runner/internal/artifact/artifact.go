@@ -49,7 +49,16 @@ type Recorder struct {
 	AcceptedCount           int            `json:"accepted_count"`
 	AcceptedDuringInjection int            `json:"accepted_during_injection"`
 	TerminalCount           int            `json:"terminal_count"`
-	RejectCodeCounts        map[string]int `json:"reject_code_counts"`
+	// SeqConsumingObserved counts every Stream-bearing event the bidder
+	// observed during the drill (BID_ACCEPTED + AUCTION_EXTENDED +
+	// AUCTION_SOLD + AUCTION_NO_BID + AUCTION_CANCELLED). Each of these
+	// emits one Stream entry and consumes one seq, so seq_no_gap can
+	// compare (postSeq - preSeq) against this directly. Fixes the
+	// undercount where the prior formula (accepted+terminal) missed
+	// T2's secondary AUCTION_EXTENDED + cap-hit AUCTION_SOLD that the
+	// readPump skipped without recording. PR #24 CR Eliaaazzz 5/25.
+	SeqConsumingObserved int            `json:"seq_consuming_observed"`
+	RejectCodeCounts     map[string]int `json:"reject_code_counts"`
 
 	// Latencies (parallel to Bids; pre-computed for invariants)
 	AckLatencies []time.Duration `json:"-"`
@@ -141,6 +150,18 @@ func (r *Recorder) SetPostSnapshotError(msg string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.PostSnapshotError = msg
+}
+
+// RecordSeqConsumingEvent is called by the bidder's readPump on every Stream-
+// bearing event type observed (BID_ACCEPTED + AUCTION_EXTENDED + AUCTION_SOLD
+// + AUCTION_NO_BID + AUCTION_CANCELLED). seq_no_gap reads SeqConsumingObserved
+// to compute the expected post-drill seq delta — replaces the prior formula
+// (accepted+terminal) that undercounted T2's secondary AUCTION_EXTENDED and
+// cap-hit AUCTION_SOLD events. PR #24 CR Eliaaazzz 5/25.
+func (r *Recorder) RecordSeqConsumingEvent() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.SeqConsumingObserved++
 }
 
 // Write serializes the recorder to JSON at path. Creates parent dirs.

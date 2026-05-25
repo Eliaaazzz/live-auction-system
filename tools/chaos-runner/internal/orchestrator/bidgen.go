@@ -231,6 +231,7 @@ func (s *steadyBidder) readPump(ctx context.Context, c *websocket.Conn, out chan
 		switch e.Type {
 		case "BID_ACCEPTED":
 			code = "OK_ACCEPTED"
+			s.rec.RecordSeqConsumingEvent()
 		case "BID_REJECTED":
 			var d struct {
 				Code string `json:"code"`
@@ -240,9 +241,14 @@ func (s *steadyBidder) readPump(ctx context.Context, c *websocket.Conn, out chan
 			if code == "" {
 				code = "ERR_UNKNOWN"
 			}
-		case "AUCTION_EXTENDED", "AUCTION_SOLD":
-			// Secondary events — broadcast to the room but not the per-bid ack.
-			// Skip; the fire-loop is waiting for BID_ACCEPTED/REJECTED.
+			// BID_REJECTED does NOT consume a Stream seq — no counter increment.
+		case "AUCTION_EXTENDED", "AUCTION_SOLD", "AUCTION_NO_BID", "AUCTION_CANCELLED":
+			// Each emits one Stream entry at <seq>-0 (T2 secondary, T3 terminal),
+			// consuming one seq. Count it so seq_no_gap can read the actual
+			// delta rather than a partial formula. Skip ack to the fire-loop
+			// since these are room broadcasts, not per-bid acks.
+			// PR #24 CR Eliaaazzz 5/25 — fix for seq_no_gap undercount.
+			s.rec.RecordSeqConsumingEvent()
 			continue
 		case "ROOM_SNAPSHOT", "PONG":
 			continue

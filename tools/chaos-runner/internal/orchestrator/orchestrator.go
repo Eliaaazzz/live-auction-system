@@ -223,6 +223,11 @@ func buildInvariantContext(parent context.Context, rec *artifact.Recorder, recov
 	// but recovery accepts arrive post-uninject).
 	c = context.WithValue(c, evtKey("during", "BID_ACCEPTED_INJECTION_WINDOW"), rec.AcceptedDuringInjection)
 	c = context.WithValue(c, evtKey("during", "TERMINAL"), rec.TerminalCount)
+	// Eliaaazzz PR #24 CR 5/25: every Stream-bearing event the bidder observed,
+	// so seq_no_gap can compute the actual delta instead of the
+	// (accepted + terminal) approximation that undercounts T2 secondary
+	// AUCTION_EXTENDED + cap-hit AUCTION_SOLD events.
+	c = context.WithValue(c, evtKey("during", "SEQ_CONSUMING_OBSERVED"), rec.SeqConsumingObserved)
 	if rec.FirstOKAfterUninject != nil {
 		c = context.WithValue(c, recKey("during", "first_ok_after_uninject"), rec.FirstOKAfterUninject)
 	}
