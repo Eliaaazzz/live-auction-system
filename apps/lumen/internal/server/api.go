@@ -417,7 +417,10 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
 }
 
-// GET /api/auctions/{id}/evidence -> T1 evidence stub (real hash chain = T4).
+// GET /api/auctions/{id}/evidence -> T4 evidence card v0: the hash-chained event
+// timeline, the chain head (eventsHash), a recompute-verified flag, and the order (if
+// the auction sold). Per proto/evidence-card.md; integrity check, not external notary
+// (HMAC key custody = §6).
 func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	aid := r.PathValue("id")
 	a, err := s.st.GetAuction(r.Context(), aid)
@@ -434,18 +437,40 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if status == "" {
 		status = a.Status
 	}
-	n, _ := s.st.CountEvents(r.Context(), aid)
-	writeJSON(w, http.StatusOK, map[string]any{
+	timeline, err := s.st.EventTimeline(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	verified, breakAtSeq, err := s.st.VerifyEvidenceChain(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	chainHead := "" // published per §6 so a verifier can pin the tip
+	if n := len(timeline); n > 0 {
+		chainHead = timeline[n-1].EventHash
+	}
+	resp := map[string]any{
 		"auctionId":         aid,
 		"status":            status,
 		"currentPriceCents": snap.CurrentPriceCents,
 		"winnerId":          snap.WinnerID,
 		"seq":               snap.Seq,
-		"eventsCount":       n,
+		"eventsCount":       len(timeline),
 		"factsConfirmed":    a.FactsConfirmed,
-		"eventsHash":        nil, // hash chain is computed by the Persistence Worker in T4
-		"note":              "T1 evidence stub; events_hash chain lands in T4",
-	})
+		"timeline":          timeline,
+		"eventsHash":        chainHead, // chain head; "" for an empty chain
+		"chainVerified":     verified,
+		"note":              "T4 evidence v0: hash-chained integrity check (not external notarization; HMAC key custody per proto/evidence-card.md §6)",
+	}
+	if !verified {
+		resp["hashBreakAtSeq"] = breakAtSeq
+	}
+	if o, err := s.st.GetOrder(r.Context(), aid); err == nil {
+		resp["order"] = o
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- helpers ---

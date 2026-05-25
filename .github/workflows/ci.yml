@@ -110,6 +110,8 @@ jobs:
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build perf-smoke
       - name: replay-verifier skeleton
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
+      - name: verify-evidence (T4 hash-chain gate; exit!=0 on hash_break)
+        run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen verify-evidence --auction "$VERIFY_AID"
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

@@ -47,7 +47,7 @@ func fullStore(t *testing.T) *store.Store {
 	if rerr != nil || derr != nil || perr != nil {
 		t.Skipf("full store unavailable (redis=%v mysql_open=%v mysql_ping=%v)", rerr, derr, perr)
 	}
-	st, err := store.New(context.Background(), redisAddr, dsn)
+	st, err := store.New(context.Background(), redisAddr, dsn, "test-evidence-key")
 	if err != nil {
 		t.Skipf("store.New: %v", err)
 	}

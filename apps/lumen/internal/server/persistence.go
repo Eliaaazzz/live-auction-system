@@ -52,6 +52,15 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 					break
 				}
 			}
+			// T4: a hammered / cap-hit SOLD creates the idempotent buyer order
+			// (orders UNIQUE(auction_id)). Done before the cursor advances so a failure
+			// re-projects on the next sweep rather than being lost.
+			if e.Type == model.TypeAuctionSold {
+				if err := st.CreateOrderFromSold(ctx, aid, e.Payload); err != nil {
+					log.Printf("persistence order %s seq=%d: %v (will retry)", aid, e.Seq, err)
+					break
+				}
+			}
 			lastID[aid] = e.ID
 		}
 	}

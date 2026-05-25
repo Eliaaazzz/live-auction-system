@@ -2,7 +2,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke verify build vet test fmt guard
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke verify verify-evidence build vet test fmt guard
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -34,6 +34,11 @@ verify:           ## replay-verifier skeleton: expect "consistent"
 	@aid="$(VERIFY_AID)"; \
 	if [ -z "$$aid" ] && [ -f "$(E2E_AID_FILE)" ]; then aid="$$(cat $(E2E_AID_FILE))"; fi; \
 	$(COMPOSE) --profile tools run --rm --build -e VERIFY_AID="$$aid" verifier
+
+verify-evidence:  ## T4 evidence gate: recompute event_hash chain; exit!=0 on hash_break
+	@aid="$(VERIFY_AID)"; \
+	if [ -z "$$aid" ] && [ -f "$(E2E_AID_FILE)" ]; then aid="$$(cat $(E2E_AID_FILE))"; fi; \
+	$(COMPOSE) exec -T lumen /lumen verify-evidence --auction "$$aid"
 
 ## --- pure Go (needs Go toolchain; used by CI) ---
 build:
