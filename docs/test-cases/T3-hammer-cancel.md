@@ -1,11 +1,11 @@
 # T3 测试用例 — Timer Hammer + Seller Cancel (PR #29)
 
-> Author: @fariZzzz (infra/AI/QA lens, blocking authority on CI/evidence gates per [#15 Workflow v2](https://github.com/Eliaaazzz/live-auction-system/issues/15)).
-> Target: `elia/T3-hammer-cancel` at commit `24a2151`.
-> Base-chain status: **PR #29 still stacks on `elia/T2-atomic-bid-core`** (main HEAD is `a5ee566`, T1-only). Cases run against the T3 branch which carries the full chain locally; CI/merge gates are blocked on the leader's rollup PR.
+> Author: @fariZzzz (per [Workflow v2 global-scope review #15](https://github.com/Eliaaazzz/live-auction-system/issues/15)).
+> Target: `elia/T3-hammer-cancel` at commit `24a2151`; rolled to `main` via PR #31.
+> Base-chain status: PR #31 absorbs T2 + T3 onto `main`; the case set runs identically there.
 >
 > Schema (per @fariZzzz 5/25 directive):每条用例必须包含 `编号 / 标题 / 前置条件 / 测试步骤 / 输入数据 / 预期结果 / 优先级`. 用例分两类:
-> - **覆盖型 (Coverage, TC-T3-001…015)** — 对应 PR #29 现有的 14 个 `_test.go` 用例,作者 review 时也用作可执行清单
+> - **覆盖型 (Coverage, TC-T3-001…020)** — 对应 PR #29 现有的 **20 个** `_test.go` 用例 (16 个 store-level: `lua_t3_test.go` + `lua_t3_hidden_test.go`; 4 个 server-level: `ws_t3_test.go` + `ws_t3_hidden_test.go`),作者 review 时也用作可执行清单
 > - **缺口型 (Gap probes, TC-T3-100…107)** — PR #29 当前未覆盖、但根据架构推理出的边界场景,本 review 主张要么补测,要么解释为何安全
 >
 > 优先级:**P0** 系统不可用 / 资产丢失 / 状态分裂 · **P1** 关键路径功能错误 · **P2** 自愈但可观测性差 · **P3** 极端/罕见
@@ -16,7 +16,7 @@
 
 ## 0. 用例索引
 
-### 覆盖型 (15)
+### 覆盖型 (20)
 
 | ID | 标题 | 对应 PR #29 测试 | P |
 |---|---|---|---|
@@ -366,12 +366,13 @@
 
 ## 3. 执行计划
 
-- **覆盖型 (TC-T3-001..020)**:本 PR 已实现 14 个 `_test.go`,执行 `go test -race -count=1 ./apps/lumen/internal/store/... ./apps/lumen/internal/server/...` 即可
+- **覆盖型 (TC-T3-001..020)**:本 PR 已实现 20 个 `_test.go` (16 store + 4 server),执行 `go test -race -count=1 ./apps/lumen/internal/store/... ./apps/lumen/internal/server/...` 即可
 - **缺口型 (TC-T3-100..107)**:
-  - 101, 105, 107 建议在 follow-up 测试 PR 落地(stream-first 自愈语义的回归测,价值高)
-  - 100 建议在 handleCancel 重写 (用 SELECT FOR UPDATE 或 retry-on-conflict) 时一并加
+  - **TC-T3-101 已落地** — PR #31 commit `8a4ac02` 加了 `TestT3CancelEventualConsistencyFromStream` (handleCancel 返 200 + persistence worker 自愈,Stream-first 设计的回归测)
+  - 100 (DRAFT TOCTOU) + 105 (cancel vs hammer concurrency winner) + 107 (重启 mid-cancel) 建议在 [#32 T3 follow-up](https://github.com/Eliaaazzz/live-auction-system/issues/32) PR 落地
   - 102, 103, 104, 106 文档化为 known-gap,T5/T8 时回过来补
 
 ## 4. 评审历史
 
 - v1 (2026-05-25, @fariZzzz) — 初稿,基于 commit `24a2151`,base chain 仍为 T2 stranded
+- v2 (2026-05-25, @fariZzzz) — Eliaaazzz CR fix: coverage count 15→20 (16 store + 4 server `_test.go`); TC-T3-101 marked 已落地 (PR #31 `8a4ac02` adopted the eventual-consistency design); links updated for rollup PR #31 + follow-up issue #32
