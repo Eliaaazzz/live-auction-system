@@ -274,6 +274,17 @@ func getJSON(hc *http.Client, urlStr string, out any) error {
 	return doJSON(hc, req, out)
 }
 
+func getJSONAuth(hc *http.Client, urlStr, token string, out any) error {
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return doJSON(hc, req, out)
+}
+
 func doJSON(hc *http.Client, req *http.Request, out any) error {
 	resp, err := hc.Do(req)
 	if err != nil {

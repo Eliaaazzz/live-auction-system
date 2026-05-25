@@ -176,10 +176,21 @@ func (s *Store) WithAuctionTransitionLock(ctx context.Context, aid string, fn fu
 }
 
 // ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
-// DIFFERENT payload than the one being projected — a tamper/bug signal, not the
-// normal idempotent re-projection. The full hash chain lands in T4; this is the
-// lightweight integrity tripwire.
-var ErrEventPayloadMismatch = errors.New("event payload mismatch for existing (auction_id, seq)")
+// DIFFERENT event type or payload than the one being projected — a tamper/bug
+// signal, not the normal idempotent re-projection.
+var ErrEventPayloadMismatch = errors.New("event type/payload mismatch for existing (auction_id, seq)")
+
+// ErrPreviousEventHashMissing is a transient hash-fill dependency: the previous seq
+// exists but has not been chained yet. The persistence worker should retry later.
+var ErrPreviousEventHashMissing = errors.New("previous event hash missing")
+
+// ErrPermanentOrderProjection marks a SOLD event/order inconsistency that retrying
+// cannot repair without operator action.
+var ErrPermanentOrderProjection = errors.New("permanent order projection error")
+
+// ErrOrderProjectionMismatch means an idempotent order re-projection found an
+// existing order for the auction that disagrees with the SOLD event.
+var ErrOrderProjectionMismatch = errors.New("order projection mismatch")
 
 // InsertEvent projects one Stream event into auction_events and extends the hash
 // chain. Idempotent via UNIQUE(auction_id, seq): a re-projection of the same (seq,
@@ -196,16 +207,16 @@ func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventTyp
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		// Row already exists: confirm it's an identical re-projection. MySQL JSON
-		// comparison normalizes key order/whitespace, so this only trips on a genuine
-		// different-payload-for-same-seq, not on cjson formatting differences.
+		// Row already exists: confirm it's an identical re-projection. event_type is
+		// part of the hash canonical string, so a type-only mismatch must fail too.
+		var existingType string
 		var diff int
 		if err := s.db.QueryRowContext(ctx,
-			`SELECT payload_json <> CAST(? AS JSON) FROM auction_events WHERE auction_id = ? AND seq = ?`,
-			payload, aid, seq).Scan(&diff); err != nil {
+			`SELECT event_type, payload_json <> CAST(? AS JSON) FROM auction_events WHERE auction_id = ? AND seq = ?`,
+			payload, aid, seq).Scan(&existingType, &diff); err != nil {
 			return err
 		}
-		if diff == 1 {
+		if existingType != eventType || diff == 1 {
 			return fmt.Errorf("%w: aid=%s seq=%d", ErrEventPayloadMismatch, aid, seq)
 		}
 	}
@@ -231,26 +242,42 @@ func (s *Store) evidenceHash(prevHash string, seq int64, eventType, payload stri
 // unchained by a crash between the INSERT and this fill. The persistence worker projects
 // in seq order, so the previous event is already chained when this runs.
 func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventType string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	var payloadNorm, existing sql.NullString
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT payload_json, event_hash FROM auction_events WHERE auction_id = ? AND seq = ?`,
+	if err := tx.QueryRowContext(ctx,
+		`SELECT payload_json, event_hash FROM auction_events WHERE auction_id = ? AND seq = ? FOR UPDATE`,
 		aid, seq).Scan(&payloadNorm, &existing); err != nil {
 		return err
 	}
 	if existing.Valid && existing.String != "" {
-		return nil // already chained
+		return tx.Commit() // already chained
 	}
 	var prev sql.NullString
-	if err := s.db.QueryRowContext(ctx,
-		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1`,
-		aid, seq).Scan(&prev); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	err = tx.QueryRowContext(ctx,
+		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq < ? ORDER BY seq DESC LIMIT 1 FOR UPDATE`,
+		aid, seq).Scan(&prev)
+	if errors.Is(err, sql.ErrNoRows) {
+		if seq > 1 {
+			return fmt.Errorf("%w: aid=%s seq=%d", ErrPreviousEventHashMissing, aid, seq)
+		}
+	} else if err != nil {
 		return err
 	}
+	if err == nil && (!prev.Valid || prev.String == "") {
+		return fmt.Errorf("%w: aid=%s seq=%d", ErrPreviousEventHashMissing, aid, seq)
+	}
 	h := s.evidenceHash(prev.String, seq, eventType, payloadNorm.String)
-	_, err := s.db.ExecContext(ctx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE auction_events SET event_hash = ?, prev_hash = ? WHERE auction_id = ? AND seq = ? AND event_hash IS NULL`,
-		h, prev.String, aid, seq)
-	return err
+		h, prev.String, aid, seq); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // VerifyEvidenceChain recomputes the auction_events hash chain for aid and returns the
@@ -314,25 +341,41 @@ type Order struct {
 func (s *Store) CreateOrderFromSold(ctx context.Context, aid, payload string) error {
 	var p model.AuctionSoldData
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {
-		return fmt.Errorf("order: parse AUCTION_SOLD payload for %s: %w", aid, err)
+		return fmt.Errorf("%w: parse AUCTION_SOLD payload for %s: %v", ErrPermanentOrderProjection, aid, err)
 	}
 	if p.WinnerID == "" {
-		return fmt.Errorf("order: AUCTION_SOLD payload has empty winnerId (aid=%s)", aid)
+		return fmt.Errorf("%w: AUCTION_SOLD payload has empty winnerId (aid=%s)", ErrPermanentOrderProjection, aid)
 	}
 	amount, err := strconv.ParseInt(p.AmountCents, 10, 64)
 	if err != nil {
-		return fmt.Errorf("order: parse amountCents %q for %s: %w", p.AmountCents, aid, err)
+		return fmt.Errorf("%w: parse amountCents %q for %s: %v", ErrPermanentOrderProjection, p.AmountCents, aid, err)
 	}
 	var productID string
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT product_id FROM auctions WHERE id = ?`, aid).Scan(&productID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: missing auction/product for %s", ErrPermanentOrderProjection, aid)
+		}
 		return fmt.Errorf("order: look up product for %s: %w", aid, err)
 	}
-	_, err = s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`INSERT IGNORE INTO orders (id, auction_id, product_id, buyer_id, amount_cents, status, created_at)
 		 VALUES (?, ?, ?, ?, ?, 'created', ?)`,
 		"ord_"+aid, aid, productID, p.WinnerID, amount, time.Now().UTC())
-	return err
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	o, err := s.GetOrder(ctx, aid)
+	if err != nil {
+		return err
+	}
+	if o.ProductID != productID || o.BuyerID != p.WinnerID || int64(o.AmountCents) != amount || o.Status != "created" {
+		return fmt.Errorf("%w: aid=%s", ErrOrderProjectionMismatch, aid)
+	}
+	return nil
 }
 
 // GetOrder returns the order for an auction, or ErrNotFound if none exists yet.

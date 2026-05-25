@@ -10,12 +10,15 @@ the Verifier against it.
 
 ## 1. Evidence card — `GET /api/auctions/{id}/evidence`
 
+Requires a valid Lumen auth token. The timeline contains raw event payloads and the
+order contains buyer/order fields, so v0 does not expose this endpoint anonymously.
+
 ```jsonc
 {
   "auctionId":        "auc_…",
-  "status":           "SOLD",            // Redis snapshot status, MySQL fallback if unfrozen
+  "status":           "ORDER_CREATED",   // MySQL projection / order-derived summary
   "currentPriceCents":"11000",           // money-as-string
-  "winnerId":         "user_…",          // "" if none
+  "winnerId":         "user_…",          // from verified timeline/order; "" if none
   "seq":              2,                  // last seq
   "eventsCount":      2,
   "factsConfirmed":   true,
@@ -54,6 +57,7 @@ canonical  = prev_hash || "\n" || dec(seq) || "\n" || event_type || "\n" || payl
 - **dec(seq)** — base-10 ASCII of the int64 `seq`.
 - **event_type** — the wire type string (`BID_ACCEPTED` / `AUCTION_SOLD` / …).
 - **payload** — the **MySQL-normalized `payload_json` text**, i.e. the value returned by `SELECT payload_json` — **not** the original cjson bytes. MySQL JSON columns normalize key order/whitespace on storage, so a verifier MUST read `payload_json` from MySQL (or apply identical normalization) before hashing, or it will compute a different digest. The writer (Persistence Worker) hashes the same read-back form, so the two always agree on one deployment.
+  - This assumes MySQL JSON normalization is stable for the deployed version. Re-verify after a MySQL upgrade; if normalization changes, pre-upgrade hashes may need an intentional re-chain.
 
 A verifier recomputes the chain and reports the **first** offending seq as `hash_break_at_seq` when either: a `prev_hash` does not link to the running head, or an `event_hash` does not match a recompute over the stored payload (a post-hoc edit of payload or hash). An empty chain verifies.
 
@@ -65,6 +69,7 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 - **What this defends:** post-hoc single-point tampering of stored history — edit any `payload_json` or `event_hash` and the chain breaks at that seq, detectable by anyone holding the key.
 - **What this is NOT:** external notarization / blockchain anchoring. And per §6, **if the HMAC key is readable by the same process/DB that writes the events, the guarantee collapses to a plain integrity/consistency check** (a writer who also has the key can re-chain a forgery). For the demo the key lives in process env, so we describe this as an **integrity/consistency check**, not tamper-proof evidence. Hardening (key in KMS, separate signer, rotation) is post-MVP.
 - **Rotation:** changing the key invalidates recompute of pre-rotation rows; a rotation scheme (versioned key id per row) is deferred — out of scope for v0, noted here so the field set can grow compatibly.
+- **Writer concurrency:** v0 still deploys one Persistence Worker. `fillEventHash` uses a transaction and row locks, and it refuses to chain seq N while seq N-1 exists without an `event_hash`; a multi-worker deployment must preserve this retry behavior or add a per-auction lease.
 
 ## 4. Schema
 

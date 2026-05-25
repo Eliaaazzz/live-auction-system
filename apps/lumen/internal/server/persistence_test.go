@@ -163,4 +163,10 @@ func TestT2HiddenInsertEventPayloadMismatch(t *testing.T) {
 	if !errors.Is(err, store.ErrEventPayloadMismatch) {
 		t.Fatalf("payload mismatch: got %v want ErrEventPayloadMismatch", err)
 	}
+	// event_type is part of the evidence hash canonical string, so a type-only
+	// conflict for the same seq/payload must also be rejected.
+	err = st.InsertEvent(ctx, aid, 1, "AUCTION_SOLD", `{"amountCents":"11000", "seq":1}`)
+	if !errors.Is(err, store.ErrEventPayloadMismatch) {
+		t.Fatalf("event_type mismatch: got %v want ErrEventPayloadMismatch", err)
+	}
 }

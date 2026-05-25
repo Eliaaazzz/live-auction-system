@@ -417,11 +417,15 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
 }
 
-// GET /api/auctions/{id}/evidence -> T4 evidence card v0: the hash-chained event
-// timeline, the chain head (eventsHash), a recompute-verified flag, and the order (if
-// the auction sold). Per proto/evidence-card.md; integrity check, not external notary
-// (HMAC key custody = §6).
+// GET /api/auctions/{id}/evidence -> T4 evidence card v0: authenticated access to
+// the hash-chained event timeline, chain head (eventsHash), recompute-verified flag,
+// and order (if the auction sold). Per proto/evidence-card.md; integrity check, not
+// external notary (HMAC key custody = §6).
 func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	aid := r.PathValue("id")
 	a, err := s.st.GetAuction(r.Context(), aid)
 	if err == store.ErrNotFound {
@@ -431,11 +435,6 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	snap, _ := s.st.Snapshot(r.Context(), aid)
-	status := snap.Status
-	if status == "" {
-		status = a.Status
 	}
 	timeline, err := s.st.EventTimeline(r.Context(), aid)
 	if err != nil {
@@ -451,12 +450,14 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if n := len(timeline); n > 0 {
 		chainHead = timeline[n-1].EventHash
 	}
+	order, orderErr := s.st.GetOrder(r.Context(), aid)
+	summary := evidenceSummary(a.Status, timeline, order, orderErr == nil)
 	resp := map[string]any{
 		"auctionId":         aid,
-		"status":            status,
-		"currentPriceCents": snap.CurrentPriceCents,
-		"winnerId":          snap.WinnerID,
-		"seq":               snap.Seq,
+		"status":            summary.Status,
+		"currentPriceCents": summary.CurrentPriceCents,
+		"winnerId":          summary.WinnerID,
+		"seq":               summary.Seq,
 		"eventsCount":       len(timeline),
 		"factsConfirmed":    a.FactsConfirmed,
 		"timeline":          timeline,
@@ -467,10 +468,53 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if !verified {
 		resp["hashBreakAtSeq"] = breakAtSeq
 	}
-	if o, err := s.st.GetOrder(r.Context(), aid); err == nil {
-		resp["order"] = o
+	if orderErr == nil {
+		resp["order"] = order
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+type evidenceSummaryData struct {
+	Status            string
+	CurrentPriceCents string
+	WinnerID          string
+	Seq               int64
+}
+
+func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order store.Order, hasOrder bool) evidenceSummaryData {
+	out := evidenceSummaryData{Status: mysqlStatus}
+	for _, e := range timeline {
+		if e.Seq > out.Seq {
+			out.Seq = e.Seq
+		}
+		switch e.EventType {
+		case model.TypeBidAccepted:
+			var p model.BidAcceptedData
+			if json.Unmarshal(e.Payload, &p) == nil {
+				out.CurrentPriceCents = p.AmountCents
+				if p.UserID != "" {
+					out.WinnerID = p.UserID
+				}
+			}
+		case model.TypeAuctionSold:
+			var p model.AuctionSoldData
+			if json.Unmarshal(e.Payload, &p) == nil {
+				out.Status = p.Status
+				out.CurrentPriceCents = p.AmountCents
+				out.WinnerID = p.WinnerID
+			}
+		case model.TypeAuctionNoBid:
+			out.Status = model.StateNoBid
+		case model.TypeAuctionCancelled:
+			out.Status = model.StateCancelled
+		}
+	}
+	if hasOrder {
+		out.Status = model.StateOrderCreated
+		out.CurrentPriceCents = strconv.FormatInt(int64(order.AmountCents), 10)
+		out.WinnerID = order.BuyerID
+	}
+	return out
 }
 
 // --- helpers ---

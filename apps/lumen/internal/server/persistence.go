@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -46,18 +48,19 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 			// source for SOLD/NO_BID/CANCELLED (covers cap-hit SOLD via place_bid, the
 			// Timer hammer, and cancel). DRAFT/SCHEDULED/LIVE are set by their handlers
 			// (they emit no Stream event). On error, stop so the next sweep retries.
-			if status := terminalStatus(e.Type); status != "" {
-				if err := st.UpdateAuctionStatus(ctx, aid, status); err != nil {
-					log.Printf("persistence status %s seq=%d -> %s: %v (will retry)", aid, e.Seq, status, err)
+			if e.Type == model.TypeAuctionSold {
+				if err := projectSold(ctx, st, aid, e); err != nil {
+					if errors.Is(err, store.ErrPermanentOrderProjection) || errors.Is(err, store.ErrOrderProjectionMismatch) {
+						log.Printf("ERROR persistence sold-order %s seq=%d: %v (poison event; advancing cursor)", aid, e.Seq, err)
+						lastID[aid] = e.ID
+						continue
+					}
+					log.Printf("persistence sold-order %s seq=%d: %v (will retry)", aid, e.Seq, err)
 					break
 				}
-			}
-			// T4: a hammered / cap-hit SOLD creates the idempotent buyer order
-			// (orders UNIQUE(auction_id)). Done before the cursor advances so a failure
-			// re-projects on the next sweep rather than being lost.
-			if e.Type == model.TypeAuctionSold {
-				if err := st.CreateOrderFromSold(ctx, aid, e.Payload); err != nil {
-					log.Printf("persistence order %s seq=%d: %v (will retry)", aid, e.Seq, err)
+			} else if status := terminalStatus(e.Type); status != "" {
+				if err := st.UpdateAuctionStatus(ctx, aid, status); err != nil {
+					log.Printf("persistence status %s seq=%d -> %s: %v (will retry)", aid, e.Seq, status, err)
 					break
 				}
 			}
@@ -95,12 +98,29 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 	}
 }
 
+func projectSold(ctx context.Context, st *store.Store, aid string, e store.StreamEvent) error {
+	a, err := st.GetAuction(ctx, aid)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("%w: missing auction row for SOLD event %s", store.ErrPermanentOrderProjection, aid)
+		}
+		return err
+	}
+	if a.Status != model.StateOrderCreated {
+		if err := st.UpdateAuctionStatus(ctx, aid, model.StateSold); err != nil {
+			return err
+		}
+	}
+	if err := st.CreateOrderFromSold(ctx, aid, e.Payload); err != nil {
+		return err
+	}
+	return st.UpdateAuctionStatus(ctx, aid, model.StateOrderCreated)
+}
+
 // terminalStatus maps a terminal Stream event type to the auctions.status it
 // projects, or "" for non-terminal events.
 func terminalStatus(eventType string) string {
 	switch eventType {
-	case model.TypeAuctionSold:
-		return model.StateSold
 	case model.TypeAuctionNoBid:
 		return model.StateNoBid
 	case model.TypeAuctionCancelled:

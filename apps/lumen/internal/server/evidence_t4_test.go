@@ -9,12 +9,14 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
 // TC-T4-01 — genesis prev_hash is empty, each event links to the prior one, and the
@@ -120,6 +122,70 @@ func TestT4HashChainTamperBreaksAtSeq(t *testing.T) {
 	}
 }
 
+// TC-T4-03a — deleting a row in the middle of the chain breaks it at the next
+// surviving seq because that row's prev_hash no longer links to the running head.
+func TestT4HashChainDeletionBreaksAtSeq(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_del_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	for seq := int64(1); seq <= 3; seq++ {
+		if err := st.InsertEvent(ctx, aid, seq, model.TypeBidAccepted, fmt.Sprintf(`{"seq":%d}`, seq)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ok, _, _ := st.VerifyEvidenceChain(ctx, aid); !ok {
+		t.Fatal("precondition: chain should verify before deletion")
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id=? AND seq=2", aid); err != nil {
+		t.Fatal(err)
+	}
+	ok, brk, err := st.VerifyEvidenceChain(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || brk != 3 {
+		t.Fatalf("after deleting seq 2: ok=%v break=%d want ok=false break_at_seq=3", ok, brk)
+	}
+}
+
+// TC-T4-03b — if a later event is inserted while the previous row exists but has not
+// been hash-filled yet, the writer must not treat it as a new genesis. It should
+// retry after the prior row gets its hash.
+func TestT4HashFillWaitsForPreviousHash(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_prevhash_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	p1 := `{"seq":1,"amountCents":"11001"}`
+	p2 := `{"seq":2,"amountCents":"11002"}`
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO auction_events (auction_id, seq, event_type, payload_json, created_at)
+		 VALUES (?, 1, ?, ?, ?)`,
+		aid, model.TypeBidAccepted, p1, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	err := st.InsertEvent(ctx, aid, 2, model.TypeBidAccepted, p2)
+	if !errors.Is(err, store.ErrPreviousEventHashMissing) {
+		t.Fatalf("insert seq2 before seq1 hash: got %v want ErrPreviousEventHashMissing", err)
+	}
+	if err := st.InsertEvent(ctx, aid, 1, model.TypeBidAccepted, p1); err != nil {
+		t.Fatalf("fill seq1: %v", err)
+	}
+	if err := st.InsertEvent(ctx, aid, 2, model.TypeBidAccepted, p2); err != nil {
+		t.Fatalf("retry seq2 after seq1 hash: %v", err)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify after retry: ok=%v break=%d err=%v", ok, brk, err)
+	}
+}
+
 // TC-T4-04 — the SOLD order is created exactly once: orders.UNIQUE(auction_id) means a
 // re-projected AUCTION_SOLD does not create a second order (the "50-user finish" exit
 // criterion at the unit level).
@@ -165,6 +231,56 @@ func TestT4OrderIdempotentOnSold(t *testing.T) {
 	}
 	if cnt != 1 {
 		t.Fatalf("orders count=%d want 1 (UNIQUE(auction_id) idempotent)", cnt)
+	}
+	conflict := `{"seq":2,"winnerId":"other_buyer","amountCents":"11001","status":"SOLD"}`
+	err = st.CreateOrderFromSold(ctx, aid, conflict)
+	if !errors.Is(err, store.ErrOrderProjectionMismatch) {
+		t.Fatalf("conflicting order re-projection: got %v want ErrOrderProjectionMismatch", err)
+	}
+}
+
+func TestT4ProjectSoldPromotesOrderCreated(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	sellerID := fmt.Sprintf("seller_t4_state_%d", suffix)
+	prodID := fmt.Sprintf("prod_t4_state_%d", suffix)
+	aid := fmt.Sprintf("auc_t4_state_%d", suffix)
+	t.Cleanup(func() {
+		c := context.Background()
+		_, _ = st.DB().ExecContext(c, "DELETE FROM orders WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(c, "DELETE FROM auction_rules WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(c, "DELETE FROM auctions WHERE id=?", aid)
+		_, _ = st.DB().ExecContext(c, "DELETE FROM products WHERE id=?", prodID)
+	})
+	if err := st.CreateProduct(ctx, prodID, sellerID, "T4 Item", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CreateAuction(ctx, aid, prodID, sellerID, persistRules(), true, ""); err != nil {
+		t.Fatal(err)
+	}
+	e := store.StreamEvent{Seq: 2, Type: model.TypeAuctionSold, Payload: `{"seq":2,"winnerId":"buyer_t4","amountCents":"11000","status":"SOLD"}`}
+	if err := projectSold(ctx, st, aid, e); err != nil {
+		t.Fatal(err)
+	}
+	a, err := st.GetAuction(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != model.StateOrderCreated {
+		t.Fatalf("status=%s want ORDER_CREATED after idempotent order creation", a.Status)
+	}
+}
+
+func TestT4ProjectSoldMissingAuctionIsPermanent(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("auc_t4_missing_%d", time.Now().UnixNano())
+	e := store.StreamEvent{Seq: 2, Type: model.TypeAuctionSold, Payload: `{"seq":2,"winnerId":"buyer_t4","amountCents":"11000","status":"SOLD"}`}
+
+	err := projectSold(ctx, st, aid, e)
+	if !errors.Is(err, store.ErrPermanentOrderProjection) {
+		t.Fatalf("missing auction SOLD event: got %v want ErrPermanentOrderProjection", err)
 	}
 }
 
@@ -226,13 +342,17 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 		var ev struct {
 			ChainVerified bool   `json:"chainVerified"`
 			EventsHash    string `json:"eventsHash"`
+			Status        string `json:"status"`
 			Order         *struct {
 				BuyerID     string `json:"buyerId"`
 				AmountCents string `json:"amountCents"`
 			} `json:"order"`
 		}
-		if err := getJSON(hc, target+"/api/auctions/"+aid+"/evidence", &ev); err == nil {
+		if err := getJSONAuth(hc, target+"/api/auctions/"+aid+"/evidence", buyer.Token, &ev); err == nil {
 			if ev.Order != nil && ev.ChainVerified && ev.EventsHash != "" {
+				if ev.Status != model.StateOrderCreated {
+					t.Fatalf("status=%s want ORDER_CREATED once order exists", ev.Status)
+				}
 				if ev.Order.BuyerID != buyer.UserID || ev.Order.AmountCents != "11000" {
 					t.Fatalf("order=%+v want buyer=%s amount=11000", ev.Order, buyer.UserID)
 				}
@@ -242,4 +362,42 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatal("evidence card did not show a verified hash chain + order within 8s")
+}
+
+func TestT4EvidenceRequiresAuth(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence Auth Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId":      productID,
+		"rules":          persistRules(),
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := hc.Get(target + "/api/auctions/" + created.AuctionID + "/evidence")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauth evidence status=%d want 401", resp.StatusCode)
+	}
+	var ev struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &ev); err != nil {
+		t.Fatalf("authenticated evidence: %v", err)
+	}
 }
