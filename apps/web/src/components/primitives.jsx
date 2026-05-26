@@ -504,15 +504,22 @@ function HashCell({ value, prefix = 8, label }) {
   );
 }
 
-// ─── QuickBidChips — Elia's #49 round-2 review · option 2 ───
-// 4 chips: +1% · +5% · +10% · MAX (cap), plus a long-press CUSTOM drawer
-// for arbitrary amounts. Percentage math is BigInt-safe and snaps UP to
-// the nearest step boundary so the resulting bid always satisfies
-// `amount >= current + minIncrement` per place_bid.lua. MAX is gated to
-// the capCents value when supplied.
+// ─── QuickBidChips v2 — bid panel ───
+// Step-multiple chips ("档") replacing the v1 percent chips, per cross-platform
+// research (Whatnot / eBay / Sotheby's / 淘宝直播):
 //
-// All chips emit `onBid(cents: string)` — same contract as <BidButton>,
-// so wiring at LiveRoomRoute is identical.
+//   - Big primary label = resulting bid amount (¥133,800) — what the user
+//     actually pays. v1's "+5% / ¥14K" buried the absolute number; reversing
+//     the visual hierarchy matches every major live-auction app.
+//   - Small secondary label = delta tag ("+1档") — auction-house dialect,
+//     unambiguously maps to backend stepCents (place_bid.lua minIncrement).
+//
+// Custom drawer expands the v1 typed-input pattern with ± step nudge buttons
+// (-3档 / -1档 / input / +1档 / +3档). Whatnot's Custom drawer has plus/minus
+// controls around the value; we adopt the same pattern. Validation now
+// catches step-boundary mismatches client-side (was unaddressed in v1).
+//
+// All chips emit `onBid(cents: string)` — same wire contract.
 function QuickBidChips({
   currentCents,
   stepCents = '500000',
@@ -525,51 +532,39 @@ function QuickBidChips({
   const [showDrawer, setShowDrawer] = React.useState(false);
   const [custom, setCustom] = React.useState('');
 
-  // Defense-in-depth: stepCents=='0' from the store default would cause a
-  // BigInt divide-by-zero inside pctBump (caught silently by try/catch,
-  // chip would silently fall back to currentCents → user taps →
-  // backend rejects with ERR_TOO_LOW). Detect upstream and treat the
-  // chips as not-renderable. The store now defaults to '500000' so this
-  // is mostly belt-and-suspenders for callers that pass through.
+  // Defense-in-depth: stepCents=='0' would still bypass the early disabling
+  // path if the store ever regresses, so guard inside the component too.
   let stepBig = 0n;
   try { stepBig = BigInt(stepCents); } catch { stepBig = 0n; }
   const stepUsable = stepBig > 0n;
 
-  const pctBump = (pctTimes100) => {
-    if (!stepUsable) return currentCents;  // defensive — caller guards on stepUsable
+  // stepBump(N) = currentCents + N · stepCents. v2: no percentage rounding,
+  // no ceil-div, no IEEE drift — straight BigInt addition.
+  const stepBump = (multiplier) => {
+    if (!stepUsable) return currentCents;
     try {
-      const c = BigInt(currentCents);
-      const s = stepBig;
-      // raw = current * (1 + pct/100)
-      const raw = (c * BigInt(100 + pctTimes100)) / 100n;
-      // floor to step boundary; then ensure raw > current+step (snap up).
-      const minTarget = c + s;
-      const snapped = raw < minTarget ? minTarget : raw;
-      // round up to next step multiple from current
-      const above = snapped - c;
-      const stepsUp = (above + s - 1n) / s;
-      return (c + stepsUp * s).toString();
+      return (BigInt(currentCents) + BigInt(multiplier) * stepBig).toString();
     } catch { return currentCents; }
   };
   const maxBid = () => {
     try {
       if (capCents) return capCents;
-      // No cap: fall back to +10% (matches the rightmost percent chip).
-      return pctBump(10);
+      // No cap → fall back to +10档 (matches the rightmost step chip).
+      return stepBump(10);
     } catch { return currentCents; }
   };
 
   const chips = [
-    { label: '+1%',  cents: pctBump(1) },
-    { label: '+5%',  cents: pctBump(5) },
-    { label: '+10%', cents: pctBump(10) },
-    { label: 'MAX',  cents: maxBid(), tone: 'gold' },
+    { label: '+1档',  cents: stepBump(1) },
+    { label: '+3档',  cents: stepBump(3) },
+    { label: '+10档', cents: stepBump(10) },
+    { label: 'MAX',   cents: maxBid(), tone: 'gold' },
   ];
 
   const chipBase = {
     flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
-    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
     transition: 'transform .12s',
   };
@@ -588,9 +583,34 @@ function QuickBidChips({
       customBig = BigInt(custom);
       if (customBig > MAX_MONEY_CENTS) customError = 'max';
       else if (customBig <= BigInt(currentCents)) customError = 'low';
+      // v2: step-boundary check. place_bid.lua requires the bid to land on
+      // a stepCents multiple above currentCents; chips already snap, custom
+      // input does not, so an off-grid bid would round-trip to ERR_BAD_INPUT.
+      else if (stepUsable && (customBig - BigInt(currentCents)) % stepBig !== 0n) {
+        customError = 'step';
+      }
     } catch { customError = 'parse'; }
   }
   const customSubmittable = !disabled && custom && customError == null;
+
+  // ± step buttons in the custom drawer: bump the typed value (or currentCents
+  // if the input is empty/invalid) by N · stepCents. Clamped to [currentCents +
+  // stepCents, MAX_MONEY_CENTS]. The −3档 / −1档 buttons let users walk back
+  // from an overshoot; the chip path is for snap-up impulse, the drawer is
+  // for precision.
+  const stepNudge = (multiplier) => {
+    if (!stepUsable || disabled) return;
+    try {
+      const c = BigInt(currentCents);
+      const s = stepBig;
+      const base = (customBig != null && customError !== 'parse') ? customBig : c + s;
+      let next = base + BigInt(multiplier) * s;
+      const min = c + s;
+      if (next < min) next = min;
+      if (next > MAX_MONEY_CENTS) next = MAX_MONEY_CENTS;
+      setCustom(next.toString());
+    } catch {}
+  };
 
   return (
     <div className={shake ? 'lumen-shake' : ''}>
@@ -625,9 +645,16 @@ function QuickBidChips({
                     ? '0 4px 14px rgba(201,169,97,.28)'
                     : '0 4px 14px rgba(254,44,85,.28)',
               }}>
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.02em' }}>{c.label}</span>
-              <span className="mono" style={{ fontSize: 11, fontWeight: 600, opacity: .9 }}>
+              <span className="mono" style={{
+                fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
+                fontVariantNumeric: 'tabular-nums',
+              }}>
                 {formatCentsCNY(c.cents)}
+              </span>
+              <span style={{
+                fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
+              }}>
+                {c.label}
               </span>
             </button>
           );
@@ -648,8 +675,9 @@ function QuickBidChips({
         <div style={{
           marginTop: 6, padding: '10px 12px', borderRadius: 10,
           background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
-          display: 'flex', flexDirection: 'column', gap: 6,
+          display: 'flex', flexDirection: 'column', gap: 8,
         }}>
+          {/* Row 1 — typed input + Submit button (Whatnot Custom pattern). */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input
               type="text"
@@ -687,6 +715,35 @@ function QuickBidChips({
               提交
             </button>
           </div>
+
+          {/* Row 2 — ± step nudge buttons (v2 addition, per Whatnot Custom +/-
+              and eBay mobile spinner pattern). Each click bumps the typed
+              value by N · stepCents, clamped to valid range. */}
+          {stepUsable && (
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'center' }}>
+              {[
+                { label: '−3档', mult: -3 },
+                { label: '−1档', mult: -1 },
+                { label: '+1档', mult:  1 },
+                { label: '+3档', mult:  3 },
+              ].map((b) => (
+                <button key={b.mult}
+                  disabled={disabled}
+                  onClick={() => stepNudge(b.mult)}
+                  style={{
+                    flex: 1, padding: '6px 4px', borderRadius: 6,
+                    background: 'rgba(255,255,255,.06)',
+                    border: '1px solid rgba(255,255,255,.10)',
+                    color: 'var(--douyin-ink-text)',
+                    fontFamily: 'inherit', fontSize: 11, fontWeight: 600,
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                  }}>
+                  {b.label}
+                </button>
+              ))}
+            </div>
+          )}
+
           {customError && (
             <div style={{
               fontSize: 10, color: 'var(--state-rejected)',
@@ -694,6 +751,7 @@ function QuickBidChips({
             }}>
               {customError === 'max'   && '金额超过单笔上限 · MaxMoneyCents (2^53-1)'}
               {customError === 'low'   && `必须高于当前价 ${formatCentsCNY(currentCents)}`}
+              {customError === 'step'  && `差额必须是 ${formatCentsCNY(stepCents)} 倍数 · 点 ± 档位按钮自动对齐`}
               {customError === 'parse' && '请输入纯数字 cents 字符串'}
             </div>
           )}
@@ -737,7 +795,7 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
       </div>
       <span className="mono" style={{
         fontSize: 10, fontWeight: 600, color: fill, flexShrink: 0,
-        tabularNums: true, minWidth: 28, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums', minWidth: 28, textAlign: 'right',
       }}>
         {bidsPerSec.toFixed(1)}/s
       </span>
