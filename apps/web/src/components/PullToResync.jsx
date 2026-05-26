@@ -22,6 +22,21 @@ export function PullToResync({ onResync, threshold = 64, children }) {
     if (pull >= threshold) armedRef.current = true;
   }, [pull, threshold]);
 
+  // Shared reset for end / cancel / mouse-leave / external interrupt.
+  // Cancel path (e.g. iOS pull-to-refresh suppression, OS notification
+  // sliding in mid-gesture) MUST clear state without firing onResync —
+  // otherwise the previously-armed flag would survive into the next pull.
+  const reset = () => {
+    startY.current = null;
+    armedRef.current = false;
+    setPull(0);
+  };
+  const finish = () => {
+    const fire = armedRef.current && typeof onResync === 'function';
+    reset();
+    if (fire) onResync();
+  };
+
   return (
     <div
       style={{ position: 'relative', width: '100%', height: '100%' }}
@@ -36,12 +51,8 @@ export function PullToResync({ onResync, threshold = 64, children }) {
           setPull(Math.min(threshold * 1.4, dy));
         }
       }}
-      onTouchEnd={() => {
-        if (armedRef.current && typeof onResync === 'function') onResync();
-        startY.current = null;
-        armedRef.current = false;
-        setPull(0);
-      }}
+      onTouchEnd={finish}
+      onTouchCancel={reset}        /* #51-H2: iOS abort-mid-pull leaves no residual armed state */
       onMouseDown={(e) => {
         if (window.scrollY > 0) return;
         startY.current = e.clientY;
@@ -53,11 +64,10 @@ export function PullToResync({ onResync, threshold = 64, children }) {
           setPull(Math.min(threshold * 1.4, dy));
         }
       }}
-      onMouseUp={() => {
-        if (armedRef.current && typeof onResync === 'function') onResync();
-        startY.current = null;
-        armedRef.current = false;
-        setPull(0);
+      onMouseUp={finish}
+      onMouseLeave={(e) => {
+        /* drag-out cancel: only reset if a drag is in progress (left button still down) */
+        if (startY.current != null && e.buttons === 1) reset();
       }}
     >
       <div

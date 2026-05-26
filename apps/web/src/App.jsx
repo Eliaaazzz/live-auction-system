@@ -69,6 +69,35 @@ function CancelOverlay() {
   const { id } = useParams();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [currentCents, setCurrentCents] = React.useState(null);
+
+  // #51-H4 fix: previously hardcoded '12880000' as the modal's confirm-by-
+  // typing amount. It happened to match the seed `auc_demo` but would be
+  // wrong for any other auction. Now fetches the real current price from
+  // the backend on mount so the 2-step verify checks against ground truth.
+  React.useEffect(() => {
+    let alive = true;
+    if (!id) return;
+    (async () => {
+      try {
+        await ensureSession('seller-demo');
+        const snap = await api.getAuction(id);
+        if (!alive) return;
+        // currentPriceCents '' on a brand-new SCHEDULED auction with no
+        // bids; AdminCancelModal handles empty string as "0" via its
+        // formatCentsCNY pipeline — but more useful for the seller is to
+        // see the start price as the fallback. Backend's GetAuction
+        // returns currentPriceCents per ws-envelope.md §3.2.
+        setCurrentCents(snap?.currentPriceCents ?? '0');
+      } catch (e) {
+        // Non-fatal — modal renders with a sentinel so seller can still
+        // cancel; backend ultimately enforces ownership + state.
+        console.warn('[CancelOverlay] getAuction failed', e);
+        if (alive) setCurrentCents('0');
+      }
+    })();
+    return () => { alive = false; };
+  }, [id]);
 
   const handleCancel = async () => {
     if (busy || !id) return;
@@ -88,11 +117,17 @@ function CancelOverlay() {
     }
   };
 
-  // currentCents passed to the modal is a static demo value for visual; the
-  // real-amount verify pattern is enforced inside <AdminCancelModal> via its
-  // existing 2-step type-the-amount UX.  TODO follow-up: fetch via
-  // api.getAuction(id) and pass real currentPriceCents through.
-  return <AdminCancelModal currentCents="12880000"
+  // Loading guard: show the modal disabled while we fetch. Avoids a flash
+  // of the wrong amount where the seller might type the old hardcoded
+  // 12880000 and have the verify check fail confusingly.
+  if (currentCents == null) {
+    return <AdminCancelModal currentCents="0"
+      busy={true}
+      error={null}
+      onClose={() => nav('..')}
+      onCancelAuction={() => {}}/>;
+  }
+  return <AdminCancelModal currentCents={currentCents}
     busy={busy}
     error={error}
     onClose={() => nav('..')}
