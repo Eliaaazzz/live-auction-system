@@ -3,6 +3,7 @@
 //	lumen serve --mode=all|api|gateway|bid-engine|timer|pg-writer
 //	lumen seed
 //	lumen verify [--auction <id>]
+//	lumen verify-evidence [--auction <id>]   (T4 hash-chain gate; exit!=0 on break)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
 package main
@@ -52,6 +53,14 @@ func main() {
 			log.Fatalf("verify: %v", err)
 		}
 
+	case "verify-evidence":
+		fs := flag.NewFlagSet("verify-evidence", flag.ExitOnError)
+		aid := fs.String("auction", os.Getenv("VERIFY_AID"), "auction id (default auc_demo)")
+		_ = fs.Parse(os.Args[2:])
+		if err := server.RunVerifyEvidence(ctx, mustConfig(), *aid); err != nil {
+			log.Fatalf("verify-evidence: %v", err)
+		}
+
 	case "e2e":
 		target := os.Getenv("TARGET")
 		if target == "" {
@@ -85,5 +94,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|e2e|perf-smoke> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke> [flags]")
 }

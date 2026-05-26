@@ -47,7 +47,7 @@ func fullStore(t *testing.T) *store.Store {
 	if rerr != nil || derr != nil || perr != nil {
 		t.Skipf("full store unavailable (redis=%v mysql_open=%v mysql_ping=%v)", rerr, derr, perr)
 	}
-	st, err := store.New(context.Background(), redisAddr, dsn)
+	st, err := store.New(context.Background(), redisAddr, dsn, "test-evidence-key")
 	if err != nil {
 		t.Skipf("store.New: %v", err)
 	}
@@ -162,5 +162,11 @@ func TestT2HiddenInsertEventPayloadMismatch(t *testing.T) {
 	err := st.InsertEvent(ctx, aid, 1, "BID_ACCEPTED", `{"seq":1,"amountCents":"99999"}`)
 	if !errors.Is(err, store.ErrEventPayloadMismatch) {
 		t.Fatalf("payload mismatch: got %v want ErrEventPayloadMismatch", err)
+	}
+	// event_type is part of the evidence hash canonical string, so a type-only
+	// conflict for the same seq/payload must also be rejected.
+	err = st.InsertEvent(ctx, aid, 1, "AUCTION_SOLD", `{"amountCents":"11000", "seq":1}`)
+	if !errors.Is(err, store.ErrEventPayloadMismatch) {
+		t.Fatalf("event_type mismatch: got %v want ErrEventPayloadMismatch", err)
 	}
 }

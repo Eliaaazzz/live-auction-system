@@ -179,7 +179,8 @@
 
     document.getElementById('evidence').onclick = async () => {
       try {
-        const ev = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/evidence')).json();
+        const ev = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/evidence',
+          { headers: { Authorization: 'Bearer ' + authToken } })).json();
         document.getElementById('evidence-out').textContent = JSON.stringify(ev, null, 2);
       } catch (e) {
         document.getElementById('evidence-out').textContent = String(e);
