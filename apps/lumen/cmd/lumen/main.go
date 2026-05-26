@@ -2,8 +2,8 @@
 //
 //	lumen serve --mode=all|api|gateway|bid-engine|timer|pg-writer
 //	lumen seed
-//	lumen verify [--auction <id>]
-//	lumen verify-evidence [--auction <id>]   (T4 hash-chain gate; exit!=0 on break)
+//	lumen verify [--auction <id>]            (T6 unified: 3-way diff + hash chain; exit!=0 on mismatch or break)
+//	lumen verify-evidence [--auction <id>]   (T4 hash-chain only; same chain check, no 3-way diff)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
 package main

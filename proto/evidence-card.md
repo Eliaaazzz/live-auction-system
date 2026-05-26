@@ -76,3 +76,54 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 ## 4. Schema
 
 `auction_events(…, event_hash VARCHAR(128) NULL, prev_hash VARCHAR(128) NULL)` — nullable from T1, **filled by the Persistence Worker at T4** (idempotent, self-healing). `orders` UNIQUE(auction_id). See `proto/db-schema.md`.
+
+## 5. Replay Verifier output contract (T6 — `make verify` / `lumen verify`)
+
+`[全员 approve]` surface for the T6 acceptance gate (issue #1 §10 T6 row). The T1 stream-vs-MySQL count check and the T4 hash-chain check fold into a single command with one machine-parseable status line on stdout. Exit code is 0 only when consistent — any failure exits 1 so CI / `make verify` can gate.
+
+### Output strings (exact bytes, no localization)
+
+```text
+consistent: stream=N mysql=N snapshot_seq=S (auction=X)
+mismatch_at_seq=N (stream=A mysql=B snapshot_seq=C, auction=X): <reason>
+hash_break_at_seq=N (events=N, auction=X)
+```
+
+| Line | Exit | Meaning |
+|---|---|---|
+| `consistent` | 0 | Stream length = MySQL projection count; per-seq event_type agrees row-by-row; snapshot tip seq (if non-zero) matches Stream tip seq; hash chain recomputes byte-identical |
+| `mismatch_at_seq=N` | 1 | First seq where the three surfaces disagree — see `<reason>` for which pair |
+| `hash_break_at_seq=N` | 1 | Counts agree but HMAC recompute failed per §2 failure modes |
+
+Tooling (CI grep, dev-log automation, future dashboard) MAY parse these literals. Changing the prefix tokens (`consistent` / `mismatch_at_seq=` / `hash_break_at_seq=`) is a breaking change to the verifier output contract and needs `[全员 approve]`.
+
+### Mismatch reason taxonomy (the `<reason>` payload)
+
+The verifier prints one of these phrases (free-form English; not a grep target — operators read it):
+
+- `stream has seq=N but MySQL projection does not`
+- `MySQL has seq=N but Stream does not`
+- `event_type mismatch at seq=N: stream="X" mysql="Y"`
+- `stream extends past MySQL projection at seq=N`
+- `MySQL projection extends past Stream at seq=N`
+- `snapshot seq=S does not match stream tip seq=T`
+
+### Three-way diff rules
+
+| Surface | Source | Strict? |
+|---|---|---|
+| Stream | `XRANGE stream:{aid} - +` | yes — canonical event log |
+| MySQL projection | `SELECT seq, event_type FROM auction_events WHERE auction_id=? ORDER BY seq ASC` | yes — idempotent projection |
+| Redis snapshot | `HGET state:{aid} seq` | tolerated when 0 (state hash may have TTL'd post-settlement); strict when non-zero (must equal stream tip seq) |
+
+Payload bytes are **not** compared row-by-row across surfaces — Stream payload is `cjson.encode` output from `place_bid.lua`; MySQL `payload_json` is MySQL's canonical form (§2). They are semantically equal but byte-divergent. Payload integrity is the hash chain's job, run after the per-seq agreement check passes.
+
+If both an upstream mismatch and a chain break exist, the verifier **reports the upstream mismatch first** and skips the chain check (the bytes it would hash are already known wrong; reporting both would mask the root cause).
+
+### Failure-mode handling for the empty case
+
+An auction with zero events (pre-LIVE, or LIVE with 0 bids) reports `consistent: stream=0 mysql=0 snapshot_seq=S (auction=X)` and exits 0 — empty chain verifies (§2). External tools relying on `consistent` as a "completed auction passes" signal MUST also check `eventsCount > 0` (or `status` ∈ terminal set) before drawing conclusions.
+
+### Implementation reference
+
+`apps/lumen/internal/server/verify.go RunVerify` (T6, replaces the T1 skeleton). `lumen verify-evidence` (T4) remains as the focused hash-chain-only command for periodic in-flight integrity scans that tolerate projection lag.
