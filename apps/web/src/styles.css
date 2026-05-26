@@ -327,6 +327,7 @@
 .surface-calm .lumen-black-horse-in,
 .surface-calm .lumen-flame-flicker,
 .surface-calm .lumen-veil-drop,
+.surface-calm .lumen-veil-bridge-fade,  /* P9 self-spotted gap — TerminalOverlay also uses this keyframe */
 .surface-calm .lumen-room-blur-out,
 .surface-calm .lumen-hammer-reveal-up,
 .surface-calm .lumen-cursor-blink,

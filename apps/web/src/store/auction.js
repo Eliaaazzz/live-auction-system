@@ -23,10 +23,22 @@ const DEFAULT_STATE = {
   connStatus: ConnStatus.IDLE,
   connDetail: null,
 
-  // pricing — ALL string-cents (blueprint P1)
+  // pricing — ALL string-cents (blueprint P1).
+  //
+  // stepCents defaults to a non-zero sentinel ('500000' = ¥5000) instead
+  // of '0' because the QuickBidChips percent-math floors to a step
+  // boundary via `(above + step - 1n) / step` — if step is 0n, that
+  // throws RangeError caught silently inside pctBump, the chip falls
+  // back to currentCents, the user taps, and the backend rejects with
+  // ERR_TOO_LOW. Defaulting to a usable step keeps the chip math
+  // self-healing until the backend snapshot DTO ships real rules
+  // (T7 / RoomSnapshotData extension).
+  //
+  // capCents=null is a valid "no buy-now ceiling" per ws-envelope.md;
+  // QuickBidChips.maxBid() falls back to +10% in that case.
   currentCents: '0',
   startCents:   '0',
-  stepCents:    '0',
+  stepCents:    '500000',
   capCents:     null,
   reserveCents: '0',
 
