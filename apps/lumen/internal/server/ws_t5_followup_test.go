@@ -30,9 +30,15 @@ import (
 // vars and concurrent mutation would race.
 func setKeepaliveForTest(t *testing.T, pw, pp time.Duration) {
 	t.Helper()
+	keepaliveMu.Lock()
 	origPW, origPP := pongWait, pingPeriod
 	pongWait, pingPeriod = pw, pp
-	t.Cleanup(func() { pongWait, pingPeriod = origPW, origPP })
+	keepaliveMu.Unlock()
+	t.Cleanup(func() {
+		keepaliveMu.Lock()
+		pongWait, pingPeriod = origPW, origPP
+		keepaliveMu.Unlock()
+	})
 }
 
 // joinRoom sends a ROOM_JOIN frame and drains the SNAPSHOT — the minimal flow
@@ -181,8 +187,9 @@ func TestT5CloseWithCodeEmitsTypedCloseFrame(t *testing.T) {
 // the read deadline can trip before the next PING goes out — i.e. healthy
 // clients get reaped. Cheap fail-fast guard.
 func TestT5KeepaliveConstantsValid(t *testing.T) {
-	if pongWait <= 0 || pingPeriod <= 0 || pingPeriod >= pongWait {
-		t.Fatalf("keepalive constants invalid: pongWait=%v pingPeriod=%v (need 0 < pingPeriod < pongWait)", pongWait, pingPeriod)
+	pw, pp := keepaliveSnapshot()
+	if pw <= 0 || pp <= 0 || pp >= pw {
+		t.Fatalf("keepalive constants invalid: pongWait=%v pingPeriod=%v (need 0 < pingPeriod < pongWait)", pw, pp)
 	}
 	if writeWait <= 0 {
 		t.Fatalf("writeWait=%v must be > 0", writeWait)
@@ -201,7 +208,8 @@ func TestT5KeepaliveConstantsValid(t *testing.T) {
 // refuses to PONG is reaped from hub.rooms within ~pongWait, proving the read
 // deadline + reap chain is actually wired.
 func TestT5KeepaliveReapsSilentClient(t *testing.T) {
-	setKeepaliveForTest(t, 300*time.Millisecond, 200*time.Millisecond)
+	testPongWait := 300 * time.Millisecond
+	setKeepaliveForTest(t, testPongWait, 200*time.Millisecond)
 
 	target, srv := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}
@@ -227,8 +235,8 @@ func TestT5KeepaliveReapsSilentClient(t *testing.T) {
 	// pongWait=300ms; the conn was alive at t≈50ms (the ROOM_JOIN read), so
 	// the deadline trips ~250ms later. Give 4x pongWait (1.2s) of slack so
 	// CI scheduling jitter doesn't false-fail.
-	if !waitForConnGone(srv.hub, aid, srvConn, 4*pongWait) {
-		t.Fatalf("silent client not reaped within %v (pongWait=%v); read deadline not firing", 4*pongWait, pongWait)
+	if !waitForConnGone(srv.hub, aid, srvConn, 4*testPongWait) {
+		t.Fatalf("silent client not reaped within %v (pongWait=%v); read deadline not firing", 4*testPongWait, testPongWait)
 	}
 	_ = c.Close()
 }
@@ -240,7 +248,8 @@ func TestT5KeepaliveReapsSilentClient(t *testing.T) {
 // these prove SetPongHandler is actually refreshing the deadline (silent
 // dies, healthy lives).
 func TestT5KeepaliveHealthyClientSurvivesPastPongWait(t *testing.T) {
-	setKeepaliveForTest(t, 300*time.Millisecond, 200*time.Millisecond)
+	testPongWait := 300 * time.Millisecond
+	setKeepaliveForTest(t, testPongWait, 200*time.Millisecond)
 
 	target, srv := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}
@@ -285,9 +294,9 @@ func TestT5KeepaliveHealthyClientSurvivesPastPongWait(t *testing.T) {
 
 	// Wait 3x pongWait (900ms). With auto-PONG the server's read deadline
 	// keeps getting refreshed, so the conn must still be in hub.rooms.
-	time.Sleep(3 * pongWait)
+	time.Sleep(3 * testPongWait)
 	if !connInRoom(srv.hub, aid, srvConn) {
-		t.Fatalf("healthy auto-PONG client was reaped after %v; SetPongHandler isn't refreshing the deadline", 3*pongWait)
+		t.Fatalf("healthy auto-PONG client was reaped after %v; SetPongHandler isn't refreshing the deadline", 3*testPongWait)
 	}
 }
 
