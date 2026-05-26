@@ -525,10 +525,21 @@ function QuickBidChips({
   const [showDrawer, setShowDrawer] = React.useState(false);
   const [custom, setCustom] = React.useState('');
 
+  // Defense-in-depth: stepCents=='0' from the store default would cause a
+  // BigInt divide-by-zero inside pctBump (caught silently by try/catch,
+  // chip would silently fall back to currentCents → user taps →
+  // backend rejects with ERR_TOO_LOW). Detect upstream and treat the
+  // chips as not-renderable. The store now defaults to '500000' so this
+  // is mostly belt-and-suspenders for callers that pass through.
+  let stepBig = 0n;
+  try { stepBig = BigInt(stepCents); } catch { stepBig = 0n; }
+  const stepUsable = stepBig > 0n;
+
   const pctBump = (pctTimes100) => {
+    if (!stepUsable) return currentCents;  // defensive — caller guards on stepUsable
     try {
       const c = BigInt(currentCents);
-      const s = BigInt(stepCents);
+      const s = stepBig;
       // raw = current * (1 + pct/100)
       const raw = (c * BigInt(100 + pctTimes100)) / 100n;
       // floor to step boundary; then ensure raw > current+step (snap up).
@@ -565,9 +576,34 @@ function QuickBidChips({
   const chipPress = (e) => { if (!disabled) e.currentTarget.style.transform = 'scale(.96)'; };
   const chipRelease = (e) => { e.currentTarget.style.transform = ''; };
 
+  // ws-envelope.md §Money: MaxMoneyCents = 2^53-1 (server's hard ceiling).
+  // Above this the value can't survive Lua/JS/Redis ZSET float64 — the
+  // backend rejects with ERR_BAD_INPUT. Validate client-side so the user
+  // sees the limit before submit instead of a rejection toast.
+  const MAX_MONEY_CENTS = 9007199254740991n;
+  let customBig = null;
+  let customError = null;
+  if (custom) {
+    try {
+      customBig = BigInt(custom);
+      if (customBig > MAX_MONEY_CENTS) customError = 'max';
+      else if (customBig <= BigInt(currentCents)) customError = 'low';
+    } catch { customError = 'parse'; }
+  }
+  const customSubmittable = !disabled && custom && customError == null;
+
   return (
     <div className={shake ? 'lumen-shake' : ''}>
-      <div style={{ display: 'flex', gap: 6 }}>
+      {!stepUsable && (
+        <div style={{
+          marginBottom: 6, padding: '6px 10px', borderRadius: 6,
+          background: 'rgba(255,176,32,.08)', border: '1px solid rgba(255,176,32,.3)',
+          fontSize: 11, color: 'var(--state-extended)',
+        }}>
+          加价阶梯未配置 · 出价请使用自定义金额
+        </div>
+      )}
+      <div style={{ display: 'flex', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
         {chips.map((c, i) => {
           const isGold = c.tone === 'gold' || isLeading;
           return (
@@ -612,42 +648,55 @@ function QuickBidChips({
         <div style={{
           marginTop: 6, padding: '10px 12px', borderRadius: 10,
           background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
-          display: 'flex', gap: 8, alignItems: 'center',
+          display: 'flex', flexDirection: 'column', gap: 6,
         }}>
-          <input
-            type="text"
-            inputMode="numeric"
-            pattern="[0-9]*"
-            placeholder="cents（保持字符串)"
-            value={custom}
-            onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, ''))}
-            style={{
-              flex: 1, padding: '8px 10px', borderRadius: 6,
-              background: 'rgba(0,0,0,.3)', border: '1px solid rgba(255,255,255,.1)',
-              color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
-              outline: 'none',
-            }}
-          />
-          <button
-            disabled={disabled || !custom || (() => { try { return BigInt(custom) <= BigInt(currentCents); } catch { return true; } })()}
-            onClick={() => {
-              if (!custom) return;
-              try {
-                if (BigInt(custom) <= BigInt(currentCents)) return;
-                onBid(custom);
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
+              // Cap raw input at 17 chars (≈ MAX_MONEY_CENTS digit count + 1)
+              // so paste of "999..." (60 digits) never reaches state.
+              maxLength={17}
+              placeholder="cents（保持字符串)"
+              value={custom}
+              onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, '').slice(0, 17))}
+              style={{
+                flex: 1, padding: '8px 10px', borderRadius: 6,
+                background: 'rgba(0,0,0,.3)',
+                border: `1px solid ${customError ? 'rgba(254,44,85,.4)' : 'rgba(255,255,255,.1)'}`,
+                color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
+                outline: 'none',
+              }}
+            />
+            <button
+              disabled={!customSubmittable}
+              onClick={() => {
+                if (!customSubmittable || customBig == null) return;
+                onBid(customBig.toString());
                 setCustom('');
                 setShowDrawer(false);
-              } catch {}
-            }}
-            style={{
-              padding: '8px 14px', borderRadius: 6, border: 'none',
-              background: 'var(--douyin-red)', color: '#fff',
-              fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
-              cursor: (disabled || !custom) ? 'not-allowed' : 'pointer',
-              opacity: (disabled || !custom) ? 0.5 : 1,
+              }}
+              style={{
+                padding: '8px 14px', borderRadius: 6, border: 'none',
+                background: 'var(--douyin-red)', color: '#fff',
+                fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+                cursor: customSubmittable ? 'pointer' : 'not-allowed',
+                opacity: customSubmittable ? 1 : 0.5,
+              }}>
+              提交
+            </button>
+          </div>
+          {customError && (
+            <div style={{
+              fontSize: 10, color: 'var(--state-rejected)',
+              fontFamily: 'var(--font-sans)',
             }}>
-            提交
-          </button>
+              {customError === 'max'   && '金额超过单笔上限 · MaxMoneyCents (2^53-1)'}
+              {customError === 'low'   && `必须高于当前价 ${formatCentsCNY(currentCents)}`}
+              {customError === 'parse' && '请输入纯数字 cents 字符串'}
+            </div>
+          )}
         </div>
       )}
     </div>

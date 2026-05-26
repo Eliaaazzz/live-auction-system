@@ -345,6 +345,70 @@ function MobileRoom({
           </div>
         </div>
       </div>
+
+      {/* Terminal overlay — Elia round-2 H2 (#54). NO_BID and CANCELLED
+          previously had no full-screen treatment, so a buyer who's still
+          looking at the room when the timer fires saw only the StatusBadge
+          flip with no clear "this ended" signal. SOLD has its own
+          HammerTransition above; this fills the gap for the two quiet
+          terminal states. */}
+      <TerminalOverlay status={status}/>
+    </div>
+  );
+}
+
+// One-shot full-screen overlay for NO_BID + CANCELLED terminal states.
+// Renders nothing for LIVE / SCHEDULED / DRAFT / SOLD / ORDER_CREATED.
+// SOLD has its own A→B HammerTransition crossfade so we explicitly skip it.
+function TerminalOverlay({ status }) {
+  if (status !== 'NO_BID' && status !== 'CANCELLED') return null;
+  const isNoBid = status === 'NO_BID';
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 80,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      // semi-transparent so the room hash + final price stay visible underneath
+      background: isNoBid
+        ? 'radial-gradient(ellipse at center, rgba(20,20,30,.92) 0%, rgba(10,10,18,.96) 70%)'
+        : 'radial-gradient(ellipse at center, rgba(40,8,18,.92) 0%, rgba(10,10,18,.96) 70%)',
+      backdropFilter: 'blur(2px)',
+      fontFamily: 'var(--font-sans)',
+      animation: 'lumen-veil-bridge-fade .4s ease-in 1 both',
+    }}>
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+        padding: '28px 36px', borderRadius: 18,
+        background: 'rgba(0,0,0,.35)',
+        border: isNoBid
+          ? '1px solid rgba(154,160,180,.25)'
+          : '1px solid rgba(254,44,85,.4)',
+        textAlign: 'center', maxWidth: 280,
+      }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: 26,
+          background: 'rgba(0,0,0,.4)',
+          border: `2px solid ${isNoBid ? 'var(--state-no-bid)' : 'var(--state-rejected)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22,
+          color: isNoBid ? 'var(--state-no-bid)' : 'var(--state-rejected)',
+        }}>
+          {isNoBid ? '∅' : '×'}
+        </div>
+        <div className="serif" style={{
+          fontSize: 22, fontWeight: 600,
+          color: isNoBid ? 'var(--douyin-ink-text)' : 'var(--state-rejected)',
+          letterSpacing: '.02em',
+        }}>
+          {isNoBid ? '本场无人出价' : '本场已取消'}
+        </div>
+        <div style={{
+          fontSize: 11, color: 'var(--douyin-ink-muted)', lineHeight: 1.5,
+        }}>
+          {isNoBid
+            ? '流拍 · NO_BID · 序列号已上链 · 可查看证据卡'
+            : '卖家终止 · CANCELLED · 序列号已上链 · 出价记录保留'}
+        </div>
+      </div>
     </div>
   );
 }
