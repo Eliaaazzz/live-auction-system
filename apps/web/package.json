@@ -1,0 +1,26 @@
+{
+  "name": "lumen-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Lumen Auction — live auction front-end (React + Vite). Pairs with the lumen-backend Go service.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "lint": "eslint src --ext .js,.jsx --max-warnings 0"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "eslint": "^9.13.0",
+    "eslint-plugin-react": "^7.37.2",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "vite": "^5.4.10"
+  }
+}
