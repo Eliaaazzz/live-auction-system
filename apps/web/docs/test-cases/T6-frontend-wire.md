@@ -44,8 +44,8 @@
 | TC-T6-101 | 反狙击触发后 BID_PLACE 的 BID_ACCEPTED 携带 post-extension endAtMs(回归 #45 evidenceSummary 派生)| 待 executable | P1 |
 | TC-T6-102 | Reconnect 携带 `ROOM_JOIN { lastSeq }`,gap ≤ 200 时后端 XRANGE 重放,前端按 seq 顺序去重应用 | 待 executable(强制 ws.close 后等待重连 + 注入 N 条事件)| P0 |
 | TC-T6-103 | Reconnect gap > 200 时后端跳过 catchup 直接发 ROOM_SNAPSHOT,前端 reset seqguard watermark | 待 executable(模拟客户端 lastSeq=0,后端 seq=300)| P0 |
-| TC-T6-104 | AUCTION_NO_BID terminal → status='NO_BID' + bid CTA disabled + 灰阶终局(F29)| 待 executable | P0 |
-| TC-T6-105 | AUCTION_CANCELLED terminal → status='CANCELLED' + 红色 stamp(F30)| 待 executable | P0 |
+| TC-T6-104 | AUCTION_NO_BID terminal → status='NO_BID' + bid CTA disabled + 灰阶终局(F29)| 🟡 UI shipped in PR #54 (`<TerminalOverlay>` in mobile.jsx — quiet calm gradient + "本场无人出价 · 流拍 · 序列号已上链" copy);executable e2e 待 Playwright | P0 |
+| TC-T6-105 | AUCTION_CANCELLED terminal → status='CANCELLED' + 红色 stamp(F30)| 🟡 UI shipped in PR #54 (`<TerminalOverlay>` red-tinted variant + "本场已取消 · 卖家终止 · 序列号已上链" copy);executable e2e 待 Playwright | P0 |
 | TC-T6-106 | AUCTION_SOLD → hammerTrans=true 触发 A→B bridge crossfade,1.05s 后稳定在 solemn surface | 已 code-verified(`store.applyEvent` set hammerTrans,`styles.css` keyframes lumen-veil-drop 等);visual 待手测 | P0 |
 | TC-T6-107 | Evidence chainVerified=false 时 timeline 在 hashBreakAtSeq 行红色高亮,之后所有行 opacity 0.4 | 已 code-verified(`components/mobile.jsx <MobileEvidence>` breakIdx 逻辑);visual 待手测 | P1 |
 | TC-T6-108 | clock skew > 500ms 时 F05 drift indicator 转 warn(state-extended `#FFB020`),drift = -300ms 时显示但不 warn | 已 code-verified(`components/atmosphere.jsx ClockDrift` 阈值);单测待补 | P2 |
@@ -424,14 +424,23 @@ existing tooling and dev-log links don't break.
 
 ---
 
-## 5. Risk Register (post #51 #53 #54)
+## 5. Risk Register (post #51 #53 #54 + review-resolution patches 2026-05-26)
 
-1. **P0 → resolved**:T6-114 (VLM freeze gate) wired in PR #53.
-2. **P0 → resolved**:T6-109 (Origin trap) fixed in PR #51's `.env.example` + README. Ops still need to set `FRONTEND_ORIGIN` correctly in deploys — flagged as runbook item, not a code issue.
-3. **P1 still open**:T6-100/101 (anti-snipe path executable) — needs Playwright + a backend fixture that can be told to end in 5s.
-4. **P1 still open**:T6-271 (expired JWT not re-handled) — 401 today shows ApiError but doesn't auto-clear session. Add to next admin polish PR.
-5. **P2 still open**:T6-217 (freeze-then-start race orphan) — code-verified the no-leak path but no test asserts it. Vitest mock for `api.freeze`/`api.startLive` would close this.
-6. **P2 still open**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
+**Resolved:**
+1. ✅ **P0 → resolved**:T6-114 (VLM freeze gate) wired in PR #53.
+2. ✅ **P0 → resolved**:T6-109 (Origin trap) fixed in PR #51's `.env.example` + README. Ops still need to set `FRONTEND_ORIGIN` correctly in deploys — flagged as runbook item, not a code issue.
+3. ✅ **P1 → resolved**:T6-217 (freeze-then-start race orphan) — fix landed in PR #53 commit `065a49d` after @Eliaaazzz review. `handleFreezeAndStart` now treats `ERR_BAD_STATE` on freeze as "already frozen, proceed to startLive". Vitest assertion still recommended but not blocking.
+4. ✅ **P1 → resolved**:T6-271 (expired JWT not re-handled) — fix landed in PR #51 commit `646c52b`. 401 from REST now calls `handleAuthFailure()` → clears cached session + dispatches `lumen:session-expired` custom event for route-level UX recovery.
+5. ✅ **P1 → resolved**:T6-#54-H1 (stepCents=0 silent panic) — store default `'500000'` + `stepUsable` guard in `<QuickBidChips>` (PR #54 commit `8e08cdf`).
+6. ✅ **P1 → resolved**:T6-#54-H2 (NO_BID / CANCELLED terminal UX missing) — `<TerminalOverlay>` component (PR #54).
+7. ✅ **P1 → resolved**:T6-#54-H3 (custom drawer MaxMoneyCents overflow) — three-layer guard: maxLength=17 + BigInt validation + inline error copy (PR #54).
+8. ✅ **P1 → resolved**:T6-#51-H4 (HMAC custody indirect doc reference) — inline threat-model summary added to `EvidenceRoute.jsx` (PR #51 commit `646c52b`).
+
+**Still open:**
+9. **P1**:T6-100/101 (anti-snipe path executable e2e) — needs Playwright + a backend fixture that can be told to end in 5s. Still the highest-priority remaining gap.
+10. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
+11. **P2**:Backend `RoomSnapshotData` doesn't ship `stepCents` / `capCents` / `extendCount` yet — frontend defaults to `'500000'` / `null` / preserves running count. Real values come from `api.getAuction` once backend extends the DTO. Track as T7 polish.
+12. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
 
 ---
 
