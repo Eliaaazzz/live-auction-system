@@ -189,8 +189,15 @@ func TestPlaceBidNotLiveWhenScheduled(t *testing.T) {
 func TestPlaceBidAfterEnd(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
-	aid := liveAuction(t, s, defaultRules(), 50) // endAtMs = now+50ms
-	time.Sleep(300 * time.Millisecond)           // now >> endAtMs (robust under load)
+	// Track far in the future, then force state.endAtMs into the past (same pattern as
+	// the T3 hammer-race tests). Putting the past time only in state — not the active
+	// index — means a Timer Worker from a concurrently-running server-package test won't
+	// hammer this auction over shared Redis (its index score stays 60s out, so a close
+	// would see ERR_NOT_DUE). Deterministic + no sleep.
+	aid := liveAuction(t, s, defaultRules(), 60_000)
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
 	code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1")
 	if err != nil || code != model.CodeErrAfterEnd {
 		t.Fatalf("code=%s err=%v want ERR_AFTER_END", code, err)

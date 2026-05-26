@@ -29,6 +29,6 @@ auction_events: UNIQUE(auction_id, seq)
 
 `event_hash` / `prev_hash` are present from T1 (nullable) so the schema is stable, but the **hash chain is computed by the Persistence Worker at T4** (integrity check on the MySQL projection — per fariZzzz #14 challenge #3), not in T1 and not in Lua.
 
-## T1 persistence
+## Persistence (T1 → T4)
 
-Persistence Worker consumes `auction:{aid}:events` Stream and writes one `auction_events` row per event (minimal projection). Idempotent projection + hash chain = T4.
+Persistence Worker consumes the `auction:{aid}:events` Stream and writes one `auction_events` row per event (idempotent via UNIQUE(auction_id, seq)). **T4** added, on the same Stream-first projection: the `event_hash`/`prev_hash` chain (filled idempotently + self-healing) and an idempotent `orders` row on `AUCTION_SOLD` (UNIQUE(auction_id) ⇒ exactly-once). The hash algorithm + canonical serialization are the `[全员 approve]` surface in **`proto/evidence-card.md`**.

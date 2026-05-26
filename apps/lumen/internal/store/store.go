@@ -29,12 +29,16 @@ type Store struct {
 	shaStart    string
 	shaClose    string
 	shaCancel   string
+	evidenceKey []byte // HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
 // retried (up to ~30s) so startup is robust against datastores still booting
 // (e.g. MySQL finishing first-run init after its healthcheck flips healthy).
-func New(ctx context.Context, redisAddr, mysqlDSN string) (*Store, error) {
+// evidenceKey is the HMAC key for the auction_events hash chain (T4); the writer
+// (persistence worker) and any verifier must use the same key, so it is threaded
+// in at construction rather than set later.
+func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
@@ -46,7 +50,7 @@ func New(ctx context.Context, redisAddr, mysqlDSN string) (*Store, error) {
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
-	s := &Store{rdb: rdb, db: db}
+	s := &Store{rdb: rdb, db: db, evidenceKey: []byte(evidenceKey)}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}

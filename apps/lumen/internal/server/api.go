@@ -417,8 +417,15 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
 }
 
-// GET /api/auctions/{id}/evidence -> T1 evidence stub (real hash chain = T4).
+// GET /api/auctions/{id}/evidence -> T4 evidence card v0: authenticated access to
+// the hash-chained event timeline, chain head (eventsHash), recompute-verified flag,
+// and order (if the auction sold). Per proto/evidence-card.md; integrity check, not
+// external notary (HMAC key custody = §6).
 func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	aid := r.PathValue("id")
 	a, err := s.st.GetAuction(r.Context(), aid)
 	if err == store.ErrNotFound {
@@ -429,23 +436,91 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	snap, _ := s.st.Snapshot(r.Context(), aid)
-	status := snap.Status
-	if status == "" {
-		status = a.Status
+	timeline, err := s.st.EventTimeline(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	n, _ := s.st.CountEvents(r.Context(), aid)
-	writeJSON(w, http.StatusOK, map[string]any{
+	verified, breakAtSeq, err := s.st.VerifyEvidenceChain(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	chainHead := "" // published per §6 so a verifier can pin the tip
+	if n := len(timeline); n > 0 {
+		chainHead = timeline[n-1].EventHash
+	}
+	order, orderErr := s.st.GetOrder(r.Context(), aid)
+	summary := evidenceSummary(a.Status, timeline, order, orderErr == nil)
+	resp := map[string]any{
 		"auctionId":         aid,
-		"status":            status,
-		"currentPriceCents": snap.CurrentPriceCents,
-		"winnerId":          snap.WinnerID,
-		"seq":               snap.Seq,
-		"eventsCount":       n,
+		"status":            summary.Status,
+		"currentPriceCents": summary.CurrentPriceCents,
+		"winnerId":          summary.WinnerID,
+		"seq":               summary.Seq,
+		"eventsCount":       len(timeline),
 		"factsConfirmed":    a.FactsConfirmed,
-		"eventsHash":        nil, // hash chain is computed by the Persistence Worker in T4
-		"note":              "T1 evidence stub; events_hash chain lands in T4",
-	})
+		"timeline":          timeline,
+		"eventsHash":        chainHead, // chain head; "" for an empty chain
+		"chainVerified":     verified,
+		"note":              "T4 evidence v0: hash-chained integrity check (not external notarization; HMAC key custody per proto/evidence-card.md §6)",
+	}
+	if !verified {
+		resp["hashBreakAtSeq"] = breakAtSeq
+	}
+	if orderErr == nil {
+		resp["order"] = order
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type evidenceSummaryData struct {
+	Status            string
+	CurrentPriceCents string
+	WinnerID          string
+	Seq               int64
+}
+
+func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order store.Order, hasOrder bool) evidenceSummaryData {
+	out := evidenceSummaryData{Status: mysqlStatus}
+	for _, e := range timeline {
+		if e.Seq > out.Seq {
+			out.Seq = e.Seq
+		}
+		switch e.EventType {
+		case model.TypeBidAccepted:
+			var p model.BidAcceptedData
+			if json.Unmarshal(e.Payload, &p) == nil {
+				out.CurrentPriceCents = p.AmountCents
+				if p.UserID != "" {
+					out.WinnerID = p.UserID
+				}
+			}
+		case model.TypeAuctionSold:
+			var p model.AuctionSoldData
+			if json.Unmarshal(e.Payload, &p) == nil {
+				out.Status = p.Status
+				out.CurrentPriceCents = p.AmountCents
+				out.WinnerID = p.WinnerID
+			}
+		case model.TypeAuctionNoBid:
+			out.Status = model.StateNoBid
+		case model.TypeAuctionCancelled:
+			// A cancelled auction has no winner and no sale (T3 TC-T3-013): clear the
+			// last-bid winner/price so the evidence card can't be misread as a sale.
+			// Consistent with NO_BID — only SOLD / ORDER_CREATED carry winner+price.
+			// (Addresses @fariZzzz #45 TC-T4-111 finding.)
+			out.Status = model.StateCancelled
+			out.WinnerID = ""
+			out.CurrentPriceCents = ""
+		}
+	}
+	if hasOrder {
+		out.Status = model.StateOrderCreated
+		out.CurrentPriceCents = strconv.FormatInt(int64(order.AmountCents), 10)
+		out.WinnerID = order.BuyerID
+	}
+	return out
 }
 
 // --- helpers ---

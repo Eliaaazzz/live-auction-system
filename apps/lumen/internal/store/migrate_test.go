@@ -40,7 +40,7 @@ func newMySQLStore(t *testing.T) *Store {
 	if rerr != nil || derr != nil || perr != nil {
 		t.Skipf("mysql store unavailable (redis=%v mysql_open=%v ping=%v)", rerr, derr, perr)
 	}
-	s, err := New(context.Background(), redisAddr, dsn)
+	s, err := New(context.Background(), redisAddr, dsn, "test-evidence-key")
 	if err != nil {
 		t.Skipf("store.New: %v", err)
 	}

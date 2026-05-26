@@ -16,7 +16,7 @@ func RunVerify(ctx context.Context, cfg config.Config, aid string) error {
 	if aid == "" {
 		aid = "auc_demo"
 	}
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN)
+	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
 	if err != nil {
 		return err
 	}
@@ -35,5 +35,31 @@ func RunVerify(ctx context.Context, cfg config.Config, aid string) error {
 		return fmt.Errorf("mismatch: stream=%d mysql=%d (auction=%s)", len(events), dbCount, aid)
 	}
 	fmt.Printf("consistent: stream=%d mysql=%d (auction=%s)\n", len(events), dbCount, aid)
+	return nil
+}
+
+// RunVerifyEvidence recomputes the auction_events hash chain for an auction and fails
+// (exit != 0) if it is broken — the T4 `make verify-evidence` gate. It re-derives each
+// event_hash over the stored payload + prev link with the configured HMAC key, so a
+// post-hoc edit of any payload/hash row surfaces as hash_break_at_seq.
+func RunVerifyEvidence(ctx context.Context, cfg config.Config, aid string) error {
+	if aid == "" {
+		aid = "auc_demo"
+	}
+	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	ok, breakAtSeq, err := st.VerifyEvidenceChain(ctx, aid)
+	if err != nil {
+		return fmt.Errorf("verify evidence chain: %w", err)
+	}
+	n, _ := st.CountEvents(ctx, aid)
+	if !ok {
+		return fmt.Errorf("evidence chain BROKEN: hash_break_at_seq=%d (auction=%s, events=%d)", breakAtSeq, aid, n)
+	}
+	fmt.Printf("evidence chain consistent: events=%d (auction=%s)\n", n, aid)
 	return nil
 }
