@@ -54,11 +54,19 @@ const fanoutSweepInterval = 2 * time.Second
 // pongWait/pingPeriod are vars (not consts) so tests can drive sub-second
 // reaping without waiting 60s of wall-clock; production reads them once at
 // connection time. Mutate only via setKeepaliveForTest under t.Cleanup —
-// production callers MUST NOT change these.
+// production callers MUST NOT change these. keepaliveMu guards test-time
+// mutation against connection-time snapshots.
 var (
-	pongWait   = 60 * time.Second
-	pingPeriod = (pongWait * 9) / 10
+	keepaliveMu sync.RWMutex
+	pongWait    = 60 * time.Second
+	pingPeriod  = (pongWait * 9) / 10
 )
+
+func keepaliveSnapshot() (time.Duration, time.Duration) {
+	keepaliveMu.RLock()
+	defer keepaliveMu.RUnlock()
+	return pongWait, pingPeriod
+}
 
 // writeWait bounds writePump's per-frame data and PING writes. The typed
 // CLOSE frame uses the tighter closeFrameWait below — see flushClose.
@@ -310,6 +318,7 @@ type Conn struct {
 	// closeWithCode; readers MUST only access these in flushClose.
 	closeCode   int
 	closeReason string
+	pingPeriod  time.Duration
 }
 
 // close tears the connection down exactly once: signal writePump via done and
@@ -399,6 +408,10 @@ func (c *Conn) trySendLossy(b []byte) {
 // PINGs on `pingPeriod` so a silently-dead client trips the read deadline (set
 // by handleWS and refreshed in the PONG handler) and is reaped promptly.
 func (c *Conn) writePump() {
+	pingPeriod := c.pingPeriod
+	if pingPeriod <= 0 {
+		_, pingPeriod = keepaliveSnapshot()
+	}
 	ping := time.NewTicker(pingPeriod)
 	defer ping.Stop()
 	defer c.flushClose() // emit typed CLOSE (if any) and close the socket
@@ -519,15 +532,16 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// ROOM_JOIN, PING) are tiny; a multi-KB frame is abuse. Gorilla closes the
 	// connection with 1009 when the limit is exceeded.
 	ws.SetReadLimit(maxWSFrameBytes)
+	connPongWait, connPingPeriod := keepaliveSnapshot()
 	// WS keepalive: a read deadline + PONG handler refresh (paired with the
 	// PING ticker in writePump). Without this a silently-dead client (cable
 	// unplugged, NAT timeout, OS sleep) blocks ws.ReadMessage() for the OS-
 	// level TCP timeout (~2h on Linux) and leaks the read + writePump
 	// goroutines for the lifetime of that window. The handler refreshes the
 	// deadline on every PONG so a healthy client never trips it.
-	_ = ws.SetReadDeadline(time.Now().Add(pongWait))
+	_ = ws.SetReadDeadline(time.Now().Add(connPongWait))
 	ws.SetPongHandler(func(string) error {
-		_ = ws.SetReadDeadline(time.Now().Add(pongWait))
+		_ = ws.SetReadDeadline(time.Now().Add(connPongWait))
 		return nil
 	})
 	// Resolve the human nickname once at connect so bids broadcast a display name,
@@ -539,7 +553,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	c := &Conn{
 		ws: ws, send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16),
 		done: make(chan struct{}), userID: userID, displayName: display,
-		metrics: s.metrics,
+		metrics: s.metrics, pingPeriod: connPingPeriod,
 	}
 	if s.metrics != nil {
 		s.metrics.ActiveConns.Add(1)
