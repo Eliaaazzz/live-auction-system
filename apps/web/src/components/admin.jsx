@@ -89,18 +89,53 @@ function AdminVLMFacts() {
   // Both calls share the route's :id auction. On success route to the
   // live console; the console subscribes to the WS feed for the broadcaster
   // view of the same room buyers see.
+  //
+  // Idempotency (review by @Eliaaazzz on PR #51/#53, H2): if freeze
+  // succeeds but startLive fails (network blip / Redis race / timer
+  // race), the auction stays in SCHEDULED. On retry, the backend's
+  // freeze handler now returns ERR_BAD_STATE (the auction is past
+  // DRAFT), which would orphan the user. We treat ERR_BAD_STATE on
+  // freeze as "already frozen, proceed to startLive". This makes the
+  // freeze step client-side idempotent without needing a backend flag.
+  //
+  // We DO NOT treat ERR_BAD_STATE on startLive as success — that path
+  // means the auction is already past SCHEDULED (LIVE / SOLD / etc.),
+  // which is a different problem the user should see.
   const handleFreezeAndStart = async () => {
     if (busy || !gateOpen || !auctionId) return;
     setBusy(true);
     setError(null);
     try {
       await ensureSession('seller-demo');
-      const fz = await api.freeze(auctionId);
-      if (fz?.code && fz.code !== 'OK_FROZEN') {
-        throw new ApiError(409, fz.code, fz.code);
+
+      // Step 1: freeze (idempotent — ERR_BAD_STATE = already frozen, skip)
+      let alreadyFrozen = false;
+      try {
+        const fz = await api.freeze(auctionId);
+        if (fz?.code && fz.code !== 'OK_FROZEN') {
+          if (fz.code === 'ERR_BAD_STATE') {
+            alreadyFrozen = true;  // proceed to startLive
+          } else {
+            throw new ApiError(409, fz.code, fz.code);
+          }
+        }
+      } catch (e) {
+        // ApiError with ERR_BAD_STATE from the HTTP error path also means
+        // already-past-DRAFT — same handling as the OK-code branch above.
+        if (e instanceof ApiError && e.code === 'ERR_BAD_STATE') {
+          alreadyFrozen = true;
+        } else {
+          throw e;
+        }
       }
-      // Backend's start handler accepts an optional durationMs; omitted here
-      // means the seed/freeze default applies.
+      // (alreadyFrozen is informational; we don't surface it to the user
+      // since the success path is identical either way.)
+      void alreadyFrozen;
+
+      // Step 2: startLive — backend accepts optional durationMs; omitted
+      // here means the seed/freeze default applies. ERR_BAD_STATE here
+      // is NOT swallowed — it means the auction is past SCHEDULED, which
+      // the user needs to see (don't pretend success).
       const st = await api.startLive(auctionId);
       if (st?.code && st.code !== 'OK_LIVE') {
         throw new ApiError(409, st.code, st.code);
