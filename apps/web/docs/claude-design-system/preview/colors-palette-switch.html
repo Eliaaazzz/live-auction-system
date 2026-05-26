@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Palette Switch — A to B</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { display: flex; height: 200px; font-family: var(--font-sans); }
+  .half { flex: 1; padding: 20px 24px; display: flex; flex-direction: column; justify-content: space-between; position: relative; }
+  .a { background: #171a28; color: #f5f5f7; }
+  .b { background: #F5EDDD; color: #0A1F44; }
+  .tag { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; opacity: 0.7; }
+  .role { font-size: 14px; font-weight: 600; }
+  .demo { font-size: 36px; line-height: 1; font-weight: 700; letter-spacing: -0.02em; }
+  .b .demo { font-family: var(--font-serif); font-weight: 900; }
+  .arrow { position: absolute; top: 50%; right: -18px; transform: translateY(-50%); width: 36px; height: 36px; border-radius: 50%; background: #C9A961; color: #0A1F44; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-weight: 700; font-size: 13px; z-index: 2; box-shadow: 0 0 24px rgba(201,169,97,0.5); }
+  .meta { font-family: var(--font-mono); font-size: 11px; opacity: 0.7; }
+</style>
+</head><body>
+  <div class="half a">
+    <div>
+      <div class="tag">PALETTE A · DOUYIN NATIVE</div>
+      <div class="role" style="margin-top:6px">live bidding · energy</div>
+    </div>
+    <div class="demo" style="color:#FE2C55">¥12,800</div>
+    <div class="meta">.pal-a</div>
+    <div class="arrow">→</div>
+  </div>
+  <div class="half b">
+    <div>
+      <div class="tag" style="color:#a3873f">PALETTE B · AUCTIONHOUSE</div>
+      <div class="role" style="margin-top:6px">hammer · evidence · record</div>
+    </div>
+    <div class="demo">¥12,800.00</div>
+    <div class="meta" style="color:#3a4b6d">.pal-b · 0.55s curtain</div>
+  </div>
+</body></html>

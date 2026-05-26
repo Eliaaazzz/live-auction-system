@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Typography — Mono Numerics</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 20px 24px; font-family: var(--font-sans); color: #f5f5f7; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; }
+  .cell { display: flex; align-items: baseline; gap: 12px; }
+  .lbl { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; color: #8b8fa3; width: 78px; text-transform: uppercase; }
+  .val { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+  .money    { font-size: 28px; font-weight: 600; color: #FE2C55; letter-spacing: 0.02em; }
+  .seq      { font-size: 18px; font-weight: 500; color: #f5f5f7; }
+  .delta-ok { font-size: 18px; font-weight: 500; color: #25F4EE; }
+  .delta-warn{font-size: 18px; font-weight: 500; color: #FFB020; }
+  .hash     { font-size: 14px; color: #c8cad6; }
+  .time     { font-size: 22px; font-weight: 600; color: #fff; letter-spacing: 0.04em; }
+  .lot      { font-size: 16px; color: #dcbf7f; letter-spacing: 0.18em; }
+</style>
+</head><body>
+  <div class="grid">
+    <div class="cell"><div class="lbl">MONEY</div><div class="val money">¥12,800.00</div></div>
+    <div class="cell"><div class="lbl">COUNTDOWN</div><div class="val time">00:09</div></div>
+    <div class="cell"><div class="lbl">SEQ</div><div class="val seq">#14998</div></div>
+    <div class="cell"><div class="lbl">Δ OK</div><div class="val delta-ok">Δ 42ms</div></div>
+    <div class="cell"><div class="lbl">HASH</div><div class="val hash">0x7af3…b21c</div></div>
+    <div class="cell"><div class="lbl">Δ WARN</div><div class="val delta-warn">Δ 412ms</div></div>
+    <div class="cell"><div class="lbl">LOT</div><div class="val lot">LOT 2026-01-088</div></div>
+    <div class="cell"><div class="lbl">USERS</div><div class="val seq">8,442</div></div>
+  </div>
+</body></html>

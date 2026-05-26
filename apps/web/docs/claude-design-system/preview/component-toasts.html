@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Toasts & Inline Alerts</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 20px; font-family: var(--font-sans); color: #f5f5f7; display: flex; flex-direction: column; gap: 10px; }
+  .toast { display: flex; gap: 10px; padding: 12px 14px; border-radius: 10px; background: #272b3d; border: 1px solid rgba(255,255,255,0.08); align-items: center; }
+  .toast.rej { background: linear-gradient(90deg, rgba(255,77,112,0.18), #272b3d 50%); border-color: rgba(255,77,112,0.4); }
+  .toast.ext { background: linear-gradient(90deg, rgba(255,176,32,0.18), #272b3d 50%); border-color: rgba(255,176,32,0.4); }
+  .toast.lead{ background: linear-gradient(90deg, rgba(201,169,97,0.18), #272b3d 50%); border-color: rgba(201,169,97,0.4); }
+  .toast.offl{ background: linear-gradient(90deg, rgba(154,160,180,0.15), #272b3d 50%); border-color: rgba(154,160,180,0.32); color: #c8cad6; }
+  .code { font-family: var(--font-mono); font-weight: 700; letter-spacing: 0.12em; font-size: 11px; padding: 3px 8px; border-radius: 4px; }
+  .code.rej  { color: #ff4d70; background: rgba(255,77,112,0.18); }
+  .code.ext  { color: #FFB020; background: rgba(255,176,32,0.18); }
+  .code.lead { color: #C9A961; background: rgba(201,169,97,0.18); }
+  .code.offl { color: #9aa0b4; background: rgba(154,160,180,0.16); }
+  .msg { font-size: 13px; font-weight: 500; }
+  .meta{ margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: #8b8fa3; }
+</style>
+</head><body>
+  <div class="toast rej"><span class="code rej">ERR_TOO_LOW</span><span class="msg">出价低于当前价 ¥12,800 · 请提高出价</span><span class="meta">shake 280ms</span></div>
+  <div class="toast ext"><span class="code ext">EXTENDED +5s</span><span class="msg">最后 10 秒出现新出价 · 倒计时延长</span><span class="meta">last-10s</span></div>
+  <div class="toast lead"><span class="code lead">YOU LEAD</span><span class="msg">你正在领先 · ¥12,800 · 保持到落槌即得标</span><span class="meta">gold halo</span></div>
+  <div class="toast offl"><span class="code offl">AI OFFLINE</span><span class="msg">主播暂时离开 · 出价仍正常 · 落槌仍由服务器执行</span><span class="meta">non-blocking</span></div>
+</body></html>

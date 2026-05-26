@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Semantic Status Colors</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { font-family: var(--font-sans); background: #111422; padding: 20px; color: #f5f5f7; }
+  .grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+  .row { display: flex; flex-direction: column; gap: 6px; }
+  .sw  { height: 56px; border-radius: 6px; display: flex; align-items: flex-end; padding: 8px; font-family: var(--font-mono); font-size: 10px; color: #fff; }
+  .lbl { font-family: var(--font-sans); font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; opacity: 0.92; }
+  .meta{ font-family: var(--font-mono); font-size: 10px; opacity: 0.6; }
+</style>
+</head><body>
+  <div class="grid">
+    <div class="row"><div class="sw" style="background:#FE2C55">#FE2C55</div><div class="lbl" style="color:#FE2C55">LIVE</div><div class="meta">--sem-live</div></div>
+    <div class="row"><div class="sw" style="background:#FFB020;color:#0f1220">#FFB020</div><div class="lbl" style="color:#FFB020">EXTENDED</div><div class="meta">--sem-extended</div></div>
+    <div class="row"><div class="sw" style="background:#C9A961;color:#0f1220">#C9A961</div><div class="lbl" style="color:#C9A961">SOLD</div><div class="meta">--sem-sold</div></div>
+    <div class="row"><div class="sw" style="background:#6b7280">#6B7280</div><div class="lbl" style="color:#9aa0b4">NO_BID</div><div class="meta">--sem-no-bid</div></div>
+    <div class="row"><div class="sw" style="background:#9aa0b4;color:#0f1220">#9AA0B4</div><div class="lbl" style="color:#9aa0b4">CANCELLED</div><div class="meta">--sem-cancelled</div></div>
+    <div class="row"><div class="sw" style="background:#ff4d70">#FF4D70</div><div class="lbl" style="color:#ff4d70">REJECTED</div><div class="meta">--sem-rejected</div></div>
+  </div>
+</body></html>

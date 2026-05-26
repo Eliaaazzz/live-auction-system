@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="400" height="400">
+  <rect width="400" height="400" fill="#1f2333"></rect>
+  <g stroke="#272b3d" stroke-width="1">
+    <line x1="0" y1="100" x2="400" y2="100"></line>
+    <line x1="0" y1="200" x2="400" y2="200"></line>
+    <line x1="0" y1="300" x2="400" y2="300"></line>
+    <line x1="100" y1="0" x2="100" y2="400"></line>
+    <line x1="200" y1="0" x2="200" y2="400"></line>
+    <line x1="300" y1="0" x2="300" y2="400"></line>
+  </g>
+  <g transform="translate(200 200)">
+    <circle r="80" fill="none" stroke="#C9A961" stroke-width="1.5" opacity="0.6"></circle>
+    <circle r="56" fill="none" stroke="#C9A961" stroke-width="1.5"></circle>
+    <g transform="rotate(-30)" stroke="#F5EDDD" stroke-width="4" stroke-linecap="round" fill="none">
+      <rect x="-44" y="-10" width="50" height="20" rx="3" fill="#F5EDDD" stroke="none"></rect>
+      <line x1="6" y1="0" x2="44" y2="0"></line>
+    </g>
+    <circle r="8" fill="#C9A961"></circle>
+  </g>
+  <text x="200" y="370" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="11" letter-spacing="0.18em" fill="#8b8fa3">LOT PLACEHOLDER · 400×400</text>
+</svg>

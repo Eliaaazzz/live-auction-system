@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lumen Auction Design System</title>
+<link rel="stylesheet" href="./colors_and_type.css" />
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--solemn-cream);
+    color: var(--solemn-text);
+    font-family: var(--font-sans);
+  }
+
+  .page {
+    width: min(1120px, calc(100vw - 40px));
+    margin: 0 auto;
+    padding: 48px 0 64px;
+  }
+
+  .topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--solemn-divider);
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  .brand img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .eyebrow {
+    margin: 0 0 8px;
+    color: var(--solemn-text-muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 44px;
+    line-height: 1.05;
+  }
+
+  .links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  a.button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 40px;
+    padding: 0 16px;
+    border: 1px solid var(--solemn-divider);
+    border-radius: var(--r-pill);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--solemn-text);
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 28px;
+    margin-top: 32px;
+  }
+
+  .panel {
+    border: 1px solid var(--solemn-divider);
+    border-radius: var(--r-md);
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: var(--e1);
+    overflow: hidden;
+  }
+
+  .panel-body {
+    padding: 22px;
+  }
+
+  .panel h2,
+  .panel h3 {
+    margin: 0 0 10px;
+  }
+
+  .panel p {
+    margin: 0;
+    color: var(--solemn-text-soft);
+    line-height: 1.65;
+  }
+
+  .preview {
+    display: block;
+    width: 100%;
+    border-bottom: 1px solid var(--solemn-divider);
+    background: var(--douyin-ink);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 28px;
+  }
+
+  .card {
+    display: flex;
+    min-height: 132px;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 18px;
+    border: 1px solid var(--solemn-divider);
+    border-radius: var(--r-md);
+    background: rgba(255, 255, 255, 0.74);
+    color: var(--solemn-text);
+    text-decoration: none;
+    box-shadow: var(--e1);
+  }
+
+  .card strong {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 17px;
+  }
+
+  .card span {
+    color: var(--solemn-text-muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+  }
+
+  @media (max-width: 860px) {
+    .topline,
+    .hero {
+      grid-template-columns: 1fr;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .grid {
+      grid-template-columns: 1fr;
+    }
+
+    h1 {
+      font-size: 34px;
+    }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <section class="topline">
+    <div class="brand">
+      <img src="./assets/mark-lumen.svg" alt="" />
+      <div>
+        <p class="eyebrow">Design system export · refs #41 #42 #43</p>
+        <h1>Lumen Auction Design System</h1>
+      </div>
+    </div>
+    <nav class="links" aria-label="Primary design links">
+      <a class="button" href="./README.md">README</a>
+      <a class="button" href="./ui_kits/mobile_room/index.html">Mobile kit</a>
+      <a class="button" href="./ui_kits/admin_console/index.html">Admin kit</a>
+    </nav>
+  </section>
+
+  <section class="hero" aria-label="Core previews">
+    <article class="panel">
+      <img class="preview" src="./screenshots/mobile-live.png" alt="Mobile H5 bidder room live state preview" />
+      <div class="panel-body">
+        <h2>Mobile H5 Bidder Room</h2>
+        <p>Live bidding, last-10s anti-snipe tension, long-press bid wheel, hammer fall, evidence verified/broken, and reconnect/catchup states.</p>
+      </div>
+    </article>
+    <article class="panel">
+      <img class="preview" src="./screenshots/admin-live.png" alt="PC admin live console preview" />
+      <div class="panel-body">
+        <h2>PC Admin Console</h2>
+        <p>VLM fact review, live console, publish workflow, items and orders, and destructive cancel flow with current-price confirmation.</p>
+      </div>
+    </article>
+  </section>
+
+  <section class="grid" aria-label="Reference files">
+    <a class="card" href="./colors_and_type.css">
+      <strong>Tokens</strong>
+      <span class="mono">colors_and_type.css</span>
+      <span>Palette A, Palette B, semantic status colors, typography, spacing, radii, shadows, motion.</span>
+    </a>
+    <a class="card" href="./preview/colors-palette-a.html">
+      <strong>Palette A</strong>
+      <span>Douyin-native live-bidding energy: ink, neon red, cyan, heartbeat, and rejection states.</span>
+    </a>
+    <a class="card" href="./preview/colors-palette-b.html">
+      <strong>Palette B</strong>
+      <span>Auctionhouse record mode: navy, gold, cream, hammer, evidence, order, and settlement states.</span>
+    </a>
+    <a class="card" href="./preview/component-bid-wheel.html">
+      <strong>Bid Wheel</strong>
+      <span>Long-press price-step radial control for +1x, +2x, +5x, and +10x bidding.</span>
+    </a>
+    <a class="card" href="./preview/component-evidence-row.html">
+      <strong>Evidence Timeline</strong>
+      <span>CHAIN VERIFIED and ERR_HASH_MISMATCH rows with seq, timestamp, prev hash, and event hash.</span>
+    </a>
+    <a class="card" href="./preview/component-vlm-card.html">
+      <strong>VLM Fact Card</strong>
+      <span>AI proposed facts, seller-confirmed diffs, confidence, and high-risk review state.</span>
+    </a>
+  </section>
+</main>
+</body>
+</html>

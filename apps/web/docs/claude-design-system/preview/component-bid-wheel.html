@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Bid Wheel — Long-press Price Step</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 16px; font-family: var(--font-sans); color: #f5f5f7; display: flex; gap: 18px; align-items: center; min-height: 230px; }
+  .stage { position: relative; width: 230px; height: 230px; flex-shrink: 0; }
+  .seg { position: absolute; inset: 0; }
+  .wheel { position: absolute; inset: 14px; border-radius: 50%; background: radial-gradient(closest-side, rgba(254,44,85,0.18), rgba(254,44,85,0) 70%); }
+  .core { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 78px; height: 78px; border-radius: 50%; background: #FE2C55; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 0 32px rgba(254,44,85,0.6); }
+  .core .price { font-family: var(--font-mono); font-weight: 700; font-size: 18px; }
+  .core .sub   { font-size: 9px; letter-spacing: 0.16em; opacity: 0.9; }
+  .tag { position: absolute; padding: 6px 12px; border-radius: 9999px; background: #1f2333; border: 1px solid rgba(255,255,255,0.1); font-family: var(--font-mono); font-weight: 700; font-size: 12px; }
+  .tag.sel { background: #FE2C55; color: #fff; border-color: #FE2C55; box-shadow: 0 0 20px rgba(254,44,85,0.55); }
+  .x1 { top: 4px;    left: 50%; transform: translateX(-50%); }
+  .x2 { right: -8px; top: 50%;  transform: translateY(-50%); }
+  .x5 { bottom: 4px; left: 50%; transform: translateX(-50%); }
+  .x10{ left: -8px;  top: 50%;  transform: translateY(-50%); }
+  .meta { flex: 1; }
+  .meta h { display: block; font-size: 14px; font-weight: 700; color: #f5f5f7; }
+  .meta p { font-size: 12px; color: #c8cad6; line-height: 1.5; margin: 6px 0 0; }
+  .meta code { font-family: var(--font-mono); font-size: 11px; color: #25F4EE; }
+</style>
+</head><body>
+  <div class="stage">
+    <div class="wheel"></div>
+    <span class="tag x1">+1×</span>
+    <span class="tag x2">+2×</span>
+    <span class="tag sel x10">+10×</span>
+    <span class="tag x5">+5×</span>
+    <div class="core"><div class="price">¥3,200</div><div class="sub">RELEASE</div></div>
+  </div>
+  <div class="meta">
+    <h>Radial bid wheel</h>
+    <p>Long-press the bid button to fan out price steps. Drag to select. Release to submit.</p>
+    <p style="margin-top:10px">Reveal <code>220ms ease-overshoot</code>, segments staggered <code>20ms</code>.</p>
+    <p style="margin-top:6px">Selected step pulses with <code>glow-live</code> until release.</p>
+  </div>
+</body></html>

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>VLM Fact Card</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #F5EDDD; padding: 16px 20px; font-family: var(--font-sans); color: #0A1F44; }
+  .card { background: #fff; border: 1px solid rgba(10,31,68,0.12); border-radius: 8px; padding: 14px 16px; box-shadow: 0 1px 0 rgba(10,31,68,0.04), 0 8px 24px -12px rgba(10,31,68,0.18); }
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .head h { font-size: 13px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; flex: 1; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; }
+  .chip.ai   { background: rgba(37,244,238,0.16); color: #0fa0a8; border: 1px solid rgba(37,244,238,0.4); }
+  .chip.conf { background: rgba(201,169,97,0.18); color: #a3873f; }
+  .chip.risk { background: rgba(254,44,85,0.10); color: #cb203f; }
+  .grid { display: grid; grid-template-columns: 130px 1fr 120px; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid rgba(10,31,68,0.08); }
+  .k { font-family: var(--font-mono); font-size: 11px; color: #6b7a96; letter-spacing: 0.04em; }
+  .v { font-family: var(--font-sans); font-size: 14px; font-weight: 600; }
+  .diff del { color: #cb203f; text-decoration: line-through; opacity: 0.7; margin-right: 6px; }
+  .diff ins { color: #0a7a40; text-decoration: none; font-weight: 700; }
+</style>
+</head><body>
+  <div class="card">
+    <div class="head">
+      <h>FACT · 时代 / DYNASTY</h>
+      <span class="chip ai">AI</span>
+      <span class="chip conf">conf 0.92</span>
+      <span class="chip risk">SELLER EDITED</span>
+    </div>
+    <div class="grid">
+      <span class="k">ai_proposed</span>
+      <span class="v">清乾隆</span>
+      <span class="k" style="text-align:right">frame #142</span>
+    </div>
+    <div class="grid">
+      <span class="k">seller_confirmed</span>
+      <span class="v diff"><del>清乾隆</del><ins>清雍正</ins></span>
+      <span class="k" style="text-align:right">高风险</span>
+    </div>
+    <div class="grid">
+      <span class="k">audit_state</span>
+      <span class="v" style="color:#a3873f">REQUIRES_CONFIRMATION · gate before SCHEDULED</span>
+      <span class="k" style="text-align:right">2 of 5</span>
+    </div>
+  </div>
+</body></html>

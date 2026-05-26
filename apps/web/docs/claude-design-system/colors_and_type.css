@@ -1,0 +1,373 @@
+/* =========================================================================
+   Lumen Auction · Design Tokens
+   Two-palette system: A Douyin-native (live) <-> B Auctionhouse (record).
+   Backend is authoritative. Tokens here are presentation only.
+   ========================================================================= */
+
+/* ---------- Fonts (web fallbacks for PingFang / HarmonyOS / Source Han) -- */
+@import url("https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Noto+Serif+SC:wght@500;600;700;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap");
+
+:root {
+  /* =========================================================================
+     PALETTE A — Douyin-native, live bidding energy.
+     ========================================================================= */
+  --douyin-ink:        #171a28;
+  --douyin-ink-soft:   #1f2333;
+  --douyin-ink-2:      #272b3d;
+  --douyin-red:        #FE2C55;
+  --douyin-red-deep:   #cb203f;
+  --douyin-cyan:       #25F4EE;
+  --ink-text:          #f5f5f7;
+  --ink-text-soft:     #c8cad6;
+  --ink-text-muted:    #8b8fa3;
+  --ink-divider:       rgba(255,255,255,0.08);
+  --ink-hover:         rgba(255,255,255,0.04);
+
+  /* =========================================================================
+     PALETTE B — Auctionhouse premium, hammer / evidence / order trust.
+     ========================================================================= */
+  --solemn-deep:       #0A1F44;
+  --solemn-deep-soft:  #142a55;
+  --solemn-deep-2:     #1f3a6b;
+  --solemn-gold:       #C9A961;
+  --solemn-gold-soft:  #dcbf7f;
+  --solemn-gold-deep:  #a3873f;
+  --solemn-cream:      #F5EDDD;
+  --solemn-cream-2:    #ece2ce;
+  --bridge-rose-gold:  #b88a5a;
+  --solemn-text:       #0A1F44;
+  --solemn-text-soft:  #3a4b6d;
+  --solemn-text-muted: #6b7a96;
+  --solemn-divider:    rgba(10,31,68,0.12);
+  --solemn-hover:      rgba(10,31,68,0.04);
+
+  /* =========================================================================
+     SEMANTIC — status & state, palette-independent.
+     ========================================================================= */
+  --sem-live:       #FE2C55;
+  --sem-extended:   #FFB020;
+  --sem-sold:       #C9A961;
+  --sem-no-bid:     #6b7280;
+  --sem-cancelled:  #9aa0b4;
+  --sem-rejected:   #ff4d70;
+  --sem-success:    #34c77b;
+  --sem-warning:    #FFB020;
+  --sem-danger:     #cb203f;
+  --sem-info:       #25F4EE;
+  --sem-ai:         #25F4EE; /* AI sidecar marker — read-only */
+  --sem-self:       #25F4EE; /* "this is your bid / your seq" */
+
+  /* =========================================================================
+     SPACING — 4px base.
+     ========================================================================= */
+  --s-2:  2px;
+  --s-4:  4px;
+  --s-8:  8px;
+  --s-12: 12px;
+  --s-16: 16px;
+  --s-20: 20px;
+  --s-24: 24px;
+  --s-32: 32px;
+  --s-40: 40px;
+  --s-56: 56px;
+  --s-80: 80px;
+
+  /* =========================================================================
+     RADII
+     ========================================================================= */
+  --r-xs:   4px;   /* chips, badges */
+  --r-sm:   8px;   /* inputs, small cards, evidence card */
+  --r-md:   12px;  /* standard cards, modals */
+  --r-lg:   20px;  /* mobile sheets, hero */
+  --r-xl:   28px;
+  --r-pill: 9999px;
+
+  /* =========================================================================
+     ELEVATION / SHADOW
+     ========================================================================= */
+  --e1: 0 1px 0 rgba(10,31,68,0.04), 0 8px 24px -12px rgba(10,31,68,0.18);
+  --e2: 0 4px 12px -2px rgba(10,31,68,0.12), 0 24px 60px -20px rgba(10,31,68,0.32);
+  --shadow-glow-live: 0 0 24px rgba(254,44,85,0.45);
+  --shadow-glow-gold: 0 0 32px rgba(201,169,97,0.35);
+  --shadow-glow-cyan: 0 0 16px rgba(37,244,238,0.35);
+  --shadow-protection-bottom: 0 -32px 32px -12px rgba(23,26,40,0.95);
+
+  /* =========================================================================
+     TYPOGRAPHY
+     ========================================================================= */
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC",
+               -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC",
+                ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* Mobile scale */
+  --t-display: 40px;
+  --t-h1:      32px;
+  --t-h2:      24px;
+  --t-h3:      18px;
+  --t-body:    16px;
+  --t-meta:    14px;
+  --t-caption: 12px;
+
+  /* PC console scale */
+  --t-pc-hammer: 160px;
+  --t-pc-display: 56px;
+  --t-pc-h1:      40px;
+  --t-pc-h2:      28px;
+  --t-pc-h3:      22px;
+  --t-pc-body:    16px;
+  --t-pc-meta:    14px;
+  --t-pc-caption: 13px;
+  --t-pc-mono:    13px;
+
+  /* Hammer (mobile) */
+  --t-hammer-mobile: 96px;
+
+  /* Weights */
+  --w-reg:    400;
+  --w-med:    500;
+  --w-semi:   600;
+  --w-bold:   700;
+  --w-black:  900;
+
+  /* Line heights */
+  --lh-tight:  1.1;
+  --lh-snug:   1.25;
+  --lh-normal: 1.45;
+  --lh-loose:  1.65;
+
+  /* Tracking */
+  --tr-caps:    0.12em;  /* status chips, mono labels */
+  --tr-mono:    0.02em;
+  --tr-tight:  -0.01em;
+  --tr-serif:  -0.02em;
+
+  /* =========================================================================
+     MOTION
+     ========================================================================= */
+  --ease-snap:      cubic-bezier(.2, .8, .2, 1);
+  --ease-pulse:     cubic-bezier(.4, 0, .6, 1);
+  --ease-curtain:   cubic-bezier(.7, 0, .2, 1);
+  --ease-overshoot: cubic-bezier(.34, 1.56, .64, 1);
+  --d-instant: 80ms;
+  --d-fast:    180ms;
+  --d-base:    280ms;
+  --d-hammer:  550ms;  /* the A->B palette switch */
+  --d-curtain: 900ms;
+  --d-heartbeat: 1400ms;
+}
+
+/* =========================================================================
+   SEMANTIC ROLES — switch palette by adding .pal-a or .pal-b to a container.
+   .pal-a is the default in the live room. .pal-b takes over at hammer.
+   ========================================================================= */
+
+.pal-a {
+  --bg:           var(--douyin-ink);
+  --bg-soft:      var(--douyin-ink-soft);
+  --bg-2:         var(--douyin-ink-2);
+  --fg:           var(--ink-text);
+  --fg-soft:      var(--ink-text-soft);
+  --fg-muted:     var(--ink-text-muted);
+  --accent:       var(--douyin-red);
+  --accent-deep:  var(--douyin-red-deep);
+  --highlight:    var(--douyin-cyan);
+  --divider:      var(--ink-divider);
+  --hover-tint:   var(--ink-hover);
+  --shadow-card:  none;
+  --focus-ring:   var(--douyin-cyan);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+.pal-b {
+  --bg:           var(--solemn-cream);
+  --bg-soft:      var(--solemn-cream-2);
+  --bg-2:         #fff;
+  --fg:           var(--solemn-text);
+  --fg-soft:      var(--solemn-text-soft);
+  --fg-muted:     var(--solemn-text-muted);
+  --accent:       var(--solemn-gold);
+  --accent-deep:  var(--solemn-gold-deep);
+  --highlight:    var(--bridge-rose-gold);
+  --divider:      var(--solemn-divider);
+  --hover-tint:   var(--solemn-hover);
+  --shadow-card:  var(--e1);
+  --focus-ring:   var(--solemn-gold);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* Deep navy variant of palette B for stream backgrounds, console chrome */
+.pal-b-deep {
+  --bg:           var(--solemn-deep);
+  --bg-soft:      var(--solemn-deep-soft);
+  --bg-2:         var(--solemn-deep-2);
+  --fg:           var(--solemn-cream);
+  --fg-soft:      #d9c89f;
+  --fg-muted:     #8fa1c2;
+  --accent:       var(--solemn-gold);
+  --accent-deep:  var(--solemn-gold-deep);
+  --highlight:    var(--bridge-rose-gold);
+  --divider:      rgba(245,237,221,0.12);
+  --hover-tint:   rgba(245,237,221,0.06);
+  --shadow-card:  none;
+  --focus-ring:   var(--solemn-gold);
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* =========================================================================
+   TYPOGRAPHY PRIMITIVES — apply directly or via tailwind/styled rules.
+   ========================================================================= */
+
+.t-display {
+  font-family: var(--font-sans);
+  font-size: var(--t-display);
+  line-height: var(--lh-tight);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--tr-tight);
+}
+.t-h1 { font-family: var(--font-sans); font-size: var(--t-h1);  line-height: var(--lh-tight);  font-weight: var(--w-bold); letter-spacing: var(--tr-tight); }
+.t-h2 { font-family: var(--font-sans); font-size: var(--t-h2);  line-height: var(--lh-snug);   font-weight: var(--w-semi); }
+.t-h3 { font-family: var(--font-sans); font-size: var(--t-h3);  line-height: var(--lh-snug);   font-weight: var(--w-semi); }
+.t-body    { font-family: var(--font-sans); font-size: var(--t-body);    line-height: var(--lh-normal); font-weight: var(--w-reg); }
+.t-meta    { font-family: var(--font-sans); font-size: var(--t-meta);    line-height: var(--lh-normal); font-weight: var(--w-med); color: var(--fg-soft); }
+.t-caption { font-family: var(--font-sans); font-size: var(--t-caption); line-height: var(--lh-normal); font-weight: var(--w-med); color: var(--fg-muted); }
+
+.t-serif-hammer {
+  font-family: var(--font-serif);
+  font-size: var(--t-hammer-mobile);
+  line-height: 1;
+  font-weight: var(--w-black);
+  letter-spacing: var(--tr-serif);
+}
+.t-serif-display {
+  font-family: var(--font-serif);
+  font-size: var(--t-h1);
+  line-height: var(--lh-tight);
+  font-weight: var(--w-bold);
+  letter-spacing: var(--tr-serif);
+}
+
+.t-mono       { font-family: var(--font-mono); font-feature-settings: "tnum","zero"; letter-spacing: var(--tr-mono); }
+.t-mono-money { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--w-semi); letter-spacing: var(--tr-mono); }
+.t-mono-seq   { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--w-med);  color: var(--fg-muted); }
+.t-mono-hash  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-weight: var(--w-reg);  color: var(--fg-soft); }
+
+.t-caps {
+  font-family: var(--font-sans);
+  font-size: var(--t-caption);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--tr-caps);
+  text-transform: uppercase;
+}
+
+/* =========================================================================
+   STATUS CHIP — canonical statuses. Always uppercase, always tracked.
+   ========================================================================= */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--r-xs);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: var(--w-bold);
+  letter-spacing: var(--tr-caps);
+  text-transform: uppercase;
+  line-height: 1;
+}
+.chip--live      { background: rgba(254,44,85,0.16); color: var(--sem-live); }
+.chip--live::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--sem-live); box-shadow: var(--shadow-glow-live); animation: heartbeat var(--d-heartbeat) infinite var(--ease-pulse); }
+.chip--extended  { background: rgba(255,176,32,0.14); color: var(--sem-extended); }
+.chip--sold      { background: rgba(201,169,97,0.20); color: var(--solemn-gold-deep); }
+.chip--no-bid    { background: rgba(107,114,128,0.18); color: var(--sem-no-bid); }
+.chip--cancelled { background: rgba(154,160,180,0.18); color: var(--sem-cancelled); }
+.chip--rejected  { background: rgba(255,77,112,0.16); color: var(--sem-rejected); }
+.chip--draft     { background: rgba(107,114,128,0.14); color: var(--fg-muted); border: 1px dashed currentColor; }
+.chip--vlm       { background: rgba(37,244,238,0.12); color: var(--sem-info); }
+.chip--scheduled { background: rgba(184,138,90,0.18); color: var(--bridge-rose-gold); }
+.chip--ai        { background: rgba(37,244,238,0.10); color: var(--sem-ai); border: 1px solid rgba(37,244,238,0.32); }
+
+/* =========================================================================
+   MOTION KEYFRAMES — the named motion primitives.
+   ========================================================================= */
+
+@keyframes heartbeat {
+  0%, 100% { transform: scale(1);    opacity: 1; }
+  35%      { transform: scale(1.18); opacity: 1; }
+  70%      { transform: scale(1);    opacity: 0.85; }
+}
+
+@keyframes pulse-ripple {
+  0%   { transform: scale(0.6); opacity: 0.7; }
+  100% { transform: scale(2.4); opacity: 0; }
+}
+
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-6px); }
+  40%      { transform: translateX(6px); }
+  60%      { transform: translateX(-4px); }
+  80%      { transform: translateX(3px); }
+}
+
+@keyframes mono-tick {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes gold-pulse-once {
+  0%   { box-shadow: 0 0 0 rgba(201,169,97,0);    transform: scale(1); }
+  40%  { box-shadow: var(--shadow-glow-gold);     transform: scale(1.04); }
+  100% { box-shadow: 0 0 0 rgba(201,169,97,0);    transform: scale(1); }
+}
+
+@keyframes hourglass-flip {
+  0%, 49%   { transform: rotate(0deg); }
+  50%, 100% { transform: rotate(180deg); }
+}
+
+/* Curtain wipe for the 0.55s A->B hammer switch */
+@keyframes curtain-wipe-down {
+  0%   { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* =========================================================================
+   BUTTON PRIMITIVES — token-driven; palette comes from the parent.
+   ========================================================================= */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: var(--r-pill);
+  font-family: var(--font-sans);
+  font-size: var(--t-body);
+  font-weight: var(--w-semi);
+  letter-spacing: 0;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: transform var(--d-instant) var(--ease-snap),
+              background var(--d-fast) var(--ease-snap),
+              border-color var(--d-fast) var(--ease-snap);
+  user-select: none;
+}
+.btn:active { transform: scale(0.97); }
+.btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.btn--primary { background: var(--accent); color: #fff; }
+.btn--primary:hover { background: var(--accent-deep); }
+.btn--ghost   { background: transparent; color: var(--fg); border-color: var(--divider); }
+.btn--ghost:hover { background: var(--hover-tint); border-color: var(--fg-soft); }
+.btn--danger  { background: var(--sem-danger); color: #fff; }
+.btn--gold    { background: var(--solemn-gold); color: var(--solemn-deep); }
+
+.btn--xl { padding: 18px 32px; font-size: var(--t-h3); }
+.btn--sm { padding: 8px 14px;  font-size: var(--t-meta); }

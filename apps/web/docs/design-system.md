@@ -12,6 +12,13 @@ editor_options:
 > `/frontend-design`) can deliver visual proposals for Lumen Auction
 > without further onboarding.
 
+> **Companion export for comparison.** The Claude Design System export
+> based on the project reference brief lives in
+> [`claude-design-system/`](claude-design-system/). Use it as a second
+> visual proposal beside this T6 brief: it includes a browsable
+> `index.html`, screenshots, token CSS, preview cards, and click-through
+> UI kits for both the Mobile H5 bidder room and the PC Admin console.
+
 ------------------------------------------------------------------------
 
 ## §0 What we want from this document

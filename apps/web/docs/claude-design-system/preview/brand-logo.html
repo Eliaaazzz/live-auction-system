@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Brand · Logo</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { display: flex; height: 170px; font-family: var(--font-sans); }
+  .half { flex: 1; display: flex; align-items: center; justify-content: center; gap: 16px; padding: 20px; position: relative; }
+  .light { background: #F5EDDD; }
+  .dark  { background: #0A1F44; }
+  img { display: block; }
+  .tag { position: absolute; left: 14px; bottom: 12px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; opacity: 0.6; }
+  .light .tag { color: #3a4b6d; }
+  .dark .tag  { color: #dcbf7f; }
+</style>
+</head><body>
+  <div class="half light">
+    <img src="../assets/mark-lumen.svg" width="48" height="48" alt=""/>
+    <img src="../assets/logo-lumen.svg" width="260" height="48" alt="Lumen Auction"/>
+    <div class="tag">on cream — primary</div>
+  </div>
+  <div class="half dark">
+    <img src="../assets/mark-lumen.svg" width="48" height="48" alt=""/>
+    <img src="../assets/logo-lumen-on-dark.svg" width="260" height="48" alt="Lumen Auction"/>
+    <div class="tag">on deep — reversed</div>
+  </div>
+</body></html>

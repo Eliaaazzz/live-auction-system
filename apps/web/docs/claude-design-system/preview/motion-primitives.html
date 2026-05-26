@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Motion Primitives</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 18px 22px; font-family: var(--font-sans); color: #f5f5f7; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; background: #1f2333; border-radius: 10px; border: 1px solid rgba(255,255,255,0.06); height: 130px; justify-content: space-between; }
+  .name { font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: #c8cad6; }
+  .meta { font-family: var(--font-mono); font-size: 9.5px; color: #8b8fa3; text-align: center; }
+
+  .hb { width: 12px; height: 12px; border-radius: 50%; background: #FE2C55; box-shadow: 0 0 16px rgba(254,44,85,0.7); animation: heartbeat 1.4s infinite var(--ease-pulse); }
+  .rip { position: relative; width: 44px; height: 44px; }
+  .rip::before, .rip::after { content: ""; position: absolute; inset: 0; border-radius: 50%; border: 2px solid #FE2C55; animation: pulse-ripple 1.2s infinite var(--ease-pulse); }
+  .rip::after { animation-delay: 0.4s; }
+  .rip span { position: absolute; inset: 14px; border-radius: 50%; background: #FE2C55; }
+  .hg { width: 28px; height: 36px; color: #FFB020; animation: hourglass-flip 1s infinite steps(2, end); transform-origin: center; }
+  .gold { width: 32px; height: 32px; border-radius: 50%; background: #C9A961; animation: gold-pulse-once 1.4s infinite; }
+  @keyframes pulse-ripple { 0% { transform: scale(0.6); opacity: 0.8;} 100%{ transform: scale(2); opacity: 0;} }
+</style>
+</head><body>
+  <div class="grid">
+    <div class="cell"><div class="name">HEARTBEAT</div><div class="hb"></div><div class="meta">1.4s · ease-pulse<br/>LIVE dot</div></div>
+    <div class="cell"><div class="name">PULSE RIPPLE</div><div class="rip"><span></span></div><div class="meta">0.9s · last-10s<br/>3 stacked rings</div></div>
+    <div class="cell"><div class="name">HOURGLASS</div><svg class="hg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h12"/><path d="M6 22h12"/><path d="M6 2v4a6 6 0 0 0 12 0V2"/><path d="M6 22v-4a6 6 0 0 1 12 0v4"/></svg><div class="meta">1s · linear<br/>anti-snipe</div></div>
+    <div class="cell"><div class="name">GOLD SEAL</div><div class="gold"></div><div class="meta">1.4s · once<br/>chain-verified</div></div>
+  </div>
+</body></html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Connection States</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 18px 20px; font-family: var(--font-sans); color: #f5f5f7; display: flex; flex-direction: column; gap: 8px; }
+  .strip { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); font-family: var(--font-mono); font-size: 12px; }
+  .strip .name { font-family: var(--font-sans); font-weight: 700; letter-spacing: 0.16em; font-size: 11px; }
+  .strip .meta { font-family: var(--font-mono); font-size: 11px; color: #8b8fa3; margin-left: auto; }
+  .ok       { background: #1f2333; }
+  .ok       .name { color: #25F4EE; }
+  .recon    { background: rgba(255,176,32,0.10); border-color: rgba(255,176,32,0.4); }
+  .recon    .name { color: #FFB020; }
+  .sync     { background: rgba(37,244,238,0.06); border-color: rgba(37,244,238,0.3); }
+  .sync     .name { color: #25F4EE; }
+  .sch      { background: rgba(254,44,85,0.10); border-color: rgba(254,44,85,0.5); }
+  .sch      .name { color: #FE2C55; }
+  .mini     { background: rgba(184,138,90,0.16); border-color: rgba(184,138,90,0.5); }
+  .mini     .name { color: #dcbf7f; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .tick { display: inline-block; width: 12px; height: 12px; border-radius: 2px; background: currentColor; animation: mono-tick 1s infinite linear; }
+</style>
+</head><body>
+  <div class="strip ok"><span class="dot" style="color:#25F4EE"></span><span class="name">CONNECTED</span><span>seq #14998 · Δ 42ms</span><span class="meta">push, normal</span></div>
+  <div class="strip recon"><span class="tick" style="color:#FFB020"></span><span class="name">RECONNECTING</span><span>last seq #14998 · attempt 2 / 3</span><span class="meta">网络抖动 · 5s</span></div>
+  <div class="strip sync"><span class="tick" style="color:#25F4EE"></span><span class="name">SYNCING</span><span>#14922 → #14998 · catchup 76 events</span><span class="meta">replay stream</span></div>
+  <div class="strip sch"><span class="dot" style="color:#FE2C55"></span><span class="name">SCHEMA_MISMATCH</span><span>client v0.4 · server v0.5 · refresh required</span><span class="meta">REFRESH</span></div>
+  <div class="strip mini"><span class="dot" style="color:#dcbf7f"></span><span class="name">MINI-PROGRAM FALLBACK</span><span>open in Douyin · H5 limited</span><span class="meta">deeplink ↗</span></div>
+</body></html>

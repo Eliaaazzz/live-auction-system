@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Evidence Timeline Row</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #F5EDDD; padding: 18px 20px; font-family: var(--font-sans); color: #0A1F44; }
+  .card { background: #fff; border: 1px solid rgba(10,31,68,0.12); border-radius: 8px; padding: 14px 16px; box-shadow: 0 1px 0 rgba(10,31,68,0.04), 0 8px 24px -12px rgba(10,31,68,0.18); }
+  .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .head h { font-family: var(--font-serif); font-weight: 700; font-size: 18px; letter-spacing: -0.01em; flex: 1; }
+  .tag { font-family: var(--font-sans); font-size: 10px; font-weight: 700; letter-spacing: 0.18em; padding: 4px 8px; border-radius: 4px; }
+  .tag.ok    { color: #a3873f; background: rgba(201,169,97,0.18); }
+  .tag.broke { color: #cb203f; background: rgba(254,44,85,0.12); }
+  .seal { width: 40px; height: 40px; }
+
+  .timeline { display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); font-size: 12px; }
+  .ev { display: grid; grid-template-columns: 60px 80px 1fr auto; gap: 12px; padding: 8px 10px; border-radius: 6px; align-items: baseline; }
+  .ev:nth-child(odd){ background: #f8f3e6; }
+  .ev .seq { font-weight: 600; color: #0A1F44; }
+  .ev .ts  { color: #6b7a96; }
+  .ev .name{ color: #0A1F44; font-family: var(--font-sans); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+  .ev .hash{ color: #6b7a96; }
+  .ev.bad  { background: rgba(254,44,85,0.10); }
+  .ev.bad .hash { color: #cb203f; font-weight: 600; }
+  .ev.bad .name { color: #cb203f; }
+</style>
+</head><body>
+  <div class="card">
+    <div class="head">
+      <img class="seal" src="../assets/icon-seal-verified.svg" alt=""/>
+      <h>Evidence · 证据链</h>
+      <span class="tag ok">CHAIN VERIFIED</span>
+    </div>
+    <div class="timeline">
+      <div class="ev"><span class="seq">#14994</span><span class="ts">20:48:21.142</span><span class="name">BID_ACCEPTED</span><span class="hash">0x1a..→ 0x4f..</span></div>
+      <div class="ev"><span class="seq">#14996</span><span class="ts">20:48:22.310</span><span class="name">ANTI_SNIPE_EXT +5s</span><span class="hash">0x4f..→ 0x71..</span></div>
+      <div class="ev"><span class="seq">#14998</span><span class="ts">20:48:28.901</span><span class="name">HAMMER_SOLD ¥12,800.00</span><span class="hash">0x71..→ 0xb2..</span></div>
+      <div class="ev bad"><span class="seq">#14999</span><span class="ts">20:48:29.011</span><span class="name">ERR_HASH_MISMATCH</span><span class="hash">expect 0xb2.. got 0xc7..</span></div>
+    </div>
+  </div>
+</body></html>

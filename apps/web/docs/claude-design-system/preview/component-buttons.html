@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Buttons</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { display: flex; }
+  .half { flex: 1; padding: 20px 22px; }
+  .a.pal-a { background: #171a28; }
+  .b.pal-b { background: #F5EDDD; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; align-items: center; }
+  .lbl { width: 100%; font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.7; margin-bottom: 2px; }
+</style>
+</head><body>
+  <div class="half a pal-a">
+    <div class="row"><div class="lbl" style="color:#8b8fa3">Palette A · live room</div>
+      <button class="btn btn--primary">出价 +10</button>
+      <button class="btn btn--ghost">查看证据</button>
+      <button class="btn btn--sm btn--ghost">关闭</button>
+    </div>
+    <div class="row">
+      <button class="btn btn--xl btn--primary" style="width:100%">PLACE BID · +10×</button>
+    </div>
+  </div>
+  <div class="half b pal-b">
+    <div class="row"><div class="lbl" style="color:#6b7a96">Palette B · console</div>
+      <button class="btn btn--gold">开始拍卖</button>
+      <button class="btn btn--ghost">保存草稿</button>
+      <button class="btn btn--danger btn--sm">取消本场</button>
+    </div>
+    <div class="row">
+      <button class="btn btn--xl" style="width:100%; background:#0A1F44; color:#F5EDDD">Confirm & Freeze Rules</button>
+    </div>
+  </div>
+</body></html>

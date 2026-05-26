@@ -159,6 +159,10 @@ properties (`transform` / `opacity` / `box-shadow`) per the blueprint perf
 budget; `.surface-calm` (frame-budget auto-degrade) and
 `prefers-reduced-motion` reduce all decorative animations to `none`.
 
+The companion Claude Design export for side-by-side comparison lives in
+`docs/claude-design-system/`; open `docs/claude-design-system/index.html` to
+browse the exported UI kits, screenshots, tokens, and reference cards.
+
 ---
 
 ## Engineering reference

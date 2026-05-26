@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Shadows & Glow</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: linear-gradient(180deg, #F5EDDD 0%, #F5EDDD 50%, #171a28 50%, #171a28 100%); padding: 22px 24px; font-family: var(--font-sans); color: #0A1F44; min-height: 200px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  .box  { background: #fff; height: 64px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 11px; color: #3a4b6d; }
+  .lbl  { margin-top: 6px; font-family: var(--font-mono); font-size: 10px; }
+  .lbl b{ display: block; font-weight: 700; color: inherit; font-size: 10px; letter-spacing: 0.12em; }
+  .on-dark { color: #c8cad6; }
+  .on-light { color: #3a4b6d; }
+</style>
+</head><body>
+  <div class="grid" style="margin-bottom: 22px;">
+    <div>
+      <div class="box" style="box-shadow: var(--e1, 0 1px 0 rgba(10,31,68,0.04), 0 8px 24px -12px rgba(10,31,68,0.18));">e1</div>
+      <div class="lbl on-light"><b>--e1</b>cards (B)</div>
+    </div>
+    <div>
+      <div class="box" style="box-shadow: 0 4px 12px -2px rgba(10,31,68,0.12), 0 24px 60px -20px rgba(10,31,68,0.32);">e2</div>
+      <div class="lbl on-light"><b>--e2</b>modals, danger</div>
+    </div>
+    <div>
+      <div class="box" style="background:#0A1F44; color:#C9A961; box-shadow: 0 0 32px rgba(201,169,97,0.35);">glow gold</div>
+      <div class="lbl on-light"><b>glow-gold</b>hammer, seal</div>
+    </div>
+    <div>
+      <div class="box" style="background:#0A1F44; color:#FE2C55; box-shadow: 0 0 24px rgba(254,44,85,0.45);">glow live</div>
+      <div class="lbl on-light"><b>glow-live</b>leading halo</div>
+    </div>
+  </div>
+  <div class="grid">
+    <div>
+      <div class="box" style="background:#1f2333; color:#f5f5f7; box-shadow: none; border: 1px solid rgba(255,255,255,0.06);">flat A</div>
+      <div class="lbl on-dark"><b>FLAT (A)</b>no elevation</div>
+    </div>
+    <div>
+      <div class="box" style="background:#1f2333; color:#25F4EE; box-shadow: 0 0 16px rgba(37,244,238,0.35); border: 1px solid rgba(37,244,238,0.32);">glow cyan</div>
+      <div class="lbl on-dark"><b>glow-cyan</b>self / AI</div>
+    </div>
+    <div>
+      <div class="box" style="background:#1f2333; color:#FFB020; border: 1px solid rgba(255,176,32,0.32);">EXT chip</div>
+      <div class="lbl on-dark"><b>amber tint</b>extension</div>
+    </div>
+    <div>
+      <div class="box" style="background:linear-gradient(180deg, transparent, #171a28 70%); color:#f5f5f7;">↓ protect</div>
+      <div class="lbl on-dark"><b>protection</b>under bid bar</div>
+    </div>
+  </div>
+</body></html>

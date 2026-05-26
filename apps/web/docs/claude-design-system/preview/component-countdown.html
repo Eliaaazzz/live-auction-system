@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Countdown · Steady & Anti-Snipe</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #171a28; padding: 18px 22px; font-family: var(--font-sans); color: #f5f5f7; display: flex; gap: 18px; }
+  .cd { flex: 1; padding: 16px; border-radius: 14px; background: #1f2333; border: 1px solid rgba(255,255,255,0.06); position: relative; overflow: hidden; }
+  .cd.t10 { background: radial-gradient(circle at 50% 0%, rgba(254,44,85,0.28), transparent 60%), #1f2333; border-color: rgba(254,44,85,0.4); }
+  .label { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; opacity: 0.7; }
+  .time  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 48px; font-weight: 700; line-height: 1; margin: 8px 0 6px; }
+  .t10 .time { color: #FE2C55; text-shadow: 0 0 24px rgba(254,44,85,0.45); }
+  .meta { display: flex; gap: 10px; align-items: center; font-family: var(--font-mono); font-size: 11px; opacity: 0.78; }
+  .dot  { width: 8px; height: 8px; border-radius: 50%; background: #FE2C55; box-shadow: 0 0 10px rgba(254,44,85,0.7); animation: heartbeat 1.4s infinite var(--ease-pulse); }
+  .ext  { display: inline-block; padding: 3px 8px; border-radius: 4px; background: rgba(255,176,32,0.18); color: #FFB020; font-weight: 700; letter-spacing: 0.14em; font-size: 10px; }
+  .ring { position: absolute; right: -30px; top: -30px; width: 120px; height: 120px; border-radius: 50%; border: 2px solid rgba(254,44,85,0.5); animation: ripple 1.2s infinite; }
+  @keyframes ripple { 0% { transform: scale(0.7); opacity: 0.7;} 100% { transform: scale(1.4); opacity: 0;} }
+</style>
+</head><body>
+  <div class="cd">
+    <div class="label">LIVE · STEADY</div>
+    <div class="time">00:42</div>
+    <div class="meta"><span class="dot"></span><span>HEARTBEAT 1.4s · seq #14982</span></div>
+  </div>
+  <div class="cd t10">
+    <div class="ring"></div>
+    <div class="label">LAST 10s · ANTI-SNIPE</div>
+    <div class="time">00:09</div>
+    <div class="meta"><span class="ext">EXTENDED · +5s</span><span>+10× story bid landed</span></div>
+  </div>
+</body></html>

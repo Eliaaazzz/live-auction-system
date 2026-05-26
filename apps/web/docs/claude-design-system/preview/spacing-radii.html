@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Radii</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #fff; padding: 22px 24px; font-family: var(--font-sans); color: #0A1F44; }
+  .row { display: flex; gap: 14px; align-items: flex-end; }
+  .box { background: linear-gradient(135deg, #C9A961, #b88a5a); width: 80px; height: 64px; box-shadow: 0 1px 0 rgba(10,31,68,0.04), 0 8px 24px -12px rgba(10,31,68,0.18); }
+  .meta{ margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: #3a4b6d; line-height: 1.4; }
+  .meta b{ display: block; color: #0A1F44; font-weight: 700; letter-spacing: 0.12em; font-size: 10px; }
+</style>
+</head><body>
+  <div class="row">
+    <div><div class="box" style="border-radius:4px"></div><div class="meta"><b>--r-xs · 4</b>chips, badges</div></div>
+    <div><div class="box" style="border-radius:8px"></div><div class="meta"><b>--r-sm · 8</b>inputs, evidence</div></div>
+    <div><div class="box" style="border-radius:12px"></div><div class="meta"><b>--r-md · 12</b>cards, modals</div></div>
+    <div><div class="box" style="border-radius:20px"></div><div class="meta"><b>--r-lg · 20</b>sheets, hero</div></div>
+    <div><div class="box" style="border-radius:28px"></div><div class="meta"><b>--r-xl · 28</b>full bleed</div></div>
+    <div><div class="box" style="border-radius:9999px;width:100px"></div><div class="meta"><b>--r-pill</b>buttons, bid wheel</div></div>
+  </div>
+</body></html>

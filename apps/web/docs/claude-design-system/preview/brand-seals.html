@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<title>Brand · Chain Seals</title>
+<link rel="stylesheet" href="../colors_and_type.css"/>
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { background: #F5EDDD; padding: 20px; font-family: var(--font-sans); color: #0A1F44; display: flex; gap: 18px; align-items: center; min-height: 180px; }
+  .cell { flex: 1; display: flex; gap: 16px; align-items: center; padding: 14px 18px; border-radius: 8px; background: #fff; border: 1px solid rgba(10,31,68,0.12); }
+  .cell.bad { background: rgba(254,44,85,0.04); border-color: rgba(254,44,85,0.4); }
+  .cell img { width: 84px; height: 84px; }
+  .cell .ok-glow { border-radius: 50%; box-shadow: 0 0 32px rgba(201,169,97,0.5); }
+  .name { font-family: var(--font-serif); font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+  .meta { font-family: var(--font-mono); font-size: 11px; color: #3a4b6d; line-height: 1.55; margin-top: 4px; }
+  .bad .name { color: #cb203f; }
+  .bad .meta { color: #cb203f; }
+</style>
+</head><body>
+  <div class="cell">
+    <img src="../assets/icon-seal-verified.svg" class="ok-glow" alt=""/>
+    <div>
+      <div class="name">Chain verified</div>
+      <div class="meta">all events hashed in order<br/>replay verifier OK</div>
+    </div>
+  </div>
+  <div class="cell bad">
+    <img src="../assets/icon-seal-broken.svg" alt=""/>
+    <div>
+      <div class="name">Chain broken</div>
+      <div class="meta">ERR_HASH_MISMATCH at #14999<br/>later events untrusted</div>
+    </div>
+  </div>
+</body></html>
