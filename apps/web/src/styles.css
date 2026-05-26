@@ -1,0 +1,345 @@
+/* Lumen Auction — design tokens + base
+ * Faithful to design-system.md §6.
+ * Token names match the brief exactly so they're auditable.
+ */
+
+:root {
+  /* A · Douyin-Native palette */
+  --douyin-ink:        #171a28;   /* slightly more blue — bridges visually toward B's deep navy */
+  --douyin-ink-soft:   #1f2333;
+  --douyin-ink-card:   #262a3c;
+  --douyin-ink-text:   #f5f5f7;
+  --douyin-ink-muted:  #9aa0b4;
+  --douyin-ink-dim:    #6b7186;
+  --douyin-red:        #FE2C55;
+  --douyin-red-soft:   #ff4d70;
+  --douyin-red-deep:   #cb203f;
+  --douyin-cyan:       #25F4EE;
+  --douyin-cyan-soft:  #5af7f1;
+
+  /* Bridge — A↔B crossover, narrow use only (transitions, accent lifts) */
+  --bridge-plum-1:     #2a1c3a;   /* deep wine — surge fade-from at hammer */
+  --bridge-plum-2:     #1f1d3a;   /* night-violet — between A ink and B deep */
+  --bridge-twilight:   #1a1d3a;
+  --bridge-rose-gold:  #b88a5a;   /* warm bronze — accent lift between red and gold */
+
+  /* B · AuctionHouse Premium palette */
+  --solemn-deep:       #0A1F44;
+  --solemn-deep-soft:  #142a55;
+  --solemn-deep-card:  #16306b;
+  --solemn-gold:       #C9A961;
+  --solemn-gold-soft:  #dcbf7f;
+  --solemn-gold-deep:  #a08543;
+  --solemn-cream:      #F5EDDD;
+  --solemn-cream-dim:  rgba(245,237,221,0.62);
+  --solemn-ink:        #101010;
+
+  /* Cross-palette anchors — used in BOTH A and B for continuity */
+  --x-gold-thin:       rgba(201,169,97,.42);     /* 1px gold underlines, separators */
+  --x-rank-1-glow:     rgba(220,191,127,.6);     /* TOP-1 medal halo in either palette */
+
+  /* State semantic — palette-agnostic */
+  --state-live:        #FE2C55;
+  --state-extended:    #FFB020;
+  --state-sold:        #C9A961;
+  --state-no-bid:      #6b7280;
+  --state-cancelled:   #9aa0b4;
+  --state-rejected:    #ff4d70;
+
+  /* Type stacks */
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Playfair Display", Georgia, serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SFMono-Regular", monospace;
+}
+
+/* Tabular numerics everywhere we use mono — locks columns */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.serif { font-family: var(--font-serif); }
+.sans { font-family: var(--font-sans); }
+
+/* ─── Continuous animations (CSS/WAAPI, compositor-only) per P8 ─── */
+
+/* F01 — last-10s pulse */
+@keyframes lumen-pulse-warn {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 0 rgba(254,44,85,0)); }
+  50%      { transform: scale(1.045); filter: drop-shadow(0 0 18px rgba(254,44,85,.55)); }
+}
+.lumen-pulse-warn { animation: lumen-pulse-warn .9s ease-in-out infinite; transform-origin: center; }
+
+@keyframes lumen-ring-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(254,44,85,.55); }
+  70%  { box-shadow: 0 0 0 18px rgba(254,44,85,0); }
+  100% { box-shadow: 0 0 0 0   rgba(254,44,85,0); }
+}
+.lumen-ring-pulse { animation: lumen-ring-pulse 1.1s ease-out infinite; border-radius: 16px; }
+
+/* F02 — anti-snipe light sweep */
+@keyframes lumen-sweep {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateX(120%);  opacity: 0; }
+}
+.lumen-sweep::after {
+  content:''; position:absolute; inset:0;
+  background: linear-gradient(100deg, transparent 0%, rgba(255,176,32,0) 35%, rgba(255,176,32,.55) 50%, rgba(255,176,32,0) 65%, transparent 100%);
+  animation: lumen-sweep 1.0s ease-out 1;
+  pointer-events:none;
+}
+
+/* F06 — own-bid gold flash */
+@keyframes lumen-gold-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(201,169,97,0); background-color: transparent; }
+  20%  { box-shadow: 0 0 0 8px rgba(201,169,97,.45); background-color: rgba(201,169,97,.18); }
+  100% { box-shadow: 0 0 0 0 rgba(201,169,97,0); background-color: transparent; }
+}
+.lumen-gold-flash { animation: lumen-gold-flash 1.2s ease-out 1; }
+
+/* F08 — reject shake */
+@keyframes lumen-shake {
+  0%,100% { transform: translateX(0); }
+  10%,30%,50%,70%,90% { transform: translateX(-6px); }
+  20%,40%,60%,80%     { transform: translateX(6px); }
+}
+.lumen-shake { animation: lumen-shake .36s cubic-bezier(.36,.07,.19,.97) 1; }
+
+/* LIVE dot — breathing */
+@keyframes lumen-live-dot {
+  0%,100% { opacity: 1; transform: scale(1); }
+  50%     { opacity: .55; transform: scale(.86); }
+}
+.lumen-live-dot { animation: lumen-live-dot 1.4s ease-in-out infinite; }
+
+/* Connection bar shimmer */
+@keyframes lumen-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.lumen-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(37,244,238,.5) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: lumen-shimmer 1.4s linear infinite;
+}
+
+/* Hammer dust — slow rise */
+@keyframes lumen-dust {
+  0%   { transform: translateY(40vh) scale(.6); opacity: 0; }
+  20%  { opacity: .9; }
+  100% { transform: translateY(-30vh) scale(1.2); opacity: 0; }
+}
+.lumen-dust { animation: lumen-dust 2.8s ease-out infinite; }
+
+/* ─── Atmosphere: leading toast ─── */
+@keyframes lumen-lead-pop {
+  0%   { transform: translate(-50%, 20px) scale(.6); opacity: 0; }
+  18%  { transform: translate(-50%, 0)    scale(1.08); opacity: 1; }
+  30%  { transform: translate(-50%, 0)    scale(1); }
+  85%  { transform: translate(-50%, -10px) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -32px) scale(.95); opacity: 0; }
+}
+.lumen-lead-pop { animation: lumen-lead-pop 1.6s cubic-bezier(.34,1.56,.64,1) 1; }
+
+@keyframes lumen-lead-ring {
+  0%   { transform: scale(.4); opacity: 0; }
+  20%  { opacity: .9; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.lumen-lead-ring { animation: lumen-lead-ring 1.4s ease-out 1; }
+
+/* ─── Atmosphere: overtake slam ─── */
+@keyframes lumen-slam-in {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  60%  { transform: translateY(6px);   opacity: 1; }
+  80%  { transform: translateY(-2px); }
+  100% { transform: translateY(0); }
+}
+.lumen-slam-in { animation: lumen-slam-in .42s cubic-bezier(.36,.07,.19,.97) 1; }
+
+@keyframes lumen-screen-shake {
+  0%,100% { transform: translateX(0); }
+  20%,60% { transform: translateX(-3px); }
+  40%,80% { transform: translateX(3px); }
+}
+.lumen-screen-shake { animation: lumen-screen-shake .32s ease-in-out 1; }
+
+@keyframes lumen-bolt-flash {
+  0%   { opacity: 0; transform: scale(.6) rotate(-12deg); }
+  40%  { opacity: 1; transform: scale(1.15) rotate(0); }
+  100% { opacity: 0; transform: scale(1.6) rotate(8deg); }
+}
+.lumen-bolt-flash { animation: lumen-bolt-flash .5s ease-out 1; }
+
+/* ─── Atmosphere: final-10s heartbeat vignette around the device ─── */
+@keyframes lumen-heartbeat {
+  0%, 100% { opacity: .55; }
+  35%      { opacity: 1; }
+  50%      { opacity: .7; }
+  70%      { opacity: 1; }
+}
+.lumen-heartbeat { animation: lumen-heartbeat .9s ease-in-out infinite; }
+
+/* ─── Atmosphere: bid ticker pills sliding up ─── */
+@keyframes lumen-ticker-up {
+  0%   { transform: translateY(20px) scale(.92); opacity: 0; }
+  15%  { transform: translateY(0)    scale(1);   opacity: 1; }
+  85%  { transform: translateY(-4px) scale(1);   opacity: 1; }
+  100% { transform: translateY(-24px) scale(.95); opacity: 0; }
+}
+.lumen-ticker-up { animation: lumen-ticker-up 3.6s ease-out 1; }
+
+/* ─── Atmosphere: speaker mute breath ─── */
+@keyframes lumen-speaker-breath {
+  0%,100% { transform: scale(1);    opacity: .55; }
+  50%     { transform: scale(1.15); opacity: .95; }
+}
+.lumen-speaker-breath { animation: lumen-speaker-breath 2.2s ease-in-out infinite; }
+
+/* ─── Atmosphere: rank position pulse (your row in the leaderboard) ─── */
+@keyframes lumen-you-pulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(37,244,238,0); }
+  50%     { box-shadow: 0 0 0 4px rgba(37,244,238,.35); }
+}
+.lumen-you-pulse { animation: lumen-you-pulse 2.4s ease-in-out infinite; }
+
+/* ─── Sand hourglass — final-10s glass falls ─── */
+@keyframes lumen-sand-fall {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 1; }
+  100% { transform: translateY(180%); opacity: 0; }
+}
+.lumen-sand-fall { animation: lumen-sand-fall 1.6s linear infinite; }
+
+@keyframes lumen-glass-tilt {
+  0%,100% { transform: rotate(-1.5deg); }
+  50%     { transform: rotate(1.5deg); }
+}
+.lumen-glass-tilt { animation: lumen-glass-tilt 4s ease-in-out infinite; }
+
+/* ─── Pulse waves — emanate from price card during final 10s ─── */
+@keyframes lumen-pulse-wave {
+  0%   { transform: scale(.85); opacity: .9; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+.lumen-pulse-wave { animation: lumen-pulse-wave 2.2s ease-out infinite; }
+
+/* ─── Black horse banner marquee (jump-bid F13) ─── */
+@keyframes lumen-marquee {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+.lumen-marquee { animation: lumen-marquee 14s linear infinite; }
+
+@keyframes lumen-black-horse-in {
+  0%   { transform: translateY(-100%) rotate(-1deg); opacity: 0; }
+  60%  { transform: translateY(2px) rotate(0); opacity: 1; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+.lumen-black-horse-in { animation: lumen-black-horse-in .5s cubic-bezier(.34,1.56,.64,1) 1; }
+
+/* ─── Combo flame — multi-bid streak ─── */
+@keyframes lumen-flame-flicker {
+  0%,100% { transform: scale(1) translateY(0);   filter: brightness(1); }
+  25%     { transform: scale(1.08) translateY(-1px); filter: brightness(1.15); }
+  50%     { transform: scale(.96) translateY(0); filter: brightness(.95); }
+  75%     { transform: scale(1.04) translateY(-1px); filter: brightness(1.1); }
+}
+.lumen-flame-flicker { animation: lumen-flame-flicker .45s ease-in-out infinite; }
+
+/* ─── Hammer transition — gold veil drop + crossfade ─── */
+@keyframes lumen-veil-drop {
+  0%   { transform: translateY(-110%) skewY(-2deg); }
+  55%  { transform: translateY(-2%)   skewY(0); }
+  100% { transform: translateY(0)     skewY(0); }
+}
+.lumen-veil-drop { animation: lumen-veil-drop 1.05s cubic-bezier(.6,.04,.32,1) 1 both; }
+
+@keyframes lumen-veil-bridge-fade {
+  0%   { opacity: 0; }
+  20%  { opacity: 1; }
+  100% { opacity: 1; }
+}
+.lumen-veil-bridge { animation: lumen-veil-bridge-fade .35s ease-in 1 both; }
+
+@keyframes lumen-room-blur-out {
+  0%   { filter: blur(0) brightness(1); transform: scale(1); }
+  100% { filter: blur(8px) brightness(.4); transform: scale(.98); }
+}
+.lumen-room-blur-out { animation: lumen-room-blur-out 1.05s ease-out 1 both; }
+
+@keyframes lumen-hammer-reveal-up {
+  0%   { transform: translateY(20px); opacity: 0; }
+  100% { transform: translateY(0);    opacity: 1; }
+}
+.lumen-hammer-reveal-up { animation: lumen-hammer-reveal-up .9s cubic-bezier(.22,1,.36,1) 1 both; animation-delay: .7s; }
+
+/* ─── Typewriter cursor ─── */
+@keyframes lumen-cursor-blink {
+  0%, 60% { opacity: 1; }
+  61%,100% { opacity: 0; }
+}
+.lumen-cursor-blink { animation: lumen-cursor-blink 1s steps(2) infinite; }
+
+/* ─── Champagne shockwave on hammer ─── */
+@keyframes lumen-shockwave {
+  0%   { transform: scale(.4); opacity: .9; border-width: 3px; }
+  60%  { opacity: .6; }
+  100% { transform: scale(3); opacity: 0; border-width: 1px; }
+}
+.lumen-shockwave { animation: lumen-shockwave 1.4s ease-out 1 both; }
+
+/* ─── Spotlight cone on leaderboard rank-1 ─── */
+@keyframes lumen-spotlight {
+  0%,100% { opacity: .25; }
+  50%     { opacity: .55; }
+}
+.lumen-spotlight { animation: lumen-spotlight 3s ease-in-out infinite; }
+
+/* ─── Long-press wheel reveal ─── */
+@keyframes lumen-wheel-in {
+  0%   { transform: scale(.4) rotate(-20deg); opacity: 0; }
+  60%  { transform: scale(1.05) rotate(0);    opacity: 1; }
+  100% { transform: scale(1) rotate(0);        opacity: 1; }
+}
+.lumen-wheel-in { animation: lumen-wheel-in .35s cubic-bezier(.34,1.56,.64,1) 1; }
+
+/* P9 — surface-calm mode disables decorative motion (keeps a single fade) */
+.surface-calm .lumen-pulse-warn,
+.surface-calm .lumen-ring-pulse,
+.surface-calm .lumen-sweep::after,
+.surface-calm .lumen-gold-flash,
+.surface-calm .lumen-shake,
+.surface-calm .lumen-live-dot,
+.surface-calm .lumen-shimmer,
+.surface-calm .lumen-dust,
+.surface-calm .lumen-lead-pop,
+.surface-calm .lumen-lead-ring,
+.surface-calm .lumen-slam-in,
+.surface-calm .lumen-screen-shake,
+.surface-calm .lumen-bolt-flash,
+.surface-calm .lumen-heartbeat,
+.surface-calm .lumen-ticker-up,
+.surface-calm .lumen-speaker-breath,
+.surface-calm .lumen-you-pulse,
+.surface-calm .lumen-sand-fall,
+.surface-calm .lumen-glass-tilt,
+.surface-calm .lumen-pulse-wave,
+.surface-calm .lumen-marquee,
+.surface-calm .lumen-black-horse-in,
+.surface-calm .lumen-flame-flicker,
+.surface-calm .lumen-veil-drop,
+.surface-calm .lumen-room-blur-out,
+.surface-calm .lumen-hammer-reveal-up,
+.surface-calm .lumen-cursor-blink,
+.surface-calm .lumen-shockwave,
+.surface-calm .lumen-spotlight,
+.surface-calm .lumen-wheel-in { animation: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* Utilities */
+.hairline { box-shadow: inset 0 -1px 0 rgba(255,255,255,.06); }
+.hairline-b { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+.no-scrollbar::-webkit-scrollbar { display:none; }
+.no-scrollbar { scrollbar-width: none; }
