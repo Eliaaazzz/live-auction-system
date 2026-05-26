@@ -160,6 +160,16 @@ export function LiveRoomRoute() {
   ).length;
   const bidsPerSec = bidsLast5s / 5;
 
+  // #54-M1: bidsPerSecPeak was hardcoded to 6 which is right for a calm
+  // demo but causes the heat meter to clip to 100% during a real bidding
+  // storm. Adaptive cap = max(6, observed peak this session). Stored in a
+  // ref so it persists across renders and only ratchets UP, never down.
+  const observedPeakRef = useRef(6);
+  if (bidsPerSec > observedPeakRef.current) {
+    observedPeakRef.current = bidsPerSec;
+  }
+  const bidsPerSecPeak = observedPeakRef.current;
+
   return (
     <PullToResync onResync={handleResync}>
     <MobileRoom

@@ -424,7 +424,7 @@ existing tooling and dev-log links don't break.
 
 ---
 
-## 5. Risk Register (post #51 #53 #54 + review-resolution patches 2026-05-26)
+## 5. Risk Register (post #51 #53 #54 + polish PRs #63 #64 — 2026-05-27)
 
 **Resolved:**
 1. ✅ **P0 → resolved**:T6-114 (VLM freeze gate) wired in PR #53.
@@ -435,12 +435,21 @@ existing tooling and dev-log links don't break.
 6. ✅ **P1 → resolved**:T6-#54-H2 (NO_BID / CANCELLED terminal UX missing) — `<TerminalOverlay>` component (PR #54).
 7. ✅ **P1 → resolved**:T6-#54-H3 (custom drawer MaxMoneyCents overflow) — three-layer guard: maxLength=17 + BigInt validation + inline error copy (PR #54).
 8. ✅ **P1 → resolved**:T6-#51-H4 (HMAC custody indirect doc reference) — inline threat-model summary added to `EvidenceRoute.jsx` (PR #51 commit `646c52b`).
+9. ✅ **P1 → resolved**:T6-#51-H2 (PullToResync onTouchCancel) — `reset()` + `finish()` helpers, `onTouchCancel` and drag-out `onMouseLeave` (PR #63 `fari/T6-room-perf-polish`).
+10. ✅ **P1 → resolved**:T6-#51-H4 (CancelOverlay hardcoded currentCents) — modal now fetches `api.getAuction(id)` on mount; loading guard renders busy modal during fetch (PR #63).
+11. ✅ **P1 → resolved**:T6-#54-M1 (bidsPerSecPeak fixed at 6 clips heat meter) — ref-based rolling-max in LiveRoomRoute (PR #63).
+12. ✅ **P1 → resolved**:T6-#53-H2 (AdminConsole bare `useAuctionStore()` re-render storm) — selector-per-slice refactor (PR #64 `fari/T6-admin-polish`).
+13. ✅ **P1 → resolved**:T6-#53-M1 (total-bids clipped at 50 by recentEvents cap) — store now maintains cumulative `totalBidsCount` field (PR #64).
+14. ✅ **P1 → resolved**:T6-#53-M2 (unique-bidder count includes undefined userIds) — store maintains `bidderIds[]` with reducer-side filter for truthy userIds (PR #64).
+15. ✅ **P1 → resolved**:T6-#53-M4 ((cap-start)%step unvalidated → silent cap-hit failure) — `capReachable` BigInt check gates submit + visible hint on cap field (PR #64).
+16. ✅ **P2 → resolved**:P9 surface-calm consistency (`lumen-veil-bridge-fade` not muted) — added to mute list (PR #63 self-spotted).
 
 **Still open:**
-9. **P1**:T6-100/101 (anti-snipe path executable e2e) — needs Playwright + a backend fixture that can be told to end in 5s. Still the highest-priority remaining gap.
-10. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
-11. **P2**:Backend `RoomSnapshotData` doesn't ship `stepCents` / `capCents` / `extendCount` yet — frontend defaults to `'500000'` / `null` / preserves running count. Real values come from `api.getAuction` once backend extends the DTO. Track as T7 polish.
-12. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
+17. **P1**:T6-100/101 (anti-snipe path executable e2e) — needs Playwright + a backend fixture that can be told to end in 5s. Still the highest-priority remaining gap.
+18. **P1**:T6-#53-H3 (VLM facts inline editor — replaces `window.prompt()`) — deferred to T7 AI sidecar work, non-trivial UX scope.
+19. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
+20. **P2**:Backend `RoomSnapshotData` doesn't ship `stepCents` / `capCents` / `extendCount` yet — frontend defaults to `'500000'` / `null` / preserves running count. Real values come from `api.getAuction` once backend extends the DTO. Track as T7 polish.
+21. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
 
 ---
 
