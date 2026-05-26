@@ -50,15 +50,27 @@ const fanoutSweepInterval = 2 * time.Second
 // AND keeps the conn in hub.rooms for every silently-dead mobile/NAT/sleep
 // client. 60s matches the gorilla/websocket example default — long enough
 // to absorb a normal mobile NAT hop, short enough for prompt cleanup.
-const pongWait = 60 * time.Second
+//
+// pongWait/pingPeriod are vars (not consts) so tests can drive sub-second
+// reaping without waiting 60s of wall-clock; production reads them once at
+// connection time. Mutate only via setKeepaliveForTest under t.Cleanup —
+// production callers MUST NOT change these.
+var (
+	pongWait   = 60 * time.Second
+	pingPeriod = (pongWait * 9) / 10
+)
 
-// pingPeriod is the cadence of server-driven PINGs (90% of pongWait so the
-// client has time to respond before the read deadline fires).
-const pingPeriod = (pongWait * 9) / 10
-
-// writeWait bounds any single WS write (data frame, PING, typed CLOSE). One
-// shared budget for the writePump and the closeWithCode control frame.
+// writeWait bounds writePump's per-frame data and PING writes. The typed
+// CLOSE frame uses the tighter closeFrameWait below — see flushClose.
 const writeWait = 10 * time.Second
+
+// closeFrameWait bounds the typed-CLOSE WriteControl emitted from flushClose.
+// Kept tight (vs. writeWait) so writePump's exit path can't park for 10s on a
+// hung socket — the close frame is best-effort: if it can't land in this
+// window, the immediately-following ws.Close() races to RST and the client
+// surfaces a generic read error instead of a typed code 4000. The frame is
+// ~12 bytes so this is generous on any healthy socket.
+const closeFrameWait = 1 * time.Second
 
 // closeCodeBackpressureDrop is the application-level close code emitted when
 // trySend force-closes a slow client. WS spec reserves 4000-4999 for app use
@@ -290,6 +302,14 @@ type Conn struct {
 	// metrics is the process-wide T8 registry. Nil-safe (every Observe call
 	// checks for nil) so unit tests can construct a Conn without wiring it.
 	metrics *metrics.Registry
+
+	// closeCode / closeReason are set under closeOnce BEFORE close(done) and
+	// then read by writePump's defer (flushClose) AFTER it receives done. The
+	// close(done) → <-c.done synchronizes-with edge in Go's memory model makes
+	// the write→read race-free without a mutex. Writers MUST go through
+	// closeWithCode; readers MUST only access these in flushClose.
+	closeCode   int
+	closeReason string
 }
 
 // close tears the connection down exactly once: signal writePump via done and
@@ -301,27 +321,25 @@ func (c *Conn) close() {
 	c.closeWithCode(0, "")
 }
 
-// closeWithCode tears down the connection, optionally writing a typed WS close
-// control frame first so the client can identify the reason (e.g. application
-// code 4000 BACKPRESSURE_DROP). code == 0 means "no typed close frame" — used
-// by close() and the read/write error paths where the reason is "socket gone".
-// closeOnce guarantees one teardown across concurrent close() / closeWithCode().
+// closeWithCode tears down the connection, recording an optional typed WS
+// close reason (e.g. application code 4000 BACKPRESSURE_DROP) for writePump
+// to emit on its way out. code == 0 means "no typed close frame" — used by
+// close() and the read/write error paths where the reason is "socket gone".
+// closeOnce guarantees one teardown across concurrent callers.
+//
+// MUST be non-blocking: this is invoked from trySend on the broadcast
+// goroutine while hub.RLock is held (ws.go:122 broadcast). The actual
+// CLOSE-frame WriteControl + ws.Close() are deferred to writePump's
+// flushClose (single-writer goroutine, no RLock), so a congested socket
+// can't stall the whole room — see flushClose for the bounded deadline.
+// Fairy PR #48 review: a writeWait-deadlined WriteControl here would have
+// blocked broadcast for up to 10s under hub.RLock when the socket was full.
 func (c *Conn) closeWithCode(code int, reason string) {
 	c.closeOnce.Do(func() {
-		if c.ws != nil && code > 0 {
-			// best-effort: a stuck socket may already be unwritable; the deadline
-			// + Close below cap the teardown's wall-time regardless.
-			_ = c.ws.WriteControl(
-				websocket.CloseMessage,
-				websocket.FormatCloseMessage(code, reason),
-				time.Now().Add(writeWait),
-			)
-		}
+		c.closeCode = code
+		c.closeReason = reason
 		if c.done != nil {
 			close(c.done)
-		}
-		if c.ws != nil {
-			_ = c.ws.Close()
 		}
 	})
 }
@@ -383,6 +401,7 @@ func (c *Conn) trySendLossy(b []byte) {
 func (c *Conn) writePump() {
 	ping := time.NewTicker(pingPeriod)
 	defer ping.Stop()
+	defer c.flushClose() // emit typed CLOSE (if any) and close the socket
 	for {
 		// Critical-first: take a pending critical frame (or shutdown) before lossy.
 		select {
@@ -420,6 +439,29 @@ func (c *Conn) writePump() {
 			}
 		}
 	}
+}
+
+// flushClose runs on writePump's exit path: it emits the typed CLOSE frame
+// (when closeWithCode set a non-zero code) and closes the socket. Running
+// here — not in closeWithCode — keeps the CLOSE-frame WriteControl off the
+// broadcast goroutine and out of hub.RLock, so a congested socket can stall
+// at most this single conn's writePump (bounded by closeFrameWait) instead
+// of the whole room's fanout. Safe to read c.closeCode/c.closeReason without
+// a lock: closeWithCode writes them under closeOnce *before* close(done),
+// and we only get here after writePump observes done — the channel close
+// is the synchronizes-with edge.
+func (c *Conn) flushClose() {
+	if c.ws == nil {
+		return
+	}
+	if code := c.closeCode; code > 0 {
+		_ = c.ws.WriteControl(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(code, c.closeReason),
+			time.Now().Add(closeFrameWait),
+		)
+	}
+	_ = c.ws.Close()
 }
 
 // write sends one frame with a bounded deadline; on error (or oversize frame)
