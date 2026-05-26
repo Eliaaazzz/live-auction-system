@@ -1,7 +1,15 @@
 import React from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { formatCentsCNY, PriceDisplay, Countdown, StatusBadge,
   TypewriterText, Leaderboard, ClockDriftIndicator } from './primitives.jsx';
 import { DEMO_LEADERS } from './mobile.jsx';
+import { api, ApiError } from '../lib/api.js';
+import { ensureSession, currentToken } from '../lib/auth.js';
+import { RoomClient, buildRoomUrl } from '../lib/ws.js';
+import { useAuctionStore } from '../store/auction.js';
+import { msRemaining } from '../lib/clock.js';
+
+const WS_BASE = import.meta.env.VITE_WS_BASE || undefined;
 
 // lumen-admin.jsx
 // Admin desktop screens: VLM facts confirmation + Live console.
@@ -50,10 +58,63 @@ const VLM_FACTS = [
 const HIGH_RISK_DISCLAIMER = '此项不可由 VLM 客观验证 · 信息以卖家声明为准';
 
 function AdminVLMFacts() {
-  const confirmedN = VLM_FACTS.filter(f => f.status === 'confirmed' || f.status === 'edited').length;
-  const total = VLM_FACTS.length;
-  const pct = Math.round(confirmedN / total * 100);
-  const gateOpen = confirmedN === total;
+  const navigate = useNavigate();
+  const { id: auctionId } = useParams();
+  const [facts, setFacts] = React.useState(VLM_FACTS);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  // Per-fact action handlers. Local state only — backend persists the final
+  // confirmed snapshot atomically on api.freeze (handler at api.go:165 reads
+  // factsConfirmed from MySQL). Future T7 work can call PATCH per-fact for
+  // server-side per-edit persistence if needed.
+  const setStatus = (factId, next) => setFacts((curr) =>
+    curr.map((f) => f.id === factId ? { ...f, ...next } : f),
+  );
+  const handleConfirm = (id) => setStatus(id, { status: 'confirmed', editedText: facts.find((f) => f.id === id).vlmText });
+  const handleEdit    = (id) => {
+    const f = facts.find((x) => x.id === id);
+    const input = window.prompt(`编辑「${f.label}」`, f.editedText || f.vlmText);
+    if (input != null && input.trim()) setStatus(id, { status: 'edited', editedText: input });
+  };
+  const handleRestore = (id) => setStatus(id, { status: 'pending', editedText: '' });
+  const handleDelete  = (id) => setFacts((curr) => curr.filter((f) => f.id !== id));
+
+  const confirmedN = facts.filter((f) => f.status === 'confirmed' || f.status === 'edited').length;
+  const total = facts.length;
+  const pct = total > 0 ? Math.round(confirmedN / total * 100) : 0;
+  const gateOpen = total > 0 && confirmedN === total;
+
+  // Bottom CTA: freeze (DRAFT → SCHEDULED) then start (SCHEDULED → LIVE).
+  // Both calls share the route's :id auction. On success route to the
+  // live console; the console subscribes to the WS feed for the broadcaster
+  // view of the same room buyers see.
+  const handleFreezeAndStart = async () => {
+    if (busy || !gateOpen || !auctionId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureSession('seller-demo');
+      const fz = await api.freeze(auctionId);
+      if (fz?.code && fz.code !== 'OK_FROZEN') {
+        throw new ApiError(409, fz.code, fz.code);
+      }
+      // Backend's start handler accepts an optional durationMs; omitted here
+      // means the seed/freeze default applies.
+      const st = await api.startLive(auctionId);
+      if (st?.code && st.code !== 'OK_LIVE') {
+        throw new ApiError(409, st.code, st.code);
+      }
+      navigate(`/admin/auctions/${auctionId}/live`);
+    } catch (e) {
+      const msg = e instanceof ApiError
+        ? `${e.code || e.status} · ${e.message}`
+        : (e?.message || String(e));
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div style={{
@@ -218,7 +279,13 @@ function AdminVLMFacts() {
           </div>
 
           {/* Fact cards */}
-          {VLM_FACTS.map(f => <FactCard key={f.id} f={f}/>)}
+          {facts.map((f) => (
+            <FactCard key={f.id} f={f}
+              onConfirm={() => handleConfirm(f.id)}
+              onEdit={() => handleEdit(f.id)}
+              onRestore={() => handleRestore(f.id)}
+              onDelete={() => handleDelete(f.id)}/>
+          ))}
         </div>
 
         {/* R: Context (LOT meta + commentary) */}
@@ -278,38 +345,42 @@ function AdminVLMFacts() {
           <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' }}>
             发布门禁 · GATE
           </span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: gateOpen ? 'var(--solemn-gold)' : 'var(--state-extended)' }}>
-            {gateOpen ? '全部确认 · 可进入 SCHEDULED' : `还差 ${total - confirmedN} 项未核对`}
+          <span style={{ fontSize: 13, fontWeight: 600, color: error ? 'var(--state-rejected)' : gateOpen ? 'var(--solemn-gold)' : 'var(--state-extended)' }}>
+            {error
+              ? `开拍失败 · ${error}`
+              : gateOpen ? '全部确认 · 点击开拍即进入 LIVE' : `还差 ${total - confirmedN} 项未核对`}
           </span>
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={{
+        <button disabled={busy} style={{
           padding: '10px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,.14)',
           background: 'transparent', color: 'var(--douyin-ink-text)', fontFamily: 'inherit',
-          fontSize: 13, cursor: 'pointer',
+          fontSize: 13, cursor: busy ? 'not-allowed' : 'pointer',
         }}>暂存草稿</button>
-        <button disabled={!gateOpen} style={{
+        <button onClick={handleFreezeAndStart} disabled={!gateOpen || busy} style={{
           padding: '10px 22px', borderRadius: 8, border: 'none',
-          background: gateOpen
+          background: (gateOpen && !busy)
             ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
             : 'rgba(107,114,128,.3)',
-          color: gateOpen ? 'var(--solemn-ink)' : 'var(--douyin-ink-muted)',
+          color: (gateOpen && !busy) ? 'var(--solemn-ink)' : 'var(--douyin-ink-muted)',
           fontFamily: 'inherit', fontSize: 13, fontWeight: 600,
-          cursor: gateOpen ? 'pointer' : 'not-allowed',
+          cursor: (gateOpen && !busy) ? 'pointer' : 'not-allowed',
           display: 'flex', alignItems: 'center', gap: 8,
-          boxShadow: gateOpen ? '0 4px 18px rgba(201,169,97,.4)' : 'none',
+          boxShadow: (gateOpen && !busy) ? '0 4px 18px rgba(201,169,97,.4)' : 'none',
         }}>
-          全部确认后开拍
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 7h8M8 3l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
+          {busy ? '正在开拍 …' : '全部确认后开拍'}
+          {!busy && (
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 7h8M8 3l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          )}
         </button>
       </div>
     </div>
   );
 }
 
-function FactCard({ f }) {
+function FactCard({ f, onConfirm, onEdit, onRestore, onDelete }) {
   const isDirty = f.editedText && f.editedText !== f.vlmText;
   const isEmpty = !f.editedText;
   const statusColor = f.status === 'confirmed' ? 'var(--solemn-gold)'
@@ -423,14 +494,14 @@ function FactCard({ f }) {
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
         {f.status === 'pending' ? (
           <>
-            <button style={btnPrimary}>采纳并补录</button>
-            <button style={btnGhost}>修改</button>
-            <button style={btnGhost}>删除</button>
+            <button onClick={onConfirm} style={btnPrimary}>采纳并补录</button>
+            <button onClick={onEdit} style={btnGhost}>修改</button>
+            <button onClick={onDelete} style={btnGhost}>删除</button>
           </>
         ) : (
           <>
-            <button style={btnGhost}>修改</button>
-            <button style={btnGhost}>恢复 VLM 原文</button>
+            <button onClick={onEdit} style={btnGhost}>修改</button>
+            <button onClick={onRestore} style={btnGhost}>恢复 VLM 原文</button>
             <div style={{ flex: 1 }}/>
             <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)', alignSelf: 'center' }}>
               已锁定 21:34
@@ -475,6 +546,73 @@ const TYPE_COLOR = {
 };
 
 function AdminConsole() {
+  const navigate = useNavigate();
+  const { id: auctionId } = useParams();
+  const store = useAuctionStore();
+  const rafRef = React.useRef(null);
+
+  // Broadcaster-side WS subscription: same RoomClient + store as the buyer
+  // (LiveRoomRoute) — broadcaster just observes, never sends BID_PLACE. On
+  // mount we ensure session, optionally fetch a snapshot, then open WS.
+  // The store fills with the same event reducer, so we read currentCents /
+  // endAtMs / extendCount / recentEvents straight off it.
+  React.useEffect(() => {
+    if (!auctionId) return;
+    let alive = true;
+    let client;
+    (async () => {
+      try {
+        await ensureSession('seller-demo');
+        useAuctionStore.getState().setSelfUserId(null); // broadcaster, not a bidder
+      } catch (e) {
+        console.warn('[Console] dev-login failed', e);
+      }
+      try {
+        const snap = await api.getAuction(auctionId);
+        if (!alive) return;
+        store.init({
+          auctionId,
+          status: snap.status,
+          currentCents: snap.currentPriceCents ?? '0',
+          endAtMs: snap.endAtMs ?? null,
+          winnerId: snap.winnerId ?? null,
+        });
+      } catch (e) {
+        console.warn('[Console] snapshot failed (continuing — WS will rebuild)', e);
+      }
+      const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
+      client = new RoomClient({
+        url, auctionId,
+        getLastSeq: () => useAuctionStore.getState().lastSeq,
+        onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
+        onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
+        onReject:   (env) => useAuctionStore.getState().applyReject(env),
+      });
+      client.connect();
+    })();
+    return () => { alive = false; client?.leave(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auctionId]);
+
+  // 1Hz countdown tick (same as LiveRoomRoute)
+  React.useEffect(() => {
+    const tick = () => {
+      const endAtMs = useAuctionStore.getState().endAtMs;
+      if (endAtMs) useAuctionStore.getState().tickRemaining(msRemaining(endAtMs));
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, []);
+
+  // Demo fallbacks when no auctionId is in the URL (e.g. design preview).
+  const status = store.status || 'LIVE';
+  const liveCents = auctionId ? store.currentCents : '12880000';
+  const liveRemainingMs = auctionId ? store.remainingMs : 8210;
+  const liveExtend = auctionId ? store.extendCount : 2;
+  const liveBids = auctionId ? store.recentEvents : null;  // null → fall through to CONSOLE_BIDS demo
+  const liveRejects = auctionId ? store.recentRejects : null;
+
   return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
@@ -490,8 +628,10 @@ function AdminConsole() {
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <StatusBadge status="LIVE" size="md"/>
-            <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>LOT 2024-0142 · 百达翡丽 5711/1A</span>
+            <StatusBadge status={status} size="md"/>
+            <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
+              {auctionId ? `AID ${auctionId.slice(0, 16)}` : 'LOT 2024-0142 · 百达翡丽 5711/1A'}
+            </span>
           </div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.01em' }}>
             主持人控制台 · Live Console
@@ -499,11 +639,15 @@ function AdminConsole() {
         </div>
         <div style={{ flex: 1 }}/>
         <div style={{ display: 'flex', gap: 22 }}>
-          <Stat label="当前价" value={<PriceDisplay cents="12880000" size={28} tone="ink"/>}/>
-          <Stat label="距落槌" value={<Countdown remainingMs={8210} size="md"/>}/>
-          <Stat label="出价总数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>126</span>}/>
-          <Stat label="参与人数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>38</span>}/>
-          <Stat label="延时" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600, color: 'var(--state-extended)' }}>×2</span>}/>
+          <Stat label="当前价" value={<PriceDisplay cents={liveCents} size={28} tone="ink"/>}/>
+          <Stat label="距落槌" value={<Countdown remainingMs={liveRemainingMs} size="md"/>}/>
+          <Stat label="出价总数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>
+            {liveBids ? liveBids.filter((e) => e.type === 'BID_ACCEPTED').length : 126}
+          </span>}/>
+          <Stat label="参与人数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>
+            {liveBids ? new Set(liveBids.filter((e) => e.type === 'BID_ACCEPTED').map((e) => e.data?.userId)).size : 38}
+          </span>}/>
+          <Stat label="延时" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600, color: 'var(--state-extended)' }}>×{liveExtend}</span>}/>
         </div>
       </div>
 
@@ -617,8 +761,8 @@ function AdminConsole() {
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
-            {CONSOLE_BIDS.map(b => {
-              const tc = TYPE_COLOR[b.type];
+            {((liveBids && liveBids.length) ? mapStoreEventsToBidStream(liveBids) : CONSOLE_BIDS).map((b) => {
+              const tc = TYPE_COLOR[b.type] ?? TYPE_COLOR.BID_ACCEPTED;
               return (
                 <div key={b.seq} className="mono" style={{
                   display: 'grid', gridTemplateColumns: '70px 100px 130px 1fr 110px',
@@ -670,11 +814,18 @@ function AdminConsole() {
               </span>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {[
-                { user: 'Echo🌙', code: 'ERR_TOO_LOW',     t: '21:47:08' },
-                { user: '夜航星', code: 'ERR_BAD_INPUT',   t: '21:46:31' },
-                { user: '某买家', code: 'ERR_NOT_ALLOWED', t: '21:45:12' },
-              ].map((r, i) => (
+              {((liveRejects && liveRejects.length)
+                ? liveRejects.slice(0, 3).map((r) => ({
+                    user: r.requestId ? `cbid ${r.requestId.slice(0, 8)}` : 'unknown',
+                    code: r.code,
+                    t:    new Date(r.ts).toLocaleTimeString('zh-CN', { hour12: false }),
+                  }))
+                : [
+                    { user: 'Echo🌙', code: 'ERR_TOO_LOW',     t: '21:47:08' },
+                    { user: '夜航星', code: 'ERR_BAD_INPUT',   t: '21:46:31' },
+                    { user: '某买家', code: 'ERR_NOT_ALLOWED', t: '21:45:12' },
+                  ]
+              ).map((r, i) => (
                 <div key={i} style={{
                   display: 'flex', alignItems: 'center', gap: 8,
                   padding: '6px 8px', borderRadius: 6,
@@ -714,11 +865,14 @@ function AdminConsole() {
             <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', marginBottom: 10, lineHeight: 1.4 }}>
               终止 LIVE 会立即推送 CANCELLED 给所有买家，行为已上链。
             </div>
-            <button style={{
+            <button onClick={() => {
+              if (auctionId) navigate(`/admin/auctions/${auctionId}/cancel`);
+            }} style={{
               width: '100%', padding: '8px 12px', borderRadius: 6,
               background: 'rgba(254,44,85,.1)', color: 'var(--state-rejected)',
-              border: '1px solid rgba(254,44,85,.5)', cursor: 'pointer',
+              border: '1px solid rgba(254,44,85,.5)', cursor: auctionId ? 'pointer' : 'not-allowed',
               fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+              opacity: auctionId ? 1 : 0.5,
             }}>取消本场拍卖…</button>
           </div>
         </div>
@@ -748,6 +902,23 @@ function Health({ label, value, ok }) {
       <span className="mono" style={{ marginLeft: 'auto', color: 'var(--douyin-ink-text)' }}>{value}</span>
     </div>
   );
+}
+
+// Map Zustand store.recentEvents → AdminConsole's bid-stream row shape.
+// Order is reverse-chrono (newest first) so the ticker fills from the top.
+function mapStoreEventsToBidStream(events) {
+  const formatHMS = (ms) => {
+    const d = new Date(ms);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}.${String(d.getMilliseconds()).padStart(3,'0')}`;
+  };
+  return events.map((e) => ({
+    seq: e.seq ?? 0,
+    time: e.ts ? formatHMS(e.ts) : '',
+    type: e.type,
+    user: e.data?.displayName,
+    cents: e.data?.amountCents,
+    extend: e.type === 'AUCTION_EXTENDED' ? (e.data?.extendCount ?? 1) : undefined,
+  }));
 }
 
 export {

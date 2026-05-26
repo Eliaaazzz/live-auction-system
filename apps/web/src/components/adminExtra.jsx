@@ -1,5 +1,8 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatCentsCNY, StatusBadge } from './primitives.jsx';
+import { api, ApiError } from '../lib/api.js';
+import { ensureSession } from '../lib/auth.js';
 
 // lumen-admin-extra.jsx
 // Publish form · Cancel modal · Orders/Products
@@ -8,6 +11,7 @@ import { formatCentsCNY, StatusBadge } from './primitives.jsx';
 // Admin · Publish form
 // ───────────────────────────────────────────────────────────────
 function AdminPublish() {
+  const navigate = useNavigate();
   const [title, setTitle] = React.useState('百达翡丽 5711/1A · 蓝面');
   const [startCents, setStartCents] = React.useState('12000000');
   const [stepCents,  setStepCents]  = React.useState('500000');
@@ -18,8 +22,53 @@ function AdminPublish() {
   const [antiSnipe, setAntiSnipe] = React.useState(true);
   const [scheduleDate, setScheduleDate] = React.useState('2026-06-10');
   const [scheduleTime, setScheduleTime] = React.useState('21:00');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
 
   const valid = title.length > 4 && BigInt(startCents) > 0n && BigInt(reserveCents) <= BigInt(startCents) && BigInt(capCents) > BigInt(startCents);
+
+  // Submit pipeline:
+  //   1. ensureSession (seller role; backend's freeze handler runs ownsAuction)
+  //   2. api.createProduct(...) → { productId }
+  //   3. api.createDraft({ productId, rules{} }) → { auctionId }
+  //   4. navigate to /admin/auctions/:id/vlm so seller can confirm VLM facts
+  //
+  // No api.schedule — backend doesn't ship a scheduled-start endpoint; seller
+  // hits "Start" manually from the live console after VLM is confirmed +
+  // freeze succeeds. scheduleDate/scheduleTime are stored as UI hint only.
+  const handleSubmit = async () => {
+    if (busy || !valid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureSession('seller-demo');
+      const { productId } = await api.createProduct({
+        name: title,
+        imageUrl: '',                 // demo: no upload (T7 wires real VLM input)
+        description: '',
+      });
+      const { auctionId } = await api.createDraft({
+        productId,
+        rules: {
+          startCents,
+          stepCents,
+          reserveCents,
+          capCents,
+          durationMs: duration * 60 * 1000,
+          maxExtensions: antiSnipe ? maxExtends : 0,
+          antiSnipeWindowMs: antiSnipe ? 10_000 : 0,
+        },
+      });
+      navigate(`/admin/auctions/${auctionId}/vlm`);
+    } catch (e) {
+      const msg = e instanceof ApiError
+        ? `${e.code || e.status} · ${e.message}`
+        : (e?.message || String(e));
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div style={{
@@ -250,18 +299,20 @@ function AdminPublish() {
         flexShrink: 0, padding: '14px 28px', borderTop: '1px solid rgba(255,255,255,.06)',
         background: 'rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', gap: 12,
       }}>
-        <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
-          {valid ? '已就绪 · 进入下一步即开始 VLM 抽取' : '请补全必填项'}
+        <div style={{ fontSize: 11, color: error ? 'var(--state-rejected)' : 'var(--douyin-ink-muted)' }}>
+          {error
+            ? `创建失败 · ${error}`
+            : valid ? '已就绪 · 进入下一步即开始 VLM 抽取' : '请补全必填项'}
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={btnGhost2}>取消</button>
-        <button disabled={!valid} style={{
+        <button onClick={() => navigate('/admin/auctions')} disabled={busy} style={btnGhost2}>取消</button>
+        <button onClick={handleSubmit} disabled={!valid || busy} style={{
           ...btnPrimary2,
-          background: valid ? 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))' : 'rgba(107,114,128,.3)',
-          color: valid ? '#fff' : 'var(--douyin-ink-muted)',
-          cursor: valid ? 'pointer' : 'not-allowed',
+          background: (valid && !busy) ? 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))' : 'rgba(107,114,128,.3)',
+          color: (valid && !busy) ? '#fff' : 'var(--douyin-ink-muted)',
+          cursor: (valid && !busy) ? 'pointer' : 'not-allowed',
         }}>
-          下一步 · VLM 核对 →
+          {busy ? '正在创建 …' : '下一步 · VLM 核对 →'}
         </button>
       </div>
     </div>
