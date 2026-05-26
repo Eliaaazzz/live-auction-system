@@ -1,9 +1,9 @@
 # T4 测试用例 — Persistence Hash Chain + Idempotent Order + Evidence Card (PR #34)
 
 > Author: @fariZzzz (per [Workflow v2 global-scope review #15](https://github.com/Eliaaazzz/live-auction-system/issues/15)).
-> Target: `elia/T4-persistence-order-evidence` — v1 drafted against `8b27ccc`; **v2 reflects the `8d8fa16` "harden T4 evidence projection" commit** (@PDGGK). Based on `main` (post T1+T2+T3 rollups).
-> Authored **before** the substantive PR #34 review per the team's "test cases first" precedent from T3 (PR #30 → CI tests in PR #33). **v2 状态**:我 v1 提的 5 个 P0/P1 缺口型 (100/101/102/104/107) 被 `8d8fa16` 全部 patch — 这是 review→fix 闭环的范例。
-> Executable read-path probe (TC-T4-110) lands in **PR #45** (`fari/T4-followup-gap-tests`, stacked on #34 — mirrors #33/#44).
+> Target: `elia/T4-persistence-order-evidence` — v1 drafted against `8b27ccc`; **v2 reflects `8d8fa16`** (@PDGGK "harden T4 evidence projection"); **v3 reflects the second-pass review** (`b72a60e` + the TC-T4-112 P0 fix in PR #47). Based on `main` (post T1+T2+T3 rollups).
+> Authored **before** the substantive PR #34 review per the team's "test cases first" precedent from T3 (PR #30 → CI tests in PR #33). **状态**:我 v1 的 5 个 P0/P1 缺口 (100/101/102/104/107) 被 `8d8fa16` 全部 patch;v3 第二轮又抓到一个 **P0 假证据** (TC-T4-112) — review→fix 闭环持续。
+> Executable probes: TC-T4-110 → **#45** (merged into #34); **TC-T4-112 → #47** (stacked on #34, the seq-contiguity fix + test).
 >
 > **`8d8fa16` 架构变更(影响多条用例)**:evidence card 的 summary 字段 (`status`/`currentPriceCents`/`winnerId`/`seq`) 从 **live Redis snapshot** 改为 **从持久化 hash 链 + order 派生**(新纯函数 `evidenceSummary`);`/evidence` 端点加 **auth gate**(401);SOLD 投影改为 3 步 `projectSold`(status→SOLD,建 order,status→ORDER_CREATED)+ **poison taxonomy**(`ErrPermanentOrderProjection`/`ErrOrderProjectionMismatch` 推进 cursor 不死循环;`ErrPreviousEventHashMissing` 是 transient retry);`fillEventHash` 加 `FOR UPDATE` 事务;`InsertEvent` 现在也查 `event_type` mismatch。
 >
@@ -35,7 +35,7 @@
 | TC-T4-010 | /evidence schema 与 proto 一致 + chainVerified=true 时无 hashBreakAtSeq | (隐含在 TC-T4-005) | P1 |
 | TC-T4-011 | SOLD 3 步投影最终 status=ORDER_CREATED;missing-auction SOLD = 永久 poison | `TestT4ProjectSoldPromotesOrderCreated` + `TestT4ProjectSoldMissingAuctionIsPermanent` | P0 |
 
-### 缺口型 (12) — v2 状态映射(我 v1 的 5 个 P0/P1 被 `8d8fa16` 闭环)
+### 缺口型 (13) — v2/v3 状态映射(我 v1 的 5 个 P0/P1 被 `8d8fa16` 闭环;v3 + 第二轮 P0)
 
 | ID | 标题 | v2 状态 (`8d8fa16`) | P |
 |---|---|---|---|
@@ -50,7 +50,8 @@
 | TC-T4-108 | MySQL JSON 归一化跨版本差异 → 旧链校验失败 | 仍 open — issue #37(MySQL-upgrade P3) | P3 |
 | TC-T4-109 | 极短拍卖 AUCTION_SOLD 未投影时 /evidence(最终一致性窗口) | 仍 open — 文档化议题,TC-T4-005 用 8s deadline 隐式 mitigate | P3 |
 | TC-T4-110 | evidenceSummary 从链派生 status/price/winner(NO_BID/CANCELLED/LIVE/SOLD/order-override) | **✅ EXECUTABLE in PR #45** — `TestT4EvidenceSummaryDerivesFromChain`,5 表驱动 case。验证 `8d8fa16` 把 evidence 读路径从 Redis 迁到链。本地 PASS | P1 |
-| TC-T4-111 | CANCELLED 拍卖的 evidence card 仍带最后一笔 bid 的 winnerId/price(语义) | **新发现(PR #45 probe)** — `AUCTION_CANCELLED` 分支只设 status 不清 winner/price。按 T3 TC-T3-013 cancel-with-bids 无 winner,这里展示"winner"可能误导。建议 evidenceSummary 在 CANCELLED 清 winner/price,或文档化为"cancel 前最后一笔出价"。**非 correctness bug** | P3 |
+| TC-T4-111 | CANCELLED 拍卖的 evidence card 仍带最后一笔 bid 的 winnerId/price(语义) | **✅ FIXED in `b72a60e`**(@Eliaaazzz 采纳)— `evidenceSummary` 的 CANCELLED 分支现在清空 winner/price。v1 由 PR #45 probe 发现 | P3 (resolved) |
+| TC-T4-112 | **projection-time seq SKIP** → 链 1→3 仍 verify(漏检 dropped event,假证据) | **🔴→✅ FIXED in PR #47** — 第二轮 review(@Eliaaazzz #35 CR)发现:`fillEventHash` 链到"最高的 seq < N"而非恰好 `seq-1`,且 `VerifyEvidenceChain` 不查连续性 → `InsertEvent(1)` then `InsertEvent(3)` 链成 1→3 且通过验证。两层修复 + `TestT4SeqSkipDoesNotChainOrVerify` 落地 | **P0** |
 
 ---
 
@@ -350,7 +351,28 @@
   - (a) `evidenceSummary` 在 CANCELLED 分支清空 `WinnerID`/`CurrentPriceCents`(语义:无成交)
   - (b) proto/evidence-card.md 文档化 "CANCELLED 时 winnerId/currentPriceCents = 取消前最后一笔出价,非成交结果"
 - **优先级**: P3(**非 correctness bug** — 链与状态都对,纯展示语义)
-- **是否已测**: ✅ 行为被 TC-T4-110 钉死(留待产品决定方向)
+- **是否已测**: ✅ 行为被 TC-T4-110 钉死;**`b72a60e` 已采纳 (a)** — CANCELLED 分支清空 winner/price
+
+### TC-T4-112 — projection-time seq SKIP 不能链成 verify(P0 假证据)✅ FIXED in PR #47
+
+> 第二轮 review 发现(@Eliaaazzz [#35 CR](https://github.com/Eliaaazzz/live-auction-system/pull/35))。TC-T4-100 覆盖的是 **完整链建好后再删** 中间一行;本条覆盖 **投影时就缺一个 seq**。两者不同。
+
+- **前置条件**: 空 auction_events;EVIDENCE_HMAC_KEY 已 load
+- **测试步骤**:
+  1. `InsertEvent(aid, seq=1, BID_ACCEPTED, p1)` → 链成 genesis
+  2. `InsertEvent(aid, seq=3, BID_ACCEPTED, p3)`(**seq=2 缺失**)
+  3. `VerifyEvidenceChain(aid)`
+  4. 补 `InsertEvent(aid, seq=2, …)`,再 `InsertEvent(aid, seq=3, …)`(同 payload),再 verify
+- **bug(fix 前)**: `fillEventHash` 用 `seq < ? ORDER BY seq DESC LIMIT 1` 取"最高的低于 N 的 seq",不是恰好 `seq-1` → seq=3 链到 seq=1(prev 有效) → **链成 1→3**。`VerifyEvidenceChain` 不查连续性 → 逐行重算 1→3 全 match → **返回 `(true, 0)`**。一个掉了事件的时间线被证据链"认证"为完整 —— tamper-evidence 系统里最坏的假绿
+- **预期结果(fix 后)**:
+  - 步骤 2 `InsertEvent(seq=3)` 返回 `ErrPreviousEventHashMissing`(closest prior seq=1 ≠ seq-1=2,不跨 gap 链)
+  - 步骤 3 `VerifyEvidenceChain` 返回 `(false, 3)`(连续性断言在第一个非连续 seq break)
+  - 步骤 4 补齐 seq=2 后,seq=3 重投影链到 seq=2,连续 → `(true, 0)`,count=3
+- **fix(两层,PR #47)**:
+  - `fillEventHash`:要求 closest prior == `seq-1`,否则 `ErrPreviousEventHashMissing`(transient — worker 按 seq 顺序投影,seq-1 下个 sweep 到)
+  - `VerifyEvidenceChain`:加 expected-seq 连续性断言(defense-in-depth,覆盖 pre-fix/legacy 链)
+- **是否已测**: ✅ `TestT4SeqSkipDoesNotChainOrVerify`(PR #47);现有 hash-chain 测试(genesis/idempotent/tamper/deletion)全部回归通过
+- **优先级**: **P0**(证据完整性)
 
 ---
 
@@ -359,9 +381,10 @@
 - **覆盖型 (TC-T4-001..011)**:
   - **v2 `8d8fa16`: 10 个落地** — 001/002/003 (hash 链) + 004 (order idempotent + mismatch) + 005 (e2e) + 011 (projectSold + missing-auction poison) + `TestT4HashChainDeletionBreaksAtSeq` + `TestT4HashFillWaitsForPreviousHash` + `TestT4EvidenceRequiresAuth`
   - 仍建议补:006 (type/payload mismatch 独立测) / 007 / 008 (CLI exit code) / 010 (schema 显式断言)
-- **缺口型 (TC-T4-100..111)**:
+- **缺口型 (TC-T4-100..112)**:
   - **✅ RESOLVED in `8d8fa16`**(我 v1 提的 5 个 P0/P1 全闭环):100 (delete-detection), 101 (multi-worker fill via FOR UPDATE), 102 (crash self-heal), 104 (empty-winnerId poison → cursor advance), 107 (auth gate)。103 实质 fixed
-  - **✅ EXECUTABLE in PR #45**:110 (evidenceSummary 派生);111 (CANCELLED-winner 语义,新发现,待产品决定)
+  - **✅ EXECUTABLE in PR #45**:110 (evidenceSummary 派生);111 (CANCELLED-winner 语义)→ `b72a60e` 已修(清空 winner/price)
+  - **🔴 P0 fixed in PR #47**:112 (projection-time seq skip → 假 verify)— 第二轮 review 发现,两层修复 + `TestT4SeqSkipDoesNotChainOrVerify`
   - **Tracked in issue #37**:105 (key rotation), 106 (VerifyEvidenceChain caching/perf), 108 (MySQL upgrade)
   - **文档化议题**:109 (最终一致性窗口)
 
@@ -369,3 +392,4 @@
 
 - v1 (2026-05-25, @fariZzzz) — 初稿,基于 commit `8b27ccc`;提 10 覆盖型 + 10 缺口型,其中 P0/P1 缺口:100 (delete) / 101 (multi-worker fill) / 102 (crash) / 104 (empty-winnerId loop) / 107 (privacy)
 - v2 (2026-05-25, @fariZzzz) — 对齐 `8d8fa16` (@PDGGK "harden T4 evidence projection"):我 v1 的 5 个 P0/P1 缺口全部被 patch(review→fix 闭环);新增覆盖型 011 + 多个落地测试映射;新增缺口型 110 (evidenceSummary 派生,executable in PR #45) + 111 (CANCELLED-winner 语义,probe 发现)。我 pull #34 @ `8d8fa16` 实测:`go test -race ./...` 全绿(真实 Redis+MySQL)。结论:hardening solid,re-affirm APPROVE
+- v3 (2026-05-26, @fariZzzz) — 第二轮 review(@Eliaaazzz #35 CR)发现 **TC-T4-112 P0**:`fillEventHash` 链到"最高低于 N 的 seq"而非 `seq-1` + `VerifyEvidenceChain` 不查连续性 → `InsertEvent(1)+(3)` 链成 1→3 且 verify(假证据)。我实现两层修复 + `TestT4SeqSkipDoesNotChainOrVerify` 落在 **PR #47**(stacked on #34),server+store `-race` 全绿、现有 hash-chain 测试无回归。同时 111 (CANCELLED-winner) 经 `b72a60e` 采纳建议 (a) 关闭
