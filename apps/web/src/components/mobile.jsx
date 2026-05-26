@@ -1,7 +1,8 @@
 import React from 'react';
 import { formatCentsCNY, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
-  AIBubble, Leaderboard, BidButton, ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
+  AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
+  ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
@@ -25,6 +26,8 @@ function MobileRoom({
   remainingMs = 30000,
   status = 'LIVE',
   currentCents = '12880000',
+  stepCents = '500000',
+  capCents = null,
   extendCount = 2,
   extendSweep = false,
   isYouLeading = false,
@@ -51,6 +54,11 @@ function MobileRoom({
   showLongPress = false,
   showHammerTransition = false,
   combos = {},  // userId -> streak count
+  // F-new (post-Elia round-2 review):
+  bidsPerSec = 0,          // for the HeatMeter
+  bidsPerSecPeak = 6,      // scale ceiling — calibrate from observed peak
+  leaders: leadersProp,    // optional override; falls back to DEMO_LEADERS
+  onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
 }) {
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs <= 10000 && status === 'LIVE';
@@ -58,17 +66,33 @@ function MobileRoom({
     ? 'radial-gradient(ellipse at top, rgba(254,44,85,.18) 0%, var(--douyin-ink) 55%)'
     : 'var(--douyin-ink)';
 
-  const leaders = DEMO_LEADERS.map((u, i) => ({
+  const baseLeaders = (leadersProp && leadersProp.length) ? leadersProp : DEMO_LEADERS;
+  const leaders = baseLeaders.map((u, i) => ({
     ...u,
     cents: i === 0 ? currentCents : u.cents,
     combo: combos[u.userId] || 0,
   }));
 
+  // F23 / Elia round-2 #3: screen-shake on hammer. One-shot — flips back
+  // to false ~700ms after status enters SOLD so the keyframe doesn't loop.
+  const [hammerShake, setHammerShake] = React.useState(false);
+  const lastStatusRef = React.useRef(status);
+  React.useEffect(() => {
+    if (status === 'SOLD' && lastStatusRef.current !== 'SOLD') {
+      setHammerShake(true);
+      const t = setTimeout(() => setHammerShake(false), 700);
+      lastStatusRef.current = status;
+      return () => clearTimeout(t);
+    }
+    lastStatusRef.current = status;
+  }, [status]);
+  const shakeNow = screenShake || hammerShake;
+
   // Bid reject toast — CN copy from bidRejectCopy[code] (§4.3 wire)
   const rejectMsg = rejectCode ? (bidRejectCopy[rejectCode] || rejectCode) : null;
 
   return (
-    <div className={screenShake ? 'lumen-screen-shake' : ''} style={{
+    <div className={shakeNow ? 'lumen-screen-shake' : ''} style={{
       position: 'relative', width: '100%', height: '100%',
       background: bg, color: 'var(--douyin-ink-text)',
       fontFamily: 'var(--font-sans)', overflow: 'hidden',
@@ -281,13 +305,11 @@ function MobileRoom({
             padding: '0 4px 6px',
           }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' }}>
-              出价榜 LEADERBOARD
+              出价榜 · TOP 3
             </span>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-              126 出价 · 38 人
-            </span>
+            <HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>
           </div>
-          <Leaderboard leaders={leaders.slice(0, 4)}/>
+          <Leaderboard leaders={leaders.slice(0, 3)} mode="podium"/>
           {/* My position gap — always visible to user (anti-disengagement) */}
           <div style={{ marginTop: 8 }}>
             <MyPositionGap
@@ -301,21 +323,25 @@ function MobileRoom({
         {/* AI bubble */}
         <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
 
-        {/* Bid CTA — thumb reach */}
+        {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
+            onBid is called with the absolute cents string the chip computed;
+            LiveRoomRoute wires it to placeBid. */}
         <div style={{ marginTop: 'auto' }}>
-          <BidButton
+          <QuickBidChips
             currentCents={currentCents}
-            incrementCents="500000"  /* ¥5000 increment */
+            stepCents={stepCents}
+            capCents={capCents}
+            disabled={status !== 'LIVE'}
             isLeading={isYouLeading}
             shake={rejectShake}
-            onBid={() => {}}
+            onBid={(c) => { if (onBid) onBid(c); }}
           />
           <div style={{
             display: 'flex', justifyContent: 'space-between',
             padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
           }}>
-            <span>最低加价 ¥5,000</span>
-            <span className="mono">每加价 +1s · 末10s延时30s</span>
+            <span>最低加价 {formatCentsCNY(stepCents)}</span>
+            <span className="mono">末10s 出价 → +30s 反狙击</span>
           </div>
         </div>
       </div>

@@ -239,7 +239,14 @@ function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }
 }
 
 // ─── Leaderboard — F11/F12 ───
-function Leaderboard({ leaders }) {
+// mode='list' (default) — vertical rows, used by admin console + preview routes.
+// mode='podium'         — top-3 centered with #1 raised, per @Eliaaazzz round-2
+//                         review feedback on PR #49 (more visual tension than
+//                         a depth list; deeper ranks are demoted to a single
+//                         "你 #3 · 差 ¥X 反超" gap pill that already lives
+//                         beside the leaderboard in MobileRoom).
+function Leaderboard({ leaders, mode = 'list' }) {
+  if (mode === 'podium') return <LeaderboardPodium leaders={leaders}/>;
   const halos = ['var(--x-rank-1-glow)', 'rgba(192,192,192,.55)', 'rgba(203,32,63,.5)'];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -301,6 +308,100 @@ function Leaderboard({ leaders }) {
             }}>
               {formatCentsCNY(u.cents)}
             </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Podium variant — top-3 only, #1 in the center and raised. Anti-slop
+// rule: gold/silver/bronze only on the medals; the surface is the same
+// Douyin-Native palette as the room so it doesn't fight the buyer view.
+function LeaderboardPodium({ leaders }) {
+  const top3 = leaders.slice(0, 3);
+  // Visual order is [#2, #1, #3] so #1 sits in the middle.
+  const visualOrder = [top3[1], top3[0], top3[2]].filter(Boolean);
+  const visualRank = (u) => top3.findIndex((x) => x?.userId === u.userId) + 1;
+  const heights = { 1: 96, 2: 76, 3: 66 };
+  const medalColor = {
+    1: 'var(--solemn-gold)',
+    2: '#c0c0c0',
+    3: 'var(--bridge-rose-gold)',
+  };
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-end', justifyContent: 'center', gap: 10,
+      padding: '14px 4px 8px', minHeight: 130,
+    }}>
+      {visualOrder.map((u) => {
+        const r = visualRank(u);
+        const isLead = r === 1;
+        return (
+          <div key={u.userId} style={{
+            flex: '0 0 84px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            position: 'relative',
+          }}>
+            {isLead && (
+              <div className="lumen-spotlight" aria-hidden style={{
+                position: 'absolute', top: -2, left: '50%',
+                transform: 'translateX(-50%)',
+                width: 64, height: 18,
+                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent)',
+                pointerEvents: 'none',
+              }}/>
+            )}
+            <div style={{
+              width: 40, height: 40, borderRadius: 20,
+              background: u.avatarBg || '#3b4252',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              color: '#fff', fontSize: 14, fontWeight: 600,
+              boxShadow: `0 0 0 2px ${medalColor[r]}`,
+              fontFamily: 'var(--font-sans)',
+            }}>
+              {u.displayName[0]}
+            </div>
+            <span style={{
+              maxWidth: 84,
+              fontSize: 11, fontWeight: isLead ? 600 : 400,
+              color: isLead ? 'var(--solemn-gold-soft)' : 'var(--douyin-ink-text)',
+              textAlign: 'center',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              display: 'flex', alignItems: 'center', gap: 3, justifyContent: 'center',
+            }}>
+              {u.displayName}
+              {u.isYou && (
+                <span style={{
+                  fontSize: 8, padding: '1px 4px',
+                  background: 'rgba(37,244,238,.2)', color: 'var(--douyin-cyan)',
+                  borderRadius: 3, fontWeight: 600,
+                }}>YOU</span>
+              )}
+            </span>
+            <span className="mono" style={{
+              fontSize: 12, fontWeight: 600,
+              color: isLead ? 'var(--solemn-gold)' : 'var(--douyin-ink-text)',
+            }}>
+              {formatCentsCNY(u.cents)}
+            </span>
+            <div style={{
+              marginTop: 2,
+              width: 64, height: heights[r],
+              borderTopLeftRadius: 6, borderTopRightRadius: 6,
+              background: isLead
+                ? 'linear-gradient(180deg, rgba(201,169,97,.28), rgba(201,169,97,.08))'
+                : r === 2
+                  ? 'linear-gradient(180deg, rgba(192,192,192,.22), rgba(192,192,192,.06))'
+                  : 'linear-gradient(180deg, rgba(184,138,90,.22), rgba(184,138,90,.06))',
+              border: `1px solid ${medalColor[r]}55`,
+              display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+              paddingTop: 6,
+            }}>
+              <span className="mono" style={{ fontSize: 14, fontWeight: 700, color: medalColor[r] }}>
+                #{r}
+              </span>
+            </div>
           </div>
         );
       })}
@@ -403,6 +504,198 @@ function HashCell({ value, prefix = 8, label }) {
   );
 }
 
+// ─── QuickBidChips — Elia's #49 round-2 review · option 2 ───
+// 4 chips: +1% · +5% · +10% · MAX (cap), plus a long-press CUSTOM drawer
+// for arbitrary amounts. Percentage math is BigInt-safe and snaps UP to
+// the nearest step boundary so the resulting bid always satisfies
+// `amount >= current + minIncrement` per place_bid.lua. MAX is gated to
+// the capCents value when supplied.
+//
+// All chips emit `onBid(cents: string)` — same contract as <BidButton>,
+// so wiring at LiveRoomRoute is identical.
+function QuickBidChips({
+  currentCents,
+  stepCents = '500000',
+  capCents = null,
+  disabled = false,
+  shake = false,
+  isLeading = false,
+  onBid = () => {},
+}) {
+  const [showDrawer, setShowDrawer] = React.useState(false);
+  const [custom, setCustom] = React.useState('');
+
+  const pctBump = (pctTimes100) => {
+    try {
+      const c = BigInt(currentCents);
+      const s = BigInt(stepCents);
+      // raw = current * (1 + pct/100)
+      const raw = (c * BigInt(100 + pctTimes100)) / 100n;
+      // floor to step boundary; then ensure raw > current+step (snap up).
+      const minTarget = c + s;
+      const snapped = raw < minTarget ? minTarget : raw;
+      // round up to next step multiple from current
+      const above = snapped - c;
+      const stepsUp = (above + s - 1n) / s;
+      return (c + stepsUp * s).toString();
+    } catch { return currentCents; }
+  };
+  const maxBid = () => {
+    try {
+      if (capCents) return capCents;
+      // No cap: fall back to +10% (matches the rightmost percent chip).
+      return pctBump(10);
+    } catch { return currentCents; }
+  };
+
+  const chips = [
+    { label: '+1%',  cents: pctBump(1) },
+    { label: '+5%',  cents: pctBump(5) },
+    { label: '+10%', cents: pctBump(10) },
+    { label: 'MAX',  cents: maxBid(), tone: 'gold' },
+  ];
+
+  const chipBase = {
+    flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+    fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
+    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    transition: 'transform .12s',
+  };
+  const chipPress = (e) => { if (!disabled) e.currentTarget.style.transform = 'scale(.96)'; };
+  const chipRelease = (e) => { e.currentTarget.style.transform = ''; };
+
+  return (
+    <div className={shake ? 'lumen-shake' : ''}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        {chips.map((c, i) => {
+          const isGold = c.tone === 'gold' || isLeading;
+          return (
+            <button key={i}
+              disabled={disabled}
+              onClick={() => onBid(c.cents)}
+              onPointerDown={chipPress}
+              onPointerUp={chipRelease}
+              onPointerLeave={chipRelease}
+              style={{
+                ...chipBase,
+                background: disabled ? 'rgba(107,114,128,.25)'
+                  : isGold
+                    ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
+                    : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
+                color: isGold ? 'var(--solemn-ink)' : '#fff',
+                boxShadow: disabled ? 'none'
+                  : isGold
+                    ? '0 4px 14px rgba(201,169,97,.28)'
+                    : '0 4px 14px rgba(254,44,85,.28)',
+              }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '.02em' }}>{c.label}</span>
+              <span className="mono" style={{ fontSize: 11, fontWeight: 600, opacity: .9 }}>
+                {formatCentsCNY(c.cents)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <button
+        onClick={() => setShowDrawer((s) => !s)}
+        disabled={disabled}
+        style={{
+          marginTop: 6, width: '100%', padding: '6px 10px', borderRadius: 8,
+          background: 'transparent', border: '1px dashed rgba(255,255,255,.18)',
+          color: 'var(--douyin-ink-muted)', fontSize: 11, fontFamily: 'inherit',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+        }}>
+        {showDrawer ? '收起' : '自定义金额 · CUSTOM'}
+      </button>
+      {showDrawer && (
+        <div style={{
+          marginTop: 6, padding: '10px 12px', borderRadius: 10,
+          background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
+          display: 'flex', gap: 8, alignItems: 'center',
+        }}>
+          <input
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            placeholder="cents（保持字符串)"
+            value={custom}
+            onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, ''))}
+            style={{
+              flex: 1, padding: '8px 10px', borderRadius: 6,
+              background: 'rgba(0,0,0,.3)', border: '1px solid rgba(255,255,255,.1)',
+              color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
+              outline: 'none',
+            }}
+          />
+          <button
+            disabled={disabled || !custom || (() => { try { return BigInt(custom) <= BigInt(currentCents); } catch { return true; } })()}
+            onClick={() => {
+              if (!custom) return;
+              try {
+                if (BigInt(custom) <= BigInt(currentCents)) return;
+                onBid(custom);
+                setCustom('');
+                setShowDrawer(false);
+              } catch {}
+            }}
+            style={{
+              padding: '8px 14px', borderRadius: 6, border: 'none',
+              background: 'var(--douyin-red)', color: '#fff',
+              fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+              cursor: (disabled || !custom) ? 'not-allowed' : 'pointer',
+              opacity: (disabled || !custom) ? 0.5 : 1,
+            }}>
+            提交
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── HeatMeter — F-new · bids/sec from store.recentEvents ───
+// Elia round-2 review point 3: surface "热度" so demo viewers feel the
+// pace without us narrating it. Pure presentational — caller computes
+// the rate (LiveRoomRoute does it from the Zustand recentEvents) and
+// passes both an instantaneous value and a peak so the bar can scale.
+function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
+  const ratio = peak > 0 ? Math.min(1, bidsPerSec / peak) : 0;
+  // Color flips warm → hot as the bar fills
+  const fill = ratio < 0.3 ? 'var(--douyin-cyan)'
+             : ratio < 0.7 ? 'var(--state-extended)'
+             : 'var(--state-live)';
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '4px 8px', borderRadius: 999,
+      background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
+      minWidth: 0,
+    }}>
+      <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em', flexShrink: 0 }}>
+        {label}
+      </span>
+      <div style={{
+        flex: 1, height: 4, borderRadius: 2,
+        background: 'rgba(255,255,255,.06)', overflow: 'hidden',
+        minWidth: 36,
+      }}>
+        <div style={{
+          width: `${Math.round(ratio * 100)}%`, height: '100%',
+          background: fill,
+          transition: 'width .3s ease, background-color .3s ease',
+        }}/>
+      </div>
+      <span className="mono" style={{
+        fontSize: 10, fontWeight: 600, color: fill, flexShrink: 0,
+        tabularNums: true, minWidth: 28, textAlign: 'right',
+      }}>
+        {bidsPerSec.toFixed(1)}/s
+      </span>
+    </div>
+  );
+}
+
 export {
   formatCentsCNY,
   addCentsStr,
@@ -416,6 +709,8 @@ export {
   TypewriterText,
   Leaderboard,
   BidButton,
+  QuickBidChips,
+  HeatMeter,
   ConnectionBar,
   ClockDriftIndicator,
   HashCell
