@@ -118,13 +118,19 @@ export const useAuctionStore = create((set, get) => ({
 
       switch (type) {
         case EventType.ROOM_SNAPSHOT: {
-          // Authoritative reset (ws-envelope.md §3.2 + project-blueprint §5.5)
+          // Authoritative reset (ws-envelope.md §3.2 + project-blueprint §5.5).
+          // Note: ROOM_SNAPSHOT does NOT carry extendCount; we preserve the
+          // current value so a reconnect-with-catchup keeps the running
+          // anti-snipe count (catchup AUCTION_EXTENDED frames arrive BEFORE
+          // the snapshot per backend dispatchWS:367). init() clears it on a
+          // fresh room. Gap > 200 → snapshot-only fallback loses count
+          // history; accepted until backend adds extendCount to
+          // RoomSnapshotData (P3 follow-up).
           next.status         = data.status;
           next.currentCents   = data.currentPriceCents ?? '0';
           next.winnerId       = data.winnerId ?? null;
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
-          next.extendCount    = 0;
           break;
         }
 
