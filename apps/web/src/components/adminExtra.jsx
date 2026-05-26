@@ -25,7 +25,21 @@ function AdminPublish() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
 
-  const valid = title.length > 4 && BigInt(startCents) > 0n && BigInt(reserveCents) <= BigInt(startCents) && BigInt(capCents) > BigInt(startCents);
+  // #53-M4: cap must be reachable from start via integer steps. Without
+  // this check the cap-hit path silently can't fire because no bid is
+  // simultaneously >= cap AND in the (start + N*step) sequence. Auction
+  // ends on duration timeout instead, which surprises the seller.
+  // BigInt-safe modulo; only meaningful when step > 0 (separate guard).
+  const stepBI = (() => { try { return BigInt(stepCents); } catch { return 0n; } })();
+  const startBI = (() => { try { return BigInt(startCents); } catch { return 0n; } })();
+  const capBI = (() => { try { return BigInt(capCents); } catch { return 0n; } })();
+  const capReachable = stepBI > 0n && capBI > startBI && ((capBI - startBI) % stepBI) === 0n;
+
+  const valid = title.length > 4
+    && BigInt(startCents) > 0n
+    && BigInt(reserveCents) <= BigInt(startCents)
+    && BigInt(capCents) > BigInt(startCents)
+    && capReachable;
 
   // Submit pipeline:
   //   1. ensureSession (seller role; backend's freeze handler runs ownsAuction)
@@ -177,8 +191,12 @@ function AdminPublish() {
               </FormRow>
               <FormRow label="上限价 (cap)" required>
                 <CurrencyInput cents={capCents} onChange={setCapCents}/>
-                <Hint warn={BigInt(capCents) <= BigInt(startCents)}>
-                  {BigInt(capCents) <= BigInt(startCents) ? '上限价必须大于起拍价' : '触发即 AUCTION_SOLD'}
+                <Hint warn={BigInt(capCents) <= BigInt(startCents) || !capReachable}>
+                  {BigInt(capCents) <= BigInt(startCents)
+                    ? '上限价必须大于起拍价'
+                    : !capReachable
+                      ? '上限价不可达 · (cap - start) 必须是阶梯的整数倍'
+                      : '触发即 AUCTION_SOLD'}
                 </Hint>
               </FormRow>
             </div>
