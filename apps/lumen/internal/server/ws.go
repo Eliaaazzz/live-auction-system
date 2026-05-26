@@ -30,6 +30,13 @@ const maxClientBidIDLen = 128
 // past it the client gets a snapshot instead (cheaper than a huge replay).
 const catchupMaxGap = 200
 
+// sendBufFrames sizes the per-conn CRITICAL lane. It MUST exceed catchupMaxGap
+// so a full Stream replay into the buffer never trips the trySend force-close
+// before writePump can drain — the catchup case is exactly the one where the
+// client may be slow (just-reconnected, possibly high-RTT), and force-closing
+// it would re-enter the reconnect loop the catchup is meant to break.
+const sendBufFrames = 256
+
 // fanoutSweepInterval is the backstop cadence for Stream-driven broadcast (a lost
 // Pub/Sub wakeup can't permanently stall the room).
 const fanoutSweepInterval = 2 * time.Second
@@ -146,12 +153,21 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 	}
 }
 
-// Conn is one WS client connection with a serialized write pump. Shutdown is
-// signalled by closing `done` (once); `send` is never closed, so concurrent
-// senders (direct ack + Pub/Sub broadcast) can't panic on a closed channel.
+// Conn is one WS client connection with a serialized write pump and a two-lane
+// send (T5 backpressure channel split):
+//   - `send`  — CRITICAL frames (bid acks, AUCTION_* terminals, ROOM_SNAPSHOT,
+//     catchup). Must be delivered; if the buffer fills, the connection is
+//     force-closed so the client reconnects and re-syncs (never a silent loss).
+//   - `lossy` — BEST-EFFORT frames (PONG heartbeat; future presence/chat). Dropped
+//     individually when full, without tearing down the connection.
+//
+// Shutdown is signalled by closing `done` (once); the send channels are never
+// closed, so concurrent senders (direct ack + Pub/Sub broadcast) can't panic on a
+// closed channel.
 type Conn struct {
 	ws          *websocket.Conn
-	send        chan []byte
+	send        chan []byte // critical lane: drop the connection if full
+	lossy       chan []byte // best-effort lane: drop the frame if full
 	done        chan struct{}
 	closeOnce   sync.Once
 	userID      string
@@ -172,31 +188,87 @@ func (c *Conn) close() {
 	})
 }
 
-// trySend enqueues a frame, or — if the send buffer is full — drops the whole
-// connection (close → client reconnects and re-syncs via ROOM_SNAPSHOT) rather
-// than silently losing a critical event (BID_ACCEPTED / AUCTION_*). Full
-// priority-queue backpressure (separating chat/presence from critical) is T5.
+// trySend enqueues a CRITICAL frame, or — if the buffer is full — force-closes the
+// connection (client reconnects and re-syncs via catchup/ROOM_SNAPSHOT) rather than
+// silently losing a critical event (BID_ACCEPTED / AUCTION_*). Non-blocking, so one
+// slow client never stalls the broadcast to the rest of the room.
+//
+// The leading non-blocking done-check drops post-close sends instead of letting
+// them accumulate in the buffer: hub.leave runs in the read goroutine's defer,
+// so there's a window after close() where the conn still sits in hub.rooms and
+// would otherwise receive (un-drained) broadcast frames.
 func (c *Conn) trySend(b []byte) {
+	select {
+	case <-c.done:
+		return
+	default:
+	}
 	select {
 	case c.send <- b:
 	default:
+		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s)", c.aid, c.userID)
 		c.close()
 	}
 }
 
+// trySendLossy enqueues a BEST-EFFORT frame, dropping it (and keeping the connection)
+// when the lossy buffer is full — so a slow client is never force-closed over a
+// replaceable frame like a heartbeat. Same post-close drop as trySend.
+func (c *Conn) trySendLossy(b []byte) {
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	select {
+	case c.lossy <- b:
+	default: // drop the frame; the connection survives
+	}
+}
+
+// writePump serializes all socket writes, draining the CRITICAL lane with
+// best-effort priority over the lossy lane: a pending critical frame always
+// pre-empts a pending lossy frame in the leading non-blocking poll, so a lossy
+// flood can delay a critical frame by at most one in-flight lossy write (Go's
+// select is pseudo-random when multiple cases are ready, but the loop tops back
+// to the critical-first poll on every iteration).
 func (c *Conn) writePump() {
 	for {
+		// Critical-first: take a pending critical frame (or shutdown) before lossy.
 		select {
-		case msg := <-c.send:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
-				c.close()
-				return
-			}
 		case <-c.done:
 			return
+		case msg := <-c.send:
+			if !c.write(msg) {
+				return
+			}
+			continue
+		default:
+		}
+		select {
+		case <-c.done:
+			return
+		case msg := <-c.send:
+			if !c.write(msg) {
+				return
+			}
+		case msg := <-c.lossy:
+			if !c.write(msg) {
+				return
+			}
 		}
 	}
+}
+
+// write sends one frame with a bounded deadline; on error it closes the conn and
+// reports false so writePump exits.
+func (c *Conn) write(msg []byte) bool {
+	_ = c.ws.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+		c.close()
+		return false
+	}
+	return true
 }
 
 func (c *Conn) push(env model.Envelope) {
@@ -205,6 +277,15 @@ func (c *Conn) push(env model.Envelope) {
 		return
 	}
 	c.trySend(b)
+}
+
+// pushLossy marshals + enqueues a best-effort frame (heartbeat).
+func (c *Conn) pushLossy(env model.Envelope) {
+	b, err := json.Marshal(env)
+	if err != nil {
+		return
+	}
+	c.trySendLossy(b)
 }
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +313,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if nick, err := s.st.UserNickname(r.Context(), userID); err == nil && nick != "" {
 		display = nick
 	}
-	c := &Conn{ws: ws, send: make(chan []byte, 64), done: make(chan struct{}), userID: userID, displayName: display}
+	c := &Conn{ws: ws, send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16), done: make(chan struct{}), userID: userID, displayName: display}
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
@@ -255,7 +336,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 	switch env.Type {
 	case model.TypePing:
-		c.push(model.Envelope{Type: model.TypePong, ServerTimeMs: time.Now().UnixMilli()})
+		// heartbeat is best-effort: a dropped PONG must not force-close a busy client.
+		c.pushLossy(model.Envelope{Type: model.TypePong, ServerTimeMs: time.Now().UnixMilli()})
 
 	case model.TypeRoomJoin:
 		var d model.RoomJoinData
