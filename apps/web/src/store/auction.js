@@ -23,10 +23,22 @@ const DEFAULT_STATE = {
   connStatus: ConnStatus.IDLE,
   connDetail: null,
 
-  // pricing — ALL string-cents (blueprint P1)
+  // pricing — ALL string-cents (blueprint P1).
+  //
+  // stepCents defaults to a non-zero sentinel ('500000' = ¥5000) instead
+  // of '0' because the QuickBidChips percent-math floors to a step
+  // boundary via `(above + step - 1n) / step` — if step is 0n, that
+  // throws RangeError caught silently inside pctBump, the chip falls
+  // back to currentCents, the user taps, and the backend rejects with
+  // ERR_TOO_LOW. Defaulting to a usable step keeps the chip math
+  // self-healing until the backend snapshot DTO ships real rules
+  // (T7 / RoomSnapshotData extension).
+  //
+  // capCents=null is a valid "no buy-now ceiling" per ws-envelope.md;
+  // QuickBidChips.maxBid() falls back to +10% in that case.
   currentCents: '0',
   startCents:   '0',
-  stepCents:    '0',
+  stepCents:    '500000',
   capCents:     null,
   reserveCents: '0',
 
@@ -51,6 +63,13 @@ const DEFAULT_STATE = {
   recentEvents:  [],
   recentRejects: [],
   lastSeq:       0,
+
+  // #53-M1 / #53-M2: cumulative counters maintained alongside recentEvents.
+  // recentEvents is capped at 50, so deriving "total bids" or "unique
+  // bidders" by filtering it silently clips for any auction past 50 bids.
+  // These two fields are reducer-maintained and reset on init().
+  totalBidsCount:  0,
+  bidderIds:       [],  // array of unique userIds (dedup via .includes — O(n) but n is small)
 
   // ephemeral feedback flags — Room components animate then clear
   leadingToast:    false,
@@ -145,6 +164,14 @@ export const useAuctionStore = create((set, get) => ({
           next.winnerId          = data.userId;
           next.winnerDisplayName = data.displayName;
           if (isSelf) next.yourCents = data.amountCents;
+
+          // #53-M1 / #53-M2: cumulative counters. totalBidsCount climbs
+          // monotonically. bidderIds appends only if the userId is new
+          // AND non-null — defensive .filter(Boolean) equivalent inline.
+          next.totalBidsCount = s.totalBidsCount + 1;
+          if (data.userId && !s.bidderIds.includes(data.userId)) {
+            next.bidderIds = [...s.bidderIds, data.userId];
+          }
 
           // Client-side leaderboard maintenance — keep max-per-user.
           // Reconcile against GET /leaderboard at strategic points.

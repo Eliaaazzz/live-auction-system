@@ -39,6 +39,29 @@ export function currentUser() {
 export function clearSession() {
   _session = null;
   try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  // Fire a one-shot custom event so route components can react (e.g. force a
+  // re-login flow). Components listen via window.addEventListener; this is
+  // intentionally global rather than a Zustand action because auth crosses
+  // every route. See lib/api.js handleAuthFailure for the call-site.
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('lumen:session-expired'));
+  }
+}
+
+/**
+ * Called by lib/api.js on a 401 response (token expired / revoked /
+ * JWT_SECRET rotated on the server). Clears the cached session and
+ * emits the global 'lumen:session-expired' event. Idempotent; safe to
+ * call multiple times during a burst of 401s from concurrent requests.
+ *
+ * The actual re-login UX (modal? full reload? auto-retry?) is the
+ * consumer's call — auth.js stays UX-agnostic. For T6 the simplest
+ * working behavior is to re-run ensureSession() and let the in-flight
+ * request retry succeed; ApiError surfaces the original 401 if the
+ * retry path isn't wired.
+ */
+export function handleAuthFailure() {
+  clearSession();
 }
 
 /**

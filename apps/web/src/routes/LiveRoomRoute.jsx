@@ -12,9 +12,10 @@
 // If VITE_USE_MOCK_DATA=true the same screen renders from inline demo data
 // (useful when the backend isn't running). The component shape is the same.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { MobileRoom } from '../components/mobile.jsx';
+import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
@@ -28,6 +29,26 @@ export function LiveRoomRoute() {
   const { auctionId } = useParams();
   const store  = useAuctionStore();
   const rafRef = useRef(null);
+  const clientRef = useRef(null);
+
+  // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
+  // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
+  const handleResync = useCallback(() => {
+    clientRef.current?.resync();
+  }, []);
+
+  // QuickBidChips emits absolute cents strings. We wrap placeBid with a
+  // freshly minted clientBidId so the backend's dedupe cache (Hash) keyed
+  // by (auctionId, userId, clientBidId) doesn't collapse two legit
+  // sequential bids. Generated client-side; opaque to the server.
+  const handleBid = useCallback((amountCents) => {
+    const client = clientRef.current;
+    if (!client) return;
+    const clientBidId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    client.placeBid({ clientBidId, amountCents });
+  }, []);
 
   // ── Bootstrap: session → snapshot → leaderboard → WS ──
   useEffect(() => {
@@ -100,11 +121,13 @@ export function LiveRoomRoute() {
         onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
+      clientRef.current = client;
       client.connect();
     })();
 
     return () => {
       alive = false;
+      clientRef.current = null;
       client?.leave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -129,15 +152,40 @@ export function LiveRoomRoute() {
 
   const inFinal10 = store.remainingMs > 0 && store.remainingMs <= 10_000;
 
+  // Bids/sec over the last 5s window. recentEvents is bounded to 50 by the
+  // store reducer; that's safely > 5s of typical bid traffic.
+  const nowMs = Date.now() + store.serverClockOffsetMs;
+  const bidsLast5s = store.recentEvents.filter(
+    (e) => e.type === 'BID_ACCEPTED' && e.ts && nowMs - e.ts < 5000,
+  ).length;
+  const bidsPerSec = bidsLast5s / 5;
+
+  // #54-M1: bidsPerSecPeak was hardcoded to 6 which is right for a calm
+  // demo but causes the heat meter to clip to 100% during a real bidding
+  // storm. Adaptive cap = max(6, observed peak this session). Stored in a
+  // ref so it persists across renders and only ratchets UP, never down.
+  const observedPeakRef = useRef(6);
+  if (bidsPerSec > observedPeakRef.current) {
+    observedPeakRef.current = bidsPerSec;
+  }
+  const bidsPerSecPeak = observedPeakRef.current;
+
   return (
+    <PullToResync onResync={handleResync}>
     <MobileRoom
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
+      stepCents={store.stepCents || '500000'}
+      capCents={store.capCents}
       status={store.status}
       extendCount={store.extendCount}
       connStatus={store.connStatus}
       yourRank={rankOfYou(store.leaders, store.yourUserId)}
       yourGapCents={youGap}
+      leaders={store.leaders}
+      onBid={handleBid}
+      bidsPerSec={bidsPerSec}
+      bidsPerSecPeak={6}
       ticker={store.recentEvents
         .filter((e) => e.type === 'BID_ACCEPTED')
         .slice(0, 6)
@@ -161,6 +209,7 @@ export function LiveRoomRoute() {
       aiText="正在等待出价 · AI 文本由 sidecar 流式生成"
       expressive
     />
+    </PullToResync>
   );
 }
 

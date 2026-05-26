@@ -14,7 +14,11 @@ import { AdminPublish, AdminOrders, AdminCancelModal } from './components/adminE
 import { MiniProgramStub, ConnReconnecting, ConnSyncing, ConnSchema } from './components/misc.jsx';
 
 import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
+import { EvidenceRoute } from './routes/EvidenceRoute.jsx';
 import { IndexPage } from './routes/IndexPage.jsx';
+import { api } from './lib/api.js';
+import { ensureSession } from './lib/auth.js';
+import { useParams } from 'react-router-dom';
 
 export default function App() {
   return (
@@ -25,6 +29,10 @@ export default function App() {
       {/* Real, WS-wired room. Falls back to mock data if VITE_USE_MOCK_DATA=true. */}
       <Route path="/room/:auctionId"
         element={<MobileFrame><LiveRoomRoute/></MobileFrame>}/>
+
+      {/* Real, REST-wired evidence card — auth-gated for the order block. */}
+      <Route path="/evidence/:auctionId"
+        element={<MobileFrame><EvidenceRoute/></MobileFrame>}/>
 
       {/* Mock variants — useful while wiring */}
       <Route path="/preview/room"          element={<MobileFrame><DemoRoom/></MobileFrame>}/>
@@ -58,9 +66,72 @@ export default function App() {
 
 function CancelOverlay() {
   const nav = useNavigate();
-  return <AdminCancelModal currentCents="12880000"
+  const { id } = useParams();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [currentCents, setCurrentCents] = React.useState(null);
+
+  // #51-H4 fix: previously hardcoded '12880000' as the modal's confirm-by-
+  // typing amount. It happened to match the seed `auc_demo` but would be
+  // wrong for any other auction. Now fetches the real current price from
+  // the backend on mount so the 2-step verify checks against ground truth.
+  React.useEffect(() => {
+    let alive = true;
+    if (!id) return;
+    (async () => {
+      try {
+        await ensureSession('seller-demo');
+        const snap = await api.getAuction(id);
+        if (!alive) return;
+        // currentPriceCents '' on a brand-new SCHEDULED auction with no
+        // bids; AdminCancelModal handles empty string as "0" via its
+        // formatCentsCNY pipeline — but more useful for the seller is to
+        // see the start price as the fallback. Backend's GetAuction
+        // returns currentPriceCents per ws-envelope.md §3.2.
+        setCurrentCents(snap?.currentPriceCents ?? '0');
+      } catch (e) {
+        // Non-fatal — modal renders with a sentinel so seller can still
+        // cancel; backend ultimately enforces ownership + state.
+        console.warn('[CancelOverlay] getAuction failed', e);
+        if (alive) setCurrentCents('0');
+      }
+    })();
+    return () => { alive = false; };
+  }, [id]);
+
+  const handleCancel = async () => {
+    if (busy || !id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureSession('seller-demo');
+      // Backend cancel handler: §api.go handleCancel. Returns either
+      // OK_CANCELLED (200) or ERR_ALREADY_TERMINAL / ERR_NOT_ALLOWED (4xx),
+      // semantic copy comes from api.js' ApiError surface.
+      await api.cancel(id, {});
+      nav('..');
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Loading guard: show the modal disabled while we fetch. Avoids a flash
+  // of the wrong amount where the seller might type the old hardcoded
+  // 12880000 and have the verify check fail confusingly.
+  if (currentCents == null) {
+    return <AdminCancelModal currentCents="0"
+      busy={true}
+      error={null}
+      onClose={() => nav('..')}
+      onCancelAuction={() => {}}/>;
+  }
+  return <AdminCancelModal currentCents={currentCents}
+    busy={busy}
+    error={error}
     onClose={() => nav('..')}
-    onCancelAuction={() => nav('..')}/>;
+    onCancelAuction={handleCancel}/>;
 }
 
 // ─── Demo room variants (used by /preview/room*) ────────────────

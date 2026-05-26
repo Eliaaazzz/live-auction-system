@@ -1,7 +1,8 @@
 import React from 'react';
 import { formatCentsCNY, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
-  AIBubble, Leaderboard, BidButton, ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
+  AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
+  ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
@@ -25,6 +26,8 @@ function MobileRoom({
   remainingMs = 30000,
   status = 'LIVE',
   currentCents = '12880000',
+  stepCents = '500000',
+  capCents = null,
   extendCount = 2,
   extendSweep = false,
   isYouLeading = false,
@@ -51,6 +54,11 @@ function MobileRoom({
   showLongPress = false,
   showHammerTransition = false,
   combos = {},  // userId -> streak count
+  // F-new (post-Elia round-2 review):
+  bidsPerSec = 0,          // for the HeatMeter
+  bidsPerSecPeak = 6,      // scale ceiling — calibrate from observed peak
+  leaders: leadersProp,    // optional override; falls back to DEMO_LEADERS
+  onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
 }) {
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs <= 10000 && status === 'LIVE';
@@ -58,17 +66,33 @@ function MobileRoom({
     ? 'radial-gradient(ellipse at top, rgba(254,44,85,.18) 0%, var(--douyin-ink) 55%)'
     : 'var(--douyin-ink)';
 
-  const leaders = DEMO_LEADERS.map((u, i) => ({
+  const baseLeaders = (leadersProp && leadersProp.length) ? leadersProp : DEMO_LEADERS;
+  const leaders = baseLeaders.map((u, i) => ({
     ...u,
     cents: i === 0 ? currentCents : u.cents,
     combo: combos[u.userId] || 0,
   }));
 
+  // F23 / Elia round-2 #3: screen-shake on hammer. One-shot — flips back
+  // to false ~700ms after status enters SOLD so the keyframe doesn't loop.
+  const [hammerShake, setHammerShake] = React.useState(false);
+  const lastStatusRef = React.useRef(status);
+  React.useEffect(() => {
+    if (status === 'SOLD' && lastStatusRef.current !== 'SOLD') {
+      setHammerShake(true);
+      const t = setTimeout(() => setHammerShake(false), 700);
+      lastStatusRef.current = status;
+      return () => clearTimeout(t);
+    }
+    lastStatusRef.current = status;
+  }, [status]);
+  const shakeNow = screenShake || hammerShake;
+
   // Bid reject toast — CN copy from bidRejectCopy[code] (§4.3 wire)
   const rejectMsg = rejectCode ? (bidRejectCopy[rejectCode] || rejectCode) : null;
 
   return (
-    <div className={screenShake ? 'lumen-screen-shake' : ''} style={{
+    <div className={shakeNow ? 'lumen-screen-shake' : ''} style={{
       position: 'relative', width: '100%', height: '100%',
       background: bg, color: 'var(--douyin-ink-text)',
       fontFamily: 'var(--font-sans)', overflow: 'hidden',
@@ -281,13 +305,11 @@ function MobileRoom({
             padding: '0 4px 6px',
           }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' }}>
-              出价榜 LEADERBOARD
+              出价榜 · TOP 3
             </span>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-              126 出价 · 38 人
-            </span>
+            <HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>
           </div>
-          <Leaderboard leaders={leaders.slice(0, 4)}/>
+          <Leaderboard leaders={leaders.slice(0, 3)} mode="podium"/>
           {/* My position gap — always visible to user (anti-disengagement) */}
           <div style={{ marginTop: 8 }}>
             <MyPositionGap
@@ -301,22 +323,90 @@ function MobileRoom({
         {/* AI bubble */}
         <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
 
-        {/* Bid CTA — thumb reach */}
+        {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
+            onBid is called with the absolute cents string the chip computed;
+            LiveRoomRoute wires it to placeBid. */}
         <div style={{ marginTop: 'auto' }}>
-          <BidButton
+          <QuickBidChips
             currentCents={currentCents}
-            incrementCents="500000"  /* ¥5000 increment */
+            stepCents={stepCents}
+            capCents={capCents}
+            disabled={status !== 'LIVE'}
             isLeading={isYouLeading}
             shake={rejectShake}
-            onBid={() => {}}
+            onBid={(c) => { if (onBid) onBid(c); }}
           />
           <div style={{
             display: 'flex', justifyContent: 'space-between',
             padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
           }}>
-            <span>最低加价 ¥5,000</span>
-            <span className="mono">每加价 +1s · 末10s延时30s</span>
+            <span>最低加价 {formatCentsCNY(stepCents)}</span>
+            <span className="mono">末10s 出价 → +30s 反狙击</span>
           </div>
+        </div>
+      </div>
+
+      {/* Terminal overlay — Elia round-2 H2 (#54). NO_BID and CANCELLED
+          previously had no full-screen treatment, so a buyer who's still
+          looking at the room when the timer fires saw only the StatusBadge
+          flip with no clear "this ended" signal. SOLD has its own
+          HammerTransition above; this fills the gap for the two quiet
+          terminal states. */}
+      <TerminalOverlay status={status}/>
+    </div>
+  );
+}
+
+// One-shot full-screen overlay for NO_BID + CANCELLED terminal states.
+// Renders nothing for LIVE / SCHEDULED / DRAFT / SOLD / ORDER_CREATED.
+// SOLD has its own A→B HammerTransition crossfade so we explicitly skip it.
+function TerminalOverlay({ status }) {
+  if (status !== 'NO_BID' && status !== 'CANCELLED') return null;
+  const isNoBid = status === 'NO_BID';
+  return (
+    <div style={{
+      position: 'absolute', inset: 0, zIndex: 80,
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      // semi-transparent so the room hash + final price stay visible underneath
+      background: isNoBid
+        ? 'radial-gradient(ellipse at center, rgba(20,20,30,.92) 0%, rgba(10,10,18,.96) 70%)'
+        : 'radial-gradient(ellipse at center, rgba(40,8,18,.92) 0%, rgba(10,10,18,.96) 70%)',
+      backdropFilter: 'blur(2px)',
+      fontFamily: 'var(--font-sans)',
+      animation: 'lumen-veil-bridge-fade .4s ease-in 1 both',
+    }}>
+      <div style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
+        padding: '28px 36px', borderRadius: 18,
+        background: 'rgba(0,0,0,.35)',
+        border: isNoBid
+          ? '1px solid rgba(154,160,180,.25)'
+          : '1px solid rgba(254,44,85,.4)',
+        textAlign: 'center', maxWidth: 280,
+      }}>
+        <div style={{
+          width: 52, height: 52, borderRadius: 26,
+          background: 'rgba(0,0,0,.4)',
+          border: `2px solid ${isNoBid ? 'var(--state-no-bid)' : 'var(--state-rejected)'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 22,
+          color: isNoBid ? 'var(--state-no-bid)' : 'var(--state-rejected)',
+        }}>
+          {isNoBid ? '∅' : '×'}
+        </div>
+        <div className="serif" style={{
+          fontSize: 22, fontWeight: 600,
+          color: isNoBid ? 'var(--douyin-ink-text)' : 'var(--state-rejected)',
+          letterSpacing: '.02em',
+        }}>
+          {isNoBid ? '本场无人出价' : '本场已取消'}
+        </div>
+        <div style={{
+          fontSize: 11, color: 'var(--douyin-ink-muted)', lineHeight: 1.5,
+        }}>
+          {isNoBid
+            ? '流拍 · NO_BID · 序列号已上链 · 可查看证据卡'
+            : '卖家终止 · CANCELLED · 序列号已上链 · 出价记录保留'}
         </div>
       </div>
     </div>
@@ -472,10 +562,78 @@ const TYPE_META = {
   AUCTION_CANCELLED: { label: '已取消',       color: 'var(--state-cancelled)', icon: '×' },
 };
 
-function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
-  const breakIdx = chainBreak
-    ? EVIDENCE_EVENTS.findIndex(e => e.seq === breakAtSeq)
+// MobileEvidence — props mode-aware:
+//
+//  • No `evidence` prop given: renders the inline demo data (used by
+//    /preview/evidence and /preview/evidence/broken). `chainBreak` and
+//    `breakAtSeq` switch the demo to the broken-chain variant.
+//
+//  • `evidence` prop provided: renders the real evidence card from
+//    GET /api/auctions/:id/evidence (see EvidenceRoute.jsx). The
+//    component maps backend's timeline event shape to its own row shape
+//    inside the render below — no external mapping required.
+function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null }) {
+  const isWired = evidence != null;
+
+  // Map backend timeline → component event rows. Each row needs the same
+  // fields the demo array provides: { type, seq, time, amount, prev, hash,
+  // extendCount?, winner? }. Backend ships { seq, eventType, payload (JSON
+  // string), eventHash, prevHash }. We parse payload lazily for the per-row
+  // amount / time / winner / extendCount.
+  const events = isWired
+    ? (evidence.timeline || []).map((e) => {
+        let p = {};
+        try { p = typeof e.payload === 'string' ? JSON.parse(e.payload) : (e.payload || {}); } catch {}
+        const ts = typeof p.serverTimeMs === 'number' ? p.serverTimeMs : null;
+        return {
+          type: e.eventType,
+          seq: e.seq,
+          time: ts ? formatHMS(ts) : '',
+          amount: p.amountCents ?? null,
+          prev: e.prevHash || '0000000000000000',
+          hash: e.eventHash || '',
+          extendCount: p.extendCount ?? undefined,
+          winner: p.displayName ?? undefined,
+        };
+      })
+    : EVIDENCE_EVENTS;
+
+  // M5 (Elia review on #51): explicit `=== false` check, NOT `!chainVerified`.
+  // The latter false-positives a CHAIN BROKEN visual when the response is
+  // missing the field entirely (old backend / fetch error / schema drift /
+  // partial degradation) — `!undefined === true`. We only want the red
+  // alarm UI when the backend has actively reported a broken chain;
+  // missing field stays neutral (no badge either way).
+  const effectiveBreak = isWired ? (evidence.chainVerified === false) : chainBreak;
+  const effectiveBreakAtSeq = isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq;
+  const breakIdx = effectiveBreak
+    ? events.findIndex((e) => e.seq === effectiveBreakAtSeq)
     : -1;
+
+  const headerPrice = isWired
+    ? (evidence.currentPriceCents ?? '0')
+    : '12880000';
+  const chainHead = isWired ? (evidence.eventsHash || '') : '0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18';
+  // Top-level winner display is currently not shown in the evidence card;
+  // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
+  // Keeping the prop computed so future variants can use it.
+  const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
+  const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+
+  // helper for mono time string from epoch-ms
+  function formatHMS(ms) {
+    const d = new Date(ms);
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const s = String(d.getSeconds()).padStart(2, '0');
+    const ms3 = String(d.getMilliseconds()).padStart(3, '0');
+    return `${h}:${m}:${s}.${ms3}`;
+  }
+
+  // chainHead / lotTitle / lotId / headerPrice / events are wired below:
+  // hardcoded literals in the JSX were replaced with these refs so
+  // /preview/evidence still renders demo data, while EvidenceRoute
+  // injects real backend data.
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
@@ -566,10 +724,10 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
         }}>
           <div>
             <div className="serif" style={{ fontSize: 13, color: 'var(--solemn-cream)', marginBottom: 2 }}>
-              百达翡丽 5711/1A · 蓝面
+              {lotTitle}
             </div>
             <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)' }}>
-              LOT 2024-0142
+              {lotId}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -577,7 +735,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
               fontSize: 22, fontWeight: 700, color: 'var(--solemn-gold)',
               lineHeight: 1, letterSpacing: '-.02em',
             }}>
-              {formatCentsCNY('12880000')}
+              {formatCentsCNY(headerPrice)}
             </div>
             <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
               落槌价 · HAMMER
@@ -595,7 +753,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
           fontSize: 10, color: 'var(--solemn-cream-dim)', letterSpacing: '.08em',
           padding: '0 4px 8px',
         }}>
-          时间线 · {EVIDENCE_EVENTS.length} 条记录
+          时间线 · {events.length} 条记录
         </div>
         <div style={{ position: 'relative' }}>
           {/* vertical chain line */}
@@ -603,7 +761,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
             position: 'absolute', left: 9, top: 14, bottom: 14, width: 1,
             background: 'linear-gradient(180deg, rgba(201,169,97,.6), rgba(201,169,97,.18))',
           }}/>
-          {EVIDENCE_EVENTS.map((ev, i) => {
+          {events.map((ev, i) => {
             const meta = TYPE_META[ev.type];
             const isBreakRow = i === breakIdx;
             const afterBreak = breakIdx >= 0 && i > breakIdx;
@@ -692,7 +850,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
             fontSize: 11, color: 'var(--solemn-cream)', wordBreak: 'break-all',
             lineHeight: 1.5,
           }}>
-            0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18
+            {chainHead || '—'}
           </div>
           <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4 }}>
             点击复制 · 长按导出 JSON

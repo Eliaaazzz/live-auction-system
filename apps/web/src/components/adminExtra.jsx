@@ -1,5 +1,8 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { formatCentsCNY, StatusBadge } from './primitives.jsx';
+import { api, ApiError } from '../lib/api.js';
+import { ensureSession } from '../lib/auth.js';
 
 // lumen-admin-extra.jsx
 // Publish form · Cancel modal · Orders/Products
@@ -8,6 +11,7 @@ import { formatCentsCNY, StatusBadge } from './primitives.jsx';
 // Admin · Publish form
 // ───────────────────────────────────────────────────────────────
 function AdminPublish() {
+  const navigate = useNavigate();
   const [title, setTitle] = React.useState('百达翡丽 5711/1A · 蓝面');
   const [startCents, setStartCents] = React.useState('12000000');
   const [stepCents,  setStepCents]  = React.useState('500000');
@@ -18,8 +22,67 @@ function AdminPublish() {
   const [antiSnipe, setAntiSnipe] = React.useState(true);
   const [scheduleDate, setScheduleDate] = React.useState('2026-06-10');
   const [scheduleTime, setScheduleTime] = React.useState('21:00');
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
 
-  const valid = title.length > 4 && BigInt(startCents) > 0n && BigInt(reserveCents) <= BigInt(startCents) && BigInt(capCents) > BigInt(startCents);
+  // #53-M4: cap must be reachable from start via integer steps. Without
+  // this check the cap-hit path silently can't fire because no bid is
+  // simultaneously >= cap AND in the (start + N*step) sequence. Auction
+  // ends on duration timeout instead, which surprises the seller.
+  // BigInt-safe modulo; only meaningful when step > 0 (separate guard).
+  const stepBI = (() => { try { return BigInt(stepCents); } catch { return 0n; } })();
+  const startBI = (() => { try { return BigInt(startCents); } catch { return 0n; } })();
+  const capBI = (() => { try { return BigInt(capCents); } catch { return 0n; } })();
+  const capReachable = stepBI > 0n && capBI > startBI && ((capBI - startBI) % stepBI) === 0n;
+
+  const valid = title.length > 4
+    && BigInt(startCents) > 0n
+    && BigInt(reserveCents) <= BigInt(startCents)
+    && BigInt(capCents) > BigInt(startCents)
+    && capReachable;
+
+  // Submit pipeline:
+  //   1. ensureSession (seller role; backend's freeze handler runs ownsAuction)
+  //   2. api.createProduct(...) → { productId }
+  //   3. api.createDraft({ productId, rules{} }) → { auctionId }
+  //   4. navigate to /admin/auctions/:id/vlm so seller can confirm VLM facts
+  //
+  // No api.schedule — backend doesn't ship a scheduled-start endpoint; seller
+  // hits "Start" manually from the live console after VLM is confirmed +
+  // freeze succeeds. scheduleDate/scheduleTime are stored as UI hint only.
+  const handleSubmit = async () => {
+    if (busy || !valid) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureSession('seller-demo');
+      const { productId } = await api.createProduct({
+        name: title,
+        imageUrl: '',                 // demo: no upload (T7 wires real VLM input)
+        description: '',
+      });
+      const { auctionId } = await api.createDraft({
+        productId,
+        rules: {
+          startCents,
+          stepCents,
+          reserveCents,
+          capCents,
+          durationMs: duration * 60 * 1000,
+          maxExtensions: antiSnipe ? maxExtends : 0,
+          antiSnipeWindowMs: antiSnipe ? 10_000 : 0,
+        },
+      });
+      navigate(`/admin/auctions/${auctionId}/vlm`);
+    } catch (e) {
+      const msg = e instanceof ApiError
+        ? `${e.code || e.status} · ${e.message}`
+        : (e?.message || String(e));
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div style={{
@@ -128,8 +191,12 @@ function AdminPublish() {
               </FormRow>
               <FormRow label="上限价 (cap)" required>
                 <CurrencyInput cents={capCents} onChange={setCapCents}/>
-                <Hint warn={BigInt(capCents) <= BigInt(startCents)}>
-                  {BigInt(capCents) <= BigInt(startCents) ? '上限价必须大于起拍价' : '触发即 AUCTION_SOLD'}
+                <Hint warn={BigInt(capCents) <= BigInt(startCents) || !capReachable}>
+                  {BigInt(capCents) <= BigInt(startCents)
+                    ? '上限价必须大于起拍价'
+                    : !capReachable
+                      ? '上限价不可达 · (cap - start) 必须是阶梯的整数倍'
+                      : '触发即 AUCTION_SOLD'}
                 </Hint>
               </FormRow>
             </div>
@@ -250,18 +317,20 @@ function AdminPublish() {
         flexShrink: 0, padding: '14px 28px', borderTop: '1px solid rgba(255,255,255,.06)',
         background: 'rgba(0,0,0,.3)', display: 'flex', alignItems: 'center', gap: 12,
       }}>
-        <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
-          {valid ? '已就绪 · 进入下一步即开始 VLM 抽取' : '请补全必填项'}
+        <div style={{ fontSize: 11, color: error ? 'var(--state-rejected)' : 'var(--douyin-ink-muted)' }}>
+          {error
+            ? `创建失败 · ${error}`
+            : valid ? '已就绪 · 进入下一步即开始 VLM 抽取' : '请补全必填项'}
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={btnGhost2}>取消</button>
-        <button disabled={!valid} style={{
+        <button onClick={() => navigate('/admin/auctions')} disabled={busy} style={btnGhost2}>取消</button>
+        <button onClick={handleSubmit} disabled={!valid || busy} style={{
           ...btnPrimary2,
-          background: valid ? 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))' : 'rgba(107,114,128,.3)',
-          color: valid ? '#fff' : 'var(--douyin-ink-muted)',
-          cursor: valid ? 'pointer' : 'not-allowed',
+          background: (valid && !busy) ? 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))' : 'rgba(107,114,128,.3)',
+          color: (valid && !busy) ? '#fff' : 'var(--douyin-ink-muted)',
+          cursor: (valid && !busy) ? 'pointer' : 'not-allowed',
         }}>
-          下一步 · VLM 核对 →
+          {busy ? '正在创建 …' : '下一步 · VLM 核对 →'}
         </button>
       </div>
     </div>
@@ -440,7 +509,7 @@ function Pipeline({ current }) {
 // Admin · Cancel-with-confirmation modal (2-step)
 // Rendered on top of the Live Console as the "danger zone confirm"
 // ───────────────────────────────────────────────────────────────
-function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction }) {
+function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction, busy = false, error = null }) {
   const requiredText = formatCentsCNY(currentCents).replace('¥', '').replace(/,/g, '');
   const [typed, setTyped] = React.useState('');
   const match = typed.replace(/[¥,\s]/g, '') === requiredText;
@@ -541,20 +610,34 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction 
           </div>
         </div>
 
+        {/* Error surface — wire-time only (HTTP fail / ERR_ALREADY_TERMINAL / ERR_NOT_ALLOWED) */}
+        {error && (
+          <div style={{
+            margin: '0 22px',
+            padding: '8px 12px',
+            background: 'rgba(254,44,85,.12)',
+            border: '1px solid rgba(254,44,85,.4)',
+            borderRadius: 6,
+            fontSize: 11,
+            color: 'var(--state-rejected)',
+          }}>
+            取消失败 · {error}
+          </div>
+        )}
         {/* Footer */}
         <div style={{
           padding: '14px 22px', borderTop: '1px solid rgba(255,255,255,.06)',
           display: 'flex', justifyContent: 'flex-end', gap: 10,
           background: 'rgba(0,0,0,.3)',
         }}>
-          <button onClick={onClose} style={btnGhost2}>暂不取消</button>
-          <button disabled={!match} onClick={onCancelAuction} style={{
+          <button onClick={onClose} disabled={busy} style={btnGhost2}>暂不取消</button>
+          <button disabled={!match || busy} onClick={onCancelAuction} style={{
             ...btnPrimary2, padding: '10px 18px',
-            background: match ? 'var(--state-rejected)' : 'rgba(107,114,128,.3)',
-            color: match ? '#fff' : 'var(--douyin-ink-muted)',
-            cursor: match ? 'pointer' : 'not-allowed',
+            background: (match && !busy) ? 'var(--state-rejected)' : 'rgba(107,114,128,.3)',
+            color: (match && !busy) ? '#fff' : 'var(--douyin-ink-muted)',
+            cursor: (match && !busy) ? 'pointer' : 'not-allowed',
           }}>
-            确认取消 · CANCELLED
+            {busy ? '正在提交 …' : '确认取消 · CANCELLED'}
           </button>
         </div>
       </div>
