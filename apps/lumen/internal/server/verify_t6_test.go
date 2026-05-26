@@ -173,7 +173,10 @@ func seedT6(t *testing.T, st *store.Store, aid string, n int) {
 		if keys, _ := st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
 			_ = st.Redis().Del(ctx, keys...).Err()
 		}
-		_ = st.Redis().Del(ctx, "stream:"+aid, "state:"+aid).Err()
+		// Stream + state keys live under the {auction-id}-tagged namespace so
+		// they're co-located in the same Redis hash-slot as everything else
+		// for that auction. See store.streamKey / store.stateKey.
+		_ = st.Redis().Del(ctx, "auction:{"+aid+"}:events", "auction:{"+aid+"}:state").Err()
 	})
 	for seq := 1; seq <= n; seq++ {
 		payload := fmt.Sprintf(`{"seq":%d,"amountCents":"%d"}`, seq, 10000+seq*100)
@@ -181,7 +184,7 @@ func seedT6(t *testing.T, st *store.Store, aid string, n int) {
 			t.Fatalf("insert mysql seq=%d: %v", seq, err)
 		}
 		if err := st.Redis().XAdd(ctx, &redis.XAddArgs{
-			Stream: "stream:" + aid,
+			Stream: "auction:{" + aid + "}:events",
 			ID:     fmt.Sprintf("%d-0", seq),
 			Values: map[string]any{
 				"seq":     fmt.Sprintf("%d", seq),
@@ -192,7 +195,7 @@ func seedT6(t *testing.T, st *store.Store, aid string, n int) {
 			t.Fatalf("xadd seq=%d: %v", seq, err)
 		}
 	}
-	if err := st.Redis().HSet(ctx, "state:"+aid, "seq", fmt.Sprintf("%d", n)).Err(); err != nil {
+	if err := st.Redis().HSet(ctx, "auction:{"+aid+"}:state", "seq", fmt.Sprintf("%d", n)).Err(); err != nil {
 		t.Fatalf("hset snapshot seq: %v", err)
 	}
 }
@@ -228,13 +231,13 @@ func TestRunVerify_T6_StreamAheadMismatch(t *testing.T) {
 	// projecting to MySQL — simulates the persistence-worker-lag scenario.
 	extraSeq := 3
 	if err := st.Redis().XAdd(ctx, &redis.XAddArgs{
-		Stream: "stream:" + aid,
+		Stream: "auction:{" + aid + "}:events",
 		ID:     fmt.Sprintf("%d-0", extraSeq),
 		Values: map[string]any{"seq": fmt.Sprintf("%d", extraSeq), "type": model.TypeAuctionSold, "payload": `{"seq":3}`},
 	}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Redis().HSet(ctx, "state:"+aid, "seq", fmt.Sprintf("%d", extraSeq)).Err(); err != nil {
+	if err := st.Redis().HSet(ctx, "auction:{"+aid+"}:state", "seq", fmt.Sprintf("%d", extraSeq)).Err(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -292,7 +295,7 @@ func TestRunVerify_T6_SnapshotTrails(t *testing.T) {
 	seedT6(t, st, aid, 3)
 
 	// Rewind snapshot.seq to 1 while Stream + MySQL agree at tip=3.
-	if err := st.Redis().HSet(ctx, "state:"+aid, "seq", "1").Err(); err != nil {
+	if err := st.Redis().HSet(ctx, "auction:{"+aid+"}:state", "seq", "1").Err(); err != nil {
 		t.Fatal(err)
 	}
 
