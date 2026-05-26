@@ -30,7 +30,7 @@ e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 perf-smoke:       ## T2 perf floor-check: ack/broadcast p95 vs §4.2 fallback budgets
 	$(COMPOSE) --profile tools run --rm --build perf-smoke
 
-verify:           ## replay-verifier skeleton: expect "consistent"
+verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
 	if [ -z "$$aid" ] && [ -f "$(E2E_AID_FILE)" ]; then aid="$$(cat $(E2E_AID_FILE))"; fi; \
 	$(COMPOSE) --profile tools run --rm --build -e VERIFY_AID="$$aid" verifier
