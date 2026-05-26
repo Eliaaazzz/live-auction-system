@@ -583,7 +583,20 @@ const TYPE_COLOR = {
 function AdminConsole() {
   const navigate = useNavigate();
   const { id: auctionId } = useParams();
-  const store = useAuctionStore();
+  // #53-H2: individual selectors so the console only re-renders when its
+  // OWN slices change. Previously `useAuctionStore()` (no selector) caused
+  // a full re-render of this huge component on every WS event — even ones
+  // it doesn't visibly use. Each line below subscribes to a single field.
+  const status         = useAuctionStore((s) => s.status);
+  const storeCurrentCents = useAuctionStore((s) => s.currentCents);
+  const remainingMs    = useAuctionStore((s) => s.remainingMs);
+  const extendCount    = useAuctionStore((s) => s.extendCount);
+  const recentEvents   = useAuctionStore((s) => s.recentEvents);
+  const recentRejects  = useAuctionStore((s) => s.recentRejects);
+  const totalBidsCount = useAuctionStore((s) => s.totalBidsCount);
+  const bidderIds      = useAuctionStore((s) => s.bidderIds);
+  // init() is a stable function ref on the store — accessing via getState()
+  // for the WS bootstrap effect (no need to subscribe).
   const rafRef = React.useRef(null);
 
   // Broadcaster-side WS subscription: same RoomClient + store as the buyer
@@ -605,7 +618,9 @@ function AdminConsole() {
       try {
         const snap = await api.getAuction(auctionId);
         if (!alive) return;
-        store.init({
+        // getState().init avoids a stale-closure issue from the removed
+        // `store` var; init is a stable function ref on the store.
+        useAuctionStore.getState().init({
           auctionId,
           status: snap.status,
           currentCents: snap.currentPriceCents ?? '0',
@@ -641,12 +656,17 @@ function AdminConsole() {
   }, []);
 
   // Demo fallbacks when no auctionId is in the URL (e.g. design preview).
-  const status = store.status || 'LIVE';
-  const liveCents = auctionId ? store.currentCents : '12880000';
-  const liveRemainingMs = auctionId ? store.remainingMs : 8210;
-  const liveExtend = auctionId ? store.extendCount : 2;
-  const liveBids = auctionId ? store.recentEvents : null;  // null → fall through to CONSOLE_BIDS demo
-  const liveRejects = auctionId ? store.recentRejects : null;
+  const effectiveStatus = status || 'LIVE';
+  const liveCents       = auctionId ? storeCurrentCents : '12880000';
+  const liveRemainingMs = auctionId ? remainingMs       : 8210;
+  const liveExtend      = auctionId ? extendCount       : 2;
+  const liveBids        = auctionId ? recentEvents      : null;  // null → fall through to CONSOLE_BIDS demo
+  const liveRejects     = auctionId ? recentRejects     : null;
+  // #53-M1: total bids from cumulative counter, not from recentEvents
+  // (capped at 50). #53-M2: unique bidder count from bidderIds (which
+  // already excludes null userIds at the store level).
+  const liveTotalBids   = auctionId ? totalBidsCount    : 126;
+  const liveUniqueBids  = auctionId ? bidderIds.length  : 38;
 
   return (
     <div style={{
@@ -663,7 +683,7 @@ function AdminConsole() {
       }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <StatusBadge status={status} size="md"/>
+            <StatusBadge status={effectiveStatus} size="md"/>
             <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
               {auctionId ? `AID ${auctionId.slice(0, 16)}` : 'LOT 2024-0142 · 百达翡丽 5711/1A'}
             </span>
@@ -677,10 +697,10 @@ function AdminConsole() {
           <Stat label="当前价" value={<PriceDisplay cents={liveCents} size={28} tone="ink"/>}/>
           <Stat label="距落槌" value={<Countdown remainingMs={liveRemainingMs} size="md"/>}/>
           <Stat label="出价总数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>
-            {liveBids ? liveBids.filter((e) => e.type === 'BID_ACCEPTED').length : 126}
+            {liveTotalBids}
           </span>}/>
           <Stat label="参与人数" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600 }}>
-            {liveBids ? new Set(liveBids.filter((e) => e.type === 'BID_ACCEPTED').map((e) => e.data?.userId)).size : 38}
+            {liveUniqueBids}
           </span>}/>
           <Stat label="延时" value={<span className="mono" style={{ fontSize: 24, fontWeight: 600, color: 'var(--state-extended)' }}>×{liveExtend}</span>}/>
         </div>
