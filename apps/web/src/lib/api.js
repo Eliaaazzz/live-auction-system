@@ -9,7 +9,7 @@
 // IMPORTANT: backend uses `/api/...` (NOT `/api/v1/...`). The Vite proxy
 // in vite.config.js forwards `/api/*` to VITE_API_BASE.
 
-import { currentToken } from './auth.js';
+import { currentToken, handleAuthFailure } from './auth.js';
 
 const API_BASE = '/api';
 
@@ -34,6 +34,20 @@ async function request(path, { method = 'GET', body, signal, auth = true } = {})
     signal,
   });
   if (!res.ok) {
+    // 401 = JWT expired / revoked / JWT_SECRET rotated on the server.
+    // Clear the cached session + emit 'lumen:session-expired' so routes
+    // can react (re-login modal / page reload / etc.). The current REST
+    // call still throws an ApiError so the caller sees the failure;
+    // recovery is the route component's call (see lib/auth.js).
+    //
+    // Why not auto-retry inline: an auto-retry path needs to either
+    // (a) mint a new token via ensureSession and resubmit — but that
+    // doubles the server load on storm 401s, or (b) wait for a fresh
+    // session via the event — which couples this layer to UI flow.
+    // Keeping the path observable + caller-driven is simpler.
+    if (res.status === 401 && auth) {
+      handleAuthFailure();
+    }
     // Backend convention: { code: "ERR_...", message?: "..." } on error.
     let code, message;
     try {

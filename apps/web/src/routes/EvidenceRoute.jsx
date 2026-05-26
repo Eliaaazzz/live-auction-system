@@ -13,6 +13,25 @@
 // Per blueprint §5 and proto/evidence-card.md §1: `hashBreakAtSeq` is
 // present ONLY when chainVerified=false; order is present ONLY when an
 // order exists (and the caller is authenticated).
+//
+// ─── HMAC custody — threat model (summary; canonical in proto/evidence-card.md §6) ───
+// What the chain DEFENDS against: post-hoc single-point tampering of a
+// stored event (edit a `payload_json` or an `event_hash`) — recompute
+// breaks at that seq, anyone holding the HMAC key can detect it. The
+// CHAIN BROKEN UI rendered when chainVerified=false signals this.
+//
+// What it does NOT do: external notarization. If the HMAC key is
+// readable by the same process that writes events (as in T1 dev mode),
+// a malicious writer with key access can re-chain a forgery. T1-T6
+// describes this as an "integrity / consistency check," not tamper-
+// proof evidence. Hardening (KMS-managed key, separate signer,
+// rotation with versioned key-id column) is post-MVP.
+//
+// Implication for this UI: chainVerified=true means "the recompute
+// agreed with the stored chain head right now," NOT "no one ever
+// modified this auction." Surface chain-verified credibility as a
+// strong-but-not-absolute signal; reviewers reading the card should
+// see "T4 evidence v0 · 哈希链可验证" not "blockchain-secured."
 
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
