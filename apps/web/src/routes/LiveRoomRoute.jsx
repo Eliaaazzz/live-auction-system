@@ -12,9 +12,10 @@
 // If VITE_USE_MOCK_DATA=true the same screen renders from inline demo data
 // (useful when the backend isn't running). The component shape is the same.
 
-import React, { useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { MobileRoom } from '../components/mobile.jsx';
+import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
@@ -28,6 +29,13 @@ export function LiveRoomRoute() {
   const { auctionId } = useParams();
   const store  = useAuctionStore();
   const rafRef = useRef(null);
+  const clientRef = useRef(null);
+
+  // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
+  // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
+  const handleResync = useCallback(() => {
+    clientRef.current?.resync();
+  }, []);
 
   // ── Bootstrap: session → snapshot → leaderboard → WS ──
   useEffect(() => {
@@ -100,11 +108,13 @@ export function LiveRoomRoute() {
         onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
+      clientRef.current = client;
       client.connect();
     })();
 
     return () => {
       alive = false;
+      clientRef.current = null;
       client?.leave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -130,6 +140,7 @@ export function LiveRoomRoute() {
   const inFinal10 = store.remainingMs > 0 && store.remainingMs <= 10_000;
 
   return (
+    <PullToResync onResync={handleResync}>
     <MobileRoom
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
@@ -161,6 +172,7 @@ export function LiveRoomRoute() {
       aiText="正在等待出价 · AI 文本由 sidecar 流式生成"
       expressive
     />
+    </PullToResync>
   );
 }
 

@@ -472,10 +472,72 @@ const TYPE_META = {
   AUCTION_CANCELLED: { label: '已取消',       color: 'var(--state-cancelled)', icon: '×' },
 };
 
-function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
-  const breakIdx = chainBreak
-    ? EVIDENCE_EVENTS.findIndex(e => e.seq === breakAtSeq)
+// MobileEvidence — props mode-aware:
+//
+//  • No `evidence` prop given: renders the inline demo data (used by
+//    /preview/evidence and /preview/evidence/broken). `chainBreak` and
+//    `breakAtSeq` switch the demo to the broken-chain variant.
+//
+//  • `evidence` prop provided: renders the real evidence card from
+//    GET /api/auctions/:id/evidence (see EvidenceRoute.jsx). The
+//    component maps backend's timeline event shape to its own row shape
+//    inside the render below — no external mapping required.
+function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null }) {
+  const isWired = evidence != null;
+
+  // Map backend timeline → component event rows. Each row needs the same
+  // fields the demo array provides: { type, seq, time, amount, prev, hash,
+  // extendCount?, winner? }. Backend ships { seq, eventType, payload (JSON
+  // string), eventHash, prevHash }. We parse payload lazily for the per-row
+  // amount / time / winner / extendCount.
+  const events = isWired
+    ? (evidence.timeline || []).map((e) => {
+        let p = {};
+        try { p = typeof e.payload === 'string' ? JSON.parse(e.payload) : (e.payload || {}); } catch {}
+        const ts = typeof p.serverTimeMs === 'number' ? p.serverTimeMs : null;
+        return {
+          type: e.eventType,
+          seq: e.seq,
+          time: ts ? formatHMS(ts) : '',
+          amount: p.amountCents ?? null,
+          prev: e.prevHash || '0000000000000000',
+          hash: e.eventHash || '',
+          extendCount: p.extendCount ?? undefined,
+          winner: p.displayName ?? undefined,
+        };
+      })
+    : EVIDENCE_EVENTS;
+
+  const effectiveBreak = isWired ? !evidence.chainVerified : chainBreak;
+  const effectiveBreakAtSeq = isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq;
+  const breakIdx = effectiveBreak
+    ? events.findIndex((e) => e.seq === effectiveBreakAtSeq)
     : -1;
+
+  const headerPrice = isWired
+    ? (evidence.currentPriceCents ?? '0')
+    : '12880000';
+  const chainHead = isWired ? (evidence.eventsHash || '') : '0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18';
+  // Top-level winner display is currently not shown in the evidence card;
+  // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
+  // Keeping the prop computed so future variants can use it.
+  const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
+  const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+
+  // helper for mono time string from epoch-ms
+  function formatHMS(ms) {
+    const d = new Date(ms);
+    const h = String(d.getHours()).padStart(2, '0');
+    const m = String(d.getMinutes()).padStart(2, '0');
+    const s = String(d.getSeconds()).padStart(2, '0');
+    const ms3 = String(d.getMilliseconds()).padStart(3, '0');
+    return `${h}:${m}:${s}.${ms3}`;
+  }
+
+  // chainHead / lotTitle / lotId / headerPrice / events are wired below:
+  // hardcoded literals in the JSX were replaced with these refs so
+  // /preview/evidence still renders demo data, while EvidenceRoute
+  // injects real backend data.
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
@@ -566,10 +628,10 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
         }}>
           <div>
             <div className="serif" style={{ fontSize: 13, color: 'var(--solemn-cream)', marginBottom: 2 }}>
-              百达翡丽 5711/1A · 蓝面
+              {lotTitle}
             </div>
             <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)' }}>
-              LOT 2024-0142
+              {lotId}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
@@ -577,7 +639,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
               fontSize: 22, fontWeight: 700, color: 'var(--solemn-gold)',
               lineHeight: 1, letterSpacing: '-.02em',
             }}>
-              {formatCentsCNY('12880000')}
+              {formatCentsCNY(headerPrice)}
             </div>
             <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
               落槌价 · HAMMER
@@ -595,7 +657,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
           fontSize: 10, color: 'var(--solemn-cream-dim)', letterSpacing: '.08em',
           padding: '0 4px 8px',
         }}>
-          时间线 · {EVIDENCE_EVENTS.length} 条记录
+          时间线 · {events.length} 条记录
         </div>
         <div style={{ position: 'relative' }}>
           {/* vertical chain line */}
@@ -603,7 +665,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
             position: 'absolute', left: 9, top: 14, bottom: 14, width: 1,
             background: 'linear-gradient(180deg, rgba(201,169,97,.6), rgba(201,169,97,.18))',
           }}/>
-          {EVIDENCE_EVENTS.map((ev, i) => {
+          {events.map((ev, i) => {
             const meta = TYPE_META[ev.type];
             const isBreakRow = i === breakIdx;
             const afterBreak = breakIdx >= 0 && i > breakIdx;
@@ -692,7 +754,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null }) {
             fontSize: 11, color: 'var(--solemn-cream)', wordBreak: 'break-all',
             lineHeight: 1.5,
           }}>
-            0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18
+            {chainHead || '—'}
           </div>
           <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4 }}>
             点击复制 · 长按导出 JSON

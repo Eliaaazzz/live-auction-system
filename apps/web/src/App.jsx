@@ -14,7 +14,11 @@ import { AdminPublish, AdminOrders, AdminCancelModal } from './components/adminE
 import { MiniProgramStub, ConnReconnecting, ConnSyncing, ConnSchema } from './components/misc.jsx';
 
 import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
+import { EvidenceRoute } from './routes/EvidenceRoute.jsx';
 import { IndexPage } from './routes/IndexPage.jsx';
+import { api } from './lib/api.js';
+import { ensureSession } from './lib/auth.js';
+import { useParams } from 'react-router-dom';
 
 export default function App() {
   return (
@@ -25,6 +29,10 @@ export default function App() {
       {/* Real, WS-wired room. Falls back to mock data if VITE_USE_MOCK_DATA=true. */}
       <Route path="/room/:auctionId"
         element={<MobileFrame><LiveRoomRoute/></MobileFrame>}/>
+
+      {/* Real, REST-wired evidence card — auth-gated for the order block. */}
+      <Route path="/evidence/:auctionId"
+        element={<MobileFrame><EvidenceRoute/></MobileFrame>}/>
 
       {/* Mock variants — useful while wiring */}
       <Route path="/preview/room"          element={<MobileFrame><DemoRoom/></MobileFrame>}/>
@@ -58,9 +66,37 @@ export default function App() {
 
 function CancelOverlay() {
   const nav = useNavigate();
+  const { id } = useParams();
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+
+  const handleCancel = async () => {
+    if (busy || !id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureSession('seller-demo');
+      // Backend cancel handler: §api.go handleCancel. Returns either
+      // OK_CANCELLED (200) or ERR_ALREADY_TERMINAL / ERR_NOT_ALLOWED (4xx),
+      // semantic copy comes from api.js' ApiError surface.
+      await api.cancel(id, {});
+      nav('..');
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // currentCents passed to the modal is a static demo value for visual; the
+  // real-amount verify pattern is enforced inside <AdminCancelModal> via its
+  // existing 2-step type-the-amount UX.  TODO follow-up: fetch via
+  // api.getAuction(id) and pass real currentPriceCents through.
   return <AdminCancelModal currentCents="12880000"
+    busy={busy}
+    error={error}
     onClose={() => nav('..')}
-    onCancelAuction={() => nav('..')}/>;
+    onCancelAuction={handleCancel}/>;
 }
 
 // ─── Demo room variants (used by /preview/room*) ────────────────

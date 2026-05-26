@@ -440,7 +440,7 @@ function Pipeline({ current }) {
 // Admin · Cancel-with-confirmation modal (2-step)
 // Rendered on top of the Live Console as the "danger zone confirm"
 // ───────────────────────────────────────────────────────────────
-function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction }) {
+function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction, busy = false, error = null }) {
   const requiredText = formatCentsCNY(currentCents).replace('¥', '').replace(/,/g, '');
   const [typed, setTyped] = React.useState('');
   const match = typed.replace(/[¥,\s]/g, '') === requiredText;
@@ -541,20 +541,34 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction 
           </div>
         </div>
 
+        {/* Error surface — wire-time only (HTTP fail / ERR_ALREADY_TERMINAL / ERR_NOT_ALLOWED) */}
+        {error && (
+          <div style={{
+            margin: '0 22px',
+            padding: '8px 12px',
+            background: 'rgba(254,44,85,.12)',
+            border: '1px solid rgba(254,44,85,.4)',
+            borderRadius: 6,
+            fontSize: 11,
+            color: 'var(--state-rejected)',
+          }}>
+            取消失败 · {error}
+          </div>
+        )}
         {/* Footer */}
         <div style={{
           padding: '14px 22px', borderTop: '1px solid rgba(255,255,255,.06)',
           display: 'flex', justifyContent: 'flex-end', gap: 10,
           background: 'rgba(0,0,0,.3)',
         }}>
-          <button onClick={onClose} style={btnGhost2}>暂不取消</button>
-          <button disabled={!match} onClick={onCancelAuction} style={{
+          <button onClick={onClose} disabled={busy} style={btnGhost2}>暂不取消</button>
+          <button disabled={!match || busy} onClick={onCancelAuction} style={{
             ...btnPrimary2, padding: '10px 18px',
-            background: match ? 'var(--state-rejected)' : 'rgba(107,114,128,.3)',
-            color: match ? '#fff' : 'var(--douyin-ink-muted)',
-            cursor: match ? 'pointer' : 'not-allowed',
+            background: (match && !busy) ? 'var(--state-rejected)' : 'rgba(107,114,128,.3)',
+            color: (match && !busy) ? '#fff' : 'var(--douyin-ink-muted)',
+            cursor: (match && !busy) ? 'pointer' : 'not-allowed',
           }}>
-            确认取消 · CANCELLED
+            {busy ? '正在提交 …' : '确认取消 · CANCELLED'}
           </button>
         </div>
       </div>
