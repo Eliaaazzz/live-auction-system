@@ -508,7 +508,13 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
       })
     : EVIDENCE_EVENTS;
 
-  const effectiveBreak = isWired ? !evidence.chainVerified : chainBreak;
+  // M5 (Elia review on #51): explicit `=== false` check, NOT `!chainVerified`.
+  // The latter false-positives a CHAIN BROKEN visual when the response is
+  // missing the field entirely (old backend / fetch error / schema drift /
+  // partial degradation) — `!undefined === true`. We only want the red
+  // alarm UI when the backend has actively reported a broken chain;
+  // missing field stays neutral (no badge either way).
+  const effectiveBreak = isWired ? (evidence.chainVerified === false) : chainBreak;
   const effectiveBreakAtSeq = isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq;
   const breakIdx = effectiveBreak
     ? events.findIndex((e) => e.seq === effectiveBreakAtSeq)
