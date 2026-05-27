@@ -19,6 +19,9 @@ type Server struct {
 	st         *store.Store
 	hub        *Hub
 	httpClient *http.Client
+	// T7 §4.2: LLM auctioneer trigger hooks. Always set after Serve()
+	// initializes (nil-safe before that). See auctioneer.go.
+	auctioneer *AuctioneerHooks
 }
 
 // Serve connects datastores, starts the selected mode's background workers, and
@@ -36,10 +39,15 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		hub:        newHub(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
+	// T7 §4.2: AI auctioneer trigger hooks. Always initialized so any
+	// mode that hosts the bid path / start path / timer can call into
+	// them — the goroutines fire only on events from those modes, so
+	// idle modes have zero overhead.
+	s.auctioneer = NewAuctioneerHooks(cfg.AISidecarURL, s.hub, s.httpClient)
 
 	switch mode {
 	case "all", "gateway":
-		go s.hub.subscribe(ctx, st)
+		go s.hub.subscribe(ctx, st, s.auctioneer)
 	}
 	switch mode {
 	case "all", "pg-writer":
@@ -47,7 +55,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	}
 	switch mode {
 	case "all", "timer":
-		go runTimerWorker(ctx, st)
+		go runTimerWorker(ctx, st, s.auctioneer)
 	}
 
 	mux := http.NewServeMux()

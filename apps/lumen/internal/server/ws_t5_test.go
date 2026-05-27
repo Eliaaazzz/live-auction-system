@@ -71,8 +71,8 @@ func TestT5MultiGatewayFanout(t *testing.T) {
 	}
 
 	hubA, hubB := newHub(), newHub()
-	go hubA.subscribe(ctx, st)
-	go hubB.subscribe(ctx, st)
+	go hubA.subscribe(ctx, st, nil)
+	go hubB.subscribe(ctx, st, nil)
 	cA := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
 	cB := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
 	hubA.join(aid, cA)

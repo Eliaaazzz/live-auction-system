@@ -26,12 +26,12 @@ const reconcileInterval = 5 * time.Second
 // is projected from the Stream terminal event by the persistence worker, so the
 // Timer only maintains the active index here. A slower reconcile tick rebuilds the
 // index from the authoritative state Hashes (self-heals a lost TrackActive).
-func runTimerWorker(ctx context.Context, st *store.Store) {
+func runTimerWorker(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks) {
 	scan := time.NewTicker(timerScanInterval)
 	defer scan.Stop()
 	reconcile := time.NewTicker(reconcileInterval)
 	defer reconcile.Stop()
-	reconcileActive(ctx, st) // initial pass: recover anything live-but-untracked at startup
+	reconcileActive(ctx, st, auctioneer) // initial pass: recover anything live-but-untracked at startup
 	for {
 		select {
 		case <-ctx.Done():
@@ -39,7 +39,7 @@ func runTimerWorker(ctx context.Context, st *store.Store) {
 		case <-scan.C:
 			hammerDue(ctx, st)
 		case <-reconcile.C:
-			reconcileActive(ctx, st)
+			reconcileActive(ctx, st, auctioneer)
 		}
 	}
 }
@@ -107,7 +107,7 @@ func closeDue(ctx context.Context, st *store.Store, aid string) {
 // within one reconcile tick. TrackActive is idempotent (ZADD), so re-tracking an
 // already-present auction is a no-op; close_auction's Redis-TIME re-check guards
 // against hammering one whose endAtMs has not actually arrived.
-func reconcileActive(ctx context.Context, st *store.Store) {
+func reconcileActive(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks) {
 	aids, err := st.ScanStateAIDs(ctx)
 	if err != nil {
 		log.Printf("timer reconcile scan: %v", err)
@@ -121,6 +121,14 @@ func reconcileActive(ctx context.Context, st *store.Store) {
 		if snap.Status == model.StateLive && snap.EndAtMs > 0 {
 			if err := st.TrackActive(ctx, aid, snap.EndAtMs); err != nil {
 				log.Printf("timer reconcile track %s: %v", aid, err)
+			}
+			// T7 §4.2: piggyback on the existing 5s reconcile sweep to
+			// drive the `cold` trigger detector. The detector itself
+			// debounces (30s) + suppresses for 5s after terminals — so
+			// firing it every reconcile is safe and free (no Redis
+			// read; uses last-seen-bid from the in-memory cache).
+			if auctioneer != nil {
+				auctioneer.OnTickStall(ctx, aid, snap.WinnerID, snap.CurrentPriceCents)
 			}
 		}
 	}
