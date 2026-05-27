@@ -279,6 +279,14 @@ These are **already implemented** at `src/styles.css` (CSS custom
 properties on `:root`). Treat them as canonical. If a proposal needs a
 token that doesn't exist, name it explicitly so we extend the system.
 
+> **Generated artifacts** (per #56 ratify, 2026-05-27): A's tokens are
+> extracted to `docs/design-tokens.json` (sorted, machine-readable) and
+> `docs/design-tokens.generated.css` (re-emittable `:root` block).
+> Design references and downstream tooling should consume the generated
+> CSS, not duplicate the values. CI (`npm run tokens:check`) catches
+> drift between `styles.css` and the artifacts on every PR — regenerate
+> with `npm run tokens:extract` and commit when adding tokens.
+
 ### §6.1 Color
 
 #### A · Douyin-Native palette
