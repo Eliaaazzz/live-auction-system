@@ -1,0 +1,54 @@
+/* AUTO-GENERATED from apps/web/src/styles.css :root
+ * Source of truth: A · Lumen Auction design system
+ * Regenerate: node apps/web/scripts/extract-design-tokens.mjs
+ * CI guards drift; do not edit by hand.
+ */
+
+:root {
+  /* A · Douyin-Native palette */
+  --douyin-ink: #171a28;                 /* slightly more blue — bridges visually toward B's deep navy */
+  --douyin-ink-soft: #1f2333;
+  --douyin-ink-card: #262a3c;
+  --douyin-ink-text: #f5f5f7;
+  --douyin-ink-muted: #9aa0b4;
+  --douyin-ink-dim: #6b7186;
+  --douyin-red: #FE2C55;
+  --douyin-red-soft: #ff4d70;
+  --douyin-red-deep: #cb203f;
+  --douyin-cyan: #25F4EE;
+  --douyin-cyan-soft: #5af7f1;
+
+  /* Bridge — A↔B crossover, narrow use only (transitions, accent lifts) */
+  --bridge-plum-1: #2a1c3a;              /* deep wine — surge fade-from at hammer */
+  --bridge-plum-2: #1f1d3a;              /* night-violet — between A ink and B deep */
+  --bridge-twilight: #1a1d3a;
+  --bridge-rose-gold: #b88a5a;           /* warm bronze — accent lift between red and gold */
+
+  /* B · AuctionHouse Premium palette */
+  --solemn-deep: #0A1F44;
+  --solemn-deep-soft: #142a55;
+  --solemn-deep-card: #16306b;
+  --solemn-gold: #C9A961;
+  --solemn-gold-soft: #dcbf7f;
+  --solemn-gold-deep: #a08543;
+  --solemn-cream: #F5EDDD;
+  --solemn-cream-dim: rgba(245,237,221,0.62);
+  --solemn-ink: #101010;
+
+  /* Cross-palette anchors — used in BOTH A and B for continuity */
+  --x-gold-thin: rgba(201,169,97,.42);   /* 1px gold underlines, separators */
+  --x-rank-1-glow: rgba(220,191,127,.6); /* TOP-1 medal halo in either palette */
+
+  /* State semantic — palette-agnostic */
+  --state-live: #FE2C55;
+  --state-extended: #FFB020;
+  --state-sold: #C9A961;
+  --state-no-bid: #6b7280;
+  --state-cancelled: #9aa0b4;
+  --state-rejected: #ff4d70;
+
+  /* Type stacks */
+  --font-sans: "PingFang SC", "HarmonyOS Sans SC", "Noto Sans SC", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Playfair Display", Georgia, serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SFMono-Regular", monospace;
+}

@@ -12,6 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "tokens:extract": "node scripts/extract-design-tokens.mjs",
+    "tokens:check": "node scripts/extract-design-tokens.mjs --check",
     "smoke:wire": "node scripts/smoke-wire.mjs",
     "smoke:catchup": "node scripts/smoke-catchup.mjs",
     "smoke:schema": "node scripts/smoke-schema.mjs",
