@@ -276,6 +276,20 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// T7 §4.2: fire the `open` auctioneer trigger. Fire-and-forget — the
+	// goroutine inside OnAuctionStart returns immediately, so we don't
+	// block the seller's startLive response on the LLM call. Bid path
+	// is never affected (V9 P3 invariant).
+	if s.auctioneer != nil {
+		startCents := ""
+		if rules, err := s.st.GetRules(r.Context(), aid); err == nil {
+			startCents = strconv.FormatInt(int64(rules.StartPriceCents), 10)
+		}
+		s.auctioneer.OnAuctionStart(r.Context(), aid, OpenContext{
+			StartPriceCents: startCents,
+			EndAtMs:         endAtMs,
+		})
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
 }
 

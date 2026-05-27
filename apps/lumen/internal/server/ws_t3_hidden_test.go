@@ -62,7 +62,7 @@ func TestT3TimerReconcileRetracksLostLiveAuction(t *testing.T) {
 		t.Fatalf("freeze sched: %s %v", code, err)
 	}
 
-	reconcileActive(ctx, st)
+	reconcileActive(ctx, st, nil)
 
 	if !inActive(t, st, live) {
 		t.Fatal("reconcile must re-track a LIVE auction missing from the active index (CRITICAL self-heal)")

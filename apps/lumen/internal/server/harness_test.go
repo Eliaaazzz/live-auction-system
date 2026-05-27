@@ -32,10 +32,14 @@ func startTestServer(t *testing.T) (string, *Server) {
 		hub:        newHub(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
 	}
+	// T7 §4.2: nil auctioneer in test harness — none of the harness
+	// tests assert AI commentary; the nil-check in subscribe/timer
+	// keeps the path inert. Real Server.Serve wires a fresh one.
+	srv.auctioneer = nil
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.hub.subscribe(ctx, st)
+	go srv.hub.subscribe(ctx, st, srv.auctioneer)
 	go runPersistenceWorker(ctx, st)
-	go runTimerWorker(ctx, st)
+	go runTimerWorker(ctx, st, srv.auctioneer)
 
 	mux := http.NewServeMux()
 	srv.routes(mux)
