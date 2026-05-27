@@ -165,8 +165,8 @@ type loadConfig struct {
 	Duration           time.Duration
 	BidInterval        time.Duration
 	AckP95Budget       time.Duration
-	BroadcastP95Budget  time.Duration
-	CatchupP95Budget    time.Duration
+	BroadcastP95Budget time.Duration
+	CatchupP95Budget   time.Duration
 	HammerP95Budget    time.Duration
 	ScriptP99Budget    time.Duration
 	AuctionDuration    time.Duration

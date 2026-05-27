@@ -346,7 +346,7 @@ func TestT8EventServerTimeMsHandlesMalformedPayload(t *testing.T) {
 // caught here, not by chasing a wrong perf-report.md number.
 func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	cfg := loadConfig{
-		CatchupP95Budget: 1000 * time.Millisecond,
+		CatchupP95Budget:   1000 * time.Millisecond,
 		AckP95Budget:       80 * time.Millisecond,
 		BroadcastP95Budget: 150 * time.Millisecond,
 		HammerP95Budget:    500 * time.Millisecond,
