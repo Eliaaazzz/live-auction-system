@@ -81,7 +81,23 @@ const DEFAULT_STATE = {
   // flips back to 'ok' on any subsequent success. AIBubble + AdminConsole
   // + AdminVLMFacts read from this. Bid path is NEVER gated on this
   // value (per V9 P3: AI is non-authoritative).
+  //
+  // T7-2 cross-PR (#74 H2 per Elia review): the AUCTIONEER_TEXT reducer
+  // ALSO flips this to 'ok' since the event itself is proof the sidecar
+  // is alive. Solves the "buyer view never sees AI health" stale-badge
+  // case from #71 H1.
   aiSidecarHealth: 'ok',
+
+  // T7-2: LLM auctioneer commentary from `AUCTIONEER_TEXT` events
+  // (proto/ai-events.md §POST /auctioneer). Replace the hardcoded
+  // "正在等待出价" placeholder in LiveRoomRoute. Resets on init() — each
+  // room starts empty until backend's first trigger hook fires.
+  //
+  // V9 P3: AUCTIONEER_TEXT is non-authoritative; the reducer does NOT
+  // touch status/currentCents/seqguard from this event type.
+  auctioneerText:     '',
+  auctioneerTrigger:  null,        // 'open' | 'jump' | 'cold' | 'hammer' | null
+  auctioneerFallback: false,       // true when backend swapped in canned text
 };
 
 export const useAuctionStore = create((set, get) => ({
@@ -239,6 +255,25 @@ export const useAuctionStore = create((set, get) => ({
 
         case EventType.AUCTION_NO_BID:    next.status = AuctionStatus.NO_BID;    break;
         case EventType.AUCTION_CANCELLED: next.status = AuctionStatus.CANCELLED; break;
+
+        case EventType.AUCTIONEER_TEXT: {
+          // T7-2: observability-only. NEVER touch status / currentCents /
+          // any state-machine field — V9 P3 says AI is non-authoritative.
+          // seq is intentionally null on this event type (spec
+          // proto/ai-events.md); the seqguard at the top of applyEvent
+          // already exempts null-seq from dedup.
+          if (typeof data?.text === 'string') next.auctioneerText = data.text;
+          if (typeof data?.trigger === 'string') next.auctioneerTrigger = data.trigger;
+          next.auctioneerFallback = data?.fallback === true;
+          // Cross-PR #71↔#74 (Elia review on both): the event itself is
+          // proof the sidecar is alive. Flip aiSidecarHealth back to 'ok'
+          // so the buyer view (which never calls draftFacts) doesn't get
+          // stuck at a stale 'offline' badge. The flag only flips offline
+          // when api.js dispatches lumen:ai-sidecar-offline, so the
+          // signal direction is preserved.
+          next.aiSidecarHealth = 'ok';
+          break;
+        }
 
         default: /* PONG etc. — handled in WS layer */
       }
