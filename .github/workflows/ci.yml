@@ -118,6 +118,54 @@ jobs:
         # more (recovery). Any failure = AI is leaking into the bid
         # path, which violates V9 P3.
         run: make e2e-ai-offline
+      - name: load-smoke (T8 instrumentation regression net + post-load Verifier)
+        # Drives the lumen load harness at CI-cheap scale (25/5/10s) against
+        # the running stack. Exits non-zero on any §4.2 budget breach + seqGap
+        # > 0; then chains `make verify` on the post-load auction so V9 §9
+        # Verifier-consistent gate runs on a real-traffic auction (not just
+        # the dummy e2e seed). MAXLEN trim alignment is documented in
+        # docs/perf-report.md — at this scale the stream is well under it.
+        run: make load-smoke
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: install web deps for smoke
+        working-directory: apps/web
+        # `npm install` (not ci) for the same reason as the web job (vitest 4 /
+        # vite 5 esbuild minor split: lockfile captures the top-level only).
+        run: npm install --no-audit --no-fund
+      - name: frontend smoke scripts (TC-T6 wire/catchup/schema/401/antisnipe/snapshot)
+        # T6 smoke scripts that drive the running backend through the same
+        # contract surface the browser uses. Wired here because the stack is
+        # up; per the user's "no skipped CI tests" rule these now run on every
+        # push. The slow one (snapshot-fallback ~30s) is parallelised with
+        # `&` + `wait` so wall time ≈ max(smoke) rather than sum.
+        working-directory: apps/web
+        run: |
+          set -uo pipefail
+          # Iterate in a fixed order so log output is deterministic; each smoke
+          # writes to its own log file and the aggregator reports per-script.
+          smokes=(wire catchup schema 401 antisnipe snapshot)
+          pids=()
+          for s in "${smokes[@]}"; do
+            npm run -s "smoke:$s" > "/tmp/smoke-$s.log" 2>&1 &
+            pids+=("$!")
+          done
+          fail=0
+          for i in "${!smokes[@]}"; do
+            s="${smokes[$i]}"
+            pid="${pids[$i]}"
+            if ! wait "$pid"; then
+              echo "=== smoke:$s FAIL ==="
+              cat "/tmp/smoke-$s.log"
+              fail=1
+            else
+              echo "smoke:$s PASS"
+            fi
+          done
+          exit $fail
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

@@ -428,6 +428,20 @@ type StreamEvent struct {
 	Payload string
 }
 
+// StreamLen returns XLEN of the auction's event Stream. T8 observability: the
+// gateway sweeps this into a max gauge so the load report can show stream
+// backlog growth (Persistence-lag proxy + AOF backlog signal). Stream missing
+// is not an error: returns 0.
+func (s *Store) StreamLen(ctx context.Context, aid string) (int64, error) {
+	n, err := s.rdb.XLen(ctx, streamKey(aid)).Result()
+	if err != nil {
+		// XLEN on a missing key returns 0/nil; only surface non-nil errors so
+		// the metrics sweep doesn't spam ENOENT-style noise during shutdown.
+		return 0, err
+	}
+	return n, nil
+}
+
 // ReadEventsAfter returns Stream events after lastID (exclusive). lastID==""
 // reads from the beginning.
 func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]StreamEvent, string, error) {

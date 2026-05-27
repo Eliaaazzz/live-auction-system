@@ -90,6 +90,33 @@ services:
     depends_on:
       lumen: {condition: service_healthy}
 
+  load:
+    # T8 P0 gate harness (V9 §10 / §4.2). Defaults exercise the gate; CI/dev
+    # boxes can lower scale via env (LOAD_OBSERVERS etc.) so the same code is
+    # the regression net for smaller runs too. Asserts ack/broadcast/script
+    # p95 against §4.2 budgets and seqGap==0 — exits non-zero on breach so the
+    # Make target can chain a `verify` step only when load itself passed.
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["load"]
+    environment:
+      TARGET: http://lumen:8080
+      # P0 gate defaults; override per box in `make load LOAD_OBSERVERS=...`.
+      LOAD_OBSERVERS: "500"
+      LOAD_BIDDERS: "50"
+      LOAD_DURATION_SEC: "60"
+      LOAD_BID_INTERVAL_MS: "100"
+      LOAD_ACK_P95_MS: "80"
+      LOAD_BROADCAST_P95_MS: "150"
+      LOAD_HAMMER_P95_MS: "500"
+      LOAD_SCRIPT_P99_MS: "5"
+      LOAD_AUCTION_DUR_SEC: "3600"
+      LOAD_OBSERVER_STAGGER_MS: "10"
+    depends_on:
+      lumen: {condition: service_healthy}
+
   verifier:
     profiles: ["tools"]
     build:

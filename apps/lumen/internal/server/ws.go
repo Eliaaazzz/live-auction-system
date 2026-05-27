@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
@@ -109,7 +110,12 @@ func (h *Hub) roomAIDs() []string {
 // and fans out those events. A forged/stale Pub/Sub message not backed by the
 // Stream therefore can never reach clients. Runs for the lifetime of ctx in a
 // single goroutine (lastSeq needs no lock).
-func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks) {
+// T8 instrumentation: each fanout records broadcast latency (now - payload
+// serverTimeMs, the Lua-authoritative Redis TIME at adjudication) and detects
+// seq gaps against the prior lastSeq. Stream length is sampled on the backstop
+// ticker so the gauge tracks the peak even under bursty traffic. auctioneer/m may
+// be nil in unit tests that wire paths without those dependencies.
+func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks, m *metrics.Registry) {
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
 	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
@@ -122,12 +128,33 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			return
 		}
 		for _, e := range events {
+			// T8 §4.1 seq-gap detector: under healthy operation lastSeq advances by
+			// exactly 1 per event (Lua-monotonic, no parallel writer). A jump > 1
+			// after a successful read is a correctness break — record once and let
+			// the load report surface it. We accumulate the missing-seq count so the
+			// magnitude (not just "did it happen") is visible. lastSeq==0 with a
+			// non-1 start means we joined a pre-existing stream → not a gap.
+			if m != nil && lastSeq[aid] > 0 && e.Seq > lastSeq[aid]+1 {
+				m.SeqGap.Add(e.Seq - lastSeq[aid] - 1)
+			}
 			env := model.Envelope{
 				Type: e.Type, AuctionID: aid, Seq: e.Seq,
 				ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
 			}
 			b, _ := json.Marshal(env)
 			h.broadcast(aid, b)
+			if m != nil {
+				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
+				// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
+				// field rather than parse the full payload — the event payloads share
+				// this field across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
+				// AUCTION_NO_BID / AUCTION_CANCELLED. Failing to unmarshal (e.g. an
+				// older event that predates the field) silently skips the observation,
+				// which is the correct behaviour: no fake zero in p50.
+				if ts := eventServerTimeMs(e.Payload); ts > 0 {
+					m.BroadcastLatency.Observe(time.Since(time.UnixMilli(ts)))
+				}
+			}
 			lastSeq[aid] = e.Seq
 			// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
 			// for legacy paths (test harness, alt-mode startup) that
@@ -135,6 +162,15 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			// (each method dispatches via `go a.fire(...)` internally).
 			if auctioneer != nil {
 				dispatchAuctioneer(ctx, auctioneer, aid, st, e)
+			}
+		}
+		// Sample stream length opportunistically after a successful fanout. XLEN is
+		// O(1) on the Redis side; sampling here rather than in a dedicated goroutine
+		// keeps the sweep cadence (and therefore the gauge freshness) tied to the
+		// rooms that are actually active.
+		if m != nil {
+			if n, err := st.StreamLen(ctx, aid); err == nil {
+				m.ObserveStreamLen(n)
 			}
 		}
 	}
@@ -160,6 +196,20 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 	}
 }
 
+// eventServerTimeMs extracts the optional "serverTimeMs" field from a Lua-authored
+// payload (cjson output). All hot-path payloads include it (model.BidAcceptedData
+// etc.); returns 0 on any decode/missing-field condition so the caller can skip
+// the observation without poisoning percentiles.
+func eventServerTimeMs(payload string) int64 {
+	var probe struct {
+		ServerTimeMs int64 `json:"serverTimeMs"`
+	}
+	if err := json.Unmarshal([]byte(payload), &probe); err != nil {
+		return 0
+	}
+	return probe.ServerTimeMs
+}
+
 // Conn is one WS client connection with a serialized write pump and a two-lane
 // send (T5 backpressure channel split):
 //   - `send`  — CRITICAL frames (bid acks, AUCTION_* terminals, ROOM_SNAPSHOT,
@@ -180,6 +230,9 @@ type Conn struct {
 	userID      string
 	displayName string // human nickname, resolved at connect (falls back to userID)
 	aid         string
+	// metrics is the process-wide T8 registry. Nil-safe (every Observe call
+	// checks for nil) so unit tests can construct a Conn without wiring it.
+	metrics *metrics.Registry
 }
 
 // close tears the connection down exactly once: signal writePump via done and
@@ -204,6 +257,11 @@ func (c *Conn) close() {
 // them accumulate in the buffer: hub.leave runs in the read goroutine's defer,
 // so there's a window after close() where the conn still sits in hub.rooms and
 // would otherwise receive (un-drained) broadcast frames.
+//
+// T8 instrumentation: the BackpressureDrop counter is incremented on each
+// force-close so the load report ties slow-client trims to ack-p95 spikes
+// (V9 §4.3: "force-close of the slow client counts as a high sample, NOT
+// 剔除"). m may be nil if the conn was created without a registry (unit tests).
 func (c *Conn) trySend(b []byte) {
 	select {
 	case <-c.done:
@@ -214,6 +272,9 @@ func (c *Conn) trySend(b []byte) {
 	case c.send <- b:
 	default:
 		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s)", c.aid, c.userID)
+		if c.metrics != nil {
+			c.metrics.BackpressureDrop.Inc()
+		}
 		c.close()
 	}
 }
@@ -320,11 +381,21 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if nick, err := s.st.UserNickname(r.Context(), userID); err == nil && nick != "" {
 		display = nick
 	}
-	c := &Conn{ws: ws, send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16), done: make(chan struct{}), userID: userID, displayName: display}
+	c := &Conn{
+		ws: ws, send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16),
+		done: make(chan struct{}), userID: userID, displayName: display,
+		metrics: s.metrics,
+	}
+	if s.metrics != nil {
+		s.metrics.ActiveConns.Add(1)
+	}
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
 		c.close()
+		if s.metrics != nil {
+			s.metrics.ActiveConns.Add(-1)
+		}
 	}()
 
 	for {
@@ -360,6 +431,12 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 		c.aid = d.AuctionID
 		s.hub.join(d.AuctionID, c)
+		// T8 catchup latency (V9 §4.2: 200 events < 1s p95). Only Observe when
+		// catchup actually runs (lastSeq > 0 and we read at least one event) so the
+		// histogram isn't polluted by trivial joins. Capture t0 before the snapshot
+		// read so the snapshot RTT is part of the budget too (the client can't apply
+		// catchup events without it).
+		t0 := time.Now()
 		snap, err := s.st.Snapshot(ctx, d.AuctionID)
 		if err != nil {
 			log.Printf("snapshot %s: %v", d.AuctionID, err)
@@ -370,6 +447,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// a gap > catchupMaxGap falls back to the snapshot only (proto: gap > 200 →
 		// snapshot). lastSeq 0 with a small backlog replays the whole short history.
 		// Catchup reads the authoritative Stream, not Pub/Sub.
+		catchupRan := false
 		if snap.Seq > d.LastSeq && snap.Seq-d.LastSeq <= catchupMaxGap {
 			if events, _, err := s.st.ReadEventsAfter(ctx, d.AuctionID, streamIDForSeq(d.LastSeq)); err == nil {
 				for _, e := range eventsUpToSnapshot(events, snap.Seq) {
@@ -377,11 +455,15 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 						Type: e.Type, AuctionID: d.AuctionID, Seq: e.Seq,
 						ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
 					})
+					catchupRan = true
 				}
 			}
 		}
 		if out, err := model.NewEnvelope(model.TypeRoomSnapshot, d.AuctionID, snap.Seq, snap); err == nil {
 			c.push(out)
+		}
+		if catchupRan && c.metrics != nil && d.LastSeq > 0 {
+			c.metrics.CatchupLatency.Observe(time.Since(t0))
 		}
 
 	case model.TypeBidPlace:
@@ -396,16 +478,33 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		amount, ok := canonicalAmount(d.AmountCents)
 		if c.aid == "" || d.ClientBidID == "" || len(d.ClientBidID) > maxClientBidIDLen || !ok {
 			c.push(rejected(c.aid, model.CodeErrBadInput))
+			if c.metrics != nil {
+				c.metrics.BidsRejected.Inc()
+			}
 			return
 		}
+		// T8 ack latency: includes envelope decode (caller), canonicalAmount, Lua
+		// dispatch, payload unmarshal, and the trySend (non-blocking enqueue). It is
+		// the full server-side processing time for one BID_PLACE — the user-visible
+		// "click → toast" budget. Script_time is the same call's narrow EVALSHA
+		// portion (Lua exec + Redis RTT), measured separately so a hot-path Lua
+		// regression separates from a Go-side regression.
 		// TODO(T3, [全员 approve]): per-connection inbound bid rate limit + wire code
 		// ERR_RATE_LIMITED (§8). Deferred: the new code is an all-member-approve
 		// contract change and dedupe already makes retries cheap. At T2 scale (single
 		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.
+		ackStart := time.Now()
+		scriptStart := time.Now()
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		if c.metrics != nil {
+			c.metrics.ScriptTime.Observe(time.Since(scriptStart))
+		}
 		if err != nil {
 			log.Printf("place_bid %s: %v", c.aid, err)
 			c.push(rejected(c.aid, bidErrCode(err)))
+			if c.metrics != nil {
+				c.metrics.BidsRejected.Inc()
+			}
 			return
 		}
 		switch code {
@@ -417,8 +516,21 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 			// the broadcast copy and dedupes by seq. OK_EXTENDED/OK_SOLD ack the bid
 			// here; their AUCTION_EXTENDED / AUCTION_SOLD reaches the room via Pub/Sub.
 			c.push(bidAccepted(c.aid, payload))
+			if c.metrics != nil {
+				c.metrics.AckLatency.Observe(time.Since(ackStart))
+				// DUPLICATE is not a fresh accept (proto/error-codes.md: it replays the
+				// original ack and is intentionally not flagged as an error), so it
+				// doesn't bump BidsAccepted. The retry already counted on first land.
+				if code != model.CodeDuplicate {
+					c.metrics.BidsAccepted.Inc()
+				}
+			}
 		default:
 			c.push(rejected(c.aid, code))
+			if c.metrics != nil {
+				c.metrics.AckLatency.Observe(time.Since(ackStart))
+				c.metrics.BidsRejected.Inc()
+			}
 		}
 	}
 }
