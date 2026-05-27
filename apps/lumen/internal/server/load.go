@@ -46,6 +46,7 @@ import (
 //	LOAD_ACK_P95_MS        =  80
 //	LOAD_BROADCAST_P95_MS  = 150
 //	LOAD_HAMMER_P95_MS     = 500    (only asserted if the auction hammered inside the window)
+//	LOAD_CATCHUP_P95_MS    = 1000   (only asserted if catchup stream replay was observed)
 //	LOAD_SCRIPT_P99_MS     =   5    (hot-path Lua exec budget, V9 §4.2 footnote)
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
 //
@@ -160,6 +161,7 @@ type loadConfig struct {
 	BidInterval       time.Duration
 	AckP95Budget      time.Duration
 	BroadcastP95Budg  time.Duration
+	CatchupP95Budget  time.Duration
 	HammerP95Budget   time.Duration
 	ScriptP99Budget   time.Duration
 	AuctionDuration   time.Duration
@@ -174,6 +176,7 @@ func loadConfigFromEnv() loadConfig {
 		BidInterval:       time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
 		AckP95Budget:      time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
 		BroadcastP95Budg:  time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
+		CatchupP95Budget:  time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
 		HammerP95Budget:   time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
 		ScriptP99Budget:   time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:   time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
@@ -408,6 +411,7 @@ func (r loadReport) print() {
 		r.Config.HammerP95Budget)
 	fmt.Printf("catchup   p50=%.1fms p95=%.1fms p99=%.1fms (count=%d)\n",
 		r.Post.Catchup.P50, r.Post.Catchup.P95, r.Post.Catchup.P99, r.Post.Catchup.Count)
+	fmt.Printf("catchup budget: p95<%v when count>0\n", r.Config.CatchupP95Budget)
 	fmt.Printf("script    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v)\n",
 		r.Post.ScriptTime.P50, r.Post.ScriptTime.P95, r.Post.ScriptTime.P99, r.Post.ScriptTime.Count,
 		r.Config.ScriptP99Budget)
@@ -438,6 +442,9 @@ func (r loadReport) breaches() []string {
 	}
 	if r.Post.Hammer.Count > 0 && r.Post.Hammer.P95 > ms(r.Config.HammerP95Budget) {
 		out = append(out, fmt.Sprintf("hammer p95 %.1fms > %v", r.Post.Hammer.P95, r.Config.HammerP95Budget))
+	}
+	if r.Post.Catchup.Count > 0 && r.Post.Catchup.P95 > ms(r.Config.CatchupP95Budget) {
+		out = append(out, fmt.Sprintf("catchup p95 %.1fms > %v", r.Post.Catchup.P95, r.Config.CatchupP95Budget))
 	}
 	if r.Post.ScriptTime.P99 > ms(r.Config.ScriptP99Budget) {
 		out = append(out, fmt.Sprintf("script p99 %.1fms > %v (V9 §4.2 footnote: ack-p95<80 pre-gate)", r.Post.ScriptTime.P99, r.Config.ScriptP99Budget))
