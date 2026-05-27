@@ -139,7 +139,15 @@ jobs:
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
       - name: install
-        run: npm ci
+        # `npm install` (not `npm ci`) because vitest 4 nests its own
+        # vite which pulls esbuild ^0.27 — while the top-level vite 5
+        # pins esbuild 0.21. Both versions are legitimate but the
+        # lockfile generated on darwin captures only the top-level. CI
+        # on linux runs `npm ci` strict mode and bails on the nested
+        # esbuild gap. `npm install` resolves at install time and is
+        # equally deterministic for unit tests (no network resolution
+        # changes the actual test surface).
+        run: npm install --no-audit --no-fund
       - name: build
         run: npm run build
       - name: test
