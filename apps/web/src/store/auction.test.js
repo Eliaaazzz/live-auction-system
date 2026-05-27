@@ -271,6 +271,120 @@ describe('applyEvent · terminal states', () => {
   });
 });
 
+describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /auctioneer)', () => {
+  beforeEach(RESET);
+
+  it('applies trigger + text + fallback flag from the data payload', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.AUCTIONEER_TEXT,
+      serverTimeMs: Date.now(),
+      // spec: seq is null for non-authoritative observability events
+      seq: null,
+      data: { trigger: 'open', text: '蓝面 5711 起拍价 ¥120,000', fallback: false },
+    });
+    const s = useAuctionStore.getState();
+    expect(s.auctioneerTrigger).toBe('open');
+    expect(s.auctioneerText).toBe('蓝面 5711 起拍价 ¥120,000');
+    expect(s.auctioneerFallback).toBe(false);
+  });
+
+  it('TC-T7-201: each of 4 triggers updates the store cleanly', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    for (const trig of ['open', 'jump', 'cold', 'hammer']) {
+      apply({
+        schemaVersion: 1,
+        type: EventType.AUCTIONEER_TEXT,
+        serverTimeMs: Date.now(),
+        seq: null,
+        data: { trigger: trig, text: `${trig}-text`, fallback: false },
+      });
+      expect(useAuctionStore.getState().auctioneerTrigger).toBe(trig);
+      expect(useAuctionStore.getState().auctioneerText).toBe(`${trig}-text`);
+    }
+  });
+
+  it('NEVER touches status / currentCents / lastSeq (V9 P3 non-authoritative)', () => {
+    // Seed with a real bid first so we have non-default state.
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1, type: EventType.BID_ACCEPTED, seq: 7, serverTimeMs: Date.now(),
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'u_x', displayName: 'X', endAtMs: Date.now() + 28_000 },
+    });
+    const before = useAuctionStore.getState();
+
+    // Apply an AUCTIONEER_TEXT; state machine fields must be unchanged.
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'hammer', text: 'this should not change status', fallback: false },
+    });
+    const after = useAuctionStore.getState();
+
+    expect(after.status).toBe(before.status);
+    expect(after.currentCents).toBe(before.currentCents);
+    expect(after.winnerId).toBe(before.winnerId);
+    expect(after.lastSeq).toBe(before.lastSeq); // null-seq must not advance watermark
+    expect(after.totalBidsCount).toBe(before.totalBidsCount);
+
+    // But the auctioneer fields DID update.
+    expect(after.auctioneerText).toBe('this should not change status');
+    expect(after.auctioneerTrigger).toBe('hammer');
+  });
+
+  it('fallback=true is preserved (UI can dim the bubble)', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'jump', text: '竞争升温', fallback: true },
+    });
+    expect(useAuctionStore.getState().auctioneerFallback).toBe(true);
+  });
+
+  it('init() resets the auctioneer fields', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'open', text: 'some text', fallback: false },
+    });
+    expect(useAuctionStore.getState().auctioneerText).toBe('some text');
+
+    useAuctionStore.getState().init({ auctionId: 'auc_fresh' });
+    const s = useAuctionStore.getState();
+    expect(s.auctioneerText).toBe('');
+    expect(s.auctioneerTrigger).toBeNull();
+    expect(s.auctioneerFallback).toBe(false);
+  });
+
+  it('cross-PR #71↔#74: AUCTIONEER_TEXT flips aiSidecarHealth back to "ok"', () => {
+    // Elia review on #74 H2: the event itself is proof the sidecar is
+    // alive — solves #71 H1 (buyer view never calls draftFacts, badge
+    // stuck stale). Verify the recovery path explicitly.
+    useAuctionStore.getState().setAiOffline();
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('offline');
+
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.AUCTIONEER_TEXT,
+      serverTimeMs: Date.now(),
+      seq: null,
+      data: { trigger: 'open', text: '开拍', fallback: false },
+    });
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('ok');
+  });
+
+  it('TC-T7-205 regression: BID_REJECTED does NOT touch auctioneer fields', () => {
+    // Trigger detection runs on backend; the frontend reducer only
+    // applies AUCTIONEER_TEXT events. This is a regression pin to make
+    // sure we never accidentally synthesize an auctioneer event from a
+    // reject envelope on the client.
+    useAuctionStore.getState().applyReject({
+      type: EventType.BID_REJECTED,
+      requestId: 'req-1',
+      data: { code: 'ERR_TOO_LOW' },
+    });
+    const s = useAuctionStore.getState();
+    expect(s.auctioneerText).toBe('');
+    expect(s.auctioneerTrigger).toBeNull();
+  });
+});
+
 describe('applyEvent · leaderboard mergeLeader', () => {
   beforeEach(RESET);
 
