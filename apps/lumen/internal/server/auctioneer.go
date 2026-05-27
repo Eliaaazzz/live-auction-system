@@ -2,20 +2,17 @@ package server
 
 // auctioneer.go — backend trigger detection for the T7 §4.2 LLM auctioneer.
 //
-// Per proto/ai-events.md §POST /auctioneer (+ #70 §4.2 + #73 spec, which
-// renames the names but not the logic — we use the current-main names
-// AUCTIONEER_TEXT / /auctioneer / `jump` and rebase to AI_COMMENTARY /
-// /llm/auctioneer / `surge` once #73 ratifies).
+// Per proto/ai-events.md §POST /llm/auctioneer (+ #70 §4.2 + #73 spec).
 //
 // Architecture:
-//   - 4 trigger detectors live on AuctioneerHooks (open/jump/cold/hammer)
+//   - 4 trigger detectors live on AuctioneerHooks (open/surge/cold/hammer)
 //   - Each detector decides whether to fire based on per-auction state +
 //     debounce caps documented in proto/ai-events.md
-//   - Firing spawns a goroutine that POSTs to ai-sidecar /auctioneer,
+//   - Firing spawns a goroutine that POSTs to ai-sidecar /llm/auctioneer,
 //     validates the response with the same guardrail rules as the sidecar
 //     (defense-in-depth — sidecar's own check is the primary; backend
 //     re-validation catches a malformed/tampered sidecar), and broadcasts
-//     an AUCTIONEER_TEXT envelope to the room via Hub.broadcast.
+//     an AI_COMMENTARY envelope to the room via Hub.broadcast.
 //   - V9 P3: the bid acceptance path NEVER awaits any of this. Detectors
 //     are called from existing flows (handleStart, fanout, Timer Worker)
 //     but always dispatch via `go a.fire(...)` so the caller returns
@@ -54,7 +51,7 @@ type AuctioneerHooks struct {
 
 	mu sync.Mutex
 	// per-auction debounce state
-	lastSurgeAtMs map[string]int64 // when we last fired `jump` (debounce 5s)
+	lastSurgeAtMs map[string]int64 // when we last fired `surge` (debounce 5s)
 	lastColdAtMs  map[string]int64 // when we last fired `cold` (debounce 30s)
 	// per-auction surge detection state (last accepted bid)
 	lastBidAtMs   map[string]int64
@@ -106,8 +103,8 @@ func (a *AuctioneerHooks) OnAuctionStart(ctx context.Context, aid string, payloa
 	go a.fire(ctx, aid, "open", ctxData)
 }
 
-// OnBidAccepted feeds the BID_ACCEPTED stream into the `jump` (a.k.a.
-// `surge` post-#73) detector. Called from the fanout goroutine (ws.go) on
+// OnBidAccepted feeds the BID_ACCEPTED stream into the `surge` detector.
+// Called from the fanout goroutine (ws.go) on
 // every BID_ACCEPTED envelope it reads from the Stream.
 //
 // Spec: fires when delta ≥ 3·stepCents AND inter-arrival < 2s.
@@ -123,7 +120,7 @@ func (a *AuctioneerHooks) OnBidAccepted(ctx context.Context, aid string, b model
 	a.lastBidAmount[aid] = b.AmountCents
 	a.mu.Unlock()
 
-	// Need a prior bid to compute delta — first bid is never a `jump`.
+	// Need a prior bid to compute delta — first bid is never a `surge`.
 	if prevAmount == "" || prevAtMs == 0 {
 		return
 	}
@@ -150,7 +147,7 @@ func (a *AuctioneerHooks) OnBidAccepted(ctx context.Context, aid string, b model
 		"winnerDisplayName":   b.DisplayName,
 		"secondsSinceLastBid": (nowMs - prevAtMs) / 1000,
 	}
-	go a.fire(ctx, aid, "jump", ctxData)
+	go a.fire(ctx, aid, "surge", ctxData)
 }
 
 // OnTickStall is called by the Timer Worker every reconcile tick (5s) for
@@ -254,7 +251,7 @@ func (a *AuctioneerHooks) fire(parentCtx context.Context, aid, trigger string, c
 		"ctx":       ctxData,
 	})
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.sidecarURL+"/auctioneer", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.sidecarURL+"/llm/auctioneer", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[auctioneer] build request trigger=%s aid=%s: %v · falling back", trigger, aid, err)
 		a.broadcast(aid, trigger, cannedFallback(trigger), true)
@@ -277,10 +274,10 @@ func (a *AuctioneerHooks) fire(parentCtx context.Context, aid, trigger string, c
 	}
 
 	var out struct {
-		Trigger   string `json:"trigger"`
-		Text      string `json:"text"`
-		Fallback  bool   `json:"fallback"`
-		ModelName string `json:"modelName"`
+		Trigger    string `json:"trigger"`
+		Commentary string `json:"commentary"`
+		Fallback   bool   `json:"fallback"`
+		ModelName  string `json:"modelName"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		log.Printf("[auctioneer] sidecar decode trigger=%s aid=%s: %v · falling back", trigger, aid, err)
@@ -292,22 +289,22 @@ func (a *AuctioneerHooks) fire(parentCtx context.Context, aid, trigger string, c
 	// sidecar applies its own check, but a corrupt sidecar or a real-LLM
 	// regression could leak unsanitized output. Backend guardrail is the
 	// final line before broadcasting to clients.
-	if reason, bad := failsAuctioneerGuardrail(out.Text); bad {
-		log.Printf("[auctioneer] guardrail FAIL trigger=%s aid=%s reason=%s text=%q · forcing fallback", trigger, aid, reason, out.Text)
+	if reason, bad := failsAuctioneerGuardrail(out.Commentary); bad {
+		log.Printf("[auctioneer] guardrail FAIL trigger=%s aid=%s reason=%s text=%q · forcing fallback", trigger, aid, reason, out.Commentary)
 		a.broadcast(aid, trigger, cannedFallback(trigger), true)
 		return
 	}
 
-	a.broadcast(aid, trigger, out.Text, out.Fallback)
+	a.broadcast(aid, trigger, out.Commentary, out.Fallback)
 }
 
-// broadcast emits the AUCTIONEER_TEXT WS envelope to the room.
+// broadcast emits the AI_COMMENTARY WS envelope to the room.
 //
 // `seq: 0` in the model.Envelope — this is intentional. The spec says
 // `seq: null` for non-authoritative events; Go's int64 zero serializes
 // to `0`, not `null`. Frontend's seqguard at the top of applyEvent
 // exempts both `null` and `<=0` from dedup, so either form is safe.
-// Future cleanup: if AUCTIONEER_TEXT events ever come from the Stream
+// Future cleanup: if AI_COMMENTARY events ever come from the Stream
 // (they don't — backend-only ephemeral), switch to a separate envelope
 // shape without a seq field.
 func (a *AuctioneerHooks) broadcast(aid, trigger, text string, fallback bool) {
@@ -317,12 +314,12 @@ func (a *AuctioneerHooks) broadcast(aid, trigger, text string, fallback bool) {
 		return
 	}
 	dataJSON, _ := json.Marshal(map[string]any{
-		"trigger":  trigger,
-		"text":     text,
-		"fallback": fallback,
+		"trigger":    trigger,
+		"commentary": text,
+		"fallback":   fallback,
 	})
 	env := model.Envelope{
-		Type:         model.TypeAuctioneerText,
+		Type:         model.TypeAICommentary,
 		AuctionID:    aid,
 		Seq:          0, // serializes to 0; see comment above
 		ServerTimeMs: time.Now().UnixMilli(),
@@ -388,7 +385,7 @@ func cannedFallback(trigger string) string {
 	switch trigger {
 	case "open":
 		return "拍卖正式开始 · 各位准备出价。"
-	case "jump":
+	case "surge":
 		return "竞争升温 · 出价幅度明显加大。"
 	case "cold":
 		return "场内沉寂 · 还有机会反手抢回。"
@@ -425,7 +422,7 @@ func deltaAtLeastThreeSteps(curStr, prevStr, stepStr string) bool {
 // dispatchAuctioneer routes a Stream-driven event to the appropriate
 // trigger detector. Called from the WS fanout goroutine (one per gateway).
 //
-// stepCents (needed for the jump delta check) is read from the
+// stepCents (needed for the surge delta check) is read from the
 // authoritative state Hash via Snapshot, with a per-auction process-
 // local cache (rules are frozen at SCHEDULED — cache safe).
 //

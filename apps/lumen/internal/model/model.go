@@ -43,14 +43,11 @@ const (
 	TypeAuctionSold      = "AUCTION_SOLD"      // terminal: cap-hit / hammer
 	TypeAuctionNoBid     = "AUCTION_NO_BID"    // terminal: timer closed with no bids (T3)
 	TypeAuctionCancelled = "AUCTION_CANCELLED" // terminal: seller/admin cancel (T3)
-	// T7 §4.2: LLM auctioneer commentary broadcast. Non-authoritative,
-	// no seq slot (`seq: null`), bid path NEVER awaits this. Spec lives
-	// in proto/ai-events.md §POST /auctioneer. Name matches the frontend
-	// (apps/web/src/lib/types.js EventType.AUCTIONEER_TEXT) currently
-	// shipping in main; will rename to AI_COMMENTARY in a single
-	// frontend+backend pass once #73 ratifies the spec.
-	TypeAuctioneerText = "AUCTIONEER_TEXT"
-	TypePong           = "PONG"
+	// T7 §4.2: AI commentary broadcast. Non-authoritative, no seq slot
+	// (`seq: null`), bid path NEVER awaits this. Spec lives in
+	// proto/ai-events.md §POST /llm/auctioneer.
+	TypeAICommentary = "AI_COMMENTARY"
+	TypePong         = "PONG"
 )
 
 // Wire / result codes (proto/error-codes.md). T1 subset + T2 (OK_EXTENDED/OK_SOLD).
