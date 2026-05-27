@@ -50,10 +50,10 @@ func joinRoom(t *testing.T, c *websocket.Conn, aid string) {
 	t.Helper()
 	if err := c.WriteJSON(map[string]any{
 		"schemaVersion": model.SchemaVersion,
-		"type":         "ROOM_JOIN",
-		"auctionId":    aid,
-		"serverTimeMs": time.Now().UnixMilli(),
-		"data":         map[string]any{"auctionId": aid},
+		"type":          "ROOM_JOIN",
+		"auctionId":     aid,
+		"serverTimeMs":  time.Now().UnixMilli(),
+		"data":          map[string]any{"auctionId": aid},
 	}); err != nil {
 		t.Fatalf("ROOM_JOIN write: %v", err)
 	}
@@ -157,10 +157,10 @@ func TestT5CloseWithCodeEmitsTypedCloseFrame(t *testing.T) {
 	// Force the server-side Conn into hub.rooms via ROOM_JOIN so we can grab it.
 	_ = c.WriteJSON(map[string]any{
 		"schemaVersion": model.SchemaVersion,
-		"type":         "ROOM_JOIN",
-		"auctionId":    "test_t5_cwc",
-		"serverTimeMs": time.Now().UnixMilli(),
-		"data":         map[string]any{"auctionId": "test_t5_cwc"},
+		"type":          "ROOM_JOIN",
+		"auctionId":     "test_t5_cwc",
+		"serverTimeMs":  time.Now().UnixMilli(),
+		"data":          map[string]any{"auctionId": "test_t5_cwc"},
 	})
 	_ = c.SetReadDeadline(time.Now().Add(2 * time.Second))
 	_, _, _ = c.ReadMessage() // drain ROOM_SNAPSHOT
