@@ -9,7 +9,7 @@ auction:{<aid>}:state
   Hash
   status, currentPriceCents, winnerId, endAtMs, seq,
   startPriceCents, incrementCents, capPriceCents,
-  extendWindowSec, extendSec, extendCount
+  extendWindowSec, extendSec, extendCount, maxExtensions
 
 auction:{<aid>}:leaderboard
   ZSET

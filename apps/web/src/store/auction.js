@@ -25,14 +25,9 @@ const DEFAULT_STATE = {
 
   // pricing — ALL string-cents (blueprint P1).
   //
-  // stepCents defaults to a non-zero sentinel ('500000' = ¥5000) instead
-  // of '0' because the QuickBidChips percent-math floors to a step
-  // boundary via `(above + step - 1n) / step` — if step is 0n, that
-  // throws RangeError caught silently inside pctBump, the chip falls
-  // back to currentCents, the user taps, and the backend rejects with
-  // ERR_TOO_LOW. Defaulting to a usable step keeps the chip math
-  // self-healing until the backend snapshot DTO ships real rules
-  // (T7 / RoomSnapshotData extension).
+  // Backend ROOM_SNAPSHOT ships real rules in data.rules. The non-zero
+  // default remains a defensive fallback for mock/back-compat payloads so
+  // QuickBidChips never divides by a zero step.
   //
   // capCents=null is a valid "no buy-now ceiling" per ws-envelope.md;
   // QuickBidChips.maxBid() falls back to +10% in that case.
@@ -143,13 +138,20 @@ export const useAuctionStore = create((set, get) => ({
           // anti-snipe count (catchup AUCTION_EXTENDED frames arrive BEFORE
           // the snapshot per backend dispatchWS:367). init() clears it on a
           // fresh room. Gap > 200 → snapshot-only fallback loses count
-          // history; accepted until backend adds extendCount to
-          // RoomSnapshotData (P3 follow-up).
+          // history; accepted until backend adds extendCount.
           next.status         = data.status;
           next.currentCents   = data.currentPriceCents ?? '0';
           next.winnerId       = data.winnerId ?? null;
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
+          if (data.rules) {
+            if (data.rules.stepCents != null) next.stepCents = data.rules.stepCents;
+            if (hasOwn(data.rules, 'capCents')) next.capCents = data.rules.capCents;
+            if (data.rules.reserveCents != null) {
+              next.reserveCents = data.rules.reserveCents;
+              next.startCents = data.rules.reserveCents;
+            }
+          }
           break;
         }
 
@@ -233,6 +235,10 @@ export const useAuctionStore = create((set, get) => ({
 
 function scheduleClear(key, ms) {
   setTimeout(() => useAuctionStore.setState({ [key]: false }), ms);
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 /**

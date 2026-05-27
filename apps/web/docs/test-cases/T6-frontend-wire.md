@@ -322,6 +322,10 @@ existing tooling and dev-log links don't break.
 | TC-T6-277 | `crypto.randomUUID` unavailable (older browser) → handleBid falls back to `cbid-{ts}-{random36}` | LiveRoomRoute | P2 |
 | TC-T6-278 | Custom drawer XSS — input is rendered only into `<input value>` and posted as JSON; never injected as HTML | security | P0 |
 | TC-T6-279 | High-fact-confidence cards: still need seller action — UI never auto-confirms regardless of `confidence > 0.99` | P3 / AI non-authoritative | P1 |
+| TC-T6-280 | `ROOM_SNAPSHOT.data.rules.stepCents` overwrites fallback and drives quick-bid chip math | store + QuickBidChips | P1 |
+| TC-T6-281 | `ROOM_SNAPSHOT.data.rules.capCents` set → MAX chip returns exactly cap | store + QuickBidChips | P1 |
+| TC-T6-282 | `ROOM_SNAPSHOT.data.rules.capCents=null` keeps no-cap semantics and MAX falls back to +10% | store + QuickBidChips | P1 |
+| TC-T6-283 | Backend snapshot DTO encodes frozen `maxExtensions` and `antiSnipeWindowMs` for UI display | store.Snapshot | P2 |
 
 ### 3.3 Test execution detail (selected high-priority cases)
 
@@ -487,7 +491,7 @@ existing tooling and dev-log links don't break.
 17. **P1**:T6-100/101 (anti-snipe path executable e2e) — needs Playwright + a backend fixture that can be told to end in 5s. Still the highest-priority remaining gap.
 18. **P1**:T6-#53-H3 (VLM facts inline editor — replaces `window.prompt()`) — deferred to T7 AI sidecar work, non-trivial UX scope.
 19. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
-20. **P2**:Backend `RoomSnapshotData` doesn't ship `stepCents` / `capCents` / `extendCount` yet — frontend defaults to `'500000'` / `null` / preserves running count. Real values come from `api.getAuction` once backend extends the DTO. Track as T7 polish.
+20. **P2**:Backend `RoomSnapshotData` now ships `rules.{stepCents, capCents, reserveCents}`; `extendCount` is still preserved client-side because snapshots do not carry it yet.
 21. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
 
 ---
