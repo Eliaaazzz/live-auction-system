@@ -343,10 +343,17 @@ const maxAuctioneerTextRunes = 80
 var (
 	reAuctioneerURL   = regexp.MustCompile(`(?i)\b(https?://|www\.)\S+`)
 	reAuctioneerPhone = regexp.MustCompile(`\b\d{11}\b|\b\+\d{1,3}[ -]?\d{4,}\b`)
-	// Money: catches symbol-before-digit (`¥1000`, `$50`, `元 99`) AND
-	// suffix-after-digit (`1000元`) — the suffix form is more common in
-	// Chinese commentary and was the gap I flagged in #73 B1 review.
-	reAuctioneerMoney = regexp.MustCompile(`(¥|\$|元)\s*\d|\d+\s*元`)
+	// Money: in lock-step with apps/lumen/internal/server/ai_events.go
+	// auctioneerCurrencyPattern (Elia's #73 B1 fix). Catches:
+	//   - ¥1000  $50            (symbol-before-digit prefix form)
+	//   - 1000元  1万             (suffix form — Chinese is suffix-heavy)
+	//   - 市价 50000元           (mid-string suffix; the prompt-injection
+	//                            vector I flagged in #73 review)
+	// Two-layer defense: ValidateAuctioneerResponse (ai_events.go) is
+	// the authoritative re-validator; this regex is the per-trigger
+	// dispatch guardrail in fire(). Both must catch the same patterns
+	// or the layers drift — pin the patterns identical here.
+	reAuctioneerMoney = regexp.MustCompile(`(?:[¥$]\s*\d)|(?:\d+\s*[元万])`)
 )
 
 var auctioneerBannedWords = []string{
