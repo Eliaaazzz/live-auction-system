@@ -159,6 +159,19 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	if snap.Status == "" { // not yet frozen: no Redis state, fall back to MySQL status
 		snap.Status = a.Status
 	}
+	if snap.Rules == nil {
+		rules, err := s.st.GetRules(r.Context(), aid)
+		if err != nil {
+			if err == store.ErrNotFound {
+				writeErr(w, http.StatusNotFound, "rules not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		dto := rules.RoomSnapshotRules()
+		snap.Rules = &dto
+	}
 	writeJSON(w, http.StatusOK, snap)
 }
 

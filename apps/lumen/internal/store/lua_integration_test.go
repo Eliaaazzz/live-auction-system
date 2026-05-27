@@ -114,6 +114,57 @@ func TestPlaceBidAcceptAndMonotonicSeq(t *testing.T) {
 	}
 }
 
+func TestSnapshotIncludesFrozenRules(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.IncrementCents = 2500
+	r.CapPriceCents = 20000
+	r.ExtendWindowSec = 10
+	r.MaxExtensions = 3
+	aid := liveAuction(t, s, r, 60_000)
+
+	snap, err := s.Snapshot(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Rules == nil {
+		t.Fatal("snapshot rules missing")
+	}
+	if snap.Rules.StepCents != "2500" {
+		t.Fatalf("stepCents=%s want 2500", snap.Rules.StepCents)
+	}
+	if snap.Rules.CapCents == nil || *snap.Rules.CapCents != "20000" {
+		t.Fatalf("capCents=%v want 20000", snap.Rules.CapCents)
+	}
+	if snap.Rules.ReserveCents != "10000" {
+		t.Fatalf("reserveCents=%s want 10000", snap.Rules.ReserveCents)
+	}
+	if snap.Rules.MaxExtensions != 3 {
+		t.Fatalf("maxExtensions=%d want 3", snap.Rules.MaxExtensions)
+	}
+	if snap.Rules.AntiSnipeWindowMs != 10000 {
+		t.Fatalf("antiSnipeWindowMs=%d want 10000", snap.Rules.AntiSnipeWindowMs)
+	}
+}
+
+func TestSnapshotRulesNoCapIsNull(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000)
+
+	snap, err := s.Snapshot(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.Rules == nil {
+		t.Fatal("snapshot rules missing")
+	}
+	if snap.Rules.CapCents != nil {
+		t.Fatalf("capCents=%v want nil", *snap.Rules.CapCents)
+	}
+}
+
 // §4.1: same client_bid_id retry returns the byte-identical original ack (NOT an
 // error), and has no side effect (price unchanged even with a higher amount).
 func TestPlaceBidDuplicateReturnsOriginalAck(t *testing.T) {

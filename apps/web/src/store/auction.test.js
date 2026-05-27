@@ -215,6 +215,33 @@ describe('applyEvent · ROOM_SNAPSHOT', () => {
     apply(env({ seq: 500, data: { status: 'LIVE', amountCents: '14000000', userId: 'u2', displayName: 'B', endAtMs: Date.now() + 28_000 } }));
     expect(useAuctionStore.getState().currentCents).toBe('13000000');
   });
+
+  it('applies nested rules without losing capCents=null', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 7,
+      type: EventType.ROOM_SNAPSHOT,
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '13000000',
+        winnerId: 'u1',
+        endAtMs: Date.now() + 38_000,
+        seq: 7,
+        rules: {
+          stepCents: '250000',
+          capCents: null,
+          reserveCents: '10000000',
+          maxExtensions: 5,
+          antiSnipeWindowMs: 10000,
+        },
+      },
+    }));
+    const s = useAuctionStore.getState();
+    expect(s.stepCents).toBe('250000');
+    expect(s.capCents).toBeNull();
+    expect(s.reserveCents).toBe('10000000');
+    expect(s.startCents).toBe('10000000');
+  });
 });
 
 describe('applyEvent · terminal states', () => {

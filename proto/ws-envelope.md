@@ -28,7 +28,7 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq }` | room state on join |
+| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }` |
 | `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
@@ -47,6 +47,8 @@ type WsEnvelope<T = unknown> = {
 
 - **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
 - **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
+- **`ROOM_SNAPSHOT.rules.capCents == null` = no buy-now ceiling**. The rules block is additive under schemaVersion 1; old clients can ignore it, new clients should prefer it over local fallback defaults.
+- **`ROOM_SNAPSHOT.rules.reserveCents` currently mirrors `startPriceCents`** because the backend rule schema does not yet persist a separate reserve price.
 - **Anti-snipe is bounded** by `maxExtensions` (rule DSL; `0` = unlimited). Past the cap an in-window bid is a normal `BID_ACCEPTED` with no `AUCTION_EXTENDED` and no `endAtMs` change.
 - A `DUPLICATE` retry on the **same** socket after an extension replays the cached `BID_ACCEPTED` (which already carries the extended `endAtMs`) but **not** the separate `AUCTION_EXTENDED` event; the canonical recovery for a missed event is reconnect + `lastSeq` catchup (implemented in T2: `ROOM_JOIN{lastSeq}` → XRANGE delta replay + snapshot fallback; multi-gateway fanout is T5).
 - **Broadcast is Stream-authoritative**: on a Pub/Sub wakeup the gateway reads the canonical Redis Stream from the room's last-broadcast seq and fans out those events. Pub/Sub is a non-authoritative hint — a forged/stale message not backed by the Stream is never broadcast.
