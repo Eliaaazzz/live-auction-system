@@ -126,22 +126,34 @@ console.log('[phase1] starting seq =', startingSeq);
 
 // ─── Phase 2 — generate 250+ bids to push tip past gap=200 ──
 console.log('[phase2] generating ' + TARGET_GAP + ' bids to push tip past gap=200');
+//
+// Bugfix: the prior version `resolve()`d synchronously after creating the
+// WebSocket, BEFORE 'open' fired. Phase 2's tight bid loop below would then
+// call ws.send() while readyState was still CONNECTING (0), throwing
+// `WebSocket is not open: readyState 0 (CONNECTING)`. This happened
+// intermittently in slow CI runners (caught by 444435d on PR #77's e2e job).
+//
+// Fix: resolve the per-flooder promise ONLY after 'open' fires (so the loop
+// can't start until every WS has handshaked) and reject after a 5s timeout
+// so a hung connection doesn't deadlock the run.
 const flooders = await Promise.all(buyers.map((b) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(b.token)}&auction=${encodeURIComponent(auctionId)}`);
   let currentCents = '10000';
+  const timeout = setTimeout(() => reject(new Error('flooder ws open timeout (5s)')), 5_000);
   ws.on('open', () => {
+    clearTimeout(timeout);
     ws.send(JSON.stringify({
       schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId },
     }));
+    resolve({ ws, getCurrent: () => currentCents });
   });
   ws.on('message', (raw) => {
     const env = JSON.parse(raw.toString());
     if (env.type === 'BID_ACCEPTED') currentCents = env.data.amountCents;
     if (env.type === 'ROOM_SNAPSHOT') currentCents = env.data.currentPriceCents;
   });
-  ws.on('error', reject);
-  resolve({ ws, getCurrent: () => currentCents });
+  ws.on('error', (e) => { clearTimeout(timeout); reject(e); });
 })));
 
 // Round-robin bid placement across all flooders.
