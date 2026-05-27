@@ -140,32 +140,10 @@ jobs:
         # T6 smoke scripts that drive the running backend through the same
         # contract surface the browser uses. Wired here because the stack is
         # up; per the user's "no skipped CI tests" rule these now run on every
-        # push. The slow one (snapshot-fallback ~30s) is parallelised with
-        # `&` + `wait` so wall time ≈ max(smoke) rather than sum.
+        # push. We run them sequentially for deterministic shared-state
+        # behavior with existing shared fixtures.
         working-directory: apps/web
-        run: |
-          set -uo pipefail
-          # Iterate in a fixed order so log output is deterministic; each smoke
-          # writes to its own log file and the aggregator reports per-script.
-          smokes=(wire catchup schema 401 antisnipe snapshot)
-          pids=()
-          for s in "${smokes[@]}"; do
-            npm run -s "smoke:$s" > "/tmp/smoke-$s.log" 2>&1 &
-            pids+=("$!")
-          done
-          fail=0
-          for i in "${!smokes[@]}"; do
-            s="${smokes[$i]}"
-            pid="${pids[$i]}"
-            if ! wait "$pid"; then
-              echo "=== smoke:$s FAIL ==="
-              cat "/tmp/smoke-$s.log"
-              fail=1
-            else
-              echo "smoke:$s PASS"
-            fi
-          done
-          exit $fail
+        run: npm run -s smoke:all
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs
