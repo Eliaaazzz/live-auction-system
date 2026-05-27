@@ -201,21 +201,30 @@ export function LiveRoomRoute() {
       showColorRamp={inFinal10}
       showHourglass={inFinal10}
       showPulseWaves={inFinal10}
+      // T7-2: aiTrigger / aiText prefer the AUCTIONEER_TEXT broadcast
+      // (store.auctioneerTrigger / store.auctioneerText) when available;
+      // fall back to the heuristic derived from status / blackHorse /
+      // inFinal10 when the backend hasn't fired a trigger yet. The
+      // hardcoded placeholder remains as the ultimate fallback so the
+      // bubble is never empty.
       aiTrigger={
-        store.status === 'SOLD' ? 'hammer'
-          : store.blackHorse    ? 'jump'
-          : inFinal10           ? 'cold'
-          : 'open'
+        store.auctioneerTrigger
+        ?? (store.status === 'SOLD' ? 'hammer'
+            : store.blackHorse      ? 'jump'
+            : inFinal10             ? 'cold'
+            : 'open')
       }
-      // T7-3 §4.3: AIBubble flips to its offline variant when the
-      // sidecar health flag in store is 'offline'. AIBubble already
-      // ships the offline render path (status='offline' branch).
-      // Bid path stays untouched — V9 P3 says AI is non-authoritative.
+      // T7-3 §4.3 + T7-2 §4.2 composition (resolved at rebase):
+      // - aiStatus reflects sidecar health (#71): offline → AIBubble
+      //   renders its offline variant which hardcodes the "拍卖师暂离" copy
+      // - aiText resolves only when sidecar is live: prefer the broadcast
+      //   AUCTIONEER_TEXT commentary (#74), fall back to the placeholder
+      //   so the bubble is never empty. AIBubble ignores aiText when
+      //   status='offline' so the offline copy wins automatically.
       aiStatus={store.aiSidecarHealth === 'offline' ? 'offline' : 'live'}
       aiText={
-        store.aiSidecarHealth === 'offline'
-          ? '拍卖师暂离 · 出价不受影响'
-          : '正在等待出价 · AI 文本由 sidecar 流式生成'
+        store.auctioneerText
+        || '正在等待出价 · AI 文本由 sidecar 流式生成'
       }
       expressive
     />
