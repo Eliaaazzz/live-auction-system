@@ -233,7 +233,7 @@ DRAFT ──(confirm AI facts + freeze rules)──▶ SCHEDULED
 
 ## 9. WebSocket protocol · WS 协议
 
-完整契约见 [`docs/ws-protocol.md`](docs/ws-protocol.md) / [`proto/ws-envelope.md`](proto/ws-envelope.md)。JSON camelCase；money 字段为 string。
+完整契约见 [`proto/ws-envelope.md`](proto/ws-envelope.md)（canonical）/ [`docs/ws-protocol.md`](docs/ws-protocol.md)。JSON camelCase；money 字段为 string。
 
 **Envelope**
 
@@ -249,15 +249,17 @@ type WsEnvelope<T = unknown> = {
 
 | C→S | 作用 | S→C | 作用 |
 |---|---|---|---|
-| `ROOM_JOIN {auctionId,lastSeq?}` | 进房 + 请求 catchup | `ROOM_SNAPSHOT` | 现价/胜者/榜/`endAtMs`/`seq`/state |
-| `BID_PLACE {clientBidId,amountCents}` | 出价 | `CATCHUP_EVENTS` | 从 `lastSeq+1` 重放 |
-| `PING` | 心跳 | `BID_ACCEPTED` / `BID_REJECTED` | ack（含 `seq`）/ 拒绝（含 code） |
-| `ROOM_LEAVE` / `CHAT_SEND` | 离房 / 聊天 | `USER_OUTBID` / `AUCTION_EXTENDED` | 被超越 / 反狙击延时 |
-| | | `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` / `PONG` | 终态 / 心跳应答 |
+| `ROOM_JOIN {auctionId,lastSeq?}` | 进房；`lastSeq` 触发 catchup —— 缺失的 Stream delta 通过**同一组 server→client 类型**重放（无独立 `CATCHUP_EVENTS`），`gap>200` → 仅快照 | `ROOM_SNAPSHOT` | 进房时房间状态：现价/胜者/`endAtMs`/`seq`/status |
+| `BID_PLACE {clientBidId,amountCents}` | 出价 | `BID_ACCEPTED` / `BID_REJECTED` | ack（含 `seq`/`endAtMs`/status）/ 拒绝（含 `code`） |
+| `PING` | 心跳 | `AUCTION_EXTENDED` | 反狙击延时（event，非 state） |
+| | | `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` | 终态事件 |
+| | | `PONG` | 心跳应答 |
+
+> 离房走 WS close（无显式 `ROOM_LEAVE` envelope）；聊天不在 V9 scope。**用户被超越提示** = `BID_REJECTED.code=ERR_TOO_LOW` + 前端 inline toast（roadmap：proxy bidding 落地后接 `USER_OUTBID`，见 [RFC #58](../../issues/58)）。
 
 **Error / result codes**：`OK_ACCEPTED` `OK_SOLD` `DUPLICATE` `ERR_NOT_LIVE` `ERR_TOO_LOW` `ERR_AFTER_END` `ERR_RATE_LIMITED` `ERR_AUCTION_PAUSED` `OK_CANCELLED` `OK_NO_BID` `ERR_NOT_DUE` `ERR_ALREADY_TERMINAL` `ERR_NOT_ALLOWED`。`DUPLICATE(previousResult)` 是幂等重放，**非**客户端拒绝。
 
-**四个 channel + 背压 / channels & backpressure**（V8 §0.3 边界 ⑧）：`critical`（bid ack/状态/catchup/落锤/取消，socket 开着绝不丢；`bufferedAmount` > 4MB → force-close 重连）、`presence`、`chat`、`ai`（软流量，满或 > 1MB 丢最旧；**AI 丢失绝不阻塞出价**）。
+**背压 / backpressure（两 lane，T5）**（不变量 ⑧）：每连接分 **critical** lane（bid ack、`AUCTION_*` 事件、`ROOM_SNAPSHOT`、catchup —— socket 开着绝不静默丢；满则 force-close 让客户端重连重放）与 **best-effort** lane（`PONG`，以及未来的 presence/chat —— 满则丢该帧、保连接）。critical 以优先级排空，一个慢客户端不拖垮房间广播；`bufferedAmount` 1MB/4MB 阈值在 T8 压测下调优。
 
 **倒计时 / countdown**：`remainingMs = endAtMs - (clientNowMs + serverClockOffsetMs)`，`serverClockOffsetMs` 由快照/事件里的 `serverTimeMs` 校准。
 
@@ -365,7 +367,7 @@ CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）以 **Redis + MySQ
 
 | 面 Surface | 约束 Constraint |
 |---|---|
-| **Auth** | `ENABLE_DEV_LOGIN` 默认 false，非 dev 硬关；seller 动作服务端校验调用者**拥有该 auction**，**绝不信任 client 传的 `sellerId`**；非本地 `JWT_SECRET=change-me-local-only` 时启动失败。 |
+| **Auth** | `ENABLE_DEV_LOGIN` 默认 false，非 dev 硬关（dev compose 显式 opt-in 设 `"true"`，见 `infra/docker-compose.yml`）；seller 动作服务端校验调用者**拥有该 auction**，**绝不信任 client 传的 `sellerId`**；非本地 `JWT_SECRET=change-me-local-only` 时启动失败。 |
 | **WS** | handshake 校验 token 并绑连接；**Origin 白名单**（`FRONTEND_ORIGIN`）防 CSWSH；max frame size；每连接出价 rate limit (`ERR_RATE_LIMITED`)。 |
 | **AI / SSRF** | VLM 取图走白名单 origin、禁私网/IMDS、限大小+超时、不跟随 redirect；product 文本当不可信数据防 prompt injection。 |
 | **Secrets** | 密钥**永不**进 git / issue / PR / commit / log / 截图；仓库只留 `.env.example`，本地与部署凭据走私有渠道 / GitHub Secrets；secret scan 跑全 commit + 全历史 baseline。 |
