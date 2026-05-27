@@ -1,0 +1,218 @@
+{
+  "source": "apps/web/src/styles.css :root",
+  "generated": "apps/web/scripts/extract-design-tokens.mjs",
+  "notice": "AUTO-GENERATED. Do not edit by hand. Run `node scripts/extract-design-tokens.mjs` to regenerate.",
+  "count": 35,
+  "tokens": [
+    {
+      "name": "--douyin-cyan",
+      "value": "#25F4EE",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-cyan-soft",
+      "value": "#5af7f1",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink",
+      "value": "#171a28",
+      "comment": "slightly more blue — bridges visually toward B's deep navy",
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink-card",
+      "value": "#262a3c",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink-dim",
+      "value": "#6b7186",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink-muted",
+      "value": "#9aa0b4",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink-soft",
+      "value": "#1f2333",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-ink-text",
+      "value": "#f5f5f7",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-red",
+      "value": "#FE2C55",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-red-deep",
+      "value": "#cb203f",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--douyin-red-soft",
+      "value": "#ff4d70",
+      "comment": null,
+      "group": "A · Douyin-Native palette"
+    },
+    {
+      "name": "--solemn-cream",
+      "value": "#F5EDDD",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-cream-dim",
+      "value": "rgba(245,237,221,0.62)",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-deep",
+      "value": "#0A1F44",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-deep-card",
+      "value": "#16306b",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-deep-soft",
+      "value": "#142a55",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-gold",
+      "value": "#C9A961",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-gold-deep",
+      "value": "#a08543",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-gold-soft",
+      "value": "#dcbf7f",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--solemn-ink",
+      "value": "#101010",
+      "comment": null,
+      "group": "B · AuctionHouse Premium palette"
+    },
+    {
+      "name": "--bridge-plum-1",
+      "value": "#2a1c3a",
+      "comment": "deep wine — surge fade-from at hammer",
+      "group": "Bridge — A↔B crossover, narrow use only (transitions, accent lifts)"
+    },
+    {
+      "name": "--bridge-plum-2",
+      "value": "#1f1d3a",
+      "comment": "night-violet — between A ink and B deep",
+      "group": "Bridge — A↔B crossover, narrow use only (transitions, accent lifts)"
+    },
+    {
+      "name": "--bridge-rose-gold",
+      "value": "#b88a5a",
+      "comment": "warm bronze — accent lift between red and gold",
+      "group": "Bridge — A↔B crossover, narrow use only (transitions, accent lifts)"
+    },
+    {
+      "name": "--bridge-twilight",
+      "value": "#1a1d3a",
+      "comment": null,
+      "group": "Bridge — A↔B crossover, narrow use only (transitions, accent lifts)"
+    },
+    {
+      "name": "--x-gold-thin",
+      "value": "rgba(201,169,97,.42)",
+      "comment": "1px gold underlines, separators",
+      "group": "Cross-palette anchors — used in BOTH A and B for continuity"
+    },
+    {
+      "name": "--x-rank-1-glow",
+      "value": "rgba(220,191,127,.6)",
+      "comment": "TOP-1 medal halo in either palette",
+      "group": "Cross-palette anchors — used in BOTH A and B for continuity"
+    },
+    {
+      "name": "--state-cancelled",
+      "value": "#9aa0b4",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--state-extended",
+      "value": "#FFB020",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--state-live",
+      "value": "#FE2C55",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--state-no-bid",
+      "value": "#6b7280",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--state-rejected",
+      "value": "#ff4d70",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--state-sold",
+      "value": "#C9A961",
+      "comment": null,
+      "group": "State semantic — palette-agnostic"
+    },
+    {
+      "name": "--font-mono",
+      "value": "\"JetBrains Mono\", \"Cascadia Code\", ui-monospace, \"SFMono-Regular\", monospace",
+      "comment": null,
+      "group": "Type stacks"
+    },
+    {
+      "name": "--font-sans",
+      "value": "\"PingFang SC\", \"HarmonyOS Sans SC\", \"Noto Sans SC\", system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+      "comment": null,
+      "group": "Type stacks"
+    },
+    {
+      "name": "--font-serif",
+      "value": "\"Noto Serif SC\", \"Source Han Serif SC\", \"Playfair Display\", Georgia, serif",
+      "comment": null,
+      "group": "Type stacks"
+    }
+  ]
+}
