@@ -112,14 +112,17 @@ func TestT2HiddenWSRejectsSchemaMismatchWithProtocolClose(t *testing.T) {
 	c := dialRaw(t, target, buyer.Token)
 	defer c.Close()
 
-	type badFrame struct {
-		SchemaVersion int `json:"schemaVersion"`
-		model.Envelope
+	raw := map[string]any{
+		"schemaVersion": 999,
+		"type":          model.TypeRoomJoin,
+		"auctionId":     "auc_demo",
+		"data":          json.RawMessage(mustJSON(t, model.RoomJoinData{AuctionID: "auc_demo"})),
 	}
-	if err := c.WriteJSON(badFrame{
-		SchemaVersion: 999,
-		Envelope:      model.Envelope{Type: model.TypeRoomJoin, AuctionID: "auc_demo", Data: mustJSON(t, model.RoomJoinData{AuctionID: "auc_demo"})},
-	}); err != nil {
+	rawFrame, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteMessage(websocket.TextMessage, rawFrame); err != nil {
 		t.Fatal(err)
 	}
 
