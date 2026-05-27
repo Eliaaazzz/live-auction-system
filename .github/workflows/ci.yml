@@ -112,6 +112,12 @@ jobs:
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
       - name: verify-evidence (T4 hash-chain gate; exit!=0 on hash_break)
         run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen verify-evidence --auction "$VERIFY_AID"
+      - name: e2e-ai-offline (T7-5 chaos gate; V9 P3 — bid path independent of AI)
+        # Per issue #70 §4.5. Stops the ai-sidecar container, re-runs
+        # e2e-dummy-bid (must exit 0), restarts sidecar, re-runs once
+        # more (recovery). Any failure = AI is leaking into the bid
+        # path, which violates V9 P3.
+        run: make e2e-ai-offline
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

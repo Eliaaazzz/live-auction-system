@@ -2,7 +2,7 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke verify verify-evidence build vet test fmt guard
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline verify verify-evidence build vet test fmt guard
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -29,6 +29,47 @@ e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 
 perf-smoke:       ## T2 perf floor-check: ack/broadcast p95 vs §4.2 fallback budgets
 	$(COMPOSE) --profile tools run --rm --build perf-smoke
+
+e2e-ai-offline:   ## T7-5 chaos gate: kill ai-sidecar, assert bid path still green (V9 P3)
+	@# Per issue #70 §4.5: prove AI-down does NOT block bidding.
+	@# Two-phase test:
+	@#   1. Stop ai-sidecar → run e2e-dummy-bid → must exit 0 (bid path
+	@#      is independent of AI per V9 P3)
+	@#   2. Restart ai-sidecar → run e2e-dummy-bid → must exit 0 (recovery)
+	@# Uses `stop` (not `kill`) so docker-compose state stays clean and
+	@# the start path restores the container without rebuild.
+	@echo "=== T7-5 phase 1: stop ai-sidecar ==="
+	$(COMPOSE) stop ai-sidecar
+	@# Belt-and-suspenders (Elia review nit 1): assert sidecar is
+	@# actually down before running the phase-1 bid. Without this,
+	@# a typo in the container name (`stop` exits 0 silently) would
+	@# leave AI running and the "AI-down green" claim a false-green.
+	@# Allow 5s for the SIGTERM → process-exit propagation.
+	@stopped=0; \
+	for i in 1 2 3 4 5; do \
+		if ! curl -sf http://localhost:8090/healthz >/dev/null 2>&1; then stopped=1; break; fi; \
+		sleep 1; \
+	done; \
+	if [ "$$stopped" != "1" ]; then echo "FAIL: ai-sidecar still responding on :8090 after stop"; exit 1; fi
+	@echo "=== T7-5 phase 1: run e2e-dummy-bid (expect exit 0 with AI down) ==="
+	$(MAKE) e2e-dummy-bid
+	@echo "=== T7-5 phase 2: restart ai-sidecar ==="
+	$(COMPOSE) start ai-sidecar
+	@# Wait briefly for /healthz to flip back up. The sidecar boots in
+	@# ~2s in docker; give it 10s of slack on slow CI runners.
+	@# Port 8090 per infra/docker-compose.yml (SIDECAR_ADDR=:8090);
+	@# /healthz endpoint per apps/ai-sidecar/cmd/sidecar/main.go.
+	@# Elia review nit 2: hard-fail on no recovery (don't fall through
+	@# to phase-2 bid which would silently retest "AI still down").
+	@recovered=0; \
+	for i in 1 2 3 4 5; do \
+		if curl -sf http://localhost:8090/healthz >/dev/null 2>&1; then recovered=1; break; fi; \
+		echo "waiting for ai-sidecar healthz ($$i)"; sleep 2; \
+	done; \
+	if [ "$$recovered" != "1" ]; then echo "FAIL: ai-sidecar did not recover after start"; exit 1; fi
+	@echo "=== T7-5 phase 2: run e2e-dummy-bid (expect exit 0 after recovery) ==="
+	$(MAKE) e2e-dummy-bid
+	@echo "✓ T7-5 PASSED · bid path stayed green throughout AI down + recovery"
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
