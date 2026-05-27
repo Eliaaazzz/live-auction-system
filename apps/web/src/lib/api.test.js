@@ -155,3 +155,63 @@ describe('204 No Content returns null', () => {
     expect(got).toBeNull();
   });
 });
+
+describe('draftFacts · AI sidecar health events (T7-3 / issue #70 §4.3)', () => {
+  it('dispatches `lumen:ai-sidecar-ok` on success', async () => {
+    const okSpy = vi.fn();
+    const offlineSpy = vi.fn();
+    window.addEventListener('lumen:ai-sidecar-ok', okSpy);
+    window.addEventListener('lumen:ai-sidecar-offline', offlineSpy);
+
+    vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ facts: [], modelName: 'mock-vlm-T1' }),
+    });
+
+    const result = await api.draftFacts({ productId: 'p1', imageUrls: [], title: 't', description: 'd' });
+    expect(result.modelName).toBe('mock-vlm-T1');
+    expect(okSpy).toHaveBeenCalledTimes(1);
+    expect(offlineSpy).not.toHaveBeenCalled();
+
+    window.removeEventListener('lumen:ai-sidecar-ok', okSpy);
+    window.removeEventListener('lumen:ai-sidecar-offline', offlineSpy);
+  });
+
+  it('dispatches `lumen:ai-sidecar-offline` on 502 + re-throws the ApiError', async () => {
+    const okSpy = vi.fn();
+    const offlineSpy = vi.fn();
+    window.addEventListener('lumen:ai-sidecar-ok', okSpy);
+    window.addEventListener('lumen:ai-sidecar-offline', offlineSpy);
+
+    vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: async () => ({ code: 'ERR_AI_UNAVAILABLE', message: 'sidecar down' }),
+    });
+
+    await expect(api.draftFacts({ productId: 'p1', imageUrls: [], title: 't', description: 'd' }))
+      .rejects.toBeInstanceOf(ApiError);
+
+    expect(offlineSpy).toHaveBeenCalledTimes(1);
+    expect(offlineSpy.mock.calls[0][0].detail).toEqual({ status: 502, code: 'ERR_AI_UNAVAILABLE' });
+    expect(okSpy).not.toHaveBeenCalled();
+
+    window.removeEventListener('lumen:ai-sidecar-ok', okSpy);
+    window.removeEventListener('lumen:ai-sidecar-offline', offlineSpy);
+  });
+
+  it('dispatches `lumen:ai-sidecar-offline` on network failure too', async () => {
+    const offlineSpy = vi.fn();
+    window.addEventListener('lumen:ai-sidecar-offline', offlineSpy);
+
+    vi.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
+
+    await expect(api.draftFacts({ productId: 'p1', imageUrls: [], title: 't', description: 'd' }))
+      .rejects.toThrow();
+
+    expect(offlineSpy).toHaveBeenCalledTimes(1);
+
+    window.removeEventListener('lumen:ai-sidecar-offline', offlineSpy);
+  });
+});

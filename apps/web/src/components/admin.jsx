@@ -63,6 +63,12 @@ function AdminVLMFacts() {
   const [facts, setFacts] = React.useState(VLM_FACTS);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
+  // T7-3 §4.3: read AI sidecar health for the on-page status pill +
+  // the non-blocking freeze banner. Local component state for facts
+  // stays unchanged when the sidecar is offline — the seller can still
+  // confirm / edit / freeze with whatever they have.
+  const aiSidecarHealth = useAuctionStore((s) => s.aiSidecarHealth);
+  const aiOffline = aiSidecarHealth === 'offline';
 
   // Per-fact action handlers. Local state only — backend persists the final
   // confirmed snapshot atomically on api.freeze (handler at api.go:165 reads
@@ -268,19 +274,31 @@ function AdminVLMFacts() {
             </div>
           </div>
 
-          {/* AI sidecar status */}
-          <div style={{
-            marginTop: 'auto', padding: '10px 12px', borderRadius: 8,
-            background: 'rgba(37,244,238,.06)', border: '1px solid rgba(37,244,238,.22)',
-            display: 'flex', alignItems: 'center', gap: 10,
-          }}>
-            <div className="lumen-live-dot" style={{
-              width: 8, height: 8, borderRadius: 4, background: 'var(--douyin-cyan)',
+          {/* AI sidecar status — T7-3 §4.3: dynamic from store */}
+          <div
+            data-testid="ai-sidecar-status"
+            data-state={aiOffline ? 'offline' : 'ok'}
+            style={{
+              marginTop: 'auto', padding: '10px 12px', borderRadius: 8,
+              background: aiOffline ? 'rgba(107,114,128,.10)' : 'rgba(37,244,238,.06)',
+              border: '1px solid ' + (aiOffline ? 'rgba(107,114,128,.28)' : 'rgba(37,244,238,.22)'),
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+            <div className={aiOffline ? '' : 'lumen-live-dot'} style={{
+              width: 8, height: 8, borderRadius: 4,
+              background: aiOffline ? '#6b7280' : 'var(--douyin-cyan)',
               flexShrink: 0,
             }}/>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--douyin-cyan)' }}>AI Sidecar · 在线</div>
-              <div style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>VLM gpt-4o-vision · 节流 1Hz</div>
+              <div style={{
+                fontSize: 11, fontWeight: 600,
+                color: aiOffline ? 'var(--douyin-ink-muted)' : 'var(--douyin-cyan)',
+              }}>
+                {aiOffline ? 'AI Sidecar · 离线' : 'AI Sidecar · 在线'}
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
+                {aiOffline ? '事实仍可手动确认 · freeze 不受影响' : 'VLM gpt-4o-vision · 节流 1Hz'}
+              </div>
             </div>
           </div>
         </div>

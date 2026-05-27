@@ -74,6 +74,14 @@ const DEFAULT_STATE = {
   hammerAt:        null,
   lastRejectCode:  null,
   lastRejectAt:    null,
+
+  // T7-3: AI sidecar health for the offline badge + graceful degrade
+  // contract (issue #70 §4.3). Default 'ok' optimistically — flips to
+  // 'offline' on `api.draftFacts` ApiError (502 or network failure) +
+  // flips back to 'ok' on any subsequent success. AIBubble + AdminConsole
+  // + AdminVLMFacts read from this. Bid path is NEVER gated on this
+  // value (per V9 P3: AI is non-authoritative).
+  aiSidecarHealth: 'ok',
 };
 
 export const useAuctionStore = create((set, get) => ({
@@ -110,6 +118,14 @@ export const useAuctionStore = create((set, get) => ({
   })),
 
   clearLastReject: () => set({ lastRejectCode: null }),
+
+  // ── AI sidecar health (T7-3 / issue #70 §4.3) ────────────────
+  // Called by lib/api.js when draftFacts() throws a 502 ApiError or
+  // network error, and on the next success. Bid path never reads from
+  // this — V9 P3 says AI is non-authoritative; the store keeps this as
+  // pure observability state for the offline badge + AdminConsole chip.
+  setAiOk:      () => set({ aiSidecarHealth: 'ok' }),
+  setAiOffline: () => set({ aiSidecarHealth: 'offline' }),
 
   // ── event reducer (from RoomClient.onEvent) ──────────────────
   applyEvent: (env) => {
