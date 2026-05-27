@@ -214,4 +214,24 @@ describe('draftFacts · AI sidecar health events (T7-3 / issue #70 §4.3)', () =
 
     window.removeEventListener('lumen:ai-sidecar-offline', offlineSpy);
   });
+
+  it('does NOT dispatch offline event on AbortError (route unmount mid-request)', async () => {
+    // Self-review catch: if a user navigates away from AdminVLMFacts
+    // while draftFacts is in-flight, fetch throws AbortError. The
+    // wrapper must NOT flip the badge to offline — the sidecar is
+    // fine, the request was cancelled by us.
+    const offlineSpy = vi.fn();
+    window.addEventListener('lumen:ai-sidecar-offline', offlineSpy);
+
+    const abortErr = new Error('aborted');
+    abortErr.name = 'AbortError';
+    vi.spyOn(global, 'fetch').mockRejectedValue(abortErr);
+
+    await expect(api.draftFacts({ productId: 'p1', imageUrls: [], title: 't', description: 'd' }))
+      .rejects.toThrow('aborted');
+
+    expect(offlineSpy).not.toHaveBeenCalled();
+
+    window.removeEventListener('lumen:ai-sidecar-offline', offlineSpy);
+  });
 });
