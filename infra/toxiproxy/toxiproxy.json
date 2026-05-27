@@ -1,0 +1,14 @@
+[
+  {
+    "name": "redis",
+    "listen": "0.0.0.0:16379",
+    "upstream": "redis:6379",
+    "enabled": true
+  },
+  {
+    "name": "mysql",
+    "listen": "0.0.0.0:13306",
+    "upstream": "mysql:3306",
+    "enabled": true
+  }
+]
