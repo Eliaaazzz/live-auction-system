@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="1040" viewBox="0 0 1700 1040" role="img" aria-labelledby="title desc">
+  <title id="title">Lumen Auction State Machine v4</title>
+  <desc id="desc">Spec-aligned auction state machine for DRAFT, SCHEDULED, LIVE, SOLD, NO_BID, CANCELLED, and ORDER_CREATED.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#334155"/>
+    </marker>
+    <style>
+      .canvas { fill: #f8fafc; }
+      .title { font: 700 36px Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 400 18px Arial, sans-serif; fill: #475569; }
+      .stage { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 16; ry: 16; }
+      .node { stroke-width: 2; rx: 14; ry: 14; }
+      .pre { fill: #e0f2fe; stroke: #0284c7; }
+      .live { fill: #dcfce7; stroke: #16a34a; }
+      .terminal { fill: #fee2e2; stroke: #dc2626; }
+      .success { fill: #fff7ed; stroke: #ea580c; }
+      .note { fill: #f1f5f9; stroke: #64748b; }
+      .node-title { font: 700 21px Arial, sans-serif; fill: #0f172a; }
+      .node-line { font: 400 16px Arial, sans-serif; fill: #334155; }
+      .arrow { fill: none; stroke: #334155; stroke-width: 3; marker-end: url(#arrow); }
+      .arrow-dash { fill: none; stroke: #64748b; stroke-width: 3; stroke-dasharray: 10 8; marker-end: url(#arrow); }
+      .label { font: 700 15px Arial, sans-serif; fill: #334155; }
+      .pill { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 8; ry: 8; }
+      .pill-text { font: 700 14px Arial, sans-serif; fill: #334155; }
+      .note-title { font: 700 19px Arial, sans-serif; fill: #0f172a; }
+      .note-line { font: 400 16px Arial, sans-serif; fill: #334155; }
+    </style>
+  </defs>
+
+  <rect class="canvas" x="0" y="0" width="1700" height="1040"/>
+  <text class="title" x="60" y="60">Auction State Machine v4</text>
+  <text class="subtitle" x="60" y="88">EXTENDED is an event inside LIVE, not another bidding state; terminal transitions are decided by Redis Lua.</text>
+  <rect class="stage" x="50" y="125" width="1600" height="805"/>
+
+  <g id="draft">
+    <rect class="node pre" data-check="node" x="90" y="215" width="240" height="110"/>
+    <text class="node-title" data-check="text" data-owner="draft" x="125" y="255">DRAFT</text>
+    <text class="node-line" data-check="text" data-owner="draft" x="125" y="285">editable rules</text>
+  </g>
+  <g id="scheduled">
+    <rect class="node pre" data-check="node" x="420" y="215" width="250" height="110"/>
+    <text class="node-title" data-check="text" data-owner="scheduled" x="455" y="249">SCHEDULED</text>
+    <text class="node-line" data-check="text" data-owner="scheduled" x="455" y="276">rules frozen</text>
+    <text class="node-line" data-check="text" data-owner="scheduled" x="455" y="297">wait for start</text>
+  </g>
+  <g id="live">
+    <rect class="node live" data-check="node" x="760" y="215" width="250" height="110"/>
+    <text class="node-title" data-check="text" data-owner="live" x="795" y="255">LIVE</text>
+    <text class="node-line" data-check="text" data-owner="live" x="795" y="285">accept valid bids only</text>
+  </g>
+  <g id="sold">
+    <rect class="node success" data-check="node" x="1100" y="215" width="230" height="110"/>
+    <text class="node-title" data-check="text" data-owner="sold" x="1135" y="255">SOLD</text>
+    <text class="node-line" data-check="text" data-owner="sold" x="1135" y="285">winner + price</text>
+  </g>
+  <g id="order-created">
+    <rect class="node success" data-check="node" x="1410" y="215" width="230" height="110"/>
+    <text class="node-title" data-check="text" data-owner="order-created" x="1440" y="255">ORDER_CREATED</text>
+    <text class="node-line" data-check="text" data-owner="order-created" x="1440" y="285">unique auction_id</text>
+  </g>
+
+  <g id="cancelled">
+    <rect class="node terminal" data-check="node" x="420" y="510" width="250" height="110"/>
+    <text class="node-title" data-check="text" data-owner="cancelled" x="455" y="550">CANCELLED</text>
+    <text class="node-line" data-check="text" data-owner="cancelled" x="455" y="580">seller abnormal stop</text>
+  </g>
+  <g id="no-bid">
+    <rect class="node terminal" data-check="node" x="760" y="510" width="250" height="110"/>
+    <text class="node-title" data-check="text" data-owner="no-bid" x="795" y="550">NO_BID</text>
+    <text class="node-line" data-check="text" data-owner="no-bid" x="795" y="580">expired without winner</text>
+  </g>
+  <g id="terminal-note">
+    <rect class="node note" data-check="node" x="1100" y="510" width="540" height="110"/>
+    <text class="node-title" data-check="text" data-owner="terminal-note" x="1135" y="543">Terminal states reject BID_PLACE</text>
+    <text class="node-line" data-check="text" data-owner="terminal-note" x="1135" y="572">CANCELLED, NO_BID, SOLD, and ORDER_CREATED</text>
+    <text class="node-line" data-check="text" data-owner="terminal-note" x="1135" y="595">are closed to new bids.</text>
+  </g>
+
+  <g id="live-rule">
+    <rect class="node note" data-check="node" x="90" y="735" width="710" height="130"/>
+    <text class="note-title" data-check="text" data-owner="live-rule" x="125" y="775">LIVE internal events</text>
+    <text class="note-line" data-check="text" data-owner="live-rule" x="125" y="807">BID_ACCEPTED updates current price, winner, ranking, and seq.</text>
+    <text class="note-line" data-check="text" data-owner="live-rule" x="125" y="835">AUCTION_EXTENDED only updates endAtMs and extendCount.</text>
+  </g>
+  <g id="lua-rule">
+    <rect class="node note" data-check="node" x="890" y="735" width="750" height="130"/>
+    <text class="note-title" data-check="text" data-owner="lua-rule" x="925" y="775">Atomic transition rule</text>
+    <text class="note-line" data-check="text" data-owner="lua-rule" x="925" y="807">start_auction.lua, freeze_rules.lua, place_bid.lua, close_auction.lua, and cancel_auction.lua</text>
+    <text class="note-line" data-check="text" data-owner="lua-rule" x="925" y="835">are the only writers that may change Redis auction status.</text>
+  </g>
+
+  <path class="arrow" d="M330 270 L420 270"/>
+  <rect class="pill" x="352" y="236" width="48" height="24"/>
+  <text class="pill-text" x="362" y="253">freeze</text>
+
+  <path class="arrow" d="M670 270 L760 270"/>
+  <rect class="pill" x="698" y="236" width="36" height="24"/>
+  <text class="pill-text" x="707" y="253">start</text>
+
+  <path class="arrow" d="M1010 270 L1100 270"/>
+  <rect class="pill" x="1024" y="236" width="62" height="24"/>
+  <text class="pill-text" x="1034" y="253">cap/timer</text>
+
+  <path class="arrow" d="M1330 270 L1410 270"/>
+  <rect class="pill" x="1344" y="236" width="52" height="24"/>
+  <text class="pill-text" x="1354" y="253">order</text>
+
+  <path class="arrow" d="M885 325 L885 510"/>
+  <text class="label" x="905" y="420">timer expires without bid</text>
+
+  <path class="arrow" d="M760 290 C700 370 635 430 545 510"/>
+  <rect class="pill" x="596" y="432" width="126" height="24"/>
+  <text class="pill-text" x="606" y="449">cancel from LIVE</text>
+
+  <path class="arrow-dash" d="M545 325 L545 510"/>
+  <rect class="pill" x="432" y="382" width="154" height="24"/>
+  <text class="pill-text" x="442" y="399">cancel before start</text>
+
+  <path class="arrow-dash" d="M885 215 C835 145 935 145 885 215"/>
+  <rect class="pill" x="804" y="142" width="164" height="24"/>
+  <text class="pill-text" x="815" y="159">bid accepted or extended</text>
+
+  <path class="arrow-dash" d="M885 620 L445 735"/>
+  <text class="label" x="475" y="690">rules stay simple</text>
+
+  <path class="arrow-dash" d="M1215 325 L1265 510"/>
+  <text class="label" x="1278" y="420">terminal guard</text>
+</svg>
