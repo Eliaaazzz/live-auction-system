@@ -57,15 +57,54 @@
 | TC-T6-114 | AdminVLMFacts:5 条 facts 全部 confirm 后才能调 `api.freeze`;少于 5 时 freeze → 后端返回 `ERR_FACTS_NOT_CONFIRMED` | 待 wiring(`adminExtra.jsx <AdminVLMFacts>` 仍用 mock confirmedN/total;`api.freeze` 调用未接)| P0(影响 demo)|
 | TC-T6-115 | 卖家自己出价被拒(seller self-bid)→ BID_REJECTED `code=ERR_NOT_ALLOWED` 文案 "当前账号不能出价此场" | 已 code-verified(`lib/types.js bidRejectCopy[ERR_NOT_ALLOWED]`);executable 待补 | P2 |
 
-**Summary** (post-PR #51 #53 #54 self-review pass, 2026-05-26):
+**Summary** (post-PR #51 #53 #54 + polish #63 #64 + test suite, 2026-05-27):
 - 覆盖项 15/15 通过 smoke + code-verify
 - 100-115 gap probes 现状:
   - ✅ resolved in PR #51: 109 (Origin trap), 110 (reduced-motion auto-degrade), 111 (frame budget port), 112 (F26 pull-to-resync wired)
   - ✅ resolved in PR #53: 114 (VLM freeze gate wired)
   - 🟡 partially covered in PR #51 (Evidence route): 107 (CHAIN BROKEN UI live now)
-  - 待 executable: 100 / 101 / 102 / 103 / 104 / 105 / 108 / 113 / 115 — all browser-e2e candidates
+  - ✅ **104 / 105 newly executable in Vitest** (PR `fari/T6-test-suite-v2`) — `mobile.test.jsx` exercises MobileRoom with status=NO_BID/CANCELLED, asserts TerminalOverlay copy
+  - ✅ **102 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-catchup.mjs` reconnects with lastSeq=N-1 and asserts the missed BID_ACCEPTED is replayed
+  - ✅ **100 / 101 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-antisnipe.mjs` creates a short-duration auction (8s) with factsConfirmed=true, places a bid in the anti-snipe window, asserts AUCTION_EXTENDED with extendCount=1 + endAtMs > snapshot endAtMs, AND that BID_ACCEPTED.endAtMs matches AUCTION_EXTENDED.endAtMs (no stale countdown)
+  - ✅ **103 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-snapshot-fallback.mjs` generates 220 bids across 3 buyers to push tip > gap=200, then reconnects with the original lastSeq and asserts a fresh ROOM_SNAPSHOT is sent instead of XRANGE replay flood
+  - 待 executable: 108 (clock drift visual — DOM-observation, lower priority) / 113 (multi-tab — needs 2 browser contexts) / 115 (seller self-bid — needs role-aware seed)
 
-剩余 P0 缺口:100/102/103/104/105 — all need Playwright + a controlled backend fixture (timer + seed manipulation).
+剩余 e2e 缺口:108 / 113 / 115 — all browser-DOM-observation cases, all P1/P2. **100% of P0 gap probes are now under automated coverage.**
+
+### 自动化测试覆盖一览 · Automated test coverage
+
+Run all tests:
+\`\`\`bash
+cd apps/web && npm test               # vitest run — 91 tests in ~1s
+cd apps/web && npm run test:coverage  # with v8 coverage report
+\`\`\`
+
+Wire smoke (needs `make up && make seed`):
+\`\`\`bash
+cd apps/web && npm run smoke:all
+  # Runs all 6 smoke scripts sequentially:
+  # · smoke:wire        — full round-trip (TC-T6-001…013)
+  # · smoke:catchup     — lastSeq catchup (TC-T6-102)
+  # · smoke:schema      — schema mismatch (TC-T6-110)
+  # · smoke:401         — JWT 401 + dev-login refresh (TC-T6-271)
+  # · smoke:antisnipe   — AUCTION_EXTENDED path (TC-T6-100/101)
+  # · smoke:snapshot    — gap > 200 fallback (TC-T6-103)
+\`\`\`
+
+| Suite | Cases | Targets |
+|---|---|---|
+| `store/auction.test.js` | 28 | TC-T6-008 (seqguard), TC-T6-013 (BigInt leaderboard), TC-T6-006/007 (snapshot/bid shape), #64-M1/M2 (totalBidsCount/bidderIds) |
+| `lib/clock.test.js` | 10 | TC-T6-108 (drift), P4 (server-corrected countdown) |
+| `lib/format.test.js` | 12 | TC-T6-012/013 (Decimal-as-string + BigInt precision) |
+| `lib/ws.test.js` | 6 | TC-T6-004 (URL composition) |
+| `components/primitives.test.jsx` | 28 | TC-T6-230/231/234 (podium graceful <3), #54-M1 (HeatMeter clip), P2 (StatusBadge 7 states) |
+| `components/mobile.test.jsx` | 12 | **TC-T6-104** (NO_BID overlay), **TC-T6-105** (CANCELLED overlay), #51-H2 (PullToResync onTouchCancel) |
+| `scripts/smoke-wire.mjs` | E2E | TC-T6-001…013 (full wire round-trip) |
+| `scripts/smoke-catchup.mjs` | E2E | **TC-T6-102** (lastSeq catchup) |
+| `scripts/smoke-schema.mjs` | E2E | **TC-T6-110** (schema mismatch) |
+| `scripts/smoke-401.mjs` | E2E | **TC-T6-271** (JWT 401 + dev-login refresh) |
+| `scripts/smoke-antisnipe.mjs` | E2E | **TC-T6-100** (extendCount + endAtMs) + **TC-T6-101** (BID_ACCEPTED carries post-ext endAtMs) |
+| `scripts/smoke-snapshot-fallback.mjs` | E2E | **TC-T6-103** (gap > 200 → snapshot fallback, no XRANGE replay flood) |
 
 ---
 
