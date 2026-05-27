@@ -157,7 +157,7 @@ function DemoRoomFinal10() {
     showColorRamp showHourglass showPulseWaves showBlackHorse
     yourRank={4} yourGapCents="630000"
     aiText="夜航星 +10× 阶梯 直接拉到 ¥133,800 — 这是一匹真正的黑马。"
-    aiTrigger="jump" aiStreaming
+    aiTrigger="surge" aiStreaming
     expressive/>;
 }
 function DemoRoomLeading() {

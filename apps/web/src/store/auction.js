@@ -82,21 +82,21 @@ const DEFAULT_STATE = {
   // + AdminVLMFacts read from this. Bid path is NEVER gated on this
   // value (per V9 P3: AI is non-authoritative).
   //
-  // T7-2 cross-PR (#74 H2 per Elia review): the AUCTIONEER_TEXT reducer
+  // T7-2 cross-PR (#74 H2 per Elia review): the AI_COMMENTARY reducer
   // ALSO flips this to 'ok' since the event itself is proof the sidecar
   // is alive. Solves the "buyer view never sees AI health" stale-badge
   // case from #71 H1.
   aiSidecarHealth: 'ok',
 
-  // T7-2: LLM auctioneer commentary from `AUCTIONEER_TEXT` events
-  // (proto/ai-events.md §POST /auctioneer). Replace the hardcoded
+  // T7-2: LLM auctioneer commentary from `AI_COMMENTARY` events
+  // (proto/ai-events.md §POST /llm/auctioneer). Replace the hardcoded
   // "正在等待出价" placeholder in LiveRoomRoute. Resets on init() — each
   // room starts empty until backend's first trigger hook fires.
   //
-  // V9 P3: AUCTIONEER_TEXT is non-authoritative; the reducer does NOT
+  // V9 P3: AI_COMMENTARY is non-authoritative; the reducer does NOT
   // touch status/currentCents/seqguard from this event type.
   auctioneerText:     '',
-  auctioneerTrigger:  null,        // 'open' | 'jump' | 'cold' | 'hammer' | null
+  auctioneerTrigger:  null,        // 'open' | 'surge' | 'cold' | 'hammer' | null
   auctioneerFallback: false,       // true when backend swapped in canned text
 };
 
@@ -256,13 +256,13 @@ export const useAuctionStore = create((set, get) => ({
         case EventType.AUCTION_NO_BID:    next.status = AuctionStatus.NO_BID;    break;
         case EventType.AUCTION_CANCELLED: next.status = AuctionStatus.CANCELLED; break;
 
-        case EventType.AUCTIONEER_TEXT: {
+        case EventType.AI_COMMENTARY: {
           // T7-2: observability-only. NEVER touch status / currentCents /
           // any state-machine field — V9 P3 says AI is non-authoritative.
           // seq is intentionally null on this event type (spec
           // proto/ai-events.md); the seqguard at the top of applyEvent
           // already exempts null-seq from dedup.
-          if (typeof data?.text === 'string') next.auctioneerText = data.text;
+          if (typeof data?.commentary === 'string') next.auctioneerText = data.commentary;
           if (typeof data?.trigger === 'string') next.auctioneerTrigger = data.trigger;
           next.auctioneerFallback = data?.fallback === true;
           // Cross-PR #71↔#74 (Elia review on both): the event itself is

@@ -158,9 +158,9 @@ func TestValidateVLMFactsResponse_RequiredFieldGaps(t *testing.T) {
 
 // TC-T7-AUC-501 / 507 — boundary + happy-path per trigger.
 func TestValidateAuctioneerResponse_AllTriggersHappyPath(t *testing.T) {
-	for _, trig := range []string{"open", "jump", "cold", "hammer"} {
+	for _, trig := range []string{"open", "surge", "cold", "hammer"} {
 		t.Run(trig, func(t *testing.T) {
-			body := []byte(`{"trigger":"` + trig + `","text":"全场起拍 · 雨过天晴","fallback":false,"modelName":"mock-llm-T7"}`)
+			body := []byte(`{"trigger":"` + trig + `","commentary":"全场起拍 · 雨过天晴","fallback":false,"modelName":"mock-llm-T7"}`)
 			if err := ValidateAuctioneerResponse(body); err != nil {
 				t.Fatalf("trigger=%s happy path should validate, got: %v", trig, err)
 			}
@@ -176,7 +176,7 @@ func TestValidateAuctioneerResponse_BoundaryExactly80(t *testing.T) {
 	if r := []rune(text); len(r) != 80 {
 		t.Fatalf("test setup broken — want 80 runes, got %d", len(r))
 	}
-	body := []byte(`{"trigger":"open","text":"` + text + `","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"` + text + `","fallback":false,"modelName":"m"}`)
 	if err := ValidateAuctioneerResponse(body); err != nil {
 		t.Fatalf("80-rune text should be at boundary (pass), got: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestValidateAuctioneerResponse_BoundaryExactly80(t *testing.T) {
 // TC-T7-AUC-502 — boundary: 81 runes exceeds cap, must fail.
 func TestValidateAuctioneerResponse_Length81Fails(t *testing.T) {
 	text := strings.Repeat("一", 81)
-	body := []byte(`{"trigger":"open","text":"` + text + `","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"` + text + `","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for 81-rune text, got nil")
@@ -197,7 +197,7 @@ func TestValidateAuctioneerResponse_Length81Fails(t *testing.T) {
 
 // TC-T7-AUC-503 — URL pattern: any http(s) link triggers reject.
 func TestValidateAuctioneerResponse_RejectsURL(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"快上 https://example.com 抢","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"快上 https://example.com 抢","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for URL in text, got nil")
@@ -210,7 +210,7 @@ func TestValidateAuctioneerResponse_RejectsURL(t *testing.T) {
 // TC-T7-AUC-504 — phone pattern: catches prompt-injection-induced contact-
 // number leaks (sometimes seen when description field is jailbroken).
 func TestValidateAuctioneerResponse_RejectsPhone(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"联系 13800138000 出价","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"联系 13800138000 出价","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for phone in text, got nil")
@@ -234,7 +234,7 @@ func TestValidateAuctioneerResponse_RejectsCurrency(t *testing.T) {
 	}
 	for _, text := range cases {
 		t.Run(text, func(t *testing.T) {
-			body := []byte(`{"trigger":"jump","text":"` + text + `","fallback":false,"modelName":"m"}`)
+			body := []byte(`{"trigger":"surge","commentary":"` + text + `","fallback":false,"modelName":"m"}`)
 			err := ValidateAuctioneerResponse(body)
 			if err == nil {
 				t.Fatalf("expected error for currency in %q, got nil", text)
@@ -249,7 +249,7 @@ func TestValidateAuctioneerResponse_RejectsCurrency(t *testing.T) {
 // TC-T7-AUC-506 — trigger must be one of the closed set. Unknown trigger
 // indicates either a sidecar bug or a schema-drift across versions.
 func TestValidateAuctioneerResponse_RejectsUnknownTrigger(t *testing.T) {
-	body := []byte(`{"trigger":"hype","text":"x","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"hype","commentary":"x","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for unknown trigger, got nil")
@@ -263,7 +263,7 @@ func TestValidateAuctioneerResponse_RejectsUnknownTrigger(t *testing.T) {
 // This is a sidecar bug, not a valid empty-string case — reject so the
 // fallback path fires.
 func TestValidateAuctioneerResponse_RejectsEmpty(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for empty text, got nil")
@@ -276,7 +276,7 @@ func TestValidateAuctioneerResponse_RejectsEmpty(t *testing.T) {
 // TC-T7-AUC-509 — modelName missing. Required so logs can attribute the
 // text to a specific model version when offline-reviewing.
 func TestValidateAuctioneerResponse_RejectsMissingModelName(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"x","fallback":false,"modelName":""}`)
+	body := []byte(`{"trigger":"open","commentary":"x","fallback":false,"modelName":""}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for missing modelName, got nil")
@@ -289,7 +289,7 @@ func TestValidateAuctioneerResponse_RejectsMissingModelName(t *testing.T) {
 // TC-T7-AUC-510 — forward-compat: T7+ sidecar may add fields (latencyMs,
 // promptTokens, etc.). Validator must tolerate unknown fields.
 func TestValidateAuctioneerResponse_ForwardCompatExtraField(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"x","fallback":false,"modelName":"m","latencyMs":420,"promptTokens":50}`)
+	body := []byte(`{"trigger":"open","commentary":"x","fallback":false,"modelName":"m","latencyMs":420,"promptTokens":50}`)
 	if err := ValidateAuctioneerResponse(body); err != nil {
 		t.Fatalf("forward-compat extra fields should not error: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestValidateAuctioneerResponse_ForwardCompatExtraField(t *testing.T) {
 // frontend (auctioneerFallback in store) for UX styling, not for backend
 // gating.
 func TestValidateAuctioneerResponse_FallbackTrueAccepted(t *testing.T) {
-	body := []byte(`{"trigger":"open","text":"开拍 · 出价踊跃","fallback":true,"modelName":"static-fallback"}`)
+	body := []byte(`{"trigger":"open","commentary":"开拍 · 出价踊跃","fallback":true,"modelName":"static-fallback"}`)
 	if err := ValidateAuctioneerResponse(body); err != nil {
 		t.Fatalf("fallback=true response should validate, got: %v", err)
 	}

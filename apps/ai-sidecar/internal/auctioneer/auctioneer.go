@@ -1,6 +1,6 @@
 // Package auctioneer implements the LLM-driven auctioneer commentary
-// generator (T7 §4.2). Backend event hooks call /auctioneer when one of
-// the 4 trigger conditions fires (open/jump/cold/hammer); this package
+// generator (T7 §4.2). Backend event hooks call /llm/auctioneer when one of
+// the 4 trigger conditions fires (open/surge/cold/hammer); this package
 // runs the LLM call (mocked in T1 → mock-llm-T7; real Doubao in prod)
 // and applies the V9-compliance guardrail BEFORE returning text to the
 // backend.
@@ -9,7 +9,7 @@
 // this package — backend hooks call it asynchronously and broadcast the
 // result via WS. Failure → fallback to canned text, never block.
 //
-// Spec: proto/ai-events.md §POST /auctioneer.
+// Spec: proto/ai-events.md §POST /llm/auctioneer.
 package auctioneer
 
 import (
@@ -28,7 +28,7 @@ type Trigger string
 
 const (
 	TriggerOpen   Trigger = "open"
-	TriggerJump   Trigger = "jump"
+	TriggerSurge  Trigger = "surge"
 	TriggerCold   Trigger = "cold"
 	TriggerHammer Trigger = "hammer"
 )
@@ -52,10 +52,10 @@ type Ctx struct {
 
 // Response is what the sidecar returns to backend.
 type Response struct {
-	Trigger   Trigger `json:"trigger"`
-	Text      string  `json:"text"`
-	Fallback  bool    `json:"fallback"`
-	ModelName string  `json:"modelName"`
+	Trigger    Trigger `json:"trigger"`
+	Commentary string  `json:"commentary"`
+	Fallback   bool    `json:"fallback"`
+	ModelName  string  `json:"modelName"`
 }
 
 // maxTextLen is the spec'd budget per ai-events.md §guardrail (Chinese-
@@ -89,7 +89,7 @@ var bannedWords = []string{
 // trigger is unknown. Keep these short, generic, and demo-safe.
 var canned = map[Trigger]string{
 	TriggerOpen:   "拍卖正式开始 · 各位准备出价。",
-	TriggerJump:   "竞争升温 · 出价幅度明显加大。",
+	TriggerSurge:  "竞争升温 · 出价幅度明显加大。",
 	TriggerCold:   "场内沉寂 · 还有机会反手抢回。",
 	TriggerHammer: "落槌成交 · 恭喜得主。",
 }
@@ -119,7 +119,7 @@ func HandlerFunc(generate Generator) http.HandlerFunc {
 type Generator func(req Request) (text string, err error)
 
 // MockGenerator returns canned-but-trigger-aware text in development.
-// Includes the winner's name in jump/hammer to look LLM-y without
+// Includes the winner's name in surge/hammer to look LLM-y without
 // actually calling an LLM. Production swaps this for a Doubao client.
 func MockGenerator(req Request) (string, error) {
 	winner := req.Ctx.WinnerDisplayName
@@ -129,7 +129,7 @@ func MockGenerator(req Request) (string, error) {
 	switch req.Trigger {
 	case TriggerOpen:
 		return "开拍 · " + winner + " 留意倒计时，机会就在前 10 秒。", nil
-	case TriggerJump:
+	case TriggerSurge:
 		return winner + " 一跃 +3 档 · 这是真的玩家。", nil
 	case TriggerCold:
 		return fmt.Sprintf("沉寂 %ds · 谁来打破这场静默？", req.Ctx.SecondsSinceLastBid), nil
@@ -149,26 +149,26 @@ func generateWithGuardrail(req Request, generate Generator) Response {
 	if err != nil {
 		log.Printf("[auctioneer] generator failed trigger=%s err=%v · falling back", req.Trigger, err)
 		return Response{
-			Trigger:   req.Trigger,
-			Text:      canned[req.Trigger],
-			Fallback:  true,
-			ModelName: model,
+			Trigger:    req.Trigger,
+			Commentary: canned[req.Trigger],
+			Fallback:   true,
+			ModelName:  model,
 		}
 	}
 	if reason, bad := failsGuardrail(text); bad {
 		log.Printf("[auctioneer] guardrail trigger=%s reason=%s text=%q · falling back", req.Trigger, reason, text)
 		return Response{
-			Trigger:   req.Trigger,
-			Text:      canned[req.Trigger],
-			Fallback:  true,
-			ModelName: model,
+			Trigger:    req.Trigger,
+			Commentary: canned[req.Trigger],
+			Fallback:   true,
+			ModelName:  model,
 		}
 	}
 	return Response{
-		Trigger:   req.Trigger,
-		Text:      text,
-		Fallback:  false,
-		ModelName: model,
+		Trigger:    req.Trigger,
+		Commentary: text,
+		Fallback:   false,
+		ModelName:  model,
 	}
 }
 
@@ -197,7 +197,7 @@ func failsGuardrail(text string) (string, bool) {
 
 func validTrigger(t Trigger) bool {
 	switch t {
-	case TriggerOpen, TriggerJump, TriggerCold, TriggerHammer:
+	case TriggerOpen, TriggerSurge, TriggerCold, TriggerHammer:
 		return true
 	}
 	return false
