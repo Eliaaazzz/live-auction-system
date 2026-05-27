@@ -377,6 +377,9 @@ func (c *Conn) trySend(b []byte) {
 	case c.send <- b:
 	default:
 		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s)", c.aid, c.userID)
+		if c.metrics != nil {
+			c.metrics.BackpressureDrop.Inc()
+		}
 		// Emit a typed close (code 4000 BACKPRESSURE_DROP) so the client can
 		// distinguish this from a raw network failure and back off its
 		// reconnect intelligently instead of tight-looping into another drop.
