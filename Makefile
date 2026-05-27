@@ -46,8 +46,10 @@ e2e-ai-offline:   ## T7-5 chaos gate: kill ai-sidecar, assert bid path still gre
 	$(COMPOSE) start ai-sidecar
 	@# Wait briefly for /healthz to flip back up. The sidecar boots in
 	@# ~2s in docker; give it 10s of slack on slow CI runners.
+	@# Port 8090 per infra/docker-compose.yml (SIDECAR_ADDR=:8090);
+	@# /healthz endpoint per apps/ai-sidecar/cmd/sidecar/main.go.
 	@for i in 1 2 3 4 5; do \
-		if curl -sf http://localhost:8081/healthz >/dev/null 2>&1; then break; fi; \
+		if curl -sf http://localhost:8090/healthz >/dev/null 2>&1; then break; fi; \
 		echo "waiting for ai-sidecar healthz ($$i)"; sleep 2; \
 	done
 	@echo "=== T7-5 phase 2: run e2e-dummy-bid (expect exit 0 after recovery) ==="
