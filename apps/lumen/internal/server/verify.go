@@ -21,9 +21,9 @@ import (
 //
 // One-line, machine-parseable output (stdout):
 //
-//   consistent: stream=N mysql=N snapshot_seq=S (auction=X)
-//   mismatch_at_seq=N (stream=A mysql=B snapshot_seq=C, auction=X): <reason>
-//   hash_break_at_seq=N (events=N, auction=X)
+//	consistent: stream=N mysql=N snapshot_seq=S (auction=X)
+//	mismatch_at_seq=N (stream=A mysql=B snapshot_seq=C, auction=X): <reason>
+//	hash_break_at_seq=N (events=N, auction=X)
 //
 // Exit code: 0 = consistent, 1 = any mismatch or chain break.
 //
