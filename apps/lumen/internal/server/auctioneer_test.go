@@ -63,9 +63,35 @@ func TestAuctioneerGuardrail_RejectsPhone(t *testing.T) {
 }
 
 func TestAuctioneerGuardrail_RejectsMoney(t *testing.T) {
-	for _, s := range []string{"¥99999 立即拿下", "市价 1000元", "just $50"} {
+	// Coverage matches ai_events.go's auctioneerCurrencyPattern (Elia
+	// #73 B1 fix). Tests both prefix (¥/$ symbol-first) and suffix
+	// (元/万 Chinese unit) forms — Chinese commentary is suffix-heavy,
+	// so the suffix gap was the practical prompt-injection vector.
+	for _, s := range []string{
+		"¥99999 立即拿下", // ¥ prefix + digit
+		"just $50",    // $ prefix + digit
+		"市价 1000元",    // mid-string 元 suffix (prompt-injection vector)
+		"成交价 5万",      // 万 suffix without 元 (rural Chinese form)
+		"参考价 100万元",   // 万元 compound suffix
+		"出价 ¥1",       // boundary: single digit
+	} {
 		if _, bad := failsAuctioneerGuardrail(s); !bad {
 			t.Errorf("%q: expected money block", s)
+		}
+	}
+}
+
+func TestAuctioneerGuardrail_AcceptsTextWithoutPrices(t *testing.T) {
+	// Negative cases — text that mentions financial concepts but no
+	// actual numbers should pass. Prevents false-positive on commentary
+	// like "出价 / 报价 / 价格" that doesn't include a digit-bearing amount.
+	for _, s := range []string{
+		"出价踊跃 · 现场升温",
+		"价格屡创新高",
+		"竞价激烈 · 不容错过",
+	} {
+		if reason, bad := failsAuctioneerGuardrail(s); bad {
+			t.Errorf("%q: false positive (reason=%s)", s, reason)
 		}
 	}
 }
