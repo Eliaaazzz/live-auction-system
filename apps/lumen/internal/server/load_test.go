@@ -346,16 +346,19 @@ func TestT8EventServerTimeMsHandlesMalformedPayload(t *testing.T) {
 // caught here, not by chasing a wrong perf-report.md number.
 func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	cfg := loadConfig{
-		AckP95Budget: 80 * time.Millisecond, BroadcastP95Budget: 150 * time.Millisecond,
-		HammerP95Budget: 500 * time.Millisecond, ScriptP99Budget: 5 * time.Millisecond,
+		CatchupP95Budget: 1000 * time.Millisecond,
+		AckP95Budget:       80 * time.Millisecond,
+		BroadcastP95Budget: 150 * time.Millisecond,
+		HammerP95Budget:    500 * time.Millisecond,
+		ScriptP99Budget:    5 * time.Millisecond,
 	}
 	type fields struct {
-		ackP95, bcastP95, hammerP95, scriptP99 float64
-		ackCount, bcastCount, hammerCount      int64
-		preSeqGap, postSeqGap                  int64
-		sent, acked                            int64
-		wantBreach                             []string // substrings that must appear
-		wantClean                              bool     // expect 0 breaches
+		ackP95, bcastP95, hammerP95, catchupP95, scriptP99 float64
+		ackCount, bcastCount, hammerCount, catchupCount    int64
+		preSeqGap, postSeqGap                              int64
+		sent, acked                                        int64
+		wantBreach                                         []string // substrings that must appear
+		wantClean                                          bool     // expect 0 breaches
 	}
 	tt := []fields{
 		// happy path: ack 50, broadcast 80, hammer 200, script 1; seq 0; bids ok.
@@ -374,6 +377,9 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 			wantBreach: []string{"hammer p95 501.0ms > 500ms"}},
 		// hammer over but count == 0 → NOT flagged (V9: "only assert if hammer fired").
 		{ackP95: 50, bcastP95: 80, hammerP95: 9999, scriptP99: 1, ackCount: 1, bcastCount: 1, hammerCount: 0, sent: 1, acked: 1, wantClean: true},
+		// catchup over budget is flagged when catchup observed.
+		{ackP95: 50, bcastP95: 80, catchupP95: 1001, scriptP99: 1, catchupCount: 1,
+			ackCount: 1, bcastCount: 1, sent: 1, acked: 1, wantBreach: []string{"catchup p95 1001.0ms > 1s"}},
 		// script p99 over.
 		{ackP95: 50, bcastP95: 80, scriptP99: 6, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
 			wantBreach: []string{"script p99 6.0ms > 5ms"}},
@@ -393,6 +399,7 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 					Ack:        metrics.HistogramSnapshot{P95: c.ackP95, Count: c.ackCount},
 					Broadcast:  metrics.HistogramSnapshot{P95: c.bcastP95, Count: c.bcastCount},
 					Hammer:     metrics.HistogramSnapshot{P95: c.hammerP95, Count: c.hammerCount},
+					Catchup:    metrics.HistogramSnapshot{P95: c.catchupP95, Count: c.catchupCount},
 					ScriptTime: metrics.HistogramSnapshot{P99: c.scriptP99, Count: 1},
 					SeqGap:     c.postSeqGap,
 				},

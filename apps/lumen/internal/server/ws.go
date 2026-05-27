@@ -430,10 +430,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if frame.SchemaVersion != model.SchemaVersion {
+			// Write the protocol close frame and tear down immediately so callers
+			// can reliably observe the intended close code and reason.
 			_ = ws.WriteMessage(
 				websocket.CloseMessage,
 				websocket.FormatCloseMessage(schemaMismatchCloseCode, "schema mismatch"),
 			)
+			c.close()
 			return
 		}
 		s.dispatchWS(r.Context(), c, frame.Envelope)
