@@ -109,7 +109,7 @@ func (h *Hub) roomAIDs() []string {
 // and fans out those events. A forged/stale Pub/Sub message not backed by the
 // Stream therefore can never reach clients. Runs for the lifetime of ctx in a
 // single goroutine (lastSeq needs no lock).
-func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
+func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks) {
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
 	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
@@ -129,6 +129,13 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store) {
 			b, _ := json.Marshal(env)
 			h.broadcast(aid, b)
 			lastSeq[aid] = e.Seq
+			// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
+			// for legacy paths (test harness, alt-mode startup) that
+			// don't initialize the hooks. Bid path NEVER awaits these
+			// (each method dispatches via `go a.fire(...)` internally).
+			if auctioneer != nil {
+				dispatchAuctioneer(ctx, auctioneer, aid, st, e)
+			}
 		}
 	}
 
