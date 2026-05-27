@@ -12,6 +12,7 @@ import { MobileRoom, MobileHammer, MobileEvidence } from './components/mobile.js
 import { AdminVLMFacts, AdminConsole } from './components/admin.jsx';
 import { AdminPublish, AdminOrders, AdminCancelModal } from './components/adminExtra.jsx';
 import { MiniProgramStub, ConnReconnecting, ConnSyncing, ConnSchema } from './components/misc.jsx';
+import { TweaksPanel } from './components/TweaksPanel.jsx';
 
 import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
 import { EvidenceRoute } from './routes/EvidenceRoute.jsx';
@@ -22,7 +23,8 @@ import { useParams } from 'react-router-dom';
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <Routes>
       <Route path="/" element={<IndexPage/>}/>
 
       {/* ─── Buyer flow (mobile) ─────────────────────────── */}
@@ -60,7 +62,9 @@ export default function App() {
       </DesktopShell>}/>
 
       <Route path="*" element={<NotFound/>}/>
-    </Routes>
+      </Routes>
+      <TweaksPanel/>
+    </>
   );
 }
 
