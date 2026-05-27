@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
 
 // setKeepaliveForTest swaps the package's pongWait / pingPeriod vars for the
@@ -47,6 +49,7 @@ func setKeepaliveForTest(t *testing.T, pw, pp time.Duration) {
 func joinRoom(t *testing.T, c *websocket.Conn, aid string) {
 	t.Helper()
 	if err := c.WriteJSON(map[string]any{
+		"schemaVersion": model.SchemaVersion,
 		"type":         "ROOM_JOIN",
 		"auctionId":    aid,
 		"serverTimeMs": time.Now().UnixMilli(),
@@ -153,7 +156,9 @@ func TestT5CloseWithCodeEmitsTypedCloseFrame(t *testing.T) {
 
 	// Force the server-side Conn into hub.rooms via ROOM_JOIN so we can grab it.
 	_ = c.WriteJSON(map[string]any{
-		"type": "ROOM_JOIN", "auctionId": "test_t5_cwc",
+		"schemaVersion": model.SchemaVersion,
+		"type":         "ROOM_JOIN",
+		"auctionId":    "test_t5_cwc",
 		"serverTimeMs": time.Now().UnixMilli(),
 		"data":         map[string]any{"auctionId": "test_t5_cwc"},
 	})
