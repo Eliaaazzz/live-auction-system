@@ -137,11 +137,47 @@ export const api = {
    * client-side and persisted on `freeze`, which atomically snapshots the
    * confirmed facts as part of the DRAFT→SCHEDULED transition.
    */
-  draftFacts: ({ productId, imageUrls, title, description }) =>
-    request('/facts/draft', {
-      method: 'POST',
-      body: { productId, imageUrls, title, description },
-    }),
+  /**
+   * T7-3 / issue #70 §4.3: wraps the wire call to surface AI sidecar
+   * health to the offline-badge listeners.
+   *   - any success → dispatch `lumen:ai-sidecar-ok`
+   *   - any failure (502, 504, network, ApiError of any status) →
+   *     dispatch `lumen:ai-sidecar-offline` AND re-throw the original
+   *     error so the caller's catch path is unchanged
+   *
+   * Event-emitter pattern (vs. importing the Zustand store directly)
+   * keeps lib/api.js free of UI-state coupling — same shape as the
+   * existing `lumen:session-expired` event in auth.js. A small
+   * bootstrap in main.jsx subscribes and wires events → store actions.
+   *
+   * The bid path NEVER calls draftFacts, so AI-down does not affect
+   * BID_PLACE / BID_ACCEPTED. V9 P3 invariant.
+   */
+  draftFacts: async ({ productId, imageUrls, title, description }) => {
+    try {
+      const result = await request('/facts/draft', {
+        method: 'POST',
+        body: { productId, imageUrls, title, description },
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-ok'));
+      }
+      return result;
+    } catch (e) {
+      // Self-review: skip the offline dispatch on AbortError. If a
+      // route unmounts mid-request (AbortController.abort()), fetch
+      // throws AbortError, which would otherwise leave the badge
+      // stuck in offline state even though the sidecar is fine.
+      // Same exemption applies to a deliberate caller-side cancel.
+      const isAbort = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
+      if (typeof window !== 'undefined' && !isAbort) {
+        window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-offline', {
+          detail: { status: e?.status ?? null, code: e?.code ?? null },
+        }));
+      }
+      throw e;
+    }
+  },
 
   // ---------- Evidence ----------
   /**
