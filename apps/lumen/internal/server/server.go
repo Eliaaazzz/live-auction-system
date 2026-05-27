@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
@@ -22,6 +23,10 @@ type Server struct {
 	// T7 §4.2: LLM auctioneer trigger hooks. Always set after Serve()
 	// initializes (nil-safe before that). See auctioneer.go.
 	auctioneer *AuctioneerHooks
+	// metrics is the T8 in-process observability registry (V9 §4.2 SLO
+	// instruments). One per process; the load harness scrapes /metrics, the
+	// bid hot path Observes.
+	metrics *metrics.Registry
 }
 
 // Serve connects datastores, starts the selected mode's background workers, and
@@ -38,6 +43,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		st:         st,
 		hub:        newHub(),
 		httpClient: &http.Client{Timeout: 5 * time.Second},
+		metrics:    metrics.New(),
 	}
 	// T7 §4.2: AI auctioneer trigger hooks. Always initialized so any
 	// mode that hosts the bid path / start path / timer can call into
@@ -47,7 +53,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 
 	switch mode {
 	case "all", "gateway":
-		go s.hub.subscribe(ctx, st, s.auctioneer)
+		go s.hub.subscribe(ctx, st, s.auctioneer, s.metrics)
 	}
 	switch mode {
 	case "all", "pg-writer":
@@ -55,7 +61,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	}
 	switch mode {
 	case "all", "timer":
-		go runTimerWorker(ctx, st, s.auctioneer)
+		go runTimerWorker(ctx, st, s.auctioneer, s.metrics)
 	}
 
 	mux := http.NewServeMux()
@@ -78,6 +84,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)

@@ -1,8 +1,9 @@
 # Lumen Auction — T1 targets. Demo path = a sequence of make targets (per #14).
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
+LOAD_AID_FILE := .load-auction-id
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline verify verify-evidence build vet test fmt guard
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -71,8 +72,41 @@ e2e-ai-offline:   ## T7-5 chaos gate: kill ai-sidecar, assert bid path still gre
 	$(MAKE) e2e-dummy-bid
 	@echo "✓ T7-5 PASSED · bid path stayed green throughout AI down + recovery"
 
+load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budgets, exit!=0 on breach + Verifier consistent on the post-load auction.
+	@# Run the load harness; tee to stdout AND to a log so we can extract the
+	@# LOAD_AUCTION_ID after the run (the harness prints it within the first
+	@# second; the run continues for LOAD_DURATION_SEC). We capture the id even
+	@# on failure so an operator can `make verify VERIFY_AID=<id>` manually.
+	@set -e; mkdir -p .load-logs
+	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
+	set +e; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; fi; \
+	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
+	@# T8 acceptance §9: Verifier consistent on the post-load auction. CI red if either step fails.
+	@# MAXLEN trim guard: load uses a long auction with bounded events (~6k at default), well
+	@# under the verifier replay budget — see docs/perf-report.md for the trim/replay alignment.
+	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
+load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets — exercises the load + verify chain so the harness itself stays a regression net.
+	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
+	@set -e; mkdir -p .load-logs
+	@logfile=".load-logs/load-smoke-$$(date +%Y%m%dT%H%M%S).log"; \
+	set +e; $(COMPOSE) --profile tools run --rm --build \
+		-e LOAD_OBSERVERS=25 -e LOAD_BIDDERS=5 -e LOAD_DURATION_SEC=10 \
+		-e LOAD_BID_INTERVAL_MS=100 \
+		-e LOAD_ACK_P95_MS=400 -e LOAD_BROADCAST_P95_MS=800 \
+		-e LOAD_HAMMER_P95_MS=2000 -e LOAD_SCRIPT_P99_MS=20 \
+		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
+		load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
+	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
+	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
+	if [ -z "$$aid" ] && [ -f "$(LOAD_AID_FILE)" ]; then aid="$$(cat $(LOAD_AID_FILE))"; fi; \
 	if [ -z "$$aid" ] && [ -f "$(E2E_AID_FILE)" ]; then aid="$$(cat $(E2E_AID_FILE))"; fi; \
 	$(COMPOSE) --profile tools run --rm --build -e VERIFY_AID="$$aid" verifier
 

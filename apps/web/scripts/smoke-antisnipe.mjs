@@ -65,24 +65,24 @@ async function api(token, path, opts = {}) {
 console.log('[setup] seller dev-login');
 const seller = await devLogin('fari-antisnipe-seller');
 
-console.log('[setup] create product + draft (factsConfirmed=true, durationMs=8000)');
+console.log('[setup] create product + draft (factsConfirmed=true, durationSec=8)');
 const { productId } = await api(seller.token, '/products', {
   method: 'POST',
   body: { name: 'AntiSnipe Smoke Test', imageUrl: '', description: '' },
 });
 
 // 8-second auction so the entire bidding window is inside the anti-snipe
-// final-10s zone. anti_snipe_window_ms=10000 is the default extension.
+// final-10s zone. extendWindowSec=10 and extendSec=10 push endAtMs forward.
 const draftBody = {
   productId,
   rules: {
-    startCents:        '10000',
-    stepCents:         '500',
-    durationMs:        8000,
+    startPriceCents:   '10000',
+    incrementCents:    '500',
+    durationSec:       8,
+    extendWindowSec:   10,
+    extendSec:         10,
     maxExtensions:     5,
-    antiSnipeWindowMs: 10000,
-    capCents:          '999900',
-    reserveCents:      '10000',
+    capPriceCents:     '999900',
   },
   factsConfirmed: true,
 };
