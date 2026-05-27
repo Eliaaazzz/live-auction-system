@@ -118,3 +118,29 @@ jobs:
       - name: teardown
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v
+
+  # Frontend gate — runs the Vitest suite (114 unit + component tests) as a
+  # tests-as-gate, not tests-on-disk (per #65 review). Smoke scripts that
+  # need a live backend (smoke:catchup / antisnipe / snapshot / 401 / wire /
+  # schema) deliberately NOT wired here — they belong in the e2e job which
+  # already has docker-compose up. Adding them is a follow-up once the
+  # smoke runtimes are tightened (anti-snipe is ~12s, snapshot-fallback
+  # ~30s; both need to be parallelizable before they're worth a CI minute).
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: install
+        run: npm ci
+      - name: build
+        run: npm run build
+      - name: test
+        run: npm test
