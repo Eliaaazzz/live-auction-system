@@ -222,15 +222,27 @@ func TestValidateAuctioneerResponse_RejectsPhone(t *testing.T) {
 
 // TC-T7-AUC-505 — currency pattern: prevent text from naming an
 // alternative price (which would mislead buyers). The auctioneer should
-// describe pacing / urgency, not echo numeric amounts.
+// describe pacing / urgency, not echo numeric amounts. Three forms
+// covered per @fariZzzz #73 B1 review: ¥-prefix, $-prefix (English),
+// 元-suffix (Chinese yuan written out).
 func TestValidateAuctioneerResponse_RejectsCurrency(t *testing.T) {
-	body := []byte(`{"trigger":"jump","text":"已达 ¥138,800 继续","fallback":false,"modelName":"m"}`)
-	err := ValidateAuctioneerResponse(body)
-	if err == nil {
-		t.Fatal("expected error for ¥ amount in text, got nil")
+	cases := []string{
+		"已达 ¥138,800 继续",   // ¥ prefix
+		"市价 50000元 起拍",     // 元 suffix (Chinese yuan written out)
+		"约值 1万元 左右",        // 万 suffix
+		"worth $500 today", // $ prefix (LLM English fallback)
 	}
-	if !strings.Contains(err.Error(), "currency") {
-		t.Fatalf("error should mention currency, got: %v", err)
+	for _, text := range cases {
+		t.Run(text, func(t *testing.T) {
+			body := []byte(`{"trigger":"jump","text":"` + text + `","fallback":false,"modelName":"m"}`)
+			err := ValidateAuctioneerResponse(body)
+			if err == nil {
+				t.Fatalf("expected error for currency in %q, got nil", text)
+			}
+			if !strings.Contains(err.Error(), "currency") {
+				t.Fatalf("error should mention currency for %q, got: %v", text, err)
+			}
+		})
 	}
 }
 
