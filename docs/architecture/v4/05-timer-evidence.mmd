@@ -1,0 +1,44 @@
+sequenceDiagram
+  title Timer Hammer And Evidence Flow v4
+  participant T as Timer Worker
+  participant Z as Redis active ZSET
+  participant L as Redis Lua close_auction.lua
+  participant S as Redis Stream
+  participant P as Redis Pub/Sub
+  participant W as WS Gateway
+  participant PW as Persistence Worker
+  participant O as Order Service
+  participant M as MySQL
+  participant E as Evidence Generator
+  participant V as Replay Verifier
+
+  T->>Z: ZRANGEBYSCORE endAtMs <= now
+  Z-->>T: candidate auction ids
+  T->>L: EVALSHA close_auction.lua(auctionId)
+  L->>L: re-check Redis TIME, now >= endAtMs
+
+  alt not due after re-check
+    L-->>T: ERR_NOT_DUE(msRemaining)
+  else already terminal
+    L-->>T: ERR_ALREADY_TERMINAL(status)
+  else highest bid exists
+    L->>S: XADD AUCTION_SOLD <seq>-0
+    L->>P: PUBLISH AUCTION_SOLD
+    P-->>W: room wakeup
+    W-->>W: broadcast AUCTION_SOLD
+    PW->>S: consume ordered event
+    PW->>M: insert auction_events, bids projection
+    O->>M: create order with UNIQUE(auction_id)
+    E->>M: write evidence card and hash chain fields
+    V->>S: replay Stream
+    V->>M: compare MySQL projection
+  else no accepted bid
+    L->>S: XADD AUCTION_NO_BID <seq>-0
+    L->>P: PUBLISH AUCTION_NO_BID
+    P-->>W: room wakeup
+    W-->>W: broadcast AUCTION_NO_BID
+    PW->>S: consume ordered event
+    PW->>M: insert terminal event
+  end
+
+  Note over T,V: SLOs: hammer p95 under 500ms. Detection lag at most 120ms. Settled Replay Verifier returns consistent.
