@@ -9,7 +9,16 @@
     "build": "vite build",
     "preview": "vite preview --port 4173",
     "lint": "eslint src --ext .js,.jsx --max-warnings 0",
-    "smoke:wire": "node scripts/smoke-wire.mjs"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "smoke:wire": "node scripts/smoke-wire.mjs",
+    "smoke:catchup": "node scripts/smoke-catchup.mjs",
+    "smoke:schema": "node scripts/smoke-schema.mjs",
+    "smoke:401": "node scripts/smoke-401.mjs",
+    "smoke:antisnipe": "node scripts/smoke-antisnipe.mjs",
+    "smoke:snapshot": "node scripts/smoke-snapshot-fallback.mjs",
+    "smoke:all": "node scripts/smoke-wire.mjs && node scripts/smoke-catchup.mjs && node scripts/smoke-schema.mjs && node scripts/smoke-401.mjs && node scripts/smoke-antisnipe.mjs && node scripts/smoke-snapshot-fallback.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -18,11 +27,16 @@
     "zustand": "^4.5.5"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.1.7",
     "eslint": "^9.13.0",
     "eslint-plugin-react": "^7.37.2",
     "eslint-plugin-react-hooks": "^5.0.0",
+    "jsdom": "^29.1.1",
     "vite": "^5.4.10",
+    "vitest": "^4.1.7",
     "ws": "^8.18.0"
   }
 }
