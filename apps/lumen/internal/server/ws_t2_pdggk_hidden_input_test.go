@@ -9,9 +9,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
@@ -96,6 +99,41 @@ func TestT2HiddenWSFrameLimitConstants(t *testing.T) {
 	}
 	if len(strings.Repeat("x", maxWSFrameBytes+1)) <= maxWSFrameBytes {
 		t.Fatalf("oversized payload fixture did not exceed frame limit")
+	}
+}
+
+func TestT2HiddenWSRejectsSchemaMismatchWithProtocolClose(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	buyer, err := devLogin(hc, target, "Schema Buyer", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialRaw(t, target, buyer.Token)
+	defer c.Close()
+
+	type badFrame struct {
+		SchemaVersion int `json:"schemaVersion"`
+		model.Envelope
+	}
+	if err := c.WriteJSON(badFrame{
+		SchemaVersion: 999,
+		Envelope:      model.Envelope{Type: model.TypeRoomJoin, AuctionID: "auc_demo", Data: mustJSON(t, model.RoomJoinData{AuctionID: "auc_demo"})},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_, _, err = c.ReadMessage()
+	if err == nil {
+		t.Fatal("expected close error after schema mismatch, got successful message")
+	}
+	closeErr, ok := err.(*websocket.CloseError)
+	if !ok {
+		t.Fatalf("read error=%T %v (want CloseError code %d)", err, err, schemaMismatchCloseCode)
+	}
+	if closeErr.Code != schemaMismatchCloseCode {
+		t.Fatalf("close code=%d want %d", closeErr.Code, schemaMismatchCloseCode)
 	}
 }
 

@@ -37,6 +37,7 @@ const catchupMaxGap = 200
 // client may be slow (just-reconnected, possibly high-RTT), and force-closing
 // it would re-enter the reconnect loop the catchup is meant to break.
 const sendBufFrames = 256
+const schemaMismatchCloseCode = 4001
 
 // fanoutSweepInterval is the backstop cadence for Stream-driven broadcast (a lost
 // Pub/Sub wakeup can't permanently stall the room).
@@ -403,11 +404,21 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return
 		}
-		var env model.Envelope
-		if err := json.Unmarshal(raw, &env); err != nil {
+		var frame struct {
+			model.Envelope
+			SchemaVersion int `json:"schemaVersion"`
+		}
+		if err := json.Unmarshal(raw, &frame); err != nil {
 			continue
 		}
-		s.dispatchWS(r.Context(), c, env)
+		if frame.SchemaVersion != model.SchemaVersion {
+			_ = ws.WriteMessage(
+				websocket.CloseMessage,
+				websocket.FormatCloseMessage(schemaMismatchCloseCode, "schema mismatch"),
+			)
+			return
+		}
+		s.dispatchWS(r.Context(), c, frame.Envelope)
 	}
 }
 
