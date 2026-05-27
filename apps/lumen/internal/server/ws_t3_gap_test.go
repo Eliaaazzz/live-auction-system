@@ -144,7 +144,7 @@ func TestT3CloseDueErrInternalUntracks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	closeDue(ctx, st, aid)
+	closeDue(ctx, st, aid, nil)
 
 	if inActive(t, st, aid) {
 		t.Fatal("closeDue must untrack on ERR_INTERNAL to stop the 100ms retry loop (TC-T3-104)")

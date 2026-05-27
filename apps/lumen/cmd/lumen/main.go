@@ -6,6 +6,7 @@
 //	lumen verify-evidence [--auction <id>]   (T4 hash-chain only; same chain check, no 3-way diff)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
+//	lumen load           (drives TARGET; T8 P0 gate — 500 connected + 50 active, asserts §4.2 budgets)
 package main
 
 import (
@@ -79,6 +80,15 @@ func main() {
 			log.Fatalf("perf-smoke: %v", err)
 		}
 
+	case "load":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunLoad(target); err != nil {
+			log.Fatalf("load: %v", err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -94,5 +104,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load> [flags]")
 }

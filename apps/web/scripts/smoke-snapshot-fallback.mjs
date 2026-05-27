@@ -68,7 +68,7 @@ async function api(token, path, opts = {}) {
 console.log('[setup] seller dev-login');
 const seller = await devLogin('fari-snap-seller');
 
-console.log('[setup] create product + draft (durationMs=120000)');
+console.log('[setup] create product + draft (durationSec=120)');
 const { productId } = await api(seller.token, '/products', {
   method: 'POST',
   body: { name: 'Snapshot Fallback Smoke', imageUrl: '', description: '' },
@@ -78,13 +78,13 @@ const { auctionId } = await api(seller.token, '/auctions', {
   body: {
     productId,
     rules: {
-      startCents:        '10000',
-      stepCents:         '500',
-      durationMs:        120000,           // 2 minutes — enough time to generate 250 bids
+      startPriceCents:   '10000',
+      incrementCents:    '500',
+      durationSec:       120,              // 2 minutes — enough time to generate 250 bids
       maxExtensions:     0,                // no anti-snipe so endAtMs stable
-      antiSnipeWindowMs: 0,
-      capCents:          '99999999999999', // very high so we don't hit it
-      reserveCents:      '10000',
+      extendWindowSec:   0,
+      extendSec:         0,
+      capPriceCents:     '99999999999999', // very high so we don't hit it
     },
     factsConfirmed: true,
   },
@@ -129,19 +129,24 @@ console.log('[phase2] generating ' + TARGET_GAP + ' bids to push tip past gap=20
 const flooders = await Promise.all(buyers.map((b) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(b.token)}&auction=${encodeURIComponent(auctionId)}`);
   let currentCents = '10000';
+  const timeout = setTimeout(() => reject(new Error('flooder ws open timeout (5s)')), 5_000);
   ws.on('open', () => {
+    clearTimeout(timeout);
     ws.send(JSON.stringify({
       schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId },
     }));
+    resolve({ ws, getCurrent: () => currentCents });
   });
   ws.on('message', (raw) => {
     const env = JSON.parse(raw.toString());
     if (env.type === 'BID_ACCEPTED') currentCents = env.data.amountCents;
     if (env.type === 'ROOM_SNAPSHOT') currentCents = env.data.currentPriceCents;
   });
-  ws.on('error', reject);
-  resolve({ ws, getCurrent: () => currentCents });
+  ws.on('error', (err) => {
+    clearTimeout(timeout);
+    reject(err);
+  });
 })));
 
 // Round-robin bid placement across all flooders.
