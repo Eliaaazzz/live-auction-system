@@ -322,3 +322,54 @@ describe('applyReject', () => {
     expect(useAuctionStore.getState().recentRejects.length).toBe(10);
   });
 });
+
+describe('aiSidecarHealth (T7-3 / issue #70 §4.3)', () => {
+  beforeEach(RESET);
+
+  it('defaults to "ok" optimistically — fresh init', () => {
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('ok');
+  });
+
+  it('setAiOffline() flips to "offline"', () => {
+    useAuctionStore.getState().setAiOffline();
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('offline');
+  });
+
+  it('setAiOk() flips back to "ok" after offline', () => {
+    useAuctionStore.getState().setAiOffline();
+    useAuctionStore.getState().setAiOk();
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('ok');
+  });
+
+  it('TC-T7-301: bid path is NEVER affected by aiSidecarHealth flips (V9 P3)', () => {
+    // Flip AI offline, then run a regular BID_ACCEPTED through the reducer.
+    // currentCents / status / leaders / totalBidsCount must all update
+    // exactly as they would when AI is ok.
+    useAuctionStore.getState().setAiOffline();
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('offline');
+
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.BID_ACCEPTED,
+      seq: 5,
+      serverTimeMs: Date.now(),
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'u_other', displayName: 'A', endAtMs: Date.now() + 28_000 },
+    });
+
+    const s = useAuctionStore.getState();
+    expect(s.aiSidecarHealth).toBe('offline');  // unchanged by the bid
+    expect(s.currentCents).toBe('11000000');     // bid applied normally
+    expect(s.winnerId).toBe('u_other');
+    expect(s.totalBidsCount).toBe(1);
+    expect(s.leaders[0].userId).toBe('u_other');
+  });
+
+  it('init() resets aiSidecarHealth to "ok" — fresh room is optimistic', () => {
+    // aiSidecarHealth lives in DEFAULT_STATE so init() resets it. Each
+    // route mount re-evaluates AI health from scratch; main.jsx event
+    // bridge will flip back to 'offline' on the next failed draftFacts.
+    useAuctionStore.getState().setAiOffline();
+    useAuctionStore.getState().init({ auctionId: 'auc_different' });
+    expect(useAuctionStore.getState().aiSidecarHealth).toBe('ok');
+  });
+});
