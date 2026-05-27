@@ -129,19 +129,24 @@ console.log('[phase2] generating ' + TARGET_GAP + ' bids to push tip past gap=20
 const flooders = await Promise.all(buyers.map((b) => new Promise((resolve, reject) => {
   const ws = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(b.token)}&auction=${encodeURIComponent(auctionId)}`);
   let currentCents = '10000';
+  const timeout = setTimeout(() => reject(new Error('flooder ws open timeout (5s)')), 5_000);
   ws.on('open', () => {
+    clearTimeout(timeout);
     ws.send(JSON.stringify({
       schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId },
     }));
+    resolve({ ws, getCurrent: () => currentCents });
   });
   ws.on('message', (raw) => {
     const env = JSON.parse(raw.toString());
     if (env.type === 'BID_ACCEPTED') currentCents = env.data.amountCents;
     if (env.type === 'ROOM_SNAPSHOT') currentCents = env.data.currentPriceCents;
   });
-  ws.on('error', reject);
-  resolve({ ws, getCurrent: () => currentCents });
+  ws.on('error', (err) => {
+    clearTimeout(timeout);
+    reject(err);
+  });
 })));
 
 // Round-robin bid placement across all flooders.
