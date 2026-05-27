@@ -182,11 +182,21 @@ type PubMessage struct {
 }
 
 type RoomSnapshotData struct {
-	Status            string `json:"status"`
-	CurrentPriceCents string `json:"currentPriceCents"`
-	WinnerID          string `json:"winnerId"`
-	EndAtMs           int64  `json:"endAtMs"`
-	Seq               int64  `json:"seq"`
+	Status            string             `json:"status"`
+	CurrentPriceCents string             `json:"currentPriceCents"`
+	WinnerID          string             `json:"winnerId"`
+	EndAtMs           int64              `json:"endAtMs"`
+	Seq               int64              `json:"seq"`
+	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
+}
+
+type RoomSnapshotRules struct {
+	StepCents string  `json:"stepCents"`
+	CapCents  *string `json:"capCents"`
+	// ReserveCents mirrors StartPriceCents until a separate reserve rule lands.
+	ReserveCents      string `json:"reserveCents"`
+	MaxExtensions     int64  `json:"maxExtensions"`
+	AntiSnipeWindowMs int64  `json:"antiSnipeWindowMs"`
 }
 
 // --- REST DTOs ---
@@ -257,6 +267,21 @@ type Rules struct {
 	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
 	// accepted as a normal bid (no endAtMs bump, no AUCTION_EXTENDED).
 	MaxExtensions int64 `json:"maxExtensions"`
+}
+
+func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
+	var capCents *string
+	if r.CapPriceCents > 0 {
+		c := strconv.FormatInt(int64(r.CapPriceCents), 10)
+		capCents = &c
+	}
+	return RoomSnapshotRules{
+		StepCents:         strconv.FormatInt(int64(r.IncrementCents), 10),
+		CapCents:          capCents,
+		ReserveCents:      strconv.FormatInt(int64(r.StartPriceCents), 10),
+		MaxExtensions:     r.MaxExtensions,
+		AntiSnipeWindowMs: r.ExtendWindowSec * 1000,
+	}
 }
 
 // Validate enforces the rule-DSL invariants the Lua hot path assumes, so a

@@ -85,7 +85,7 @@ discriminator**.
 
 | `type` | `data` payload |
 |---|---|
-| `ROOM_SNAPSHOT`     | `{ status, currentPriceCents, winnerId, endAtMs, seq }` |
+| `ROOM_SNAPSHOT`     | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` |
 | `BID_ACCEPTED`      | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` |
 | `BID_REJECTED`      | `{ code }` (see `bidRejectCopy` in `src/lib/types.js`) |
 | `AUCTION_EXTENDED`  | `{ seq, endAtMs, extendCount }` |

@@ -392,7 +392,32 @@ func (s *Store) Snapshot(ctx context.Context, aid string) (model.RoomSnapshotDat
 		WinnerID:          m["winnerId"],
 		EndAtMs:           parseInt(m["endAtMs"]),
 		Seq:               parseInt(m["seq"]),
+		Rules:             snapshotRules(m),
 	}, nil
+}
+
+func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
+	if m["startPriceCents"] == "" && m["incrementCents"] == "" && m["capPriceCents"] == "" {
+		return nil
+	}
+	var capCents *string
+	if cap := moneyOrZero(m["capPriceCents"]); cap != "0" {
+		capCents = &cap
+	}
+	return &model.RoomSnapshotRules{
+		StepCents:         moneyOrZero(m["incrementCents"]),
+		CapCents:          capCents,
+		ReserveCents:      moneyOrZero(m["startPriceCents"]),
+		MaxExtensions:     parseInt(m["maxExtensions"]),
+		AntiSnipeWindowMs: parseInt(m["extendWindowSec"]) * 1000,
+	}
+}
+
+func moneyOrZero(s string) string {
+	if s == "" {
+		return "0"
+	}
+	return s
 }
 
 // StreamEvent is one durable event read from the Redis Stream.

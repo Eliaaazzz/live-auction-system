@@ -379,7 +379,7 @@ type WsEnvelope<T = unknown> = {
 
 | Type | Fields in `data` | Trigger | FE response |
 |---|---|---|---|
-| `ROOM_SNAPSHOT` | `status, currentPriceCents, winnerId, endAtMs, seq` | Sent after `ROOM_JOIN` or on gap > 200 reset | Reset seqguard watermark; initialize all room state |
+| `ROOM_SNAPSHOT` | `status, currentPriceCents, winnerId, endAtMs, seq, rules?` | Sent after `ROOM_JOIN` or on gap > 200 reset | Reset seqguard watermark; initialize room state and seller-configured bid rules |
 | `BID_ACCEPTED` | `seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs` | After `place_bid.lua` returns `OK_ACCEPTED`/`OK_EXTENDED`/`OK_SOLD` | Animate price flip; update countdown end; if self → F06 flash; if was-self → F07 banner |
 | `BID_REJECTED` | `code` (one of: `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_NOT_ALLOWED`, `ERR_BAD_INPUT`, `ERR_INTERNAL`) | `place_bid.lua` rejects | F08 shake + toast with `bidRejectCopy[code]` |
 | `AUCTION_EXTENDED` | `seq, endAtMs, extendCount` | `place_bid.lua` triggered anti-snipe | F02 light-sweep on countdown; ExtendBadge increment |

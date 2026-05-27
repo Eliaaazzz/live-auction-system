@@ -86,14 +86,15 @@ export function LiveRoomRoute() {
         // 2. Snapshot — gives us status/price/endAtMs before WS opens.
         const snap = await api.getAuction(auctionId);
         if (!alive) return;
+        const rules = snap.rules ?? {};
         store.init({
           auctionId,
           status:       snap.status,
           currentCents: snap.currentPriceCents ?? '0',
-          startCents:   snap.startCents   ?? '0',
-          stepCents:    snap.stepCents    ?? '0',
-          capCents:     snap.capCents     ?? null,
-          reserveCents: snap.reserveCents ?? '0',
+          startCents:   snap.startCents ?? rules.reserveCents ?? '0',
+          stepCents:    rules.stepCents ?? snap.stepCents ?? '500000',
+          capCents:     hasOwn(rules, 'capCents') ? rules.capCents : (snap.capCents ?? null),
+          reserveCents: rules.reserveCents ?? snap.reserveCents ?? '0',
           endAtMs:      snap.endAtMs ?? null,
           winnerId:     snap.winnerId ?? null,
           yourUserId:   useAuctionStore.getState().yourUserId,
@@ -175,7 +176,7 @@ export function LiveRoomRoute() {
     <MobileRoom
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
-      stepCents={store.stepCents || '500000'}
+      stepCents={store.stepCents}
       capCents={store.capCents}
       status={store.status}
       extendCount={store.extendCount}
@@ -218,6 +219,10 @@ function rankOfYou(leaders, userId) {
   if (!userId) return null;
   const idx = leaders.findIndex((l) => l.userId === userId);
   return idx >= 0 ? idx + 1 : null;
+}
+
+function hasOwn(obj, key) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
 }
 
 function safeSubBigInt(a, b) {
