@@ -164,7 +164,13 @@ export const api = {
       }
       return result;
     } catch (e) {
-      if (typeof window !== 'undefined') {
+      // Self-review: skip the offline dispatch on AbortError. If a
+      // route unmounts mid-request (AbortController.abort()), fetch
+      // throws AbortError, which would otherwise leave the badge
+      // stuck in offline state even though the sidecar is fine.
+      // Same exemption applies to a deliberate caller-side cancel.
+      const isAbort = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
+      if (typeof window !== 'undefined' && !isAbort) {
         window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-offline', {
           detail: { status: e?.status ?? null, code: e?.code ?? null },
         }));
