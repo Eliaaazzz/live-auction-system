@@ -207,7 +207,16 @@ export function LiveRoomRoute() {
           : inFinal10           ? 'cold'
           : 'open'
       }
-      aiText="正在等待出价 · AI 文本由 sidecar 流式生成"
+      // T7-3 §4.3: AIBubble flips to its offline variant when the
+      // sidecar health flag in store is 'offline'. AIBubble already
+      // ships the offline render path (status='offline' branch).
+      // Bid path stays untouched — V9 P3 says AI is non-authoritative.
+      aiStatus={store.aiSidecarHealth === 'offline' ? 'offline' : 'live'}
+      aiText={
+        store.aiSidecarHealth === 'offline'
+          ? '拍卖师暂离 · 出价不受影响'
+          : '正在等待出价 · AI 文本由 sidecar 流式生成'
+      }
       expressive
     />
     </PullToResync>
