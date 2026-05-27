@@ -28,9 +28,14 @@ const reconcileInterval = 5 * time.Second
 // Timer only maintains the active index here. A slower reconcile tick rebuilds the
 // index from the authoritative state Hashes (self-heals a lost TrackActive).
 //
-// T8 instrumentation: hammer latency = (now - endAtMs) at close commit. This is
-// the timer-side detection lag + Lua exec (fanout-to-last-viewer adds the
-// BroadcastLatency for AUCTION_SOLD/NO_BID; sum is the user-visible hammer SLO).
+// T8 instrumentation: hammer latency = (wall-clock now - endAtMs) at close
+// commit. This is the timer-side **detection lag + Lua exec** — the budget
+// component the Timer owns. The fanout-to-last-viewer cost lands in
+// BroadcastLatency (recorded against payload.serverTimeMs, a DIFFERENT epoch
+// reference: Lua TIME at adjudication, not the scheduled endAtMs). The §4.2
+// hammer p95 < 500 ms budget is *the larger of* the two components for the
+// AUCTION_SOLD/NO_BID event — it is NOT their numeric sum (different zero
+// points). The perf report explains the decomposition.
 // auctioneer/m may be nil in tests that wire the worker without those dependencies.
 func runTimerWorker(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks, m *metrics.Registry) {
 	scan := time.NewTicker(timerScanInterval)

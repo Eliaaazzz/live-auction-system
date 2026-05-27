@@ -125,6 +125,7 @@ jobs:
         # Verifier-consistent gate runs on a real-traffic auction (not just
         # the dummy e2e seed). MAXLEN trim alignment is documented in
         # docs/perf-report.md — at this scale the stream is well under it.
+        timeout-minutes: 5
         run: make load-smoke
       - uses: actions/setup-node@v4
         with:
@@ -139,9 +140,11 @@ jobs:
       - name: frontend smoke scripts (TC-T6 wire/catchup/schema/401/antisnipe/snapshot)
         # T6 smoke scripts that drive the running backend through the same
         # contract surface the browser uses. Wired here because the stack is
-        # up; per the user's "no skipped CI tests" rule these now run on every
-        # push. We run them sequentially for deterministic shared-state
-        # behavior with existing shared fixtures.
+        # up; per the team rule "no skipped CI tests" these run on every push.
+        # Sequential execution preserves deterministic shared-state behavior
+        # with existing fixtures (each smoke creates its own auction; wall
+        # time is the sum but each is short enough that the total is bounded).
+        timeout-minutes: 5
         working-directory: apps/web
         run: npm run -s smoke:all
       - name: logs on failure

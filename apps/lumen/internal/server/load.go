@@ -120,8 +120,13 @@ func RunLoad(target string) error {
 	}
 
 	// Hold the load for the configured duration; observers and bidders both
-	// honour ctx so cancel() at the end stops everyone.
-	time.Sleep(cfg.Duration)
+	// honour ctx so cancel() at the end stops everyone. Select on ctx so an
+	// external signal (SIGTERM, test cancellation) breaks the wait early
+	// instead of stalling for up to LOAD_DURATION_SEC after a shutdown signal.
+	select {
+	case <-ctx.Done():
+	case <-time.After(cfg.Duration):
+	}
 	cancel()
 	bidderWG.Wait()
 	observerWG.Wait()
@@ -154,30 +159,30 @@ func RunLoad(target string) error {
 const loadStartCents = 100_000 // start price; per-bid amount is loadStartCents + amountCounter++
 
 type loadConfig struct {
-	Observers         int
-	Bidders           int
-	Duration          time.Duration
-	BidInterval       time.Duration
-	AckP95Budget      time.Duration
-	BroadcastP95Budg  time.Duration
-	HammerP95Budget   time.Duration
-	ScriptP99Budget   time.Duration
-	AuctionDuration   time.Duration
-	ObserverStaggerMs int
+	Observers          int
+	Bidders            int
+	Duration           time.Duration
+	BidInterval        time.Duration
+	AckP95Budget       time.Duration
+	BroadcastP95Budget time.Duration
+	HammerP95Budget    time.Duration
+	ScriptP99Budget    time.Duration
+	AuctionDuration    time.Duration
+	ObserverStaggerMs  int
 }
 
 func loadConfigFromEnv() loadConfig {
 	return loadConfig{
-		Observers:         envInt("LOAD_OBSERVERS", 500),
-		Bidders:           envInt("LOAD_BIDDERS", 50),
-		Duration:          time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
-		BidInterval:       time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
-		AckP95Budget:      time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
-		BroadcastP95Budg:  time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
-		HammerP95Budget:   time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
-		ScriptP99Budget:   time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
-		AuctionDuration:   time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
-		ObserverStaggerMs: envInt("LOAD_OBSERVER_STAGGER_MS", 10),
+		Observers:          envInt("LOAD_OBSERVERS", 500),
+		Bidders:            envInt("LOAD_BIDDERS", 50),
+		Duration:           time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
+		BidInterval:        time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
+		AckP95Budget:       time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
+		BroadcastP95Budget: time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
+		HammerP95Budget:    time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
+		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
+		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
+		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
 	}
 }
 
@@ -341,6 +346,13 @@ func runBidder(ctx context.Context, target, token, aid string, idx int, cfg load
 				return
 			}
 			stats.bidsSent.Add(1)
+			// Clear the prior iteration's read deadline before waitForBidAccepted
+			// sets its own. Without this an earlier 2s deadline that already
+			// expired (but the read returned before we noticed) could shrink the
+			// effective wait window of the next call — biasing the bidErrors rate
+			// upward. waitForBidAccepted always sets its own fresh deadline on entry,
+			// so this is belt-and-suspenders for any future caller that doesn't.
+			_ = c.SetReadDeadline(time.Time{})
 			// Wait for the ack envelope for *this* bid: matching BID_ACCEPTED by
 			// amountCents (the originating socket also receives broadcast copies of
 			// other bidders' bids — skip those). One in-flight is enough at 50 × 10/s.
@@ -402,7 +414,7 @@ func (r loadReport) print() {
 		r.Post.Ack.P50, r.Post.Ack.P95, r.Post.Ack.P99, r.Post.Ack.Max, r.Post.Ack.Count, r.Config.AckP95Budget)
 	fmt.Printf("broadcast p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms (count=%d, budget p95<%v)\n",
 		r.Post.Broadcast.P50, r.Post.Broadcast.P95, r.Post.Broadcast.P99, r.Post.Broadcast.Max,
-		r.Post.Broadcast.Count, r.Config.BroadcastP95Budg)
+		r.Post.Broadcast.Count, r.Config.BroadcastP95Budget)
 	fmt.Printf("hammer    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p95<%v)\n",
 		r.Post.Hammer.P50, r.Post.Hammer.P95, r.Post.Hammer.P99, r.Post.Hammer.Count,
 		r.Config.HammerP95Budget)
@@ -433,8 +445,8 @@ func (r loadReport) breaches() []string {
 	if r.Post.Ack.P95 > ms(r.Config.AckP95Budget) {
 		out = append(out, fmt.Sprintf("ack p95 %.1fms > %v", r.Post.Ack.P95, r.Config.AckP95Budget))
 	}
-	if r.Post.Broadcast.P95 > ms(r.Config.BroadcastP95Budg) {
-		out = append(out, fmt.Sprintf("broadcast p95 %.1fms > %v", r.Post.Broadcast.P95, r.Config.BroadcastP95Budg))
+	if r.Post.Broadcast.P95 > ms(r.Config.BroadcastP95Budget) {
+		out = append(out, fmt.Sprintf("broadcast p95 %.1fms > %v", r.Post.Broadcast.P95, r.Config.BroadcastP95Budget))
 	}
 	if r.Post.Hammer.Count > 0 && r.Post.Hammer.P95 > ms(r.Config.HammerP95Budget) {
 		out = append(out, fmt.Sprintf("hammer p95 %.1fms > %v", r.Post.Hammer.P95, r.Config.HammerP95Budget))

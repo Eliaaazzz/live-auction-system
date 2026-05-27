@@ -131,10 +131,10 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 		for _, e := range events {
 			// T8 §4.1 seq-gap detector: under healthy operation lastSeq advances by
 			// exactly 1 per event (Lua-monotonic, no parallel writer). A jump > 1
-			// after a successful read is a correctness break — record once and let
-			// the load report surface it. We accumulate the missing-seq count so the
-			// magnitude (not just "did it happen") is visible. lastSeq==0 with a
-			// non-1 start means we joined a pre-existing stream → not a gap.
+			// after a successful read is a correctness break — record the magnitude
+			// (not just "did it happen") so the load report can quantify the gap.
+			// lastSeq==0 with a non-1 start means we joined a pre-existing stream
+			// → not a gap (mid-room subscriber, no missed event).
 			if m != nil && lastSeq[aid] > 0 && e.Seq > lastSeq[aid]+1 {
 				m.SeqGap.Add(e.Seq - lastSeq[aid] - 1)
 			}
@@ -142,7 +142,17 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				Type: e.Type, AuctionID: aid, Seq: e.Seq,
 				ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
 			}
-			b, _ := json.Marshal(env)
+			b, err := json.Marshal(env)
+			if err != nil {
+				// Corrupt Stream payload (e.g. a non-UTF-8 byte from a future
+				// contributor's event type that breaks json.RawMessage round-trip):
+				// surface in the log and SKIP the broadcast rather than fan out a
+				// zero-byte / nil frame to every client in the room. The next sweep
+				// re-reads the same Stream window so a transient marshal error gets
+				// another chance; a persistent one shows up as a tight log loop.
+				log.Printf("fanout marshal %s seq=%d type=%s: %v", aid, e.Seq, e.Type, err)
+				continue
+			}
 			h.broadcast(aid, b)
 			if m != nil {
 				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
@@ -165,11 +175,18 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				dispatchAuctioneer(ctx, auctioneer, aid, st, e)
 			}
 		}
-		// Sample stream length opportunistically after a successful fanout. XLEN is
-		// O(1) on the Redis side; sampling here rather than in a dedicated goroutine
-		// keeps the sweep cadence (and therefore the gauge freshness) tied to the
-		// rooms that are actually active.
-		if m != nil {
+	}
+
+	// Stream-length sampler: XLEN is O(1) Redis-side but each call costs an RTT,
+	// so we sample on the backstop ticker (every 2 s) NOT on every Pub/Sub hint
+	// — at 500 bids/s the per-event sampling would mean ~500 XLEN RTTs/s. The
+	// gauge tracks the peak (ObserveStreamLen is monotonic), so a 2 s cadence
+	// is sufficient resolution to catch a backlog buildup without burning Redis.
+	sampleStreamLens := func() {
+		if m == nil {
+			return
+		}
+		for _, aid := range h.roomAIDs() {
 			if n, err := st.StreamLen(ctx, aid); err == nil {
 				m.ObserveStreamLen(n)
 			}
@@ -186,6 +203,7 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			for _, aid := range h.roomAIDs() { // backstop: independent of Pub/Sub delivery
 				fanout(aid)
 			}
+			sampleStreamLens()
 		case msg, ok := <-ch:
 			if !ok {
 				return
@@ -473,7 +491,13 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		if out, err := model.NewEnvelope(model.TypeRoomSnapshot, d.AuctionID, snap.Seq, snap); err == nil {
 			c.push(out)
 		}
-		if catchupRan && c.metrics != nil && d.LastSeq > 0 {
+		// catchupRan == we replayed ≥1 Stream event into the snapshot. That's the
+		// "user is paying catchup latency" case the §4.2 1-s budget targets — both
+		// a reconnect with lastSeq > 0 AND a cold-join into an active room (lastSeq=0,
+		// short history) need to land inside the budget. Earlier guard had
+		// `d.LastSeq > 0` which silently dropped cold-joins, making the SLO
+		// unverifiable in the load harness (observers join with lastSeq=0).
+		if catchupRan && c.metrics != nil {
 			c.metrics.CatchupLatency.Observe(time.Since(t0))
 		}
 

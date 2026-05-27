@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -136,11 +139,22 @@ func TestT8BackpressureForceCloseIncrementsCounter(t *testing.T) {
 	}
 }
 
-// TestT8SeqGapDetectorObservesMissingSeq — the gateway subscriber must
-// increment SeqGap when the stream advances by more than 1 from the
-// last-broadcast seq for a room. Drives the detector at the unit level
-// (subscribe's internal map) by exercising it against a real Stream with a
-// synthesised gap.
+// TestT8SeqGapDetectorObservesMissingSeq — end-to-end check that the
+// Hub.subscribe.fanout gap arithmetic actually fires the SeqGap counter when
+// the stream advances by more than 1 between fanout passes. We:
+//
+//  1. land one real bid (seq=1) so the subscriber's lastSeq[aid] advances to 1
+//     (the guard at ws.go requires lastSeq > 0 — first event is "I joined a
+//     pre-existing stream", not a gap)
+//  2. directly XADD a synthetic event at seq=3 (skipping seq=2) — the Lua
+//     hot path would never produce a gap, so we plant one out-of-band to
+//     exercise the detector
+//  3. publish on the Pub/Sub channel to wake the subscriber
+//  4. assert the SeqGap counter advances by exactly 1 (the magnitude of the
+//     missing-seq range, NOT a binary "did it happen" flag)
+//
+// This pins the integration path (ws.go gap detector); the breaches matrix
+// pins the arithmetic separately.
 func TestT8SeqGapDetectorObservesMissingSeq(t *testing.T) {
 	target, srv := startTestServer(t)
 	ctx := context.Background()
@@ -148,39 +162,157 @@ func TestT8SeqGapDetectorObservesMissingSeq(t *testing.T) {
 	liveAuctionFull(t, srv.st, aid)
 	hc := &http.Client{Timeout: 5 * time.Second}
 
-	pre := scrapeOrFatal(t, hc, target)
-
-	// Place bid 1 (seq=1) → connect an observer AFTER bid 1 so the gateway's
-	// lastSeq advances to 1. Then place bids 2..4. Now the room has seq 1..4
-	// in stream. Connecting a *new* hub would see all four as one fanout — no
-	// gap. To synthesise a gap we'd need to corrupt the stream, which the Lua
-	// type-guards prevent. Instead, drive the detector at the unit level by
-	// constructing two synthetic events with a deliberate gap and feeding them
-	// through the *same* fanout helper logic (eventServerTimeMs) — pure unit
-	// test of the gap math, complementary to the integration smoke below.
+	// 1) Real bid to advance the subscriber's lastSeq to 1.
 	if code, _, _, err := srv.st.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
 		t.Fatalf("bid1: %s %v", code, err)
 	}
-	// Give the broadcast subscriber up to 2s to fan out and observe the bid.
-	deadline := time.Now().Add(2 * time.Second)
+	// Wait for the subscriber to fan out the bid (so its lastSeq[aid] = 1).
+	pre := scrapeOrFatal(t, hc, target)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		post := scrapeOrFatal(t, hc, target)
-		if post.Broadcast.Count > pre.Broadcast.Count {
-			break // fanout happened; the registry is wired.
+		if scrapeOrFatal(t, hc, target).Broadcast.Count > pre.Broadcast.Count {
+			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Pure-unit slice: a SeqGap counter increment for a synthetic 1→3 jump.
-	// This pins the math; the integration above pins the wire.
-	m := metrics.New()
-	lastSeq := int64(1)
-	newSeq := int64(3) // 2 missing
-	if newSeq > lastSeq+1 {
-		m.SeqGap.Add(newSeq - lastSeq - 1)
+	// 2) Synthesise a gap: XADD a fabricated event at seq=3 (real Lua would
+	// have advanced via seq=2 first). The id format matches `<seq>-0` per
+	// proto/redis-keys.md. Use a minimal payload that has a serverTimeMs so
+	// the broadcast-latency observation succeeds (otherwise the path is half-
+	// instrumented and the test asserts less than it claims).
+	preGap := scrapeOrFatal(t, hc, target).SeqGap
+	streamKey := "auction:{" + aid + "}:events"
+	if err := srv.st.Redis().XAdd(ctx, &redis.XAddArgs{
+		Stream: streamKey, ID: "3-0",
+		Values: map[string]any{
+			"type": model.TypeBidAccepted, "seq": 3,
+			"payload": `{"seq":3,"userId":"u_synth","amountCents":"50000","serverTimeMs":` + strconv.FormatInt(time.Now().UnixMilli(), 10) + `}`,
+		},
+	}).Err(); err != nil {
+		t.Fatalf("synthetic XADD seq=3: %v", err)
 	}
-	if got := m.SeqGap.Load(); got != 1 {
-		t.Fatalf("seq-gap math: got=%d want=1", got)
+	// 3) Publish to wake the subscriber (it would also catch the gap on the
+	// 2-s backstop tick — Publish just makes the test deterministic in <100ms).
+	pubChan := "auction:{" + aid + "}:pub"
+	if err := srv.st.Redis().Publish(ctx, pubChan, `{"type":"BID_ACCEPTED","seq":3}`).Err(); err != nil {
+		t.Fatalf("publish wake-up: %v", err)
+	}
+
+	// 4) Assert the counter advanced by exactly 1 (seq jumped 1→3, missing seq=2).
+	deadline = time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		post := scrapeOrFatal(t, hc, target).SeqGap
+		if post == preGap+1 {
+			return // exactly the expected gap magnitude.
+		}
+		if post > preGap+1 {
+			t.Fatalf("seq-gap counter overshot: pre=%d post=%d (only seq=2 should be missing)", preGap, post)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("seq-gap counter did not advance: pre=%d post=%d (expected pre+1)", preGap, scrapeOrFatal(t, hc, target).SeqGap)
+}
+
+// TestT8HammerLatencyObservation — assert closeDue Observes HammerLatency on
+// the OK_NO_BID path (no winner ⇒ short test). Drives a real timer worker
+// against a real auction by setting endAtMs in the past and waiting for the
+// 100ms scan tick to fire the close. If this regresses (e.g. someone moves
+// the Observe out of the OK_SOLD/OK_NO_BID case), the hammer SLO becomes
+// silently unrecorded and the load report shows count=0 forever.
+func TestT8HammerLatencyObservation(t *testing.T) {
+	target, srv := startTestServer(t)
+	ctx := context.Background()
+	aid := newAID("test_t8_hammer")
+
+	// Bring the auction live with a 100ms duration so endAtMs is in the
+	// near-past by the time the next 100ms scan tick fires close_auction.lua.
+	if code, err := srv.st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
+		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
+		DurationSec: 1, ExtendWindowSec: 0, ExtendSec: 0,
+	}); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: code=%s err=%v", code, err)
+	}
+	if code, _, err := srv.st.StartAuction(ctx, aid, 100); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: code=%s err=%v", code, err)
+	}
+	t.Cleanup(func() {
+		if keys, _ := srv.st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
+			_ = srv.st.Redis().Del(ctx, keys...).Err()
+		}
+		_, _ = srv.st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
+	})
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	pre := scrapeOrFatal(t, hc, target).Hammer.Count
+
+	// Timer Worker scans every 100ms. Allow up to 3s for it to hammer this
+	// auction (NO_BID path: no winning bid was placed). Hammer.Count must
+	// advance by exactly 1 — the closeDue Observe ran with the snapshot's
+	// endAtMs as the reference (now - endAtMs ≈ a small detection lag).
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if post := scrapeOrFatal(t, hc, target).Hammer.Count; post == pre+1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("HammerLatency did not advance: pre=%d post=%d (expected pre+1)", pre, scrapeOrFatal(t, hc, target).Hammer.Count)
+}
+
+// TestT8CatchupLatencyObservation — assert the ROOM_JOIN catchup branch
+// Observes CatchupLatency for BOTH a cold-join (lastSeq=0, replays whole
+// history) AND a reconnect (lastSeq > 0). The earlier guard `d.LastSeq > 0`
+// silently dropped cold-joins, so this test pins the corrected behaviour.
+func TestT8CatchupLatencyObservation(t *testing.T) {
+	target, srv := startTestServer(t)
+	ctx := context.Background()
+	aid := newAID("test_t8_catchup")
+	liveAuctionFull(t, srv.st, aid)
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	// Plant 3 real bids so the catchup branch has events to replay.
+	for i := 1; i <= 3; i++ {
+		amt := fmt.Sprintf("%d", 10000+i*1000)
+		cb := fmt.Sprintf("cb_catchup_%d", i)
+		uid := fmt.Sprintf("u_catchup_%d", i)
+		if code, _, _, err := srv.st.PlaceBid(ctx, aid, uid, cb, amt, uid); err != nil || code != model.CodeOKAccepted {
+			t.Fatalf("bid %d: %s %v", i, code, err)
+		}
+	}
+	buyer, err := devLogin(hc, target, "Catchup Probe", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Cold-join (lastSeq=0): replays seq 1..3 before the snapshot. CatchupLatency
+	// MUST advance — the §4.2 200-events-<1s budget targets exactly this case.
+	preCold := scrapeOrFatal(t, hc, target).Catchup.Count
+	c1 := dialRaw(t, target, buyer.Token)
+	join0, _ := model.NewEnvelope(model.TypeRoomJoin, aid, 0, model.RoomJoinData{AuctionID: aid, LastSeq: 0})
+	if err := c1.WriteJSON(join0); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForType(c1, model.TypeRoomSnapshot, 3*time.Second); err != nil {
+		t.Fatalf("cold-join no ROOM_SNAPSHOT: %v", err)
+	}
+	if got := scrapeOrFatal(t, hc, target).Catchup.Count; got <= preCold {
+		t.Fatalf("CatchupLatency did not advance on cold-join: pre=%d post=%d (the d.LastSeq>0 guard regressed?)", preCold, got)
+	}
+
+	// Reconnect (lastSeq=1): replays seq 2..3 (one event past the client's
+	// last-seen). Same observation path; should also advance the counter.
+	preReconnect := scrapeOrFatal(t, hc, target).Catchup.Count
+	c2 := dialRaw(t, target, buyer.Token)
+	join1, _ := model.NewEnvelope(model.TypeRoomJoin, aid, 0, model.RoomJoinData{AuctionID: aid, LastSeq: 1})
+	if err := c2.WriteJSON(join1); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForType(c2, model.TypeRoomSnapshot, 3*time.Second); err != nil {
+		t.Fatalf("reconnect no ROOM_SNAPSHOT: %v", err)
+	}
+	if got := scrapeOrFatal(t, hc, target).Catchup.Count; got <= preReconnect {
+		t.Fatalf("CatchupLatency did not advance on reconnect: pre=%d post=%d", preReconnect, got)
 	}
 }
 
@@ -214,7 +346,7 @@ func TestT8EventServerTimeMsHandlesMalformedPayload(t *testing.T) {
 // caught here, not by chasing a wrong perf-report.md number.
 func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	cfg := loadConfig{
-		AckP95Budget: 80 * time.Millisecond, BroadcastP95Budg: 150 * time.Millisecond,
+		AckP95Budget: 80 * time.Millisecond, BroadcastP95Budget: 150 * time.Millisecond,
 		HammerP95Budget: 500 * time.Millisecond, ScriptP99Budget: 5 * time.Millisecond,
 	}
 	type fields struct {
