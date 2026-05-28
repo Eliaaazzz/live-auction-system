@@ -355,7 +355,7 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	type fields struct {
 		ackP95, bcastP95, hammerP95, catchupP95, scriptP99 float64
 		ackCount, bcastCount, hammerCount, catchupCount    int64
-		observerReadErrs                                 int64
+		observerReadErrs                                   int64
 		preSeqGap, postSeqGap                              int64
 		sent, acked                                        int64
 		wantBreach                                         []string // substrings that must appear
