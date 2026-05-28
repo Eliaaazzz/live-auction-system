@@ -1000,32 +1000,32 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// would accept (or return DUPLICATE/ERR_AFTER_END/ERR_NOT_LIVE for) is
 		// wrongly handled as ERR_TOO_LOW.
 		if rs := s.hub.roomStateSnap(c.aid); rs.priceCents != "" && !rs.terminal {
-			// Guard 0 (codex pass-2 Q1): if rs.terminal is set, the auction is
-			// in the (cap-hit BID_ACCEPTED, AUCTION_SOLD-drop) window or the
-			// AUCTION_SOLD/NO_BID/CANCELLED handler hasn't completed its drop
-			// yet. Fall through to Lua so the response is ERR_NOT_LIVE (the
-			// authoritative terminal code), not ERR_TOO_LOW.
+			// Guard 0 (codex pass-2 Q1): rs.terminal is set under the same
+			// write lock as the price ratchet for cap-hit / AUCTION_SOLD /
+			// NO_BID / CANCELLED. Any reader observing a populated cache also
+			// sees terminal=true and defers to Lua's ERR_NOT_LIVE here.
 			if cached, errC := strconv.ParseInt(rs.priceCents, 10, 64); errC == nil {
 				bidN, errB := strconv.ParseInt(amount, 10, 64)
 				if errB == nil && bidN <= cached {
 					// Guard 2 (codex pass-2 Q2 — clock-skew safety): defer to
 					// Lua's ERR_AFTER_END when the gateway's wall clock is
 					// within `fastRejectExpiryMarginMs` of the cached endAtMs.
-					// Lua's Redis TIME is authoritative; the gateway clock can
-					// lag (NTP step, container clock drift, etc.). Without the
-					// margin a slow gateway clock returns ERR_TOO_LOW where
-					// Lua would return ERR_AFTER_END. With the margin: bids in
-					// the last `margin` ms of the auction always hit Lua.
 					nowMs := time.Now().UnixMilli()
 					inWindow := rs.endAtMs == 0 || nowMs+fastRejectExpiryMarginMs < rs.endAtMs
 					if inWindow {
-						// Guard 1 (DUPLICATE): one HEXISTS RTT preserves the
-						// (auction, userID, clientBidID) replay semantics.
-						// Errors fall through to Lua ("unsure → defer to
-						// authoritative source"; Redis-down then surfaces as
-						// ERR_AUCTION_PAUSED via bidErrCode in the Lua path).
-						isDupe, derr := s.st.HasDedupe(ctx, c.aid, c.userID, d.ClientBidID)
-						if derr == nil && !isDupe {
+						// Guard 1+3 (codex pass-3): pipelined precheck against
+						// Lua's authoritative state — ONE Redis RTT for both:
+						//   - status == LIVE? (closes the broadcast-RTT window
+						//     where Lua has already committed terminal status
+						//     but the gateway's cache hasn't seen the event yet
+						//     — fast-rejecting then would return ERR_TOO_LOW
+						//     when Lua returns ERR_NOT_LIVE)
+						//   - dedupe hit? (preserves DUPLICATE-replay)
+						// Errors → fall through to Lua ("unsure → defer to the
+						// authoritative source"; Redis-down surfaces as
+						// ERR_AUCTION_PAUSED via bidErrCode on the Lua path).
+						isLive, isDupe, perr := s.st.FastPathPrecheck(ctx, c.aid, c.userID, d.ClientBidID)
+						if perr == nil && isLive && !isDupe {
 							c.push(rejected(c.aid, model.CodeErrTooLow))
 							if c.metrics != nil {
 								c.metrics.AckLatency.Observe(time.Since(ackStart))
@@ -1034,7 +1034,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 							}
 							return
 						}
-						// derr != nil OR isDupe → fall through to Lua
+						// perr != nil OR !isLive OR isDupe → fall through to Lua
 					}
 					// inWindow == false → within skew margin of endAtMs → Lua decides
 				}
