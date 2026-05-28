@@ -355,6 +355,7 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	type fields struct {
 		ackP95, bcastP95, hammerP95, catchupP95, scriptP99 float64
 		ackCount, bcastCount, hammerCount, catchupCount    int64
+		observerReadErrs                                   int64
 		preSeqGap, postSeqGap                              int64
 		sent, acked                                        int64
 		wantBreach                                         []string // substrings that must appear
@@ -386,6 +387,8 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 		// seqGap delta > 0.
 		{ackP95: 50, bcastP95: 80, scriptP99: 1, ackCount: 1, bcastCount: 1, preSeqGap: 0, postSeqGap: 3, sent: 1, acked: 1,
 			wantBreach: []string{"seqGapCount=3 (must be 0)"}},
+		{ackP95: 50, bcastP95: 80, scriptP99: 1, observerReadErrs: 2, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
+			wantBreach: []string{"observer readErrors=2 (must be 0)"}},
 		// bids sent but none acked (path probably broken).
 		{ackP95: 0, bcastP95: 0, scriptP99: 1, ackCount: 1, bcastCount: 1, sent: 5, acked: 0,
 			wantBreach: []string{"no bids acked"}},
@@ -403,7 +406,8 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 					ScriptTime: metrics.HistogramSnapshot{P99: c.scriptP99, Count: 1},
 					SeqGap:     c.postSeqGap,
 				},
-				BidderStats: bidderSnapshot{Sent: c.sent, Acked: c.acked},
+				BidderStats:   bidderSnapshot{Sent: c.sent, Acked: c.acked},
+				ObserverStats: observerSnapshot{Errors: c.observerReadErrs},
 			}
 			got := r.breaches()
 			if c.wantClean {
