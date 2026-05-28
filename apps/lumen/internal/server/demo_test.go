@@ -2,20 +2,25 @@ package server
 
 import "testing"
 
-// The demo-auction driver's anti-snipe trigger is only deterministic if the
-// whole auction sits inside the anti-snipe window — otherwise a bid placed at
-// t=0 could fall outside the tail window and never extend, making the live demo
-// flaky. This fast guard pins that invariant (and the rules' basic validity) so
-// a future tweak to the demo knobs can't silently break the demo path.
+// The demo-auction driver fires AUCTION_EXTENDED for BOTH bids only if every
+// bid satisfies place_bid.lua's in-window check `(endAtMs - now) <= window`.
+// Because the extend is ACCUMULATIVE (endAtMs += ExtendSec), the first snipe
+// pushes endAtMs out, so the window must exceed the start duration PLUS all the
+// extensions it can accumulate — otherwise the second bid lands outside the
+// window and never extends (the exact flake this replaced). This fast guard
+// pins that condition (+ the rules' basic validity) without a live stack.
 func TestDemoRulesValidAndDeterministic(t *testing.T) {
 	r := demoRules()
 	if err := r.Validate(); err != nil {
 		t.Fatalf("demo rules must be valid: %v", err)
 	}
 	windowMs := r.ExtendWindowSec * 1000
-	if windowMs < demoDurationMs {
-		t.Fatalf("anti-snipe window %dms < start duration %dms — first-bid extension not deterministic",
-			windowMs, demoDurationMs)
+	// Worst case: bid lands at ~start (now≈start) after endAtMs was already
+	// bumped by every extension → (endAtMs-now) ≈ duration + ExtendSec*MaxExt.
+	maxReach := int64(demoDurationMs) + int64(demoExtendSec)*1000*int64(demoMaxExtensions)
+	if int64(windowMs) < maxReach {
+		t.Fatalf("anti-snipe window %dms < duration+extensions %dms — second-bid extension not deterministic",
+			windowMs, maxReach)
 	}
 	if r.MaxExtensions <= 0 {
 		t.Fatalf("MaxExtensions must be > 0 so the auction still hammers to SOLD (got %d)", r.MaxExtensions)
