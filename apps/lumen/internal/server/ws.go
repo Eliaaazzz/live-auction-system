@@ -43,6 +43,15 @@ const catchupMaxGap = 200
 // `1024 × 8B (slice header) ≈ 8 KiB` channel buffer; at 10k conn = 80 MiB
 // resident — well within budget on any deploy box.
 const sendBufFrames = 1024
+
+// fastRejectExpiryMarginMs is the safety margin between the gateway's wall
+// clock and the cached endAtMs below which the V10k Tier C fast-reject defers
+// to Lua (codex pass-2 Q2). Lua's Redis TIME is authoritative; if the gateway
+// clock is up to `fastRejectExpiryMarginMs` behind Redis, deferring keeps the
+// fast-path from returning ERR_TOO_LOW where Lua would correctly return
+// ERR_AFTER_END. 1000ms covers normal container clock drift (NTP step + jitter);
+// raise it on platforms with looser clock sync.
+const fastRejectExpiryMarginMs int64 = 1000
 const schemaMismatchCloseCode = 4001
 
 // fanoutSweepInterval is the backstop cadence for Stream-driven broadcast (a lost
@@ -138,9 +147,19 @@ type Hub struct {
 // matching the wire shape. The numeric comparison done in the BID_PLACE path
 // parses via strconv.ParseInt so a malformed broadcast (shouldn't happen — Lua
 // echoes canonical strings) falls through to Lua for authoritative rejection.
+//
+// `terminal` is set true under the SAME write-lock acquisition that captures the
+// last accepted price for a cap-hit BID_ACCEPTED(status=SOLD) or an explicit
+// AUCTION_SOLD/NO_BID/CANCELLED event. Fast-reject MUST check this flag and fall
+// through to Lua (which returns ERR_NOT_LIVE on terminal status) — codex pass-2
+// review Q1: closes the race between cap-hit cache populate and the subsequent
+// terminal drop. With a single write-lock around price-update + terminal-mark,
+// any reader either sees (price=X, terminal=false) or (price=X, terminal=true);
+// the in-between never escapes.
 type roomState struct {
 	priceCents string // monotonically non-decreasing; "" until first observed event
 	endAtMs    int64  // 0 until first observed snapshot/event; used to skip filter past hammer time
+	terminal   bool   // true after AUCTION_SOLD/NO_BID/CANCELLED or cap-hit BID_ACCEPTED(SOLD)
 }
 
 func newHub() *Hub {
@@ -259,6 +278,42 @@ func (h *Hub) dropRoomState(aid string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.state, aid)
+}
+
+// markTerminalAndUpdate atomically updates the price (if non-empty) AND sets
+// `terminal=true` under ONE write-lock acquisition. Used by the cap-hit path
+// (BID_ACCEPTED with status="SOLD") so a concurrent BID_PLACE handler that
+// reads the cache cannot observe the populated price WITHOUT also seeing
+// terminal=true. Closes the codex pass-2 Q1 race between the v1 fix's
+// populate-then-drop call pair.
+//
+// After this call, the cache entry exists with terminal=true. dropRoomState
+// is called separately AFTER the terminal-flag set (or by the subsequent
+// AUCTION_SOLD event handler) to eventually free the map entry. Any
+// BID_PLACE arriving during the (populated+terminal, drop) window sees
+// terminal=true and falls through to Lua → ERR_NOT_LIVE. Correct semantics.
+func (h *Hub) markTerminalAndUpdate(aid, priceCents string, endAtMs int64) {
+	if aid == "" {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs := h.state[aid]
+	if rs == nil {
+		rs = &roomState{}
+		h.state[aid] = rs
+	}
+	if priceCents != "" {
+		newN, err1 := strconv.ParseInt(priceCents, 10, 64)
+		curN, err2 := strconv.ParseInt(rs.priceCents, 10, 64)
+		if err1 == nil && (rs.priceCents == "" || (err2 == nil && newN > curN)) {
+			rs.priceCents = priceCents
+		}
+	}
+	if endAtMs > rs.endAtMs {
+		rs.endAtMs = endAtMs
+	}
+	rs.terminal = true
 }
 
 // roomAIDs snapshots the auction ids with at least one connection.
@@ -391,39 +446,50 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 // updateRoomStateFromEvent parses a Stream event payload and ratchets the hub's
 // gateway-side roomState cache (V10k Tier C). The Lua-authored payloads share a
 // consistent shape across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
-// AUCTION_NO_BID / AUCTION_CANCELLED; we extract `amountCents` (BID_ACCEPTED /
-// AUCTION_SOLD only) and `endAtMs` (BID_ACCEPTED / AUCTION_EXTENDED). Terminal
-// events drop the cache. A malformed payload is silently skipped — the cache
-// stays at its last good value, and Lua remains authoritative.
+// AUCTION_NO_BID / AUCTION_CANCELLED.
+//
+// Terminal events go through markTerminalAndUpdate (single write-lock that sets
+// both the final-price ratchet AND `terminal=true`) so a concurrent BID_PLACE
+// handler cannot observe a populated price without the terminal flag — closes
+// the codex pass-2 race window.
+//
+// A malformed payload is silently skipped; the cache stays at its last good
+// value and Lua remains authoritative.
 func updateRoomStateFromEvent(h *Hub, aid string, e store.StreamEvent) {
 	switch e.Type {
-	case model.TypeAuctionSold, model.TypeAuctionNoBid, model.TypeAuctionCancelled:
-		// On terminal: ratchet final price (SOLD carries amountCents; NO_BID
-		// + CANCELLED don't but the cache is dropped immediately after).
-		if e.Type == model.TypeAuctionSold {
-			var p model.AuctionSoldData
-			if err := json.Unmarshal([]byte(e.Payload), &p); err == nil {
-				h.updateRoomState(aid, p.AmountCents, 0)
-			}
+	case model.TypeAuctionSold:
+		// Capture final price + mark terminal under ONE write-lock; the
+		// subsequent dropRoomState frees the entry once no reader needs it.
+		var p model.AuctionSoldData
+		if err := json.Unmarshal([]byte(e.Payload), &p); err == nil {
+			h.markTerminalAndUpdate(aid, p.AmountCents, 0)
+		} else {
+			h.markTerminalAndUpdate(aid, "", 0)
 		}
+		h.dropRoomState(aid)
+	case model.TypeAuctionNoBid, model.TypeAuctionCancelled:
+		// No final price to capture; mark terminal so any in-flight reader
+		// sees terminal=true before the drop, then free the entry.
+		h.markTerminalAndUpdate(aid, "", 0)
 		h.dropRoomState(aid)
 	case model.TypeBidAccepted:
 		var p model.BidAcceptedData
 		if err := json.Unmarshal([]byte(e.Payload), &p); err != nil {
 			return
 		}
-		h.updateRoomState(aid, p.AmountCents, p.EndAtMs)
-		// V10k Tier C correctness — codex review #3: place_bid.lua emits a
-		// BID_ACCEPTED with `status: "SOLD"` for the cap-hit (buy-now) path BEFORE
-		// the subsequent AUCTION_SOLD event arrives. Between the two events, the
-		// gateway cache holds the final price but doesn't know the auction is
-		// terminal — a stray late bid in that window would fast-reject as
-		// ERR_TOO_LOW when Lua would correctly return ERR_NOT_LIVE. Drop the cache
-		// immediately on a terminal-shaped BID_ACCEPTED so the next BID_PLACE
-		// falls through to Lua and gets the authoritative ERR_NOT_LIVE.
+		// Codex pass-2 Q1: cap-hit BID_ACCEPTED carries status=SOLD. Setting
+		// price + terminal atomically (one write lock) closes the race where a
+		// concurrent BID_PLACE could read the populated cache before the
+		// subsequent dropRoomState fired. After this call: cache exists with
+		// terminal=true → fast-reject path sees terminal and defers to Lua's
+		// ERR_NOT_LIVE. The subsequent dropRoomState (or the AUCTION_SOLD event
+		// that lands next in the same Lua atomic execution) frees the entry.
 		if p.Status == model.StateSold {
+			h.markTerminalAndUpdate(aid, p.AmountCents, p.EndAtMs)
 			h.dropRoomState(aid)
+			return
 		}
+		h.updateRoomState(aid, p.AmountCents, p.EndAtMs)
 	case model.TypeAuctionExtended:
 		var p model.AuctionExtendedData
 		if err := json.Unmarshal([]byte(e.Payload), &p); err != nil {
@@ -933,20 +999,31 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// Lua's response would specifically be ERR_TOO_LOW. No bid that Lua
 		// would accept (or return DUPLICATE/ERR_AFTER_END/ERR_NOT_LIVE for) is
 		// wrongly handled as ERR_TOO_LOW.
-		if rs := s.hub.roomStateSnap(c.aid); rs.priceCents != "" {
+		if rs := s.hub.roomStateSnap(c.aid); rs.priceCents != "" && !rs.terminal {
+			// Guard 0 (codex pass-2 Q1): if rs.terminal is set, the auction is
+			// in the (cap-hit BID_ACCEPTED, AUCTION_SOLD-drop) window or the
+			// AUCTION_SOLD/NO_BID/CANCELLED handler hasn't completed its drop
+			// yet. Fall through to Lua so the response is ERR_NOT_LIVE (the
+			// authoritative terminal code), not ERR_TOO_LOW.
 			if cached, errC := strconv.ParseInt(rs.priceCents, 10, 64); errC == nil {
 				bidN, errB := strconv.ParseInt(amount, 10, 64)
 				if errB == nil && bidN <= cached {
-					// Guard 2: defer to Lua's ERR_AFTER_END if the auction is past
-					// its scheduled endAtMs (Lua's Redis TIME is authoritative,
-					// but the gateway clock is a safe approximation — false
-					// "in window" lands the bid in Lua which makes the real call).
-					notExpired := rs.endAtMs == 0 || time.Now().UnixMilli() < rs.endAtMs
-					if notExpired {
-						// Guard 1: preserve DUPLICATE semantics. One HEXISTS RTT
-						// (~50μs localhost) — much cheaper than the full EVALSHA
-						// we're replacing. Errors fall through to Lua (treat
-						// "unsure" as "defer to authoritative source").
+					// Guard 2 (codex pass-2 Q2 — clock-skew safety): defer to
+					// Lua's ERR_AFTER_END when the gateway's wall clock is
+					// within `fastRejectExpiryMarginMs` of the cached endAtMs.
+					// Lua's Redis TIME is authoritative; the gateway clock can
+					// lag (NTP step, container clock drift, etc.). Without the
+					// margin a slow gateway clock returns ERR_TOO_LOW where
+					// Lua would return ERR_AFTER_END. With the margin: bids in
+					// the last `margin` ms of the auction always hit Lua.
+					nowMs := time.Now().UnixMilli()
+					inWindow := rs.endAtMs == 0 || nowMs+fastRejectExpiryMarginMs < rs.endAtMs
+					if inWindow {
+						// Guard 1 (DUPLICATE): one HEXISTS RTT preserves the
+						// (auction, userID, clientBidID) replay semantics.
+						// Errors fall through to Lua ("unsure → defer to
+						// authoritative source"; Redis-down then surfaces as
+						// ERR_AUCTION_PAUSED via bidErrCode in the Lua path).
 						isDupe, derr := s.st.HasDedupe(ctx, c.aid, c.userID, d.ClientBidID)
 						if derr == nil && !isDupe {
 							c.push(rejected(c.aid, model.CodeErrTooLow))
@@ -959,7 +1036,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 						}
 						// derr != nil OR isDupe → fall through to Lua
 					}
-					// expired (notExpired == false) → fall through to Lua for ERR_AFTER_END
+					// inWindow == false → within skew margin of endAtMs → Lua decides
 				}
 			}
 		}

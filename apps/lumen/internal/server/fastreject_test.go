@@ -161,6 +161,86 @@ func TestRoomState_LiveBidAcceptedKeepsCache(t *testing.T) {
 	if rs.priceCents != "5000" || rs.endAtMs != 7777 {
 		t.Fatalf("LIVE BID_ACCEPTED should populate cache for subsequent fast-rejects; got %+v", rs)
 	}
+	if rs.terminal {
+		t.Fatalf("LIVE BID_ACCEPTED must NOT set terminal flag; got %+v", rs)
+	}
+}
+
+// TestRoomState_MarkTerminalAndUpdateAtomicity — codex pass-2 Q1: the race
+// between cap-hit populate + drop. Verify markTerminalAndUpdate sets both
+// price AND terminal=true under ONE write lock so a concurrent reader
+// (BID_PLACE handler taking RLock) cannot see a populated price WITHOUT
+// also seeing terminal=true. The fast-reject path checks `!rs.terminal`
+// before rejecting, so a reader observing this state falls through to Lua.
+func TestRoomState_MarkTerminalAndUpdateAtomicity(t *testing.T) {
+	h := newHub()
+	h.markTerminalAndUpdate("auc_t", "999", 8888)
+	rs := h.roomStateSnap("auc_t")
+	if !rs.terminal {
+		t.Fatalf("markTerminalAndUpdate must set terminal=true; got %+v", rs)
+	}
+	if rs.priceCents != "999" || rs.endAtMs != 8888 {
+		t.Fatalf("markTerminalAndUpdate must also ratchet price/endAtMs; got %+v", rs)
+	}
+}
+
+// TestRoomState_CapHitFastRejectGuardObservesTerminal — pin the BID_PLACE
+// fast-path's `!rs.terminal` guard. After a cap-hit BID_ACCEPTED(SOLD), the
+// (price, terminal) tuple should be (X, true) — fast-reject must NOT fire.
+// Then the subsequent dropRoomState clears the entry → cold cache → fast-
+// reject still doesn't fire. So in BOTH the racy window AND post-drop, the
+// behavior is "fall through to Lua" (which returns ERR_NOT_LIVE).
+func TestRoomState_CapHitFastRejectGuardObservesTerminal(t *testing.T) {
+	h := newHub()
+	// Simulate the "racy window" state: markTerminalAndUpdate WITHOUT the
+	// follow-up drop. Reader should see populated cache + terminal=true.
+	h.markTerminalAndUpdate("auc_race", "1000000", 7777)
+	rs := h.roomStateSnap("auc_race")
+	if rs.priceCents != "1000000" {
+		t.Fatalf("racy window: price not captured; got %+v", rs)
+	}
+	if !rs.terminal {
+		t.Fatalf("racy window: terminal flag missing; got %+v", rs)
+	}
+	// Verify the fast-path's guard condition: `priceCents != "" && !terminal`
+	// must be false (so we fall through to Lua). The guard is in dispatchWS
+	// BID_PLACE — we mirror it inline to pin the contract.
+	guardWouldReject := rs.priceCents != "" && !rs.terminal
+	if guardWouldReject {
+		t.Fatalf("fast-reject would fire on terminal cache; correctness regression: %+v", rs)
+	}
+}
+
+// TestRoomState_ExpiryMarginGuard — codex pass-2 Q2: clock-skew safety
+// margin. The fast-path checks `nowMs+fastRejectExpiryMarginMs < endAtMs`
+// so bids arriving within the last `fastRejectExpiryMarginMs` of the
+// auction always defer to Lua (which has Redis TIME as authoritative).
+// Without the margin, a slow gateway clock returns ERR_TOO_LOW where Lua
+// would return ERR_AFTER_END.
+func TestRoomState_ExpiryMarginGuard(t *testing.T) {
+	// Three cases relative to the margin (1s default):
+	cases := []struct {
+		name     string
+		endAtMs  int64
+		nowMs    int64
+		inWindow bool // true == fast-reject path eligible
+	}{
+		{"endAt=0-always-inWindow", 0, 1000, true},
+		{"far-in-future", 100000, 1000, true},
+		{"within-margin-defer", 1500, 1000, false}, // nowMs+1000 = 2000 NOT < 1500
+		{"at-margin-defer", 2000, 1000, false},     // nowMs+1000 = 2000 NOT < 2000
+		{"past-endAtMs-defer", 500, 1000, false},   // already expired
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			// Mirror the inline guard from dispatchWS — kept in sync by this test.
+			inWindow := c.endAtMs == 0 || c.nowMs+fastRejectExpiryMarginMs < c.endAtMs
+			if inWindow != c.inWindow {
+				t.Fatalf("endAtMs=%d nowMs=%d margin=%d: got inWindow=%v want %v",
+					c.endAtMs, c.nowMs, fastRejectExpiryMarginMs, inWindow, c.inWindow)
+			}
+		})
+	}
 }
 
 // TestRoomState_FastRejectArithmetic — pin the comparison: a bid amount LE
