@@ -275,6 +275,43 @@ func (s *Server) handlePayOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, paid)
 }
 
+// PATCH /api/auctions/{id} -> modify a pre-start auction's rules (商品管理:
+// 修改未开始竞拍的规则). Owner-only; allowed only while DRAFT/SCHEDULED.
+func (s *Server) handlePatchAuction(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	a, ok := s.ownsAuction(w, r, aid, userID)
+	if !ok {
+		return
+	}
+	if a.Status != model.StateDraft && a.Status != model.StateScheduled {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"code":    "ERR_NOT_EDITABLE",
+			"message": "rules can only be edited before the auction starts (DRAFT/SCHEDULED)",
+		})
+		return
+	}
+	var body struct {
+		Rules model.Rules `json:"rules"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	if err := s.st.UpdateRules(r.Context(), aid, body.Rules); err != nil {
+		if err == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "rules not found")
+			return
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"code": "OK_RULES_UPDATED"})
+}
+
 // POST /api/auctions/{id}/freeze -> freeze_rules.lua (DRAFT -> SCHEDULED).
 func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)

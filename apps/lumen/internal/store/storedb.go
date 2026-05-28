@@ -153,6 +153,32 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// UpdateRules replaces a pre-start auction's rules (商品管理: 修改未开始竞拍的规则).
+// The caller gates on status (DRAFT/SCHEDULED) and ownership; this validates +
+// writes. Also realigns the auctions display price with the new start price so
+// the room/snapshot reflects the edit before freeze.
+func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auction_rules SET start_price_cents=?, increment_cents=?, cap_price_cents=?,
+		        duration_sec=?, extend_window_sec=?, extend_sec=?, max_extensions=?
+		  WHERE auction_id=?`,
+		int64(r.StartPriceCents), int64(r.IncrementCents), int64(r.CapPriceCents),
+		r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, aid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE auctions SET current_price_cents=?, updated_at=? WHERE id=? AND status IN ('DRAFT','SCHEDULED')`,
+		int64(r.StartPriceCents), time.Now().UTC(), aid)
+	return nil
+}
+
 // AuctionListItem is a row in the auctions list (商家 商品管理 / 买家 竞拍浏览 /
 // 历史竞拍记录). Joined to the product for display name + image. Nullable
 // winner/end columns are zero-valued when absent.
