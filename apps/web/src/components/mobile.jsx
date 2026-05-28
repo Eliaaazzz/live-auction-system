@@ -23,6 +23,7 @@ const DEMO_LEADERS = [
 
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
+  productImage = null,
   remainingMs = 30000,
   status = 'LIVE',
   currentCents = '12880000',
@@ -194,6 +195,13 @@ function MobileRoom({
             backgroundImage: 'radial-gradient(rgba(255,255,255,.06) 1px, transparent 1.5px)',
             backgroundSize: '8px 8px',
           }}/>
+          {/* Item 3: real product image as the "live" feed, layered over the
+              placeholder. Non-authoritative ambiance; onError → keeps the SVG. */}
+          {productImage && (
+            <img src={productImage} alt=""
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          )}
         </div>
 
         {/* Top chrome over video */}

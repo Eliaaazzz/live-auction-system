@@ -12,7 +12,7 @@
 // If VITE_USE_MOCK_DATA=true the same screen renders from inline demo data
 // (useful when the backend isn't running). The component shape is the same.
 
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { MobileRoom } from '../components/mobile.jsx';
 import { PullToResync } from '../components/PullToResync.jsx';
@@ -30,6 +30,9 @@ export function LiveRoomRoute() {
   const store  = useAuctionStore();
   const rafRef = useRef(null);
   const clientRef = useRef(null);
+  // Item 3: the real product image, rendered as the "live" feed in the room
+  // (V9: video is non-authoritative — purely the ambiance; never gates bids).
+  const [productImage, setProductImage] = useState(null);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -99,6 +102,7 @@ export function LiveRoomRoute() {
           winnerId:     snap.winnerId ?? null,
           yourUserId:   useAuctionStore.getState().yourUserId,
         });
+        if (snap.imageUrl) setProductImage(snap.imageUrl);
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
       }
@@ -174,6 +178,7 @@ export function LiveRoomRoute() {
   return (
     <PullToResync onResync={handleResync}>
     <MobileRoom
+      productImage={productImage}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
       stepCents={store.stepCents}

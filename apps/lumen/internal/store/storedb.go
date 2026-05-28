@@ -48,6 +48,32 @@ func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL,
 	return err
 }
 
+// Product is the listed item behind an auction (商品 名称/图片/介绍). Surfaced on
+// the auction detail so the room can show the real image and the VLM page can
+// draft facts from it.
+type Product struct {
+	ID          string
+	SellerID    string
+	Name        string
+	ImageURL    string
+	Description string
+}
+
+// GetProduct returns the product row, or ErrNotFound.
+func (s *Store) GetProduct(ctx context.Context, id string) (Product, error) {
+	var p Product
+	var img, desc sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, seller_id, name, image_url, description FROM products WHERE id = ?`, id).
+		Scan(&p.ID, &p.SellerID, &p.Name, &img, &desc)
+	if errors.Is(err, sql.ErrNoRows) {
+		return p, ErrNotFound
+	}
+	p.ImageURL = img.String
+	p.Description = desc.String
+	return p, err
+}
+
 // CreateAuction inserts a DRAFT auction and its frozen-able rules in one tx.
 // factsConfirmed records that the seller confirmed the AI facts draft before
 // the auction can be frozen/started; confirmedFacts is the confirmed snapshot
