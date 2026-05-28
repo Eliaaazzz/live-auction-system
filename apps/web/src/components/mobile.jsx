@@ -60,6 +60,9 @@ function MobileRoom({
   leaders: leadersProp,    // optional override; falls back to DEMO_LEADERS
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
 }) {
+  // Follow the seller — cosmetic social toggle (no backend; the relationship
+  // graph is out of V9 scope). Local state so the button visibly responds.
+  const [following, setFollowing] = React.useState(false);
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs <= 10000 && status === 'LIVE';
   const bg = warn && showColorRamp
@@ -214,11 +217,13 @@ function MobileRoom({
               <span style={{ fontSize: 11, fontWeight: 600 }}>琉森拍卖行</span>
               <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>1.2万 在线</span>
             </div>
-            <button style={{
-              padding: '3px 10px', borderRadius: 999, border: 'none',
-              background: 'var(--douyin-red)', color: '#fff', fontSize: 10, fontWeight: 600,
-              marginLeft: 4,
-            }}>+ 关注</button>
+            <button
+              onClick={() => setFollowing(f => !f)}
+              style={{
+                padding: '3px 10px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                background: following ? 'rgba(255,255,255,.15)' : 'var(--douyin-red)',
+                color: '#fff', fontSize: 10, fontWeight: 600, marginLeft: 4,
+              }}>{following ? '已关注' : '+ 关注'}</button>
           </div>
           <div style={{ flex: 1 }}/>
           <StatusBadge status={status} size="sm" />
