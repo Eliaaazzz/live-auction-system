@@ -295,13 +295,27 @@ func (s *Server) handlePatchAuction(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Partial merge: start from the current rules and overlay only the fields the
+	// client sent, so a UI that edits just (e.g.) the start price doesn't have to
+	// resend durationSec/extendSec it never sees in the snapshot.
+	rules, err := s.st.GetRules(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "rules not found")
+		return
+	}
 	var body struct {
-		Rules model.Rules `json:"rules"`
+		Rules json.RawMessage `json:"rules"`
 	}
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if err := s.st.UpdateRules(r.Context(), aid, body.Rules); err != nil {
+	if len(body.Rules) > 0 {
+		if err := json.Unmarshal(body.Rules, &rules); err != nil {
+			writeErr(w, http.StatusBadRequest, "bad rules: "+err.Error())
+			return
+		}
+	}
+	if err := s.st.UpdateRules(r.Context(), aid, rules); err != nil {
 		if err == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "rules not found")
 			return
