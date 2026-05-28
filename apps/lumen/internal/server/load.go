@@ -48,6 +48,7 @@ import (
 //	LOAD_HAMMER_P95_MS     = 500    (only asserted if the auction hammered inside the window)
 //	LOAD_CATCHUP_P95_MS    = 1000   (only asserted if catchup stream replay was observed)
 //	LOAD_SCRIPT_P99_MS     =   5    (hot-path Lua exec budget, V9 §4.2 footnote)
+//	LOAD_HANDLER_P99_MS    =   5    (P8: BID_PLACE Go-side handler work, excl. Redis RTT)
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
@@ -169,6 +170,7 @@ type loadConfig struct {
 	CatchupP95Budget   time.Duration
 	HammerP95Budget    time.Duration
 	ScriptP99Budget    time.Duration
+	HandlerP99Budget   time.Duration
 	AuctionDuration    time.Duration
 	ObserverStaggerMs  int
 }
@@ -184,6 +186,7 @@ func loadConfigFromEnv() loadConfig {
 		CatchupP95Budget:   time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
 		HammerP95Budget:    time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
 		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
+		HandlerP99Budget:   time.Duration(envInt("LOAD_HANDLER_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
 		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
 	}
@@ -432,6 +435,9 @@ func (r loadReport) print() {
 	fmt.Printf("script    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v)\n",
 		r.Post.ScriptTime.P50, r.Post.ScriptTime.P95, r.Post.ScriptTime.P99, r.Post.ScriptTime.Count,
 		r.Config.ScriptP99Budget)
+	fmt.Printf("handler   p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v · P8 Go-side, excl. Redis RTT)\n",
+		r.Post.HandlerOverhead.P50, r.Post.HandlerOverhead.P95, r.Post.HandlerOverhead.P99, r.Post.HandlerOverhead.Count,
+		r.Config.HandlerP99Budget)
 	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
 		r.Post.BidsAccepted-r.Pre.BidsAccepted,
 		r.Post.BidsRejected-r.Pre.BidsRejected,
@@ -465,6 +471,12 @@ func (r loadReport) breaches() []string {
 	}
 	if r.Post.ScriptTime.P99 > ms(r.Config.ScriptP99Budget) {
 		out = append(out, fmt.Sprintf("script p99 %.1fms > %v (V9 §4.2 footnote: ack-p95<80 pre-gate)", r.Post.ScriptTime.P99, r.Config.ScriptP99Budget))
+	}
+	if r.Post.HandlerOverhead.Count > 0 && r.Post.HandlerOverhead.P99 > ms(r.Config.HandlerP99Budget) {
+		// P8: the WS BID_PLACE handler's own synchronous work (decode + canonicalize
+		// + ack push), measured excluding the PlaceBid/Redis span so this is pure
+		// Go-side time — the network RTT is already covered by ack p95<80ms.
+		out = append(out, fmt.Sprintf("handler-overhead p99 %.1fms > %v (P8: WS handler Go-side work, excl. Redis RTT)", r.Post.HandlerOverhead.P99, r.Config.HandlerP99Budget))
 	}
 	if r.ObserverStats.Errors > 0 {
 		out = append(out, fmt.Sprintf("observer readErrors=%d (must be 0)", r.ObserverStats.Errors))
