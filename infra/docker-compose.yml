@@ -53,6 +53,12 @@ services:
       MYSQL_DSN: "lumen:lumen@tcp(mysql:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
       REDIS_ADDR: redis:6379
       AI_SIDECAR_URL: http://ai-sidecar:8090
+      # T9 chaos knob (V9 plan §10 timer-phase). Defaults to empty so prod
+      # behaviour is unchanged; the chaos-timer Make target sets this to "1"
+      # via `LUMEN_CHAOS_DISABLE_TIMER=1 docker compose up -d --force-recreate
+      # lumen` so the Timer Worker goroutine is skipped at startup. See
+      # apps/lumen/internal/server/server.go for the fail-closed check.
+      LUMEN_CHAOS_DISABLE_TIMER: ${LUMEN_CHAOS_DISABLE_TIMER:-}
     depends_on:
       redis: {condition: service_healthy}
       mysql: {condition: service_healthy}
