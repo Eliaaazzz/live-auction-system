@@ -271,17 +271,17 @@ describe('applyEvent · terminal states', () => {
   });
 });
 
-describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /auctioneer)', () => {
+describe('applyEvent · AI_COMMENTARY (T7-2 / proto/ai-events.md §POST /llm/auctioneer)', () => {
   beforeEach(RESET);
 
   it('applies trigger + text + fallback flag from the data payload', () => {
     useAuctionStore.getState().applyEvent({
       schemaVersion: 1,
-      type: EventType.AUCTIONEER_TEXT,
+      type: EventType.AI_COMMENTARY,
       serverTimeMs: Date.now(),
       // spec: seq is null for non-authoritative observability events
       seq: null,
-      data: { trigger: 'open', text: '蓝面 5711 起拍价 ¥120,000', fallback: false },
+      data: { trigger: 'open', commentary: '蓝面 5711 起拍价 ¥120,000', fallback: false },
     });
     const s = useAuctionStore.getState();
     expect(s.auctioneerTrigger).toBe('open');
@@ -291,13 +291,13 @@ describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /aucti
 
   it('TC-T7-201: each of 4 triggers updates the store cleanly', () => {
     const apply = useAuctionStore.getState().applyEvent;
-    for (const trig of ['open', 'jump', 'cold', 'hammer']) {
+    for (const trig of ['open', 'surge', 'cold', 'hammer']) {
       apply({
         schemaVersion: 1,
-        type: EventType.AUCTIONEER_TEXT,
+        type: EventType.AI_COMMENTARY,
         serverTimeMs: Date.now(),
         seq: null,
-        data: { trigger: trig, text: `${trig}-text`, fallback: false },
+        data: { trigger: trig, commentary: `${trig}-text`, fallback: false },
       });
       expect(useAuctionStore.getState().auctioneerTrigger).toBe(trig);
       expect(useAuctionStore.getState().auctioneerText).toBe(`${trig}-text`);
@@ -312,10 +312,10 @@ describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /aucti
     });
     const before = useAuctionStore.getState();
 
-    // Apply an AUCTIONEER_TEXT; state machine fields must be unchanged.
+    // Apply an AI_COMMENTARY event; state machine fields must be unchanged.
     useAuctionStore.getState().applyEvent({
-      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
-      data: { trigger: 'hammer', text: 'this should not change status', fallback: false },
+      schemaVersion: 1, type: EventType.AI_COMMENTARY, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'hammer', commentary: 'this should not change status', fallback: false },
     });
     const after = useAuctionStore.getState();
 
@@ -332,16 +332,16 @@ describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /aucti
 
   it('fallback=true is preserved (UI can dim the bubble)', () => {
     useAuctionStore.getState().applyEvent({
-      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
-      data: { trigger: 'jump', text: '竞争升温', fallback: true },
+      schemaVersion: 1, type: EventType.AI_COMMENTARY, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'surge', commentary: '竞争升温', fallback: true },
     });
     expect(useAuctionStore.getState().auctioneerFallback).toBe(true);
   });
 
   it('init() resets the auctioneer fields', () => {
     useAuctionStore.getState().applyEvent({
-      schemaVersion: 1, type: EventType.AUCTIONEER_TEXT, seq: null, serverTimeMs: Date.now(),
-      data: { trigger: 'open', text: 'some text', fallback: false },
+      schemaVersion: 1, type: EventType.AI_COMMENTARY, seq: null, serverTimeMs: Date.now(),
+      data: { trigger: 'open', commentary: 'some text', fallback: false },
     });
     expect(useAuctionStore.getState().auctioneerText).toBe('some text');
 
@@ -352,7 +352,7 @@ describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /aucti
     expect(s.auctioneerFallback).toBe(false);
   });
 
-  it('cross-PR #71↔#74: AUCTIONEER_TEXT flips aiSidecarHealth back to "ok"', () => {
+  it('cross-PR #71↔#74: AI_COMMENTARY flips aiSidecarHealth back to "ok"', () => {
     // Elia review on #74 H2: the event itself is proof the sidecar is
     // alive — solves #71 H1 (buyer view never calls draftFacts, badge
     // stuck stale). Verify the recovery path explicitly.
@@ -361,17 +361,17 @@ describe('applyEvent · AUCTIONEER_TEXT (T7-2 / proto/ai-events.md §POST /aucti
 
     useAuctionStore.getState().applyEvent({
       schemaVersion: 1,
-      type: EventType.AUCTIONEER_TEXT,
+      type: EventType.AI_COMMENTARY,
       serverTimeMs: Date.now(),
       seq: null,
-      data: { trigger: 'open', text: '开拍', fallback: false },
+      data: { trigger: 'open', commentary: '开拍', fallback: false },
     });
     expect(useAuctionStore.getState().aiSidecarHealth).toBe('ok');
   });
 
   it('TC-T7-205 regression: BID_REJECTED does NOT touch auctioneer fields', () => {
     // Trigger detection runs on backend; the frontend reducer only
-    // applies AUCTIONEER_TEXT events. This is a regression pin to make
+    // applies AI_COMMENTARY events. This is a regression pin to make
     // sure we never accidentally synthesize an auctioneer event from a
     // reject envelope on the client.
     useAuctionStore.getState().applyReject({

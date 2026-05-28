@@ -20,10 +20,10 @@ func main() {
 	})
 	mux.HandleFunc("POST /facts/draft", factsDraft)
 	// T7 §4.2: LLM auctioneer 4-trigger endpoint. Mock generator returns
-	// canned-but-trigger-aware text in T1/T7 mock; real Doubao swap is a
-	// follow-up. Guardrail (length/URL/phone/money/banned-word) runs
-	// regardless of generator. See proto/ai-events.md §POST /auctioneer.
-	mux.HandleFunc("POST /auctioneer", auctioneer.HandlerFunc(auctioneer.MockGenerator))
+	// canned-but-trigger-aware commentary in T1/T7 mock; real Doubao swap
+	// is a follow-up. Guardrail (length/URL/phone/money/banned-word) runs
+	// regardless of generator. See proto/ai-events.md §POST /llm/auctioneer.
+	mux.HandleFunc("POST /llm/auctioneer", auctioneer.HandlerFunc(auctioneer.MockGenerator))
 
 	addr := os.Getenv("SIDECAR_ADDR")
 	if addr == "" {

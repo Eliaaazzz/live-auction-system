@@ -5,7 +5,7 @@ package server
 // Per proto/ai-events.md:
 //
 //	§1  POST /facts/draft  — VLM, frozen since T1
-//	§2  POST /auctioneer   — LLM commentary, wire spec owned by PR #74
+//	§2  POST /llm/auctioneer — LLM commentary, wire spec owned by PR #74
 //	                          (apps/ai-sidecar/internal/auctioneer/)
 //
 // Two-layer architecture:
@@ -103,25 +103,25 @@ func ValidateVLMFactsResponse(body []byte) error {
 
 // ─── §2 LLM auctioneer commentary (defense-in-depth re-validator) ────
 //
-// Wire shape is OWNED BY PR #74's §POST /auctioneer in proto/ai-events.md.
+// Wire shape is OWNED BY PR #74's §POST /llm/auctioneer in proto/ai-events.md.
 // This validator adopts #74's exact naming so the two layers stay in
 // lock-step:
 //
 //	field         | sidecar (#74)            | backend (this file)
-//	endpoint      | POST /auctioneer         | (consumed via proxy)
-//	WS envelope   | AUCTIONEER_TEXT          | (broadcast after validate)
-//	trigger set   | open|jump|cold|hammer    | auctioneerTriggers (below)
-//	text field    | text (≤80 runes)         | AuctioneerResponse.Text
+//	endpoint      | POST /llm/auctioneer     | (consumed via proxy)
+//	WS envelope   | AI_COMMENTARY            | (broadcast after validate)
+//	trigger set   | open|surge|cold|hammer   | auctioneerTriggers (below)
+//	field         | commentary (≤80 runes)
 //	fallback flag | fallback bool            | AuctioneerResponse.Fallback
 
-// AuctioneerResponse is the schema for ai-sidecar POST /auctioneer
+// AuctioneerResponse is the schema for ai-sidecar POST /llm/auctioneer
 // (defined by PR #74). This struct mirrors that wire shape for
 // strict re-validation on the backend side.
 type AuctioneerResponse struct {
-	Trigger   string `json:"trigger"`
-	Text      string `json:"text"`
-	Fallback  bool   `json:"fallback"`
-	ModelName string `json:"modelName"`
+	Trigger    string `json:"trigger"`
+	Commentary string `json:"commentary"`
+	Fallback   bool   `json:"fallback"`
+	ModelName  string `json:"modelName"`
 }
 
 // auctioneerTriggers is the closed set of valid trigger values per PR #74's
@@ -130,12 +130,12 @@ type AuctioneerResponse struct {
 // map and #74's sidecar enum must update together.
 var auctioneerTriggers = map[string]bool{
 	"open":   true,
-	"jump":   true,
+	"surge":  true,
 	"cold":   true,
 	"hammer": true,
 }
 
-// Commentary content guards per PR #74's §POST /auctioneer guardrail.
+// Commentary content guards per PR #74's §POST /llm/auctioneer guardrail.
 // Patterns are intentionally over-inclusive — false positives fall back
 // to static commentary (UX-only, never blocks bidding); false negatives
 // leak unvalidated model output to the room.
@@ -151,7 +151,7 @@ var (
 	auctioneerPhonePattern = regexp.MustCompile(`1[3-9]\d{9}`)
 
 	// Currency pattern — catches commentary naming an alternative price
-	// in any of 3 common forms (per #74 §POST /auctioneer guardrail intent
+	// in any of 3 common forms (per #74 §POST /llm/auctioneer guardrail intent
 	// + #73 B1 review fix). Bid amounts are already surfaced in the
 	// BID_ACCEPTED envelope; the auctioneer shouldn't echo them.
 	//   ¥10000          — Chinese yuan prefix
@@ -178,21 +178,21 @@ func ValidateAuctioneerResponse(body []byte) error {
 		return fmt.Errorf("ai_events: auctioneer parse: %w", err)
 	}
 	if !auctioneerTriggers[resp.Trigger] {
-		return fmt.Errorf("ai_events: auctioneer unknown trigger %q (valid: open|jump|cold|hammer)", resp.Trigger)
+		return fmt.Errorf("ai_events: auctioneer unknown trigger %q (valid: open|surge|cold|hammer)", resp.Trigger)
 	}
-	if resp.Text == "" {
+	if resp.Commentary == "" {
 		return errors.New("ai_events: auctioneer text empty")
 	}
-	if n := utf8.RuneCountInString(resp.Text); n > auctioneerMaxRunes {
+	if n := utf8.RuneCountInString(resp.Commentary); n > auctioneerMaxRunes {
 		return fmt.Errorf("ai_events: auctioneer text length=%d > max=%d runes", n, auctioneerMaxRunes)
 	}
-	if auctioneerURLPattern.MatchString(resp.Text) {
+	if auctioneerURLPattern.MatchString(resp.Commentary) {
 		return errors.New("ai_events: auctioneer text contains forbidden URL pattern")
 	}
-	if auctioneerPhonePattern.MatchString(resp.Text) {
+	if auctioneerPhonePattern.MatchString(resp.Commentary) {
 		return errors.New("ai_events: auctioneer text contains forbidden phone pattern")
 	}
-	if auctioneerCurrencyPattern.MatchString(resp.Text) {
+	if auctioneerCurrencyPattern.MatchString(resp.Commentary) {
 		return errors.New("ai_events: auctioneer text contains forbidden currency pattern (auctioneer must not name prices)")
 	}
 	if resp.ModelName == "" {
