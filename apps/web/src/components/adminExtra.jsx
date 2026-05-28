@@ -646,34 +646,49 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction,
 }
 
 // ───────────────────────────────────────────────────────────────
-// Admin · Orders / Products
+// Admin · Orders / Products — real data from GET /api/auctions
 // ───────────────────────────────────────────────────────────────
-const ORDER_ROWS = [
-  { lot: '2024-0142', title: '百达翡丽 5711/1A · 蓝面',         status: 'ORDER_CREATED', winner: '海风_2024',   hammer: '12880000', settle: '已结算',   t: '2026-05-25 21:48' },
-  { lot: '2024-0141', title: '劳力士 GMT-Master II 116710',     status: 'SOLD',           winner: '陆_LU',       hammer: '6850000',  settle: '待结算',   t: '2026-05-25 20:14' },
-  { lot: '2024-0140', title: '清代翡翠手镯 · A货',                status: 'NO_BID',         winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-24 22:30' },
-  { lot: '2024-0139', title: '宋瓷青瓷莲花碗',                    status: 'CANCELLED',      winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-24 21:02' },
-  { lot: '2024-0138', title: 'Louis Vuitton Limited Edition 手袋', status: 'ORDER_CREATED',  winner: '盐渍生活',   hammer: '1850000',  settle: '已结算',   t: '2026-05-23 19:48' },
-  { lot: '2024-0137', title: '萧勤 抽象画作 1988',                status: 'SOLD',           winner: '听雨人',      hammer: '4200000',  settle: '待结算',   t: '2026-05-22 21:12' },
-  { lot: '2024-0136', title: '欧米茄 Speedmaster Moonwatch',     status: 'SCHEDULED',      winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-26 21:00' },
-  { lot: '2024-0135', title: '田黄石印章 · 清乾隆',                status: 'LIVE',           winner: '—',           hammer: '0',        settle: '—',        t: '直播中' },
-  { lot: '2024-0134', title: '陶器 · 战国 灰陶罐',                 status: 'DRAFT',          winner: '—',           hammer: '0',        settle: '—',        t: '草稿' },
-];
-
 function AdminOrders() {
   const navigate = useNavigate();
   const [filter, setFilter] = React.useState('ALL');
+  // Real auctions from GET /api/auctions (newest first), replacing the old mock
+  // ORDER_ROWS. Created auctions appear here; the table reflects live status.
+  const [allRows, setAllRows] = React.useState([]);
+  const [loadErr, setLoadErr] = React.useState(null);
+
+  React.useEffect(() => {
+    let live = true;
+    api.listAuctions({ limit: 100 })
+      .then(res => {
+        if (!live) return;
+        setAllRows((res.auctions || []).map(a => {
+          const sold = a.status === 'SOLD' || a.status === 'ORDER_CREATED';
+          return {
+            lot: a.auctionId,
+            title: a.productName || a.auctionId,
+            status: a.status,
+            winner: a.winnerId || '—',
+            hammer: sold ? (a.currentPriceCents || '0') : '0',
+            settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
+            t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
+          };
+        }));
+      })
+      .catch(e => { if (live) setLoadErr(e?.message || String(e)); });
+    return () => { live = false; };
+  }, []);
+
   const counts = {
-    ALL: ORDER_ROWS.length,
-    LIVE: ORDER_ROWS.filter(r => r.status === 'LIVE').length,
-    SCHEDULED: ORDER_ROWS.filter(r => r.status === 'SCHEDULED').length,
-    SOLD: ORDER_ROWS.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED').length,
-    NO_BID: ORDER_ROWS.filter(r => r.status === 'NO_BID').length,
-    CANCELLED: ORDER_ROWS.filter(r => r.status === 'CANCELLED').length,
+    ALL: allRows.length,
+    LIVE: allRows.filter(r => r.status === 'LIVE').length,
+    SCHEDULED: allRows.filter(r => r.status === 'SCHEDULED').length,
+    SOLD: allRows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED').length,
+    NO_BID: allRows.filter(r => r.status === 'NO_BID').length,
+    CANCELLED: allRows.filter(r => r.status === 'CANCELLED').length,
   };
-  const rows = filter === 'ALL' ? ORDER_ROWS
-            : filter === 'SOLD'  ? ORDER_ROWS.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED')
-            : ORDER_ROWS.filter(r => r.status === filter);
+  const rows = filter === 'ALL' ? allRows
+            : filter === 'SOLD'  ? allRows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED')
+            : allRows.filter(r => r.status === filter);
 
   const totalGmv = rows.reduce((a, r) => a + BigInt(r.hammer || '0'), 0n).toString();
   const sales = rows.filter(r => BigInt(r.hammer || '0') > 0n).length;
@@ -732,7 +747,7 @@ function AdminOrders() {
             border: '1px solid ' + (filter === s ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.06)'),
             cursor: 'pointer', fontFamily: 'inherit',
           }}>
-            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? ORDER_ROWS.filter(r=>r.status===s).length}</span>
+            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? 0}</span>
           </button>
         ))}
       </div>
@@ -835,5 +850,4 @@ export {
   AdminPublish,
   AdminCancelModal,
   AdminOrders,
-  ORDER_ROWS
 };

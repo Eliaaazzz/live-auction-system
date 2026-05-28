@@ -175,6 +175,90 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snap)
 }
 
+// GET /api/auctions -> recent auctions (newest first), joined to product name +
+// image. Backs the seller 商品管理 table, the buyer browse list, and 历史竞拍记录.
+// Money is a string at the JS boundary (P1). Optional ?limit=N.
+func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
+	limit := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		limit, _ = strconv.Atoi(v)
+	}
+	items, err := s.st.ListAuctions(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	type dto struct {
+		AuctionID         string `json:"auctionId"`
+		ProductName       string `json:"productName"`
+		ImageURL          string `json:"imageUrl"`
+		Status            string `json:"status"`
+		CurrentPriceCents string `json:"currentPriceCents"`
+		WinnerID          string `json:"winnerId"`
+		EndAtMs           int64  `json:"endAtMs"`
+		CreatedAtMs       int64  `json:"createdAtMs"`
+	}
+	out := make([]dto, 0, len(items))
+	for _, it := range items {
+		out = append(out, dto{
+			AuctionID:         it.ID,
+			ProductName:       it.ProductName,
+			ImageURL:          it.ImageURL,
+			Status:            it.Status,
+			CurrentPriceCents: strconv.FormatInt(it.CurrentPriceCents, 10),
+			WinnerID:          it.WinnerID,
+			EndAtMs:           it.EndAtMs,
+			CreatedAtMs:       it.CreatedAtMs,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auctions": out})
+}
+
+// GET /api/auctions/{id}/order -> the settlement order (订单管理 成交详情 / 结果查看).
+// The Order struct marshals money-as-string (model.Cents) per P1.
+func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
+	o, err := s.st.GetOrder(r.Context(), r.PathValue("id"))
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "no order for this auction (not sold yet)")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, o)
+}
+
+// POST /api/auctions/{id}/pay -> 模拟支付流程: mark the order paid. Idempotent.
+// Only the winning buyer can pay their own order.
+func (s *Server) handlePayOrder(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	o, err := s.st.GetOrder(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "no order to pay")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if o.BuyerID != userID {
+		writeErr(w, http.StatusForbidden, "not your order")
+		return
+	}
+	paid, err := s.st.PayOrder(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, paid)
+}
+
 // POST /api/auctions/{id}/freeze -> freeze_rules.lua (DRAFT -> SCHEDULED).
 func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
