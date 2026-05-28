@@ -3,7 +3,6 @@ package ssrf
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -70,35 +69,26 @@ func TestFetchImage_TC_T7_101_102_BlocksForbiddenHosts(t *testing.T) {
 	}
 }
 
-// TC-T7-103: a public host that 302-redirects to a private IP must be
-// rejected — the classic SSRF-via-redirect bypass.
+// TC-T7-103: a host that 302-redirects (→ 169.254.169.254) must be refused —
+// the classic SSRF-via-redirect bypass. Drives the REAL guarded client; only
+// the IP-block predicate is relaxed (so the loopback httptest server is
+// reachable), leaving the no-redirect CheckRedirect under test exactly as
+// production ships it.
 func TestFetchImage_TC_T7_103_BlocksRedirect(t *testing.T) {
-	// Public-facing httptest server that redirects to an internal target.
 	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://169.254.169.254/creds", http.StatusFound)
 	}))
 	defer redirector.Close()
 
-	client := NewClient()
-	// httptest binds to 127.0.0.1 so the FIRST hop is already blocked by
-	// the dial guard — to isolate the *redirect* behavior we need the
-	// initial host to be allowed. Use a custom client pointed at the
-	// redirector but with the dial-guard relaxed for the test server's
-	// loopback, asserting that the redirect itself is refused.
-	//
-	// Simpler: assert the redirect policy directly — any 3xx must error.
-	client.CheckRedirect = NewClient().CheckRedirect // ensure the policy is set
-	req, _ := http.NewRequest(http.MethodGet, redirector.URL, nil)
-	// Bypass the dial guard for the loopback test server by using a vanilla
-	// transport but keeping the no-redirect policy.
-	probe := &http.Client{CheckRedirect: client.CheckRedirect}
-	_, err := probe.Do(req)
-	if !errors.Is(err, ErrRedirect) && !strings.Contains(fmt.Sprint(err), "redirect not allowed") {
-		t.Fatalf("expected ErrRedirect on 302, got %v", err)
+	_, err := FetchImage(context.Background(), newClient(allowAllIPs), redirector.URL)
+	if !errors.Is(err, ErrRedirect) {
+		t.Fatalf("expected ErrRedirect through the guarded client, got %v", err)
 	}
 }
 
-// TC-T7-104: a response larger than the 10MiB cap is rejected.
+// TC-T7-104: a response larger than the 10MiB cap is rejected — through the
+// REAL guarded client + FetchImage's LimitReader (predicate relaxed only to
+// reach the loopback server).
 func TestFetchImage_TC_T7_104_RejectsOversize(t *testing.T) {
 	big := strings.Repeat("x", maxImageBytes+1024) // just over the cap
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -107,15 +97,13 @@ func TestFetchImage_TC_T7_104_RejectsOversize(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// Loopback test server → bypass dial guard with a vanilla transport but
-	// keep the size-cap read path (FetchImage's LimitReader).
-	_, err := fetchImageVanilla(context.Background(), srv.URL)
+	_, err := FetchImage(context.Background(), newClient(allowAllIPs), srv.URL)
 	if !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("expected ErrTooLarge, got %v", err)
 	}
 }
 
-// TC-T7-104b: a response exactly at the cap is allowed.
+// TC-T7-104b: a response exactly at the cap is allowed (boundary).
 func TestFetchImage_ExactlyAtCapAllowed(t *testing.T) {
 	atCap := strings.Repeat("x", maxImageBytes)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +112,7 @@ func TestFetchImage_ExactlyAtCapAllowed(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	body, err := fetchImageVanilla(context.Background(), srv.URL)
+	body, err := FetchImage(context.Background(), newClient(allowAllIPs), srv.URL)
 	if err != nil {
 		t.Fatalf("exactly-at-cap should pass, got %v", err)
 	}
@@ -133,11 +121,8 @@ func TestFetchImage_ExactlyAtCapAllowed(t *testing.T) {
 	}
 }
 
-// fetchImageVanilla runs FetchImage's size-cap read against a vanilla
-// transport (no dial guard) so the loopback test server is reachable.
-// Exercises the LimitReader path in isolation from the dial guard.
-func fetchImageVanilla(ctx context.Context, url string) ([]byte, error) {
-	return FetchImage(ctx, &http.Client{
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return ErrRedirect },
-	}, url)
-}
+// allowAllIPs is the relaxed dial predicate the redirect/size tests inject so
+// the loopback httptest server is reachable through the REAL transport. The
+// IP-block path itself is covered UNrelaxed by TC-T7-101/102 +
+// TestBlocked_RejectsForbiddenRanges, so relaxing it here doesn't lose coverage.
+func allowAllIPs(net.IP) bool { return false }
