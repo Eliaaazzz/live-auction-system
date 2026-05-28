@@ -7,6 +7,8 @@
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
 //	lumen load           (drives TARGET; T8 P0 gate — 500 connected + 50 active, asserts §4.2 budgets)
+//	lumen chaos --phase=<setup|bid-expect|connect-fails|state-expect|catchup-expect|wait-events>
+//	                    (drives TARGET; T9 fault-drill building blocks composed by `make chaos PHASE=...`)
 package main
 
 import (
@@ -17,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/server"
@@ -89,10 +92,49 @@ func main() {
 			log.Fatalf("load: %v", err)
 		}
 
+	case "chaos":
+		fs := flag.NewFlagSet("chaos", flag.ExitOnError)
+		target := fs.String("target", envOr("TARGET", "http://localhost:8080"), "stack base URL")
+		phase := fs.String("phase", "", "setup|bid-expect|connect-fails|state-expect|catchup-expect|wait-events")
+		aid := fs.String("aid", "", "auction id (for non-setup phases)")
+		token := fs.String("token", "", "buyer JWT (skips devLogin so MySQL-down drills keep working)")
+		code := fs.String("code", "", "expected BID_PLACE wire code (bid-expect)")
+		state := fs.String("state", "", "expected auction state (state-expect)")
+		lastSeq := fs.Int64("last-seq", 0, "ROOM_JOIN.lastSeq (catchup-expect)")
+		wantSeq := fs.Int64("want-seq", 0, "minimum seq / events-count threshold")
+		durationMs := fs.Int64("duration-ms", 0, "auction duration for setup phase (default 600000 = 10min)")
+		timeoutMs := fs.Int64("timeout-ms", 10000, "per-phase wall-clock budget")
+		_ = fs.Parse(os.Args[2:])
+		if *phase == "" {
+			log.Fatalf("chaos: --phase required")
+		}
+		if err := server.RunChaos(server.ChaosOptions{
+			Target:     *target,
+			Phase:      *phase,
+			AID:        *aid,
+			Token:      *token,
+			Code:       *code,
+			State:      *state,
+			LastSeq:    *lastSeq,
+			WantSeq:    *wantSeq,
+			DurationMs: *durationMs,
+			Timeout:    time.Duration(*timeoutMs) * time.Millisecond,
+		}); err != nil {
+			fmt.Printf("CHAOS_FAIL phase=%s err=%v\n", *phase, err)
+			log.Fatalf("chaos: %v", err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
 	}
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func mustConfig() config.Config {
@@ -104,5 +146,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load|chaos> [flags]")
 }

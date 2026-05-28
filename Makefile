@@ -2,8 +2,11 @@
 COMPOSE := docker compose -f infra/docker-compose.yml
 E2E_AID_FILE := .e2e-auction-id
 LOAD_AID_FILE := .load-auction-id
+CHAOS_AID_FILE := .chaos-auction-id
+CHAOS_TOKEN_FILE := .chaos-buyer-token
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
+        chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -132,3 +135,178 @@ guard:            ## cheap CI guards (git grep scans tracked files incl. binarie
 	@if git grep -nI '_v2' -- '*.lua'; then echo "FAIL: *_v2.lua naming is banned (V9)"; exit 1; fi
 	@if git grep -nE 'ep-[0-9]{8}'; then echo "FAIL: real DOUBAO endpoint id present"; exit 1; fi
 	@echo "guards passed"
+
+## --- T9 chaos drills (V9 plan §10) ---
+## Each phase: inject fault → assert degrade → recover → assert recovery (no seq gap) → optional verify.
+## Logs are the artifact: every assertion prints `CHAOS_OK phase=... ` (success) or `CHAOS_FAIL phase=... ` (failure)
+## and the harness exits non-zero on any miss. Recording for the demo is generated separately (out of CI scope).
+
+chaos: chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer
+	@echo "✓ T9 PASSED · 5/5 chaos drills (ai/redis/mysql/ws/timer)"
+
+chaos-ai:        ## phase 1: AI sidecar — bid path independent of AI (reuses T7-5 e2e-ai-offline gate)
+	@echo "=== chaos[1/5] ai-sidecar ==="
+	$(MAKE) e2e-ai-offline
+	@echo "✓ chaos[1/5] ai-sidecar PASSED"
+
+chaos-redis:     ## phase 2: Redis — bid -> ERR_AUCTION_PAUSED under outage; fresh auction recovers post-restart
+	@# Sequence:
+	@#  1. setup auction A (warm 1 bid; seq=1 baseline) → captures CHAOS_AID + CHAOS_BUYER_TOKEN
+	@#  2. stop redis → bid_expect ERR_AUCTION_PAUSED (V9 §6 hard rule ⑦)
+	@#  3. start redis + restart lumen (script cache + state Hashes were lost; this
+	@#     mirrors the demo runbook — Redis dev compose has no volume so the post-
+	@#     restart contract is "fresh auction works", not "old auction resumes")
+	@#  4. setup a FRESH auction B → expect OK_ACCEPTED (proves Redis hot path recovers)
+	@#  5. verify B (3-way diff + hash chain → consistent)
+	@echo "=== chaos[2/5] redis ==="
+	@echo "--- redis: setup pre-fault auction ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-setup.log
+	@grep -m1 '^CHAOS_AID=' .chaos-setup.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
+	@grep -m1 '^CHAOS_BUYER_TOKEN=' .chaos-setup.log | sed 's/^CHAOS_BUYER_TOKEN=//' > $(CHAOS_TOKEN_FILE)
+	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID"; cat .chaos-setup.log; exit 1; }
+	@echo "redis: pre-fault aid=$$(cat $(CHAOS_AID_FILE))"
+	@echo "--- redis: stop ---"
+	$(COMPOSE) stop redis
+	@# Allow up to 15s for the lumen Redis pool to surface the outage as an
+	@# EVALSHA transport error mapped to ERR_AUCTION_PAUSED. (go-redis dial
+	@# default ~5s + JOIN snapshot block ~5s + bid EvalSha block ~5s = 15s
+	@# ceiling.)
+	@echo "--- redis: bid-expect ERR_AUCTION_PAUSED ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
+		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
+		--code=ERR_AUCTION_PAUSED --timeout-ms=20000
+	@echo "--- redis: start + restart lumen (script cache reload) ---"
+	$(COMPOSE) start redis
+	$(COMPOSE) restart lumen
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
+		echo "waiting for lumen healthz ($$i)"; sleep 2; \
+	done
+	@echo "--- redis: fresh auction post-recovery ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-recover.log
+	@grep -m1 '^CHAOS_AID=' .chaos-recover.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
+	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID from recover setup"; cat .chaos-recover.log; exit 1; }
+	@echo "--- redis: verify recovered auction (3-way diff + hash chain) ---"
+	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
+	@echo "✓ chaos[2/5] redis PASSED · degrade=ERR_AUCTION_PAUSED · recover=fresh-auction-consistent"
+
+chaos-mysql:     ## phase 3: MySQL — bid path stays alive (Redis hot path); persistence drains post-restart
+	@# Sequence:
+	@#  1. setup auction A (seq=1 baseline) → captures CHAOS_AID + CHAOS_BUYER_TOKEN
+	@#     (token reuse avoids devLogin during the outage; devLogin writes to MySQL)
+	@#  2. stop mysql → 2 more bids using cached token → expect OK_ACCEPTED
+	@#     (Redis-only hot path is unaffected per V9 §3 "MySQL 不在出价热路径")
+	@#  3. start mysql → wait-events until events-count >= 3 (persistence catches up)
+	@#  4. verify A (consistent across stream/snapshot/mysql — the persistence
+	@#     worker's idempotency is the gate)
+	@echo "=== chaos[3/5] mysql ==="
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-setup.log
+	@grep -m1 '^CHAOS_AID=' .chaos-setup.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
+	@grep -m1 '^CHAOS_BUYER_TOKEN=' .chaos-setup.log | sed 's/^CHAOS_BUYER_TOKEN=//' > $(CHAOS_TOKEN_FILE)
+	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID"; cat .chaos-setup.log; exit 1; }
+	@echo "mysql: aid=$$(cat $(CHAOS_AID_FILE))"
+	@echo "--- mysql: stop ---"
+	$(COMPOSE) stop mysql
+	@echo "--- mysql: bid still accepted (Redis hot path) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
+		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
+		--code=OK_ACCEPTED --timeout-ms=10000
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
+		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
+		--code=OK_ACCEPTED --timeout-ms=10000
+	@echo "--- mysql: start + wait for persistence drain ---"
+	$(COMPOSE) start mysql
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if $(COMPOSE) exec -T mysql mysqladmin ping -h 127.0.0.1 -uroot -prootpw >/dev/null 2>&1; then break; fi; \
+		echo "waiting for mysql ($$i)"; sleep 2; \
+	done
+	@# Persistence worker projects Stream → MySQL on a short tick. 3 events
+	@# should drain within seconds; allow 30s slack on slow runners.
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=wait-events --aid="$$(cat $(CHAOS_AID_FILE))" --want-seq=3 --timeout-ms=30000
+	@echo "--- mysql: verify (consistent across stream/redis/mysql post-recovery) ---"
+	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
+	@echo "✓ chaos[3/5] mysql PASSED · bids OK during outage · persistence drained · verifier consistent"
+
+chaos-ws:        ## phase 4: WS gateway — connect-fails under outage; catchup post-restart proves no seq gap
+	@# Sequence:
+	@#  1. setup auction A (seq=1) → captures CHAOS_AID + CHAOS_BUYER_TOKEN
+	@#  2. stop lumen → assert /healthz curl fails (degrade observed from the host)
+	@#  3. start lumen → catchup-expect with lastSeq=1 → ROOM_SNAPSHOT.seq >= 1 (no gap)
+	@#  4. fresh bid post-recovery accepted (using the cached buyer token)
+	@#  5. verify A
+	@echo "=== chaos[4/5] ws-gateway ==="
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-setup.log
+	@grep -m1 '^CHAOS_AID=' .chaos-setup.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
+	@grep -m1 '^CHAOS_BUYER_TOKEN=' .chaos-setup.log | sed 's/^CHAOS_BUYER_TOKEN=//' > $(CHAOS_TOKEN_FILE)
+	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID"; cat .chaos-setup.log; exit 1; }
+	@echo "ws: aid=$$(cat $(CHAOS_AID_FILE))"
+	@echo "--- ws: stop lumen ---"
+	$(COMPOSE) stop lumen
+	@echo "--- ws: assert /healthz refused (degrade observed) ---"
+	@if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then \
+		echo "FAIL: lumen still serving /healthz after stop"; exit 1; \
+	fi
+	@echo "ws: gateway confirmed down"
+	@echo "--- ws: start lumen ---"
+	$(COMPOSE) start lumen
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
+		echo "waiting for lumen healthz ($$i)"; sleep 2; \
+	done
+	@echo "--- ws: catchup with lastSeq=1 (proves no seq gap across the outage) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=catchup-expect --aid="$$(cat $(CHAOS_AID_FILE))" --last-seq=1 --want-seq=1
+	@echo "--- ws: fresh bid post-recovery ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
+		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
+		--code=OK_ACCEPTED
+	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
+	@echo "✓ chaos[4/5] ws-gateway PASSED · stopped→/healthz refused · started→catchup → no seq gap"
+
+chaos-timer:     ## phase 5: Timer Worker — LIVE outlives endAtMs while disabled; hammers within 1s after re-enable
+	@# Sequence:
+	@#  1. setup auction A with a SHORT duration (5s) → seq=1, captures aid + token
+	@#  2. stop lumen + recreate with LUMEN_CHAOS_DISABLE_TIMER=1 → wait healthz
+	@#  3. sleep past endAtMs (5s + grace)
+	@#  4. assert state still LIVE (timer skipped → terminal event never written)
+	@#     AND late bid → ERR_AFTER_END (Lua boundary check is intact)
+	@#  5. stop + recreate WITHOUT the env → timer back on → scan tick (100ms)
+	@#     fires hammerDue → close_auction.lua writes AUCTION_SOLD
+	@#  6. state-expect SOLD within scan tick + persistence projection
+	@#  7. verify A
+	@echo "=== chaos[5/5] timer ==="
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup --duration-ms=5000 > .chaos-setup.log
+	@grep -m1 '^CHAOS_AID=' .chaos-setup.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
+	@grep -m1 '^CHAOS_BUYER_TOKEN=' .chaos-setup.log | sed 's/^CHAOS_BUYER_TOKEN=//' > $(CHAOS_TOKEN_FILE)
+	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID"; cat .chaos-setup.log; exit 1; }
+	@echo "timer: aid=$$(cat $(CHAOS_AID_FILE)) (durationMs=5000)"
+	@echo "--- timer: stop lumen + recreate with LUMEN_CHAOS_DISABLE_TIMER=1 ---"
+	$(COMPOSE) stop lumen
+	@# Force recreate so the new env var sticks. --no-deps avoids cascading
+	@# restarts on healthy services.
+	LUMEN_CHAOS_DISABLE_TIMER=1 $(COMPOSE) up -d --no-deps --force-recreate lumen
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
+		echo "waiting for lumen healthz ($$i)"; sleep 2; \
+	done
+	@echo "--- timer: sleep past endAtMs (5s) + grace (3s) — timer is OFF so no hammer ---"
+	@sleep 8
+	@echo "--- timer: assert auction still LIVE (no hammer fired) AND late bid → ERR_AFTER_END ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=state-expect --aid="$$(cat $(CHAOS_AID_FILE))" --state=LIVE --timeout-ms=2000
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
+		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
+		--code=ERR_AFTER_END
+	@echo "--- timer: restart lumen WITHOUT the env (timer back on) ---"
+	$(COMPOSE) stop lumen
+	$(COMPOSE) up -d --no-deps --force-recreate lumen
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
+		echo "waiting for lumen healthz ($$i)"; sleep 2; \
+	done
+	@echo "--- timer: state-expect SOLD (timer re-armed → scan tick → hammerDue → close_auction.lua) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=state-expect --aid="$$(cat $(CHAOS_AID_FILE))" --state=SOLD --timeout-ms=15000
+	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
+	@echo "✓ chaos[5/5] timer PASSED · disabled→LIVE-past-endAtMs · re-enabled→SOLD within scan tick"
+
+chaos-smoke:     ## CI-cheap chaos check: AI phase only (already wired, ~30s) — keeps the harness a regression net
+	@echo "=== chaos-smoke (AI phase) ==="
+	@$(MAKE) chaos-ai
