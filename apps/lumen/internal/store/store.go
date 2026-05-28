@@ -153,6 +153,48 @@ func (s *Store) HasDedupe(ctx context.Context, aid, userID, clientBidID string) 
 	return s.rdb.HExists(ctx, dedupeKey(aid, userID), clientBidID).Result()
 }
 
+// FastPathPrecheck is the V10k Tier C fast-reject's authoritative liveness
+// + dedupe check, pipelined into ONE Redis round-trip. Returns:
+//   - isLive: true iff state.status == "LIVE" RIGHT NOW (Lua's authoritative
+//     view; closes the codex pass-3 race where the gateway's eventually-
+//     consistent cache lags Lua's terminal transition by a broadcast RTT)
+//   - isDupe: true iff (aid, userID, clientBidID) has a prior cached ack
+//     (DUPLICATE-replay must defer to Lua so the original payload is replayed)
+//   - err: any Redis transport error — caller treats as "unsure, defer to Lua"
+//
+// Cost: ONE pipelined RTT (go-redis batches Pipeline.Exec into a single
+// network round-trip), ~100μs localhost. Still much cheaper than the full
+// EVALSHA hot path (~6ms) it replaces, so net throughput win is preserved.
+//
+// Together with the cache check, the fast-path now mirrors Lua's check order
+// exactly:
+//  1. cache miss (priceCents=="") → fall through (cold cache, Lua decides)
+//  2. terminal flag → fall through (terminal known via broadcast)
+//  3. amount > cached → fall through (could be accepted; Lua decides)
+//  4. expiry margin → fall through (clock-skew safety; Lua decides)
+//  5. FastPathPrecheck:
+//     - !isLive → fall through (Lua returns ERR_NOT_LIVE)
+//     - isDupe → fall through (Lua returns DUPLICATE-replay)
+//  6. else → fast-reject ERR_TOO_LOW (Lua would also return ERR_TOO_LOW)
+func (s *Store) FastPathPrecheck(ctx context.Context, aid, userID, clientBidID string) (isLive, isDupe bool, err error) {
+	// Single pipeline = single network RTT.
+	pipe := s.rdb.Pipeline()
+	statusCmd := pipe.HGet(ctx, stateKey(aid), "status")
+	dupeCmd := pipe.HExists(ctx, dedupeKey(aid, userID), clientBidID)
+	_, perr := pipe.Exec(ctx)
+	// HGET on a missing key returns redis.Nil; treat as !isLive (no state →
+	// auction probably not started yet; caller should defer to Lua).
+	status, herr := statusCmd.Result()
+	dupe, derr := dupeCmd.Result()
+	if perr != nil && herr != nil && herr != redis.Nil {
+		return false, false, herr
+	}
+	if derr != nil {
+		return false, false, derr
+	}
+	return status == "LIVE", dupe, nil
+}
+
 // PubChannel is the per-auction Pub/Sub fanout hint channel.
 func PubChannel(aid string) string { return fmt.Sprintf("auction:{%s}:pub", aid) }
 
