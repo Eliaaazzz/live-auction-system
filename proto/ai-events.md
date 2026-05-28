@@ -23,6 +23,21 @@ Response (T1 mock returns this shape with canned values):
 
 Rules (enforced from T7 in `internal`/sidecar): VLM image fetch uses an **SSRF allowlist** (no private net / IMDS, size+timeout limits, no redirect-follow); product text is treated as **untrusted data** (never as instructions) to block prompt injection; `highRiskFieldsDisclaimer` is always present. The seller must `confirm/edit` facts before `freeze_rules` — AI output never auto-enters the core auction.
 
+### §1.2 SSRF allowlist + prompt-injection (T7 §4.1 — LIVE)
+
+Implemented in `apps/ai-sidecar/internal/{ssrf,vlm}` (PR closing #70 §4.1). Status: **enforced**, not just documented.
+
+- **SSRF guard** (`internal/ssrf/allowlist.go`): the image fetch runs through a guarded `http.Client` that rejects forbidden IPs **at dial time** (after DNS resolution, so a hostname resolving to a private IP is still blocked — URL-string blocklists are bypassable, IP-at-dial is robust):
+  - blocked ranges: loopback (`127/8`, `::1`), private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local incl. IMDS (`169.254/16`, pinned `169.254.169.254`), unspecified, multicast
+  - redirects disabled (`CheckRedirect` → error; a `302 → http://169.254.169.254` is the classic SSRF-via-redirect bypass)
+  - response capped at **10 MiB** (`io.LimitReader` at cap+1; exactly-cap allowed, cap+1 → `ErrTooLarge`)
+  - **5s** dial + total timeout
+  - the vetted IP is pinned for the actual dial so a DNS-rebind between check and connect can't slip a private IP in
+- **Prompt-injection** (`internal/vlm/vlm.go buildPrompt`): seller title/description are embedded in an explicit `<<<SELLER_TEXT_UNTRUSTED … SELLER_TEXT_UNTRUSTED` fence, after a system instruction telling the model to treat the block as DATA never instructions. The fence delimiter token is stripped from the seller payload so it can't break out.
+- **Mode toggle**: `VLM_MODE=real` + `VLM_DOUBAO_KEY` selects the Doubao path; unset → mock (`mock-vlm-T1`). A box without a key defaults safe (the deprovisioned-key risk in #70 §7). The Doubao HTTP call itself is stubbed (`callDoubao`) pending a re-provisioned key; the real path still runs the SSRF-guarded image fetch end-to-end so the security surface is exercised.
+
+Tested by `apps/ai-sidecar/internal/ssrf/allowlist_test.go` (TC-T7-101 IMDS / 102 private / 103 redirect / 104 oversize) + `internal/vlm/vlm_test.go` (TC-T7-105 prompt-injection resistance).
+
 ## `POST /llm/auctioneer` (ai-sidecar · T7 §4.2)
 
 Generates LLM auctioneer commentary for one of 4 triggers. Non-authoritative — V9 P3 says AI never gates bidding. Backend event hooks (separate PR) detect the trigger conditions and call this endpoint synchronously; the response is broadcast via the `AI_COMMENTARY` wire event.
