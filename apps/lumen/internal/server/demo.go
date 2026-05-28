@@ -21,16 +21,25 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
 
-// Demo timing knobs. The anti-snipe WINDOW is set >= the start DURATION so the
-// whole auction sits inside the window: that makes AUCTION_EXTENDED deterministic
-// (any accepted bid extends) instead of depending on landing a bid in a narrow
-// tail, which would make the demo flaky. MaxExtensions bounds the extensions so
-// the Timer Worker still hammers the auction to SOLD after bidding stops.
+// Demo timing knobs. Two independent requirements make AUCTION_EXTENDED fire
+// deterministically for BOTH demo bids (not just the first):
+//
+//  1. The auction must still be LIVE when each bid lands → demoDurationMs must
+//     comfortably exceed the WS setup overhead (2 dev-logins + 2 dials).
+//  2. Each bid must satisfy place_bid.lua's in-window check
+//     `(endAtMs - now) <= ExtendWindowSec*1000`. The extend is ACCUMULATIVE
+//     (`endAtMs += ExtendSec`), so after the first snipe pushes endAtMs out, a
+//     window that merely equals the duration leaves the SECOND bid outside it
+//     — which is the bug this replaced (first extend fired, second timed out).
+//     So the window must exceed duration + ExtendSec*MaxExtensions. We set it
+//     far larger (10 min) so every bid in the demo counts as a snipe regardless
+//     of timing; MaxExtensions still bounds it so the Timer Worker hammers to
+//     SOLD at endAtMs = start + duration + ExtendSec*MaxExtensions.
 const (
-	demoDurationMs      = 5000
-	demoExtendWindowSec = 5
+	demoDurationMs      = 12000 // LIVE long enough for setup + both bids
+	demoExtendWindowSec = 600   // >> duration + ExtendSec*MaxExtensions → both bids always in-window
 	demoExtendSec       = 3
-	demoMaxExtensions   = 2
+	demoMaxExtensions   = 2 // hammer fires at start + 12s + 2*3s = ~18s
 )
 
 // demoRules is the auction config the demo drives. Package-level so demo_test.go
@@ -40,7 +49,7 @@ func demoRules() model.Rules {
 		StartPriceCents: 10000,
 		IncrementCents:  1000,
 		CapPriceCents:   1000000,
-		DurationSec:     demoExtendWindowSec, // rules duration; `start` overrides with demoDurationMs
+		DurationSec:     demoDurationMs / 1000, // rules duration; `start` overrides with demoDurationMs
 		ExtendWindowSec: demoExtendWindowSec,
 		ExtendSec:       demoExtendSec,
 		MaxExtensions:   demoMaxExtensions,
@@ -124,8 +133,9 @@ func RunDemo(target string) error {
 	}
 
 	// §12.5: stop bidding → the Timer Worker hammers the (extended) auction to
-	// SOLD. Generous timeout — each extension bumped endAtMs by demoExtendSec.
-	if err := waitForType(connA, model.TypeAuctionSold, 30*time.Second); err != nil {
+	// SOLD at endAtMs = start + demoDurationMs + demoExtendSec*demoMaxExtensions
+	// (~18s). Wait covers that with margin for slow setup on a cold box.
+	if err := waitForType(connA, model.TypeAuctionSold, 45*time.Second); err != nil {
 		return fmt.Errorf("hammer (AUCTION_SOLD): %w", err)
 	}
 

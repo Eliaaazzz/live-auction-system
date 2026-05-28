@@ -53,7 +53,8 @@ that proves it**, and the assertable signal to point at.
 ## 2. Three-minute script · 三分钟脚本
 
 Pre-flight (before the clock): `make up && make seed` so the stack is warm.
-Open two tabs: `admin.html` (seller) and `room.html?auction=auc_demo` (buyer).
+Open two tabs: `/admin` (seller console) and `/room/auc_demo` (buyer room) — the
+designed React app, served by lumen at `http://localhost:8080`.
 
 | 时间 | 画面 | 旁白要点 |
 |---|---|---|
@@ -88,7 +89,7 @@ nodes 4–5:
 Prints `DEMO_AUCTION_ID=… · demo-auction: PASS · extendCount=2 → AUCTION_SOLD → eventsHash=…`.
 Wired into `make demo` / `make demo-smoke` as node 3.
 
-- **Live (preferred for narration):** in `room.html`, place a bid inside the
+- **Live (preferred for narration):** in `/room/auc_demo`, place a bid inside the
   anti-snipe window — the countdown extends and the `extendCount` badge bumps.
   Most legible on camera; `make demo-auction` is the proof it actually fired.
 - The timer + boundary behavior is *also* independently covered by
