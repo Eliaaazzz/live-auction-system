@@ -649,6 +649,19 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction,
 // ───────────────────────────────────────────────────────────────
 // Admin · Orders / Products — real data from GET /api/auctions
 // ───────────────────────────────────────────────────────────────
+function auctionToRow(a) {
+  const sold = a.status === 'SOLD' || a.status === 'ORDER_CREATED';
+  return {
+    lot: a.auctionId,
+    title: a.productName || a.auctionId,
+    status: a.status,
+    winner: a.winnerId || '—',
+    hammer: sold ? (a.currentPriceCents || '0') : '0',
+    settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
+    t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
+  };
+}
+
 function AdminOrders() {
   const navigate = useNavigate();
   const [filter, setFilter] = React.useState('ALL');
@@ -660,24 +673,26 @@ function AdminOrders() {
   React.useEffect(() => {
     let live = true;
     api.listAuctions({ limit: 100 })
-      .then(res => {
-        if (!live) return;
-        setAllRows((res.auctions || []).map(a => {
-          const sold = a.status === 'SOLD' || a.status === 'ORDER_CREATED';
-          return {
-            lot: a.auctionId,
-            title: a.productName || a.auctionId,
-            status: a.status,
-            winner: a.winnerId || '—',
-            hammer: sold ? (a.currentPriceCents || '0') : '0',
-            settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
-            t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
-          };
-        }));
-      })
+      .then(res => { if (live) setAllRows((res.auctions || []).map(auctionToRow)); })
       .catch(e => { if (live) setLoadErr(e?.message || String(e)); });
     return () => { live = false; };
   }, []);
+
+  // Item 7: modify a pre-start auction's rules (修改未开始竞拍的规则). Partial
+  // PATCH — sends only the edited fields; backend merges with current rules.
+  const handleEditRules = async (aid) => {
+    const sp = window.prompt('修改起拍价(分 cents) — 仅 DRAFT/SCHEDULED 可改:');
+    if (sp == null || !sp.trim()) return;
+    const inc = window.prompt('修改加价幅度(分 cents):');
+    if (inc == null || !inc.trim()) return;
+    try {
+      await api.updateRules(aid, { startPriceCents: sp.trim(), incrementCents: inc.trim() });
+      const res = await api.listAuctions({ limit: 100 });
+      setAllRows((res.auctions || []).map(auctionToRow));
+    } catch (e) {
+      window.alert('更新失败: ' + (e?.message || e));
+    }
+  };
 
   const counts = {
     ALL: allRows.length,
@@ -813,10 +828,19 @@ function AdminOrders() {
                   }}>{r.settle}</span>
                 </Td>
                 <Td><span className="mono" style={{ color: 'var(--douyin-ink-muted)', fontSize: 11 }}>{r.t}</span></Td>
-                <Td><button style={{
-                  border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
-                  cursor: 'pointer', fontSize: 14, padding: '4px 8px',
-                }}>›</button></Td>
+                <Td>
+                  {(r.status === 'DRAFT' || r.status === 'SCHEDULED')
+                    ? <button onClick={() => handleEditRules(r.lot)} style={{
+                        border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
+                        color: 'var(--douyin-ink-text)', cursor: 'pointer', fontSize: 11,
+                        padding: '3px 10px', borderRadius: 6,
+                      }}>编辑规则</button>
+                    : <button onClick={() => navigate(
+                        (r.status === 'LIVE') ? `/room/${r.lot}` : `/evidence/${r.lot}`)} style={{
+                        border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
+                        cursor: 'pointer', fontSize: 14, padding: '4px 8px',
+                      }}>›</button>}
+                </Td>
               </tr>
             ))}
           </tbody>
