@@ -1,0 +1,284 @@
+# Alert rules for Lumen Auction.
+# Tiers:
+#   - critical:  rubric-line failure (seq gap, SLO breach, data loss); blocks demo
+#   - warn:      capacity / degradation; system still passes spec
+#
+# P0 has no alertmanager wired — alerts surface as colored panels in Grafana
+# auction-realtime dashboard. P1 stretch: webhook to Slack.
+
+groups:
+  # ─────────────────────────────────────────────────────────────────────
+  - name: lumen_critical
+    rules:
+
+      # Per V9 §4.1: seq gap MUST be 0. Any positive value is a correctness break.
+      - alert: SeqGapDetected
+        expr: lumen_seq_gap > 0
+        for: 30s
+        labels:
+          severity: critical
+          rubric: 稳定性-数据一致性
+        annotations:
+          summary: "Auction seq gap > 0 on {{ $labels.auction_id }}"
+          runbook: "docs/runbook.md#seq-gap"
+          description: "Stream events are non-monotonic. Replay Verifier will fail."
+
+      # Per V9 §4.2: ack p95 gate = 80ms, floor = 200ms. Two-tier alerting:
+      #   warn  at SLO×1.25 (100ms) — meaningful early-warning (PDGGK PR #18 CR P0-3)
+      #   crit  at floor    (200ms) — paging breach, back-stops the warn tier
+      - alert: AckLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m]))
+          ) > 0.1
+        for: 2m
+        labels:
+          severity: warn
+          rubric: 系统可用性
+        annotations:
+          summary: "bid ack p95 > 100ms (SLO×1.25 — early warning)"
+          target: "p95 < 80ms gate per V9 §4.2"
+
+      - alert: AckLatencyAboveFloor
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_ack_duration_seconds_bucket[1m]))
+          ) > 0.2
+        for: 1m
+        labels:
+          severity: critical
+          rubric: 系统可用性
+        annotations:
+          summary: "bid ack p95 > 200ms (floor breached)"
+          target: "p95 < 80ms gate; < 200ms floor per V9 §4.2"
+
+      - alert: BroadcastLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m]))
+          ) > 0.2
+        for: 2m
+        labels:
+          severity: warn
+          rubric: 系统可用性
+        annotations:
+          summary: "broadcast p95 > 200ms (SLO×1.33 — early warning)"
+          target: "p95 < 150ms gate per V9 §4.2"
+
+      - alert: BroadcastLatencyAboveFloor
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_broadcast_duration_seconds_bucket[1m]))
+          ) > 0.5
+        for: 1m
+        labels:
+          severity: critical
+          rubric: 系统可用性
+        annotations:
+          summary: "broadcast p95 > 500ms (floor breached)"
+          target: "p95 < 150ms gate; < 500ms floor per V9 §4.2"
+
+      - alert: HammerLatencyWarn
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m]))
+          ) > 0.7
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "hammer p95 > 700ms (SLO×1.4 — early warning)"
+          target: "p95 < 500ms gate per V9 §4.2"
+
+      - alert: HammerLatencyAboveFloor
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_bidengine_hammer_duration_seconds_bucket[1m]))
+          ) > 2
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "hammer p95 > 2s (floor breached)"
+          target: "p95 < 500ms gate; < 2s floor per V9 §4.2"
+
+      # Per V9 §4.2 + 04-timer-worker.md: scan 100ms + detection-lag ≤ 120ms.
+      # If lag exceeds budget the hammer SLO is at risk.
+      - alert: TimerDetectionLagHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(lumen_timer_detection_lag_ms_bucket[1m]))
+          ) > 120
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Timer detection lag p95 > 120ms"
+          target: "≤ 120ms per V9 §4.2 budget arithmetic"
+
+      # Per 03-lua-scripts.md: Lua should never error. Non-zero = bug.
+      - alert: BidengineLuaErrors
+        expr: increase(lumen_bidengine_lua_errors_total[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Lua execution errors detected (target = 0)"
+          description: "Could be schema drift, OOM, or unhandled return."
+
+      # Per V9 §4.2 hot-path budget: place_bid.lua p99 < 5ms (gate for ack p95 < 80ms)
+      - alert: LuaScriptBudgetBreached
+        expr: lumen:script_p99_1m{script="place_bid"} > 0.005
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "place_bid.lua p99 > 5ms (hot-path budget breached)"
+          description: "ack p95 < 80ms is at risk — Lua exec time dominates the budget."
+
+      - alert: LuaScriptBudgetCritical
+        expr: lumen:script_p99_1m{script="place_bid"} > 0.010
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "place_bid.lua p99 > 10ms (2x budget)"
+
+      # Per V9 §4.2: catchup 200 events p95 < 1s gate; 3s floor.
+      - alert: CatchupLatencyHigh
+        expr: lumen:catchup_p95_1m > 1
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Catchup p95 > 1s (gate breached)"
+          target: "p95 < 1s gate; < 3s floor per V9 §4.2"
+
+      - alert: CatchupLatencyFloor
+        expr: lumen:catchup_p95_1m > 3
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Catchup p95 > 3s (floor breached)"
+
+      # Redis is on the hot path. Down = ERR_AUCTION_PAUSED for all bids.
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis down — auctions paused"
+          runbook: "docs/runbook.md#redis-recovery"
+
+      # T1 default (single lumen process): use job=lumen. T5+ split-mode topology
+      # uses per-mode jobs (lumen-bid-engine, lumen-gateway, lumen-timer); uncomment
+      # the T5 alerts below when prometheus.yml multi-process scrape stanzas are
+      # un-commented. Keeping them commented avoids red panels in T1 single-binary.
+      - alert: LumenDown
+        expr: up{job="lumen"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "lumen process down — all auctions paused"
+
+      # ─── T5+ multi-process alerts (commented; un-comment when split topology lands)
+      # - alert: GatewayDown
+      #   expr: up{job="lumen-gateway"} == 0
+      #   for: 30s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Gateway instance {{ $labels.instance }} down" }
+      #
+      # - alert: BidEngineDown
+      #   expr: up{job="lumen-bid-engine"} == 0
+      #   for: 30s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Bid engine down — no bids accepted" }
+      #
+      # - alert: TimerDown
+      #   expr: up{job="lumen-timer"} == 0
+      #   for: 60s
+      #   labels: { severity: critical }
+      #   annotations: { summary: "Timer worker down — auctions won't auto-hammer" }
+
+  # ─────────────────────────────────────────────────────────────────────
+  - name: lumen_capacity
+    rules:
+
+      # Per 05-persistence-worker.md: lag grows when MySQL is slow or down.
+      # MySQL is NOT on hot path, so this is warn not critical.
+      - alert: StreamConsumerLag
+        expr: lumen_persistence_consumer_lag > 1000
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Stream {{ $labels.stream }} backlog > 1000 events"
+          description: "Persistence worker behind; evidence card / replay verifier will lag."
+
+      - alert: MySQLDown
+        expr: up{job="mysql"} == 0
+        for: 30s
+        labels:
+          severity: warn
+        annotations:
+          summary: "MySQL down — auctions continue, evidence queue grows"
+          description: "Hot path unaffected (Redis is source of truth)."
+
+      # Per V9 §4.3: AOF fsync stalls affect bid latency.
+      - alert: AOFFsyncStall
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(lumen_redis_aof_fsync_duration_seconds_bucket[1m]))
+          ) > 0.5
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Redis AOF fsync p99 > 500ms"
+          description: "Bid latency may spike; check disk IO."
+
+      - alert: GoGCPauseHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le, job) (rate(lumen_go_gc_pause_seconds_bucket[1m]))
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: warn
+        annotations:
+          summary: "Go GC pause p99 > 50ms on {{ $labels.job }}"
+          description: "May add jitter to ack/broadcast latency."
+
+  # ─────────────────────────────────────────────────────────────────────
+  - name: lumen_ai
+    rules:
+
+      # AI offline is BY DESIGN tolerable per V9 §0 (AI is sidecar). Warn only.
+      - alert: AICircuitOpen
+        expr: ai_circuit_state == 2
+        for: 1m
+        labels:
+          severity: warn
+        annotations:
+          summary: "AI sidecar circuit breaker open"
+          description: "Auctioneer disabled; bidding unaffected. UI shows AI-offline badge."
+
+      - alert: AISidecarDown
+        expr: up{job="ai-sidecar"} == 0
+        for: 30s
+        labels:
+          severity: warn
+        annotations:
+          summary: "AI sidecar unreachable; bidding unaffected"
+
+      # Per 09-ai-sidecar.md: ban-word hits are expected occasionally but a spike
+      # may mean the prompt template is broken.
+      - alert: AIBanwordsSpike
+        expr: rate(ai_banwords_hits_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warn
+        annotations:
+          summary: "AI ban-word hits > 0.1/sec — prompt template may need review"

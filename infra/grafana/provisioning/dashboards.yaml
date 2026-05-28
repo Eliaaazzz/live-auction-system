@@ -1,0 +1,14 @@
+# Grafana dashboard provisioning. Loads all JSON files from /var/lib/grafana/dashboards.
+apiVersion: 1
+
+providers:
+  - name: lumen
+    orgId: 1
+    folder: Lumen Auction
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

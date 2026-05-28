@@ -1,0 +1,395 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "enable": true,
+        "expr": "changes(lumen_chaos_active[1m]) > 0",
+        "name": "Chaos drills",
+        "iconColor": "rgba(255, 96, 96, 1)",
+        "titleFormat": "Chaos: {{phase}}"
+      }
+    ]
+  },
+  "description": "Lumen Auction — real-time system health. Maps to rubric 可观测性 line. Panels follow docs/components/13-observability.md.",
+  "editable": false,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "AI Sidecar",
+      "url": "/d/lumen-ai-sidecar"
+    },
+    {
+      "title": "Chaos",
+      "url": "/d/lumen-chaos"
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "title": "System Health (Row 1)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "id": 1
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Active auctions",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:active_auctions", "refId": "A" }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue" }] } } }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "WS connections / target 500",
+      "description": "V9 §4.2 P0 gate: 500 connected sustained 60s+. Threshold lights up green at 500.",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum(lumen_ws_connections)", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Active bidders (1m) / target 50",
+      "description": "V9 §4.2 P0 gate: 50 active bidders sustained 60s+. Red below target only when load-test profile expects it; green during demo idle is fine.",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:active_bidders_1m", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 50 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "seq_gap (must = 0)",
+      "description": "Per V9 §4.1: 0 tolerance for monotonicity break. Any positive value = correctness failure.",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "max(lumen_seq_gap)", "refId": "A" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Latency SLOs (Row 2)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "id": 2
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "ack p50 / p95 / p99",
+      "description": "V9 §4.2: p95 < 80ms gate (yellow), < 200ms floor (red).",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:ack_p50_1m", "refId": "p50", "legendFormat": "p50" },
+        { "expr": "lumen:ack_p95_1m", "refId": "p95", "legendFormat": "p95" },
+        { "expr": "lumen:ack_p99_1m", "refId": "p99", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.08 },
+              { "color": "red", "value": 0.2 }
+            ]
+          }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "broadcast p50 / p95 / p99",
+      "description": "V9 §4.2: p95 < 150ms gate (yellow), < 500ms floor (red).",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:broadcast_p50_1m", "refId": "p50", "legendFormat": "p50" },
+        { "expr": "lumen:broadcast_p95_1m", "refId": "p95", "legendFormat": "p95" },
+        { "expr": "lumen:broadcast_p99_1m", "refId": "p99", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.15 },
+              { "color": "red", "value": 0.5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "hammer p50 / p95 / p99 (+ detection-lag)",
+      "description": "V9 §4.2: hammer p95 < 500ms gate (yellow), < 2s floor (red). detection-lag is the timer scan portion (≤120ms budget).",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:hammer_p50_1m", "refId": "p50", "legendFormat": "hammer p50" },
+        { "expr": "lumen:hammer_p95_1m", "refId": "p95", "legendFormat": "hammer p95" },
+        { "expr": "lumen:hammer_p99_1m", "refId": "p99", "legendFormat": "hammer p99" },
+        { "expr": "lumen:detection_lag_p95_1m / 1000", "refId": "lag", "legendFormat": "detection-lag p95" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.5 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "catchup p50 / p95 / p99 (200 events)",
+      "description": "V9 §4.2: p95 < 1s gate (yellow), < 3s floor (red). Triggered by ROOM_JOIN with lastSeq < high water; XRANGE replay duration.",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen:catchup_p50_1m", "refId": "p50", "legendFormat": "p50" },
+        { "expr": "lumen:catchup_p95_1m", "refId": "p95", "legendFormat": "p95" },
+        { "expr": "lumen:catchup_p99_1m", "refId": "p99", "legendFormat": "p99" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1.0 },
+              { "color": "red", "value": 3.0 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Throughput + Error Distribution (Row 3)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "collapsed": false,
+      "id": 3
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Bids/sec by code (place_bid)",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (code) (rate(lumen_bidengine_return_code_total{script=\"place_bid\"}[1m]))", "legendFormat": "{{code}}", "refId": "A" }
+      ],
+      "options": { "tooltip": { "mode": "multi" } },
+      "fieldConfig": { "defaults": { "custom": { "stacking": { "mode": "normal" } } } }
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Close results by code",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (code) (rate(lumen_timer_close_result_total[1m]))", "legendFormat": "{{code}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "WS msg in/out by type",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (type, direction) (rate(lumen_ws_messages_total[1m]))", "legendFormat": "{{direction}} {{type}}", "refId": "A" }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Stream + Persistence (Row 4)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false,
+      "id": 4
+    },
+    {
+      "id": 41,
+      "type": "timeseries",
+      "title": "Stream consumer lag (per stream)",
+      "description": "Stream→MySQL backlog. Alert at >1000 for 1m.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "lumen_persistence_consumer_lag", "legendFormat": "{{stream}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Persistence insert duration",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(lumen_persistence_insert_seconds_bucket[1m])))", "legendFormat": "p95", "refId": "A" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(lumen_persistence_insert_seconds_bucket[1m])))", "legendFormat": "p99", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 43,
+      "type": "timeseries",
+      "title": "Hash compute duration + place_bid.lua script time",
+      "description": "place_bid.lua p99 must stay < 5ms (V9 §4.2 budget) to hit ack p95 < 80ms.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(lumen_persistence_hash_compute_seconds_bucket[1m])))", "legendFormat": "hash p99", "refId": "A" },
+        { "expr": "lumen:script_p99_1m{script=\"place_bid\"}", "legendFormat": "place_bid.lua p99", "refId": "B" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.005 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Pressure + Capacity (Row 5)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "collapsed": false,
+      "id": 5
+    },
+    {
+      "id": 51,
+      "type": "heatmap",
+      "title": "WS bufferedAmount distribution",
+      "description": "Client backpressure. Critical at 1MB, force-close at 4MB.",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (le) (rate(lumen_ws_buffered_amount_bytes_bucket[1m]))", "format": "heatmap", "refId": "A" }
+      ]
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Dropped soft + force-close",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "sum by (channel) (rate(lumen_ws_dropped_soft_total[1m]))", "legendFormat": "drop {{channel}}", "refId": "A" },
+        { "expr": "rate(lumen_ws_force_close_total[1m])", "legendFormat": "force-close", "refId": "B" }
+      ]
+    },
+    {
+      "id": 53,
+      "type": "timeseries",
+      "title": "Redis AOF fsync (p99)",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(lumen_redis_aof_fsync_duration_seconds_bucket[1m])))", "legendFormat": "p99", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    },
+    {
+      "id": 54,
+      "type": "timeseries",
+      "title": "Go GC pause (p99)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 33 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, sum by (le, job) (rate(lumen_go_gc_pause_seconds_bucket[1m])))", "legendFormat": "{{job}} p99", "refId": "A" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "s" } }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "tags": ["lumen", "rubric:可观测性", "p0"],
+  "templating": { "list": [] },
+  "time": { "from": "now-15m", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Lumen Auction — Realtime",
+  "uid": "lumen-auction-realtime",
+  "version": 1,
+  "weekStart": ""
+}
