@@ -37,15 +37,16 @@ that proves it**, and the assertable signal to point at.
 | 1 | 卖家上传商品图，VLM 抽取事实 | "AI 抽取品牌/成色/瑕疵，高风险字段标注『卖家声明·AI 未验证』" | `make e2e-dummy-bid` (step: facts draft + factsConfirmed gate) | `highRiskFieldsDisclaimer` present; create-auction **forbidden** until confirmed |
 | 2 | 卖家 confirm/edit facts + 配规则 | "起拍价 / 加价步长 / 时长 / 反狙击窗口，卖家最终背书" | same e2e (freeze → `CodeOKFrozen`) | freeze returns `OK_FROZEN`; rules locked |
 | 3 | 开拍，多观众实时出价，AI 冒泡 | "开拍/跳涨/冷场30s/落锤四触发，AI 是旁路、非裁决" | same e2e (start → `OK_LIVE` → multi-WS bid → broadcast) | bidder **and** observer both get `BID_ACCEPTED` |
-| 4 | 末 N 秒反狙击，倒计时延长 | "最后时刻出价自动延时，反阻击" | UI (live) + `AUCTION_EXTENDED` event | `extendCount` badge increments — *see §3 note* |
-| 5 | 落锤 → 证据卡 | "成交即生成证据卡：图/价/timeline + `events_hash`" | `make verify-evidence` | exit 0; no `hash_break` — chain recomputes clean |
+| 4 | 末 N 秒反狙击，倒计时延长 | "最后时刻出价自动延时，反阻击" | `make demo-auction` (+ UI live) | two `AUCTION_EXTENDED` (`extendCount` 1→2, bounded by `MaxExtensions`) |
+| 5 | 落锤 → 证据卡 | "成交即生成证据卡：图/价/timeline + `events_hash`" | `make demo-auction` (→ `AUCTION_SOLD` + `eventsHash`) · `make verify-evidence` | demo-auction asserts hammer + non-empty `eventsHash`; verify-evidence: exit 0, no `hash_break` |
 | 6 | Replay Verifier consistent | "Stream / Redis / MySQL 三方一致 + hash 链校验" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
 | 7 | 监控面板 500/50 | "500 在线 + 50 活跃出价，ack/broadcast p95 达标，**seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
 | 8 | 故障演练 30s ×5 | "MySQL/WS/Timer/AI/Redis 各挂一段，证明降级 + 自愈" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; AI 挂时出价继续 (V9 P3) |
 
-> `make demo` runs nodes 1–3 (`e2e-dummy-bid`), 5 (`verify-evidence`), 6 (`verify`),
-> 7 (`load`), 8 (`chaos`) automatically. Node 4 (anti-snipe) is shown live in the
-> UI / backup clip — see §3.
+> `make demo` runs all of it automatically: nodes 1–3 (`e2e-dummy-bid`), **4–5
+> (`demo-auction`: anti-snipe extend → hammer → evidence)**, 5 (`verify-evidence`),
+> 6 (`verify`), 7 (`load`), 8 (`chaos`). Every node is now an assertion — node 4
+> is no longer UI-only (see §3).
 
 ---
 
@@ -71,20 +72,28 @@ Keep a terminal visible running `make demo` in parallel — the scrolling
 ## 3. Anti-snipe (node 4) · 反狙击演示
 
 `e2e-dummy-bid` does a single bid and exits before the timer, so it does **not**
-drive an `AUCTION_EXTENDED`. Show node 4 one of two ways:
+drive an `AUCTION_EXTENDED`. That gap is now closed by **`make demo-auction`**
+(`RunDemo`, `apps/lumen/internal/server/demo.go`) — the assertable form of demo
+nodes 4–5:
+
+1. starts a **short** auction whose anti-snipe window ≥ its duration, so the
+   whole auction sits inside the window and any accepted bid extends
+   deterministically (no flaky "land a bid in the last N seconds" timing);
+2. bidder A bids → asserts `AUCTION_EXTENDED` with `extendCount == 1`;
+3. bidder B (a competing snipe) bids → asserts `extendCount == 2`, bounded by
+   `MaxExtensions=2`;
+4. stops bidding → the Timer Worker hammers → asserts `AUCTION_SOLD`;
+5. fetches the evidence card → asserts a non-empty `eventsHash` (chain head).
+
+Prints `DEMO_AUCTION_ID=… · demo-auction: PASS · extendCount=2 → AUCTION_SOLD → eventsHash=…`.
+Wired into `make demo` / `make demo-smoke` as node 3.
 
 - **Live (preferred for narration):** in `room.html`, place a bid inside the
-  anti-snipe window (last N seconds) — the countdown extends and the
-  `extendCount` badge bumps. This is the most legible on camera.
-- **Assertable:** the timer + boundary behavior is already covered by
+  anti-snipe window — the countdown extends and the `extendCount` badge bumps.
+  Most legible on camera; `make demo-auction` is the proof it actually fired.
+- The timer + boundary behavior is *also* independently covered by
   `make chaos-timer` (LIVE outlives `endAtMs` when the timer is disabled; hammers
-  to `SOLD` within a scan tick when re-enabled), and `AUCTION_EXTENDED` semantics
-  are unit-tested in the server package.
-
-> **Open item (see T10 issue):** if we want node 4 to be a *first-class make
-> assertion* (`make demo-auction`: short auction → late bid → assert
-> `AUCTION_EXTENDED` → hammer → evidence), that's a small Go driver (`RunDemo`
-> extending `RunE2E`). Flagged for PDGGK/Elia — not blocking, the live UI covers it.
+  to `SOLD` when re-enabled).
 
 ---
 

@@ -7,7 +7,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke
+        demo demo-smoke demo-auction
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -326,18 +326,20 @@ demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves st
 	@echo "+==============================================================+"
 	@echo "|  Lumen Auction - T10 demo path (V9 plan section 12)          |"
 	@echo "+==============================================================+"
-	@echo ">>> [1/6] stack up + seed (seller / product / LIVE auction)"
+	@echo ">>> [1/7] stack up + seed (seller / product / LIVE auction)"
 	$(MAKE) up
 	$(MAKE) seed
-	@echo ">>> [2/6] section 12.1-3  list -> VLM facts draft -> seller confirm -> freeze rules -> start -> multi-viewer bid -> broadcast"
+	@echo ">>> [2/7] section 12.1-3  list -> VLM facts draft -> seller confirm -> freeze rules -> start -> multi-viewer bid -> broadcast"
 	$(MAKE) e2e-dummy-bid
-	@echo ">>> [3/6] section 12.5  evidence chain -- recompute event_hash (exit!=0 on hash_break)"
+	@echo ">>> [3/7] section 12.4-5  anti-snipe extend (AUCTION_EXTENDED) -> hammer (AUCTION_SOLD) -> evidence card (events_hash)"
+	$(MAKE) demo-auction
+	@echo ">>> [4/7] section 12.5  evidence chain -- recompute event_hash (exit!=0 on hash_break)"
 	$(MAKE) verify-evidence
-	@echo ">>> [4/6] section 12.6  Replay Verifier -- 3-way diff stream/redis/mysql + hash chain (consistent)"
+	@echo ">>> [5/7] section 12.6  Replay Verifier -- 3-way diff stream/redis/mysql + hash chain (consistent)"
 	$(MAKE) verify
-	@echo ">>> [5/6] section 12.7  monitoring 500 connected + 50 active -- ack/broadcast p95 + seq gap=0 + post-load verify"
+	@echo ">>> [6/7] section 12.7  monitoring 500 connected + 50 active -- ack/broadcast p95 + seq gap=0 + post-load verify"
 	$(MAKE) load
-	@echo ">>> [6/6] section 12.8  5 chaos drills -- ai/redis/mysql/ws/timer degrade + self-heal (chaos-ai proves V9 P3: AI down, bidding continues)"
+	@echo ">>> [7/7] section 12.8  5 chaos drills -- ai/redis/mysql/ws/timer degrade + self-heal (chaos-ai proves V9 P3: AI down, bidding continues)"
 	$(MAKE) chaos
 	@echo "+==============================================================+"
 	@echo "|  DEMO PATH GREEN -- every section 12 node asserted via make  |"
@@ -345,19 +347,30 @@ demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves st
 	@echo "|      http://localhost:8080/room.html?auction=auc_demo        |"
 	@echo "+==============================================================+"
 
-demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestration regression net
-	@echo ">>> demo-smoke [1/6] stack up + seed"
+demo-auction:     ## T10 §12.4-5: anti-snipe extend -> hammer -> evidence on one auction (asserted)
+	@# Drives the parts RunE2E stops short of: an in-window bid that extends the
+	@# countdown (AUCTION_EXTENDED), a competing snipe that extends again, then —
+	@# once bidding stops — the Timer Worker hammering to AUCTION_SOLD, and the
+	@# evidence card publishing the hash-chain head. Runs inside the lumen
+	@# container (mirrors `make chaos`), targeting its own :8080.
+	@echo "=== demo-auction (section 12.4-5: anti-snipe -> hammer -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-auction
+
+demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke) — orchestration regression net
+	@echo ">>> demo-smoke [1/7] stack up + seed"
 	$(MAKE) up
 	$(MAKE) seed
-	@echo ">>> demo-smoke [2/6] section 12.1-3 e2e roundtrip"
+	@echo ">>> demo-smoke [2/7] section 12.1-3 e2e roundtrip"
 	$(MAKE) e2e-dummy-bid
-	@echo ">>> demo-smoke [3/6] section 12.5 evidence hash chain"
+	@echo ">>> demo-smoke [3/7] section 12.4-5 anti-snipe extend -> hammer -> evidence"
+	$(MAKE) demo-auction
+	@echo ">>> demo-smoke [4/7] section 12.5 evidence hash chain"
 	$(MAKE) verify-evidence
-	@echo ">>> demo-smoke [4/6] section 12.6 replay verifier"
+	@echo ">>> demo-smoke [5/7] section 12.6 replay verifier"
 	$(MAKE) verify
-	@echo ">>> demo-smoke [5/6] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
+	@echo ">>> demo-smoke [6/7] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
 	$(MAKE) load-smoke
 	$(MAKE) chaos-smoke
-	@echo ">>> demo-smoke [6/6] V9 P3 AI offline -> core bidding continues"
+	@echo ">>> demo-smoke [7/7] V9 P3 AI offline -> core bidding continues"
 	$(MAKE) e2e-ai-offline
 	@echo "demo-smoke GREEN -- demo path wiring intact"
