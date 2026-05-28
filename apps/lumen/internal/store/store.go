@@ -138,6 +138,21 @@ func lbKey(aid string) string          { return fmt.Sprintf("auction:{%s}:leader
 func streamKey(aid string) string      { return fmt.Sprintf("auction:{%s}:events", aid) }
 func dedupeKey(aid, uid string) string { return fmt.Sprintf("auction:{%s}:dedupe:%s", aid, uid) }
 
+// HasDedupe reports whether a clientBidID already has a cached BID_ACCEPTED
+// payload in the per-(auction,user) dedupe Hash. Used by the V10k Tier C
+// gateway-side fast-reject path to preserve DUPLICATE-replay semantics — if
+// a retry hits the gateway with a previously-accepted clientBidId, we must
+// fall through to Lua (which returns DUPLICATE with the original ack) rather
+// than fast-rejecting as ERR_TOO_LOW (which violates proto/error-codes.md
+// "DUPLICATE replays cached ack and is not an error").
+//
+// One HEXISTS RTT (~50μs localhost, ~1ms cross-host) — still much cheaper
+// than the full EVALSHA the fast-path is replacing. Errors fall through to
+// the caller (which treats them as "unsure → defer to Lua").
+func (s *Store) HasDedupe(ctx context.Context, aid, userID, clientBidID string) (bool, error) {
+	return s.rdb.HExists(ctx, dedupeKey(aid, userID), clientBidID).Result()
+}
+
 // PubChannel is the per-auction Pub/Sub fanout hint channel.
 func PubChannel(aid string) string { return fmt.Sprintf("auction:{%s}:pub", aid) }
 

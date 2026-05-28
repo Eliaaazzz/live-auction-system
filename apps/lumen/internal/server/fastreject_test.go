@@ -130,6 +130,39 @@ func TestRoomState_SoldDropsButCapturesFinalPrice(t *testing.T) {
 	}
 }
 
+// TestRoomState_CapHitSoldBidAcceptedDropsCache — codex review #3: place_bid.lua
+// emits BID_ACCEPTED with status="SOLD" for the cap-hit (buy-now) path BEFORE
+// the AUCTION_SOLD event. The gateway cache MUST drop on that BID_ACCEPTED so
+// a stray late bid in the (cap-hit BID_ACCEPTED, AUCTION_SOLD) window doesn't
+// fast-reject as ERR_TOO_LOW when Lua would correctly return ERR_NOT_LIVE.
+func TestRoomState_CapHitSoldBidAcceptedDropsCache(t *testing.T) {
+	h := newHub()
+	updateRoomStateFromEvent(h, "auc_cap", store.StreamEvent{
+		Type: model.TypeBidAccepted,
+		// status=SOLD inside a BID_ACCEPTED — this is the cap-hit shape Lua
+		// emits at place_bid.lua step 7 when amount >= capPriceCents.
+		Payload: `{"seq":1,"userId":"u","amountCents":"1000000","endAtMs":7777,"status":"SOLD","serverTimeMs":1}`,
+	})
+	if rs := h.roomStateSnap("auc_cap"); rs.priceCents != "" {
+		t.Fatalf("cap-hit BID_ACCEPTED (status=SOLD) must drop cache so next bid falls through to Lua for ERR_NOT_LIVE; got %+v", rs)
+	}
+}
+
+// TestRoomState_LiveBidAcceptedKeepsCache — counterpart to the cap-hit test:
+// a regular BID_ACCEPTED with status=LIVE leaves the cache populated so the
+// fast-reject can still fire on subsequent doomed bids.
+func TestRoomState_LiveBidAcceptedKeepsCache(t *testing.T) {
+	h := newHub()
+	updateRoomStateFromEvent(h, "auc_live", store.StreamEvent{
+		Type:    model.TypeBidAccepted,
+		Payload: `{"seq":1,"userId":"u","amountCents":"5000","endAtMs":7777,"status":"LIVE","serverTimeMs":1}`,
+	})
+	rs := h.roomStateSnap("auc_live")
+	if rs.priceCents != "5000" || rs.endAtMs != 7777 {
+		t.Fatalf("LIVE BID_ACCEPTED should populate cache for subsequent fast-rejects; got %+v", rs)
+	}
+}
+
 // TestRoomState_FastRejectArithmetic — pin the comparison: a bid amount LE
 // the cached price (= equal, not strictly less) is rejected. The Lua hot
 // path requires strictly-greater-than-current; the gateway filter mirrors

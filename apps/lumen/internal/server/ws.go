@@ -413,6 +413,17 @@ func updateRoomStateFromEvent(h *Hub, aid string, e store.StreamEvent) {
 			return
 		}
 		h.updateRoomState(aid, p.AmountCents, p.EndAtMs)
+		// V10k Tier C correctness — codex review #3: place_bid.lua emits a
+		// BID_ACCEPTED with `status: "SOLD"` for the cap-hit (buy-now) path BEFORE
+		// the subsequent AUCTION_SOLD event arrives. Between the two events, the
+		// gateway cache holds the final price but doesn't know the auction is
+		// terminal — a stray late bid in that window would fast-reject as
+		// ERR_TOO_LOW when Lua would correctly return ERR_NOT_LIVE. Drop the cache
+		// immediately on a terminal-shaped BID_ACCEPTED so the next BID_PLACE
+		// falls through to Lua and gets the authoritative ERR_NOT_LIVE.
+		if p.Status == model.StateSold {
+			h.dropRoomState(aid)
+		}
 	case model.TypeAuctionExtended:
 		var p model.AuctionExtendedData
 		if err := json.Unmarshal([]byte(e.Payload), &p); err != nil {
@@ -897,32 +908,58 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 		// V10k Tier C: gateway-side fast-reject. The hub's roomState cache holds
 		// the latest BID_ACCEPTED amount we fanned out for this auction. If the
-		// incoming bid is <= that cached price, Lua would 100% reject it as
-		// ERR_TOO_LOW (increment validation in place_bid.lua step 4). Returning
-		// the rejection here saves one EVALSHA round-trip per doomed bid.
+		// incoming bid is <= that cached price AND the bid is NOT a duplicate
+		// retry AND the auction hasn't passed endAtMs, Lua would reject it as
+		// ERR_TOO_LOW (place_bid.lua step 4). Returning the rejection here saves
+		// one EVALSHA round-trip per doomed bid.
 		//
-		// Correctness: the cache is eventually-consistent, lagging Lua by one
-		// broadcast RTT. The lag can ONLY produce false negatives (a bid the
-		// gateway thinks is too-low but Lua's actual current is even higher) —
-		// IMPOSSIBLE because Lua's current price ≥ our cache (cache only
-		// ratchets up). A COLD cache (`priceCents == ""` before first
-		// BID_ACCEPTED observed) is handled by the empty check → fall through
-		// to Lua so the very first bid is always Lua-authoritative.
+		// Codex review fixes — three semantic guards mirror Lua's check order:
+		//  1. DUPLICATE preservation (place_bid.lua step 1): a retry with a
+		//     previously-accepted (aid, userID, clientBidID) MUST replay the
+		//     original ack, not return ERR_TOO_LOW. Check the Redis dedupe Hash
+		//     before fast-rejecting; if present, fall through so Lua replays.
+		//  2. ERR_AFTER_END (place_bid.lua step 3): a bid arriving past endAtMs
+		//     MUST return ERR_AFTER_END, not ERR_TOO_LOW. Check the cached
+		//     endAtMs; if the gateway's clock sees it as past, fall through to
+		//     Lua (Lua's Redis TIME is authoritative for the actual decision).
+		//  3. Cap-hit SOLD: handled in updateRoomStateFromEvent — a BID_ACCEPTED
+		//     with `status: SOLD` drops the cache immediately, so the next bid
+		//     after a cap-hit always falls through to Lua (which returns
+		//     ERR_NOT_LIVE on a terminal auction).
 		//
-		// The bid amount is already canonicalized + numeric here (canonicalAmount
-		// above rejected non-numeric); ParseInt succeeds in the fast path. The
-		// errB check is defense-in-depth.
+		// Correctness invariant (after the three guards): the cache only
+		// ratchets up, so cache ≤ Lua actual current price. A bid ≤ cache is
+		// also ≤ Lua actual, and the guards ensure we only fast-reject when
+		// Lua's response would specifically be ERR_TOO_LOW. No bid that Lua
+		// would accept (or return DUPLICATE/ERR_AFTER_END/ERR_NOT_LIVE for) is
+		// wrongly handled as ERR_TOO_LOW.
 		if rs := s.hub.roomStateSnap(c.aid); rs.priceCents != "" {
 			if cached, errC := strconv.ParseInt(rs.priceCents, 10, 64); errC == nil {
 				bidN, errB := strconv.ParseInt(amount, 10, 64)
 				if errB == nil && bidN <= cached {
-					c.push(rejected(c.aid, model.CodeErrTooLow))
-					if c.metrics != nil {
-						c.metrics.AckLatency.Observe(time.Since(ackStart))
-						c.metrics.BidsRejectedFastPath.Inc()
-						c.metrics.BidsRejected.Inc()
+					// Guard 2: defer to Lua's ERR_AFTER_END if the auction is past
+					// its scheduled endAtMs (Lua's Redis TIME is authoritative,
+					// but the gateway clock is a safe approximation — false
+					// "in window" lands the bid in Lua which makes the real call).
+					notExpired := rs.endAtMs == 0 || time.Now().UnixMilli() < rs.endAtMs
+					if notExpired {
+						// Guard 1: preserve DUPLICATE semantics. One HEXISTS RTT
+						// (~50μs localhost) — much cheaper than the full EVALSHA
+						// we're replacing. Errors fall through to Lua (treat
+						// "unsure" as "defer to authoritative source").
+						isDupe, derr := s.st.HasDedupe(ctx, c.aid, c.userID, d.ClientBidID)
+						if derr == nil && !isDupe {
+							c.push(rejected(c.aid, model.CodeErrTooLow))
+							if c.metrics != nil {
+								c.metrics.AckLatency.Observe(time.Since(ackStart))
+								c.metrics.BidsRejectedFastPath.Inc()
+								c.metrics.BidsRejected.Inc()
+							}
+							return
+						}
+						// derr != nil OR isDupe → fall through to Lua
 					}
-					return
+					// expired (notExpired == false) → fall through to Lua for ERR_AFTER_END
 				}
 			}
 		}
