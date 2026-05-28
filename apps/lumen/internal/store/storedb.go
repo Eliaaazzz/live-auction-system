@@ -127,6 +127,55 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// AuctionListItem is a row in the auctions list (商家 商品管理 / 买家 竞拍浏览 /
+// 历史竞拍记录). Joined to the product for display name + image. Nullable
+// winner/end columns are zero-valued when absent.
+type AuctionListItem struct {
+	ID                string
+	ProductName       string
+	ImageURL          string
+	Status            string
+	CurrentPriceCents int64
+	WinnerID          string
+	EndAtMs           int64
+	CreatedAtMs       int64
+}
+
+// ListAuctions returns recent auctions (newest first), joined to their product.
+// Bounded by limit (default 100, max 200). Backs the seller 商品管理 table, the
+// buyer browse list, and 历史竞拍记录 — replacing the hardcoded mock rows.
+func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT a.id, COALESCE(p.name,''), COALESCE(p.image_url,''), a.status,
+		        a.current_price_cents, COALESCE(a.winner_id,''), a.end_at, a.created_at
+		   FROM auctions a LEFT JOIN products p ON a.product_id = p.id
+		  ORDER BY a.created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []AuctionListItem{}
+	for rows.Next() {
+		var it AuctionListItem
+		var endAt, createdAt sql.NullTime
+		if err := rows.Scan(&it.ID, &it.ProductName, &it.ImageURL, &it.Status,
+			&it.CurrentPriceCents, &it.WinnerID, &endAt, &createdAt); err != nil {
+			return nil, err
+		}
+		if endAt.Valid {
+			it.EndAtMs = endAt.Time.UnixMilli()
+		}
+		if createdAt.Valid {
+			it.CreatedAtMs = createdAt.Time.UnixMilli()
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
 // UpdateAuctionStatusIf performs a status-conditional update and reports whether it
 // applied (RowsAffected == 1). It is the compare-and-set guard for the DRAFT cancel
 // TOCTOU: a plain UpdateAuctionStatus would clobber a status a concurrent transition
@@ -351,8 +400,9 @@ type Order struct {
 	ProductID   string      `json:"productId"`
 	BuyerID     string      `json:"buyerId"`
 	AmountCents model.Cents `json:"amountCents"` // money-as-string on the JSON boundary
-	Status      string      `json:"status"`
+	Status      string      `json:"status"`      // created | paid (模拟支付)
 	CreatedAt   time.Time   `json:"createdAt"`
+	PaidAt      *time.Time  `json:"paidAt"` // nil until 模拟支付 marks it paid
 }
 
 // CreateOrderFromSold creates the buyer order for a hammered/cap-hit SOLD auction from
@@ -403,14 +453,30 @@ func (s *Store) CreateOrderFromSold(ctx context.Context, aid, payload string) er
 // GetOrder returns the order for an auction, or ErrNotFound if none exists yet.
 func (s *Store) GetOrder(ctx context.Context, aid string) (Order, error) {
 	var o Order
+	var paidAt sql.NullTime
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, auction_id, product_id, buyer_id, amount_cents, status, created_at
+		`SELECT id, auction_id, product_id, buyer_id, amount_cents, status, created_at, paid_at
 		 FROM orders WHERE auction_id = ?`, aid).
-		Scan(&o.ID, &o.AuctionID, &o.ProductID, &o.BuyerID, &o.AmountCents, &o.Status, &o.CreatedAt)
+		Scan(&o.ID, &o.AuctionID, &o.ProductID, &o.BuyerID, &o.AmountCents, &o.Status, &o.CreatedAt, &paidAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return o, ErrNotFound
 	}
+	if paidAt.Valid {
+		o.PaidAt = &paidAt.Time
+	}
 	return o, err
+}
+
+// PayOrder simulates the 模拟支付流程: marks a 'created' order 'paid' (paid_at=now).
+// Idempotent — paying an already-paid order is a no-op success. Returns the
+// resulting order (ErrNotFound if the auction has no order yet).
+func (s *Store) PayOrder(ctx context.Context, aid string) (Order, error) {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE orders SET status='paid', paid_at=? WHERE auction_id=? AND status='created'`,
+		time.Now().UTC(), aid); err != nil {
+		return Order{}, err
+	}
+	return s.GetOrder(ctx, aid)
 }
 
 // EvidenceEvent is one row of the evidence-card timeline (T4): the projected event plus
