@@ -5,6 +5,7 @@
 //	lumen verify [--auction <id>]            (T6 unified: 3-way diff + hash chain; exit!=0 on mismatch or break)
 //	lumen verify-evidence [--auction <id>]   (T4 hash-chain only; same chain check, no 3-way diff)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
+//	lumen demo-auction   (drives TARGET; T10 §12 nodes 4-5 — anti-snipe extend → hammer → evidence)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
 //	lumen load           (drives TARGET; T8 P0 gate — 500 connected + 50 active, asserts §4.2 budgets)
 //	lumen chaos --phase=<setup|bid-expect|connect-fails|state-expect|catchup-expect|wait-events>
@@ -72,6 +73,15 @@ func main() {
 		}
 		if err := server.RunE2E(target); err != nil {
 			log.Fatalf("e2e: %v", err)
+		}
+
+	case "demo-auction":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemo(target); err != nil {
+			log.Fatalf("demo-auction: %v", err)
 		}
 
 	case "perf-smoke":
@@ -146,5 +156,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load|chaos> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|demo-auction|perf-smoke|load|chaos> [flags]")
 }
