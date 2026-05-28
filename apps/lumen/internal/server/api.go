@@ -172,7 +172,23 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 		dto := rules.RoomSnapshotRules()
 		snap.Rules = &dto
 	}
-	writeJSON(w, http.StatusOK, snap)
+	// Surface the product (name / image / 介绍) so the room shows the real item
+	// and the VLM page can draft facts from its image. Best-effort: a missing
+	// product just yields empty fields, never a 500.
+	prod, _ := s.st.GetProduct(r.Context(), a.ProductID)
+	writeJSON(w, http.StatusOK, struct {
+		model.RoomSnapshotData
+		ProductID   string `json:"productId"`
+		ProductName string `json:"productName"`
+		ImageURL    string `json:"imageUrl"`
+		Description string `json:"description"`
+	}{
+		RoomSnapshotData: snap,
+		ProductID:        a.ProductID,
+		ProductName:      prod.Name,
+		ImageURL:         prod.ImageURL,
+		Description:      prod.Description,
+	})
 }
 
 // GET /api/auctions -> recent auctions (newest first), joined to product name +

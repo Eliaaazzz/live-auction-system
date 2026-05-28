@@ -22,6 +22,12 @@ function AdminPublish() {
   const [antiSnipe, setAntiSnipe] = React.useState(true);
   const [scheduleDate, setScheduleDate] = React.useState('2026-06-10');
   const [scheduleTime, setScheduleTime] = React.useState('21:00');
+  // Real product media (item 4): an image URL the room renders + the VLM page
+  // drafts facts from. Defaults to a sample so the demo has a real image;
+  // sellers can paste their own. (No binary upload endpoint — a URL is the
+  // spec-allowed input; the room degrades to a styled placeholder if it fails.)
+  const [imageUrl, setImageUrl] = React.useState('https://images.unsplash.com/photo-1547996160-81dfa63595aa?w=900&q=80');
+  const [description, setDescription] = React.useState('稀世腕表,蓝面,盘面完好,附原厂证书。');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
 
@@ -58,8 +64,8 @@ function AdminPublish() {
       await ensureSession('seller-demo');
       const { productId } = await api.createProduct({
         name: title,
-        imageUrl: '',                 // demo: no upload (T7 wires real VLM input)
-        description: '',
+        imageUrl,
+        description,
       });
       const { auctionId } = await api.createDraft({
         productId,
@@ -137,39 +143,31 @@ function AdminPublish() {
             </div>
           </FormSection>
 
-          {/* ─ Section: media ─ */}
-          <FormSection step="02" title="拍品视频" desc="上传后 AI Sidecar 将自动运行 VLM 抽取关键事实">
-            <div style={{
-              border: '1.5px dashed rgba(255,255,255,.18)', borderRadius: 12, padding: '20px 22px',
-              display: 'flex', alignItems: 'center', gap: 14,
-            }}>
+          {/* ─ Section: media ─ (real image URL + 介绍; the room renders these
+               and the VLM page drafts facts from the image) */}
+          <FormSection step="02" title="商品图片 & 介绍" desc="图片 URL + 介绍 — 直播间渲染该图,VLM 据此抽取事实">
+            <div style={{ display: 'flex', gap: 16 }}>
               <div style={{
-                width: 72, height: 96, borderRadius: 8,
+                width: 96, height: 128, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
                 background: 'linear-gradient(160deg,#2a1f2e,#0a0e1a)',
-                position: 'relative', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <svg viewBox="0 0 100 100" style={{ position: 'absolute', inset: '15%' }}>
-                  <circle cx="50" cy="50" r="30" fill="none" stroke="#C9A961" strokeWidth="2"/>
-                  <circle cx="50" cy="50" r="24" fill="#0d0d14"/>
-                </svg>
-                <div style={{
-                  position: 'absolute', top: 6, right: 6,
-                  width: 18, height: 18, borderRadius: 9, background: 'var(--douyin-cyan)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, fontWeight: 700, color: '#0a0a14',
-                }}>✓</div>
+                {imageUrl
+                  ? <img src={imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                         onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+                  : <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>无图</span>}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>watch-5711a-walkthrough.mp4</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', marginTop: 2 }}>
-                  05:18 · 1080p · 42.8 MB · 已上传
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                  <span style={chip('cyan')}>VLM 已采样 28 帧</span>
-                  <span style={chip('warn')}>等待事实核对 · 0/5</span>
-                </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <FormRow label="图片 URL" required>
+                  <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://…/item.jpg" style={inp}/>
+                </FormRow>
+                <FormRow label="商品介绍">
+                  <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                    rows={2} placeholder="成色 / 瑕疵 / 关键参数(VLM 会把它当作卖家声明,不作裁决)"
+                    style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}/>
+                </FormRow>
               </div>
-              <button style={btnGhost2}>替换</button>
             </div>
           </FormSection>
 
