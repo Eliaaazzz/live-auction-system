@@ -14,6 +14,12 @@ vendor/
 .env.*.local
 *.local
 .e2e-auction-id
+.load-auction-id
+.chaos-auction-id
+.chaos-buyer-token
+.chaos-setup.log
+.chaos-recover.log
+.load-logs/
 
 # node / web
 node_modules/
