@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/auctioneer"
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/vlm"
 )
 
 func main() {
@@ -18,7 +19,11 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
-	mux.HandleFunc("POST /facts/draft", factsDraft)
+	// T7 §4.1: VLM facts draft. vlm.Select() picks the real Doubao path
+	// when VLM_MODE=real (image fetch SSRF-guarded; seller text treated
+	// as untrusted data), else the canned mock. 502 on generator error →
+	// backend proxy maps to ERR_AI_UNAVAILABLE; bidding is never blocked.
+	mux.HandleFunc("POST /facts/draft", vlm.HandlerFunc(vlm.Select()))
 	// T7 §4.2: LLM auctioneer 4-trigger endpoint. Mock generator returns
 	// canned-but-trigger-aware commentary in T1/T7 mock; real Doubao swap
 	// is a follow-up. Guardrail (length/URL/phone/money/banned-word) runs
@@ -29,19 +34,12 @@ func main() {
 	if addr == "" {
 		addr = ":8090"
 	}
-	log.Printf("ai-sidecar (mock) listening on %s", addr)
+	mode := os.Getenv("VLM_MODE")
+	if mode == "" {
+		mode = "mock"
+	}
+	log.Printf("ai-sidecar listening on %s (vlm=%s)", addr, mode)
 	log.Fatal(http.ListenAndServe(addr, mux))
-}
-
-func factsDraft(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
-		"facts": []map[string]any{
-			{"field": "category", "value": "watch", "confidence": 0.91, "highRisk": false},
-			{"field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true},
-		},
-		"highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
-		"modelName":                "mock-vlm-T1",
-	})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
