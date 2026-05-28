@@ -83,7 +83,7 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@# on failure so an operator can `make verify VERIFY_AID=<id>` manually.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+	set +e; bash -c 'set -o pipefail; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$1"' _ "$$logfile"; rc=$$?; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; fi; \
 	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
@@ -96,13 +96,13 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-smoke-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build \
+	set +e; bash -c 'set -o pipefail; $(COMPOSE) --profile tools run --rm --build \
 		-e LOAD_OBSERVERS=25 -e LOAD_BIDDERS=5 -e LOAD_DURATION_SEC=10 \
 		-e LOAD_BID_INTERVAL_MS=100 \
 		-e LOAD_ACK_P95_MS=400 -e LOAD_BROADCAST_P95_MS=800 \
 		-e LOAD_HAMMER_P95_MS=2000 -e LOAD_SCRIPT_P99_MS=20 \
 		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
-		load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+		load 2>&1 | tee "$$1"' _ "$$logfile"; rc=$$?; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
