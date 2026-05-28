@@ -1013,19 +1013,22 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 					nowMs := time.Now().UnixMilli()
 					inWindow := rs.endAtMs == 0 || nowMs+fastRejectExpiryMarginMs < rs.endAtMs
 					if inWindow {
-						// Guard 1+3 (codex pass-3): pipelined precheck against
-						// Lua's authoritative state — ONE Redis RTT for both:
-						//   - status == LIVE? (closes the broadcast-RTT window
-						//     where Lua has already committed terminal status
-						//     but the gateway's cache hasn't seen the event yet
-						//     — fast-rejecting then would return ERR_TOO_LOW
-						//     when Lua returns ERR_NOT_LIVE)
-						//   - dedupe hit? (preserves DUPLICATE-replay)
+						// Guards 1+3+4+5 (codex pass-4): pipelined Redis precheck
+						// of every Lua guard that runs BEFORE the amount-too-low
+						// check in place_bid.lua. ONE round-trip pulls:
+						//   - status: must be LIVE (else ERR_NOT_LIVE)
+						//   - paused: must be false (else ERR_AUCTION_PAUSED)
+						//   - sellerId == userID: forbidden (else ERR_NOT_ALLOWED
+						//     "seller_self_bid", anti-shill-bidding)
+						//   - dedupe HEXISTS clientBidID: must be absent (else
+						//     DUPLICATE-replay)
+						// Only when ALL four are clear does Lua proceed to the
+						// ERR_TOO_LOW check; only then is fast-reject safe.
 						// Errors → fall through to Lua ("unsure → defer to the
 						// authoritative source"; Redis-down surfaces as
 						// ERR_AUCTION_PAUSED via bidErrCode on the Lua path).
-						isLive, isDupe, perr := s.st.FastPathPrecheck(ctx, c.aid, c.userID, d.ClientBidID)
-						if perr == nil && isLive && !isDupe {
+						fp, perr := s.st.FastPathPrecheck(ctx, c.aid, c.userID, d.ClientBidID)
+						if perr == nil && fp.IsLive && !fp.IsPaused && !fp.IsSellerSelfBid && !fp.IsDupe {
 							c.push(rejected(c.aid, model.CodeErrTooLow))
 							if c.metrics != nil {
 								c.metrics.AckLatency.Observe(time.Since(ackStart))
@@ -1034,7 +1037,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 							}
 							return
 						}
-						// perr != nil OR !isLive OR isDupe → fall through to Lua
+						// perr != nil OR any guard violated → fall through to Lua
 					}
 					// inWindow == false → within skew margin of endAtMs → Lua decides
 				}
