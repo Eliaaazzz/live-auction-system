@@ -278,6 +278,11 @@ func (s *loadStats) bidderSnapshot() bidderSnapshot {
 // broadcastLatency p95.
 func runObserver(ctx context.Context, target, token, aid string, stats *loadStats, wg *sync.WaitGroup) {
 	defer wg.Done()
+	defer func() {
+		if recover() != nil {
+			stats.observerErr.Add(1)
+		}
+	}()
 	c, err := dialAndJoin(target, token, aid)
 	if err != nil {
 		stats.dialErr.Add(1)
@@ -460,6 +465,9 @@ func (r loadReport) breaches() []string {
 	}
 	if r.Post.ScriptTime.P99 > ms(r.Config.ScriptP99Budget) {
 		out = append(out, fmt.Sprintf("script p99 %.1fms > %v (V9 §4.2 footnote: ack-p95<80 pre-gate)", r.Post.ScriptTime.P99, r.Config.ScriptP99Budget))
+	}
+	if r.ObserverStats.Errors > 0 {
+		out = append(out, fmt.Sprintf("observer readErrors=%d (must be 0)", r.ObserverStats.Errors))
 	}
 	if gap := r.Post.SeqGap - r.Pre.SeqGap; gap > 0 {
 		// 0-tolerance correctness invariant (V9 §4.1).
