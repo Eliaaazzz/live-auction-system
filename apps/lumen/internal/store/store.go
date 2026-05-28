@@ -153,46 +153,70 @@ func (s *Store) HasDedupe(ctx context.Context, aid, userID, clientBidID string) 
 	return s.rdb.HExists(ctx, dedupeKey(aid, userID), clientBidID).Result()
 }
 
-// FastPathPrecheck is the V10k Tier C fast-reject's authoritative liveness
-// + dedupe check, pipelined into ONE Redis round-trip. Returns:
-//   - isLive: true iff state.status == "LIVE" RIGHT NOW (Lua's authoritative
-//     view; closes the codex pass-3 race where the gateway's eventually-
-//     consistent cache lags Lua's terminal transition by a broadcast RTT)
-//   - isDupe: true iff (aid, userID, clientBidID) has a prior cached ack
-//     (DUPLICATE-replay must defer to Lua so the original payload is replayed)
-//   - err: any Redis transport error — caller treats as "unsure, defer to Lua"
+// FastPathState carries every gateway-side fact the V10k Tier C fast-reject
+// needs to mirror Lua's check ordering exactly. Loaded in ONE pipelined Redis
+// RTT by FastPathPrecheck. The caller fast-rejects ONLY when ALL of:
+//   - isLive (status=="LIVE")
+//   - !isPaused
+//   - !isSellerSelfBid
+//   - !isDupe
+// hold simultaneously. Any single negative falls through to Lua so the
+// authoritative error code (ERR_AUCTION_PAUSED / ERR_NOT_LIVE / ERR_NOT_ALLOWED
+// / DUPLICATE-replay) is returned instead of a mistaken ERR_TOO_LOW.
+type FastPathState struct {
+	IsLive          bool // state.status == "LIVE"
+	IsPaused        bool // state.paused == "true" (Redis-down or operator pause)
+	IsSellerSelfBid bool // state.sellerId == userID (anti-shill-bidding)
+	IsDupe          bool // dedupe Hash has clientBidID for (aid,userID)
+}
+
+// FastPathPrecheck is the V10k Tier C fast-reject's authoritative state probe.
+// Returns a FastPathState reflecting Lua's view of `state:{<aid>}` + the
+// per-user dedupe Hash in ONE pipelined Redis round-trip.
 //
-// Cost: ONE pipelined RTT (go-redis batches Pipeline.Exec into a single
-// network round-trip), ~100μs localhost. Still much cheaper than the full
-// EVALSHA hot path (~6ms) it replaces, so net throughput win is preserved.
+// Mirrors place_bid.lua's check order:
+//   1. dedupe (step 1) → isDupe
+//   2. paused (step 2)  → isPaused
+//   3. status (step 2)  → !isLive when status != "LIVE"
+//   4. seller-self-bid (step 2) → isSellerSelfBid
 //
-// Together with the cache check, the fast-path now mirrors Lua's check order
-// exactly:
-//  1. cache miss (priceCents=="") → fall through (cold cache, Lua decides)
-//  2. terminal flag → fall through (terminal known via broadcast)
-//  3. amount > cached → fall through (could be accepted; Lua decides)
-//  4. expiry margin → fall through (clock-skew safety; Lua decides)
-//  5. FastPathPrecheck:
-//     - !isLive → fall through (Lua returns ERR_NOT_LIVE)
-//     - isDupe → fall through (Lua returns DUPLICATE-replay)
-//  6. else → fast-reject ERR_TOO_LOW (Lua would also return ERR_TOO_LOW)
-func (s *Store) FastPathPrecheck(ctx context.Context, aid, userID, clientBidID string) (isLive, isDupe bool, err error) {
-	// Single pipeline = single network RTT.
+// place_bid.lua step 3 (now >= endAtMs) is covered by the gateway-side
+// fastRejectExpiryMarginMs guard in dispatchWS — checking Redis TIME again here
+// would add another HGET; the margin avoids the round-trip without breaking
+// correctness under bounded clock skew.
+//
+// Cost: ONE pipelined Pipeline.Exec → single network RTT (~100μs localhost,
+// ~1ms cross-host). Still much cheaper than the full EVALSHA hot path (~6ms)
+// being skipped, so the throughput win is preserved.
+//
+// Errors fall through to Lua (caller treats as "unsure → defer to authoritative
+// source"; a Redis-down condition then surfaces on the Lua path as
+// ERR_AUCTION_PAUSED via bidErrCode, matching today's semantics).
+func (s *Store) FastPathPrecheck(ctx context.Context, aid, userID, clientBidID string) (FastPathState, error) {
 	pipe := s.rdb.Pipeline()
-	statusCmd := pipe.HGet(ctx, stateKey(aid), "status")
+	stateCmd := pipe.HMGet(ctx, stateKey(aid), "status", "paused", "sellerId")
 	dupeCmd := pipe.HExists(ctx, dedupeKey(aid, userID), clientBidID)
-	_, perr := pipe.Exec(ctx)
-	// HGET on a missing key returns redis.Nil; treat as !isLive (no state →
-	// auction probably not started yet; caller should defer to Lua).
-	status, herr := statusCmd.Result()
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return FastPathState{}, err
+	}
+	out := FastPathState{}
+	if fields, herr := stateCmd.Result(); herr == nil && len(fields) >= 3 {
+		if status, ok := fields[0].(string); ok {
+			out.IsLive = status == "LIVE"
+		}
+		if paused, ok := fields[1].(string); ok {
+			out.IsPaused = paused == "true"
+		}
+		if sellerID, ok := fields[2].(string); ok && sellerID != "" {
+			out.IsSellerSelfBid = sellerID == userID
+		}
+	}
 	dupe, derr := dupeCmd.Result()
-	if perr != nil && herr != nil && herr != redis.Nil {
-		return false, false, herr
+	if derr != nil && derr != redis.Nil {
+		return out, derr
 	}
-	if derr != nil {
-		return false, false, derr
-	}
-	return status == "LIVE", dupe, nil
+	out.IsDupe = dupe
+	return out, nil
 }
 
 // PubChannel is the per-auction Pub/Sub fanout hint channel.
