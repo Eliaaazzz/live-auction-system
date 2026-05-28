@@ -97,8 +97,8 @@ func TestGenerate_FallsBackOnGeneratorError(t *testing.T) {
 	if !resp.Fallback {
 		t.Fatal("expected fallback=true")
 	}
-	if resp.Text != canned[TriggerOpen] {
-		t.Fatalf("expected canned open, got %q", resp.Text)
+	if resp.Commentary != canned[TriggerOpen] {
+		t.Fatalf("expected canned open, got %q", resp.Commentary)
 	}
 }
 
@@ -112,19 +112,19 @@ func TestGenerate_FallsBackOnGuardrailViolation(t *testing.T) {
 	if !resp.Fallback {
 		t.Fatal("expected fallback=true on banned-word violation")
 	}
-	if resp.Text != canned[TriggerHammer] {
-		t.Fatalf("expected canned hammer, got %q", resp.Text)
+	if resp.Commentary != canned[TriggerHammer] {
+		t.Fatalf("expected canned hammer, got %q", resp.Commentary)
 	}
 }
 
 func TestGenerate_PassesThroughCleanText(t *testing.T) {
-	req := Request{AuctionID: "auc_x", Trigger: TriggerJump, Ctx: Ctx{WinnerDisplayName: "海风_2024"}}
+	req := Request{AuctionID: "auc_x", Trigger: TriggerSurge, Ctx: Ctx{WinnerDisplayName: "海风_2024"}}
 	resp := generateWithGuardrail(req, MockGenerator)
 	if resp.Fallback {
 		t.Fatal("clean text should not fall back")
 	}
-	if !strings.Contains(resp.Text, "海风_2024") {
-		t.Fatalf("expected winner name in jump text, got %q", resp.Text)
+	if !strings.Contains(resp.Commentary, "海风_2024") {
+		t.Fatalf("expected winner name in surge text, got %q", resp.Commentary)
 	}
 }
 
@@ -132,15 +132,15 @@ func TestGenerate_PassesThroughCleanText(t *testing.T) {
 
 func TestHandler_ReturnsExpectedShape(t *testing.T) {
 	// 4 trigger calls; each response must conform to proto/ai-events.md
-	// §POST /auctioneer (Response shape).
-	for _, trig := range []Trigger{TriggerOpen, TriggerJump, TriggerCold, TriggerHammer} {
+	// §POST /llm/auctioneer (Response shape).
+	for _, trig := range []Trigger{TriggerOpen, TriggerSurge, TriggerCold, TriggerHammer} {
 		t.Run(string(trig), func(t *testing.T) {
 			body, _ := json.Marshal(Request{
 				AuctionID: "auc_demo",
 				Trigger:   trig,
 				Ctx:       Ctx{CurrentPriceCents: "10000", WinnerDisplayName: "u_test"},
 			})
-			req := httptest.NewRequest("POST", "/auctioneer", bytes.NewReader(body))
+			req := httptest.NewRequest("POST", "/llm/auctioneer", bytes.NewReader(body))
 			rr := httptest.NewRecorder()
 
 			HandlerFunc(MockGenerator).ServeHTTP(rr, req)
@@ -155,8 +155,8 @@ func TestHandler_ReturnsExpectedShape(t *testing.T) {
 			if resp.Trigger != trig {
 				t.Fatalf("trigger mismatch: got %s", resp.Trigger)
 			}
-			if resp.Text == "" {
-				t.Fatal("text must not be empty")
+			if resp.Commentary == "" {
+				t.Fatal("commentary must not be empty")
 			}
 			if resp.ModelName == "" {
 				t.Fatal("modelName must not be empty")
@@ -167,7 +167,7 @@ func TestHandler_ReturnsExpectedShape(t *testing.T) {
 
 func TestHandler_RejectsUnknownTrigger(t *testing.T) {
 	body, _ := json.Marshal(Request{AuctionID: "auc_demo", Trigger: "evil"})
-	req := httptest.NewRequest("POST", "/auctioneer", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/llm/auctioneer", bytes.NewReader(body))
 	rr := httptest.NewRecorder()
 	HandlerFunc(MockGenerator).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -176,7 +176,7 @@ func TestHandler_RejectsUnknownTrigger(t *testing.T) {
 }
 
 func TestHandler_RejectsMalformedBody(t *testing.T) {
-	req := httptest.NewRequest("POST", "/auctioneer", strings.NewReader("not json"))
+	req := httptest.NewRequest("POST", "/llm/auctioneer", strings.NewReader("not json"))
 	rr := httptest.NewRecorder()
 	HandlerFunc(MockGenerator).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {

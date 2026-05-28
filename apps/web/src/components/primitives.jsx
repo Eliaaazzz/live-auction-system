@@ -166,9 +166,11 @@ function TypewriterText({ text, charDelay = 28, cursor = true, onDone }) {
 }
 
 // ─── AIBubble — P3 graceful degrade + 4-trigger color states (T7) ───
-// Triggers per blueprint §5.8: open / jump / cold / hammer / offline
+// Triggers per blueprint §5.8: open / surge / cold / hammer / offline
 const AI_TRIGGER = {
   open:    { dot: 'var(--douyin-cyan)',    bg: 'rgba(37,244,238,.06)',  border: 'rgba(37,244,238,.22)',  label: '开场',    icon: '▶' },
+  surge:   { dot: 'var(--state-extended)', bg: 'rgba(255,176,32,.07)',  border: 'rgba(255,176,32,.28)',  label: '黑马',    icon: '⚡' },
+  // compat: support legacy jump payloads until all producers switch.
   jump:    { dot: 'var(--state-extended)', bg: 'rgba(255,176,32,.07)',  border: 'rgba(255,176,32,.28)',  label: '黑马',    icon: '⚡' },
   cold:    { dot: 'var(--douyin-ink-muted)', bg: 'rgba(154,160,180,.06)', border: 'rgba(154,160,180,.18)', label: '冷场',    icon: '··' },
   hammer:  { dot: 'var(--solemn-gold)',    bg: 'rgba(201,169,97,.08)',  border: 'rgba(201,169,97,.32)',  label: '落槌',    icon: '✦' },
@@ -191,7 +193,8 @@ function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }
         flexShrink: 0, width: 28, height: 28, borderRadius: 14,
         background: offline ? '#2a2d3a'
           : trigger === 'hammer' ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
-          : trigger === 'jump'   ? 'linear-gradient(135deg, #FE2C55, #FFB020)'
+          : trigger === 'surge'   ? 'linear-gradient(135deg, #FE2C55, #FFB020)'
+          : trigger === 'jump'    ? 'linear-gradient(135deg, #FE2C55, #FFB020)'
           : trigger === 'cold'   ? 'linear-gradient(135deg, #2a2d3a, #475569)'
           : 'linear-gradient(135deg, #25F4EE, #FE2C55)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',

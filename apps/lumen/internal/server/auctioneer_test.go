@@ -8,7 +8,7 @@ package server
 //   TC-T7-202: LLM returns banned text → fallback canned
 //   TC-T7-203: LLM timeout → fallback canned
 //   TC-T7-204: cold doesn't double-fire on LIVE→SOLD transition
-//   TC-T7-205: jump doesn't fire on BID_REJECTED (covered by ws.go contract:
+//   TC-T7-205: surge doesn't fire on BID_REJECTED (covered by ws.go contract:
 //              fanout only calls OnBidAccepted on BID_ACCEPTED, never on
 //              BID_REJECTED — pin via OnBidAccepted state requires real bid)
 
@@ -116,7 +116,7 @@ func TestDeltaAtLeastThreeSteps(t *testing.T) {
 	}{
 		{"exactly 3x step", "10000000", "8500000", "500000", true},     // delta=1.5M = 3*500K
 		{"just under 3x step", "10000000", "8500001", "500000", false}, // delta=1499999
-		{"big jump", "20000000", "10000000", "500000", true},           // delta=10M, way > 1.5M
+		{"big surge", "20000000", "10000000", "500000", true},          // delta=10M, way > 1.5M
 		{"identical bid", "10000000", "10000000", "500000", false},
 		{"step zero", "10000000", "8500000", "0", false},
 		{"bad cur", "not-int", "8500000", "500000", false},
@@ -152,11 +152,11 @@ func TestOnAuctionStart_FiresOnce(t *testing.T) {
 	}
 }
 
-// ─── OnBidAccepted · jump trigger ────────────────────────────────────
+// ─── OnBidAccepted · surge trigger ────────────────────────────────────
 
 func TestOnBidAccepted_FirstBidNoTrigger(t *testing.T) {
-	// First bid has no `prev` — jump cannot fire.
-	srv, calls := mockSidecar(t, http.StatusOK, jumpMockBody)
+	// First bid has no `prev` — surge cannot fire.
+	srv, calls := mockSidecar(t, http.StatusOK, surgeMockBody)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
@@ -166,12 +166,12 @@ func TestOnBidAccepted_FirstBidNoTrigger(t *testing.T) {
 
 	waitForCalls(t, calls, 0, 200*time.Millisecond)
 	if got := len(calls.snapshot()); got != 0 {
-		t.Fatalf("first bid should NOT fire jump, got %d calls", got)
+		t.Fatalf("first bid should NOT fire surge, got %d calls", got)
 	}
 }
 
-func TestOnBidAccepted_JumpFiresOnBigDelta(t *testing.T) {
-	srv, calls := mockSidecar(t, http.StatusOK, jumpMockBody)
+func TestOnBidAccepted_SurgeFiresOnBigDelta(t *testing.T) {
+	srv, calls := mockSidecar(t, http.StatusOK, surgeMockBody)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
@@ -179,19 +179,19 @@ func TestOnBidAccepted_JumpFiresOnBigDelta(t *testing.T) {
 	a.OnBidAccepted(context.Background(), "auc_x", model.BidAcceptedData{
 		AmountCents: "10000", DisplayName: "A",
 	}, "500")
-	// Now a jump-worthy bid (delta = 3000 = 6 steps, > 3 steps).
+	// Now a surge-worthy bid (delta = 3000 = 6 steps, > 3 steps).
 	a.OnBidAccepted(context.Background(), "auc_x", model.BidAcceptedData{
 		AmountCents: "13000", DisplayName: "B",
 	}, "500")
 
 	waitForCalls(t, calls, 1, 1*time.Second)
 	if got := len(calls.snapshot()); got != 1 {
-		t.Fatalf("expected jump fire on big delta, got %d calls", got)
+		t.Fatalf("expected surge fire on big delta, got %d calls", got)
 	}
 }
 
-func TestOnBidAccepted_JumpSuppressedOnSmallDelta(t *testing.T) {
-	srv, calls := mockSidecar(t, http.StatusOK, jumpMockBody)
+func TestOnBidAccepted_SurgeSuppressedOnSmallDelta(t *testing.T) {
+	srv, calls := mockSidecar(t, http.StatusOK, surgeMockBody)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
@@ -202,16 +202,16 @@ func TestOnBidAccepted_JumpSuppressedOnSmallDelta(t *testing.T) {
 
 	waitForCalls(t, calls, 1, 1*time.Second)
 	if got := len(calls.snapshot()); got != 1 {
-		t.Fatalf("expected exactly 1 jump fire (on the 3-step delta), got %d", got)
+		t.Fatalf("expected exactly 1 surge fire (on the 3-step delta), got %d", got)
 	}
 }
 
-func TestOnBidAccepted_JumpDebounce5s(t *testing.T) {
-	srv, calls := mockSidecar(t, http.StatusOK, jumpMockBody)
+func TestOnBidAccepted_SurgeDebounce5s(t *testing.T) {
+	srv, calls := mockSidecar(t, http.StatusOK, surgeMockBody)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
-	// Two big jumps in rapid succession — second must be debounced.
+	// Two surge-worthy bids in rapid succession — second must be debounced.
 	a.OnBidAccepted(context.Background(), "auc_x", model.BidAcceptedData{AmountCents: "10000"}, "500")
 	a.OnBidAccepted(context.Background(), "auc_x", model.BidAcceptedData{AmountCents: "13000"}, "500") // fires
 	a.OnBidAccepted(context.Background(), "auc_x", model.BidAcceptedData{AmountCents: "16000"}, "500") // should be debounced
@@ -303,7 +303,7 @@ func TestFire_GuardrailFallsBackOnBannedWord(t *testing.T) {
 	// (Defense in depth — sidecar should also catch this, but the
 	// backend re-runs the check so a corrupt sidecar can't leak.)
 	srv, calls := mockSidecar(t, http.StatusOK,
-		`{"trigger":"open","text":"100% 保真精品 不容错过","fallback":false,"modelName":"x"}`)
+		`{"trigger":"open","commentary":"100% 保真精品 不容错过","fallback":false,"modelName":"x"}`)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
@@ -348,7 +348,7 @@ func TestFire_FallsBackOnTimeout(t *testing.T) {
 func TestCannedFallbacks_AllPassGuardrail(t *testing.T) {
 	// Embarrassing if our canned fallback itself contained a banned
 	// word — pin all 4 here.
-	for _, trig := range []string{"open", "jump", "cold", "hammer"} {
+	for _, trig := range []string{"open", "surge", "cold", "hammer"} {
 		text := cannedFallback(trig)
 		if text == "" {
 			t.Errorf("%s: canned fallback is empty", trig)
@@ -407,10 +407,10 @@ func waitForCalls(t *testing.T, rec *callRecorder, want int, timeout time.Durati
 	}
 }
 
-const openMockBody = `{"trigger":"open","text":"开拍 · 准备出价","fallback":false,"modelName":"mock-llm-T7"}`
-const jumpMockBody = `{"trigger":"jump","text":"竞争升温 · 出价升级","fallback":false,"modelName":"mock-llm-T7"}`
-const coldMockBody = `{"trigger":"cold","text":"沉寂中 · 谁来打破","fallback":false,"modelName":"mock-llm-T7"}`
-const hammerMockBody = `{"trigger":"hammer","text":"落槌成交 · 恭喜","fallback":false,"modelName":"mock-llm-T7"}`
+const openMockBody = `{"trigger":"open","commentary":"开拍 · 准备出价","fallback":false,"modelName":"mock-llm-T7"}`
+const surgeMockBody = `{"trigger":"surge","commentary":"竞争升温 · 出价升级","fallback":false,"modelName":"mock-llm-T7"}`
+const coldMockBody = `{"trigger":"cold","commentary":"沉寂中 · 谁来打破","fallback":false,"modelName":"mock-llm-T7"}`
+const hammerMockBody = `{"trigger":"hammer","commentary":"落槌成交 · 恭喜","fallback":false,"modelName":"mock-llm-T7"}`
 
 // Ensure bytes pkg stays imported (used in fire() for body construction)
 var _ = bytes.NewReader
