@@ -11,7 +11,7 @@
   <code>Replay Verifier</code>
 </p>
 
-**Status / 状态**：trunk-driven `T0…T10`｜当前节点 **T6**（Replay Verifier + hash 校验 UI；T0–T5 已完成）｜内部 freeze **2026-06-08**｜对外 D-day **2026-06-10**。
+**Status / 状态**：trunk-driven `T0…T10`｜当前节点 **T10**（Demo materials + freeze；T0–T9 已完成）｜内部 freeze **2026-06-08**｜对外 D-day **2026-06-10**。
 
 ---
 
@@ -341,11 +341,11 @@ cancel_auction.lua(aid,sellerId,reason) → OK_CANCELLED | ERR_ALREADY_TERMINAL 
 | **T3** | Hammer + 反狙击 + cancel + durable stream | 到点自动落锤、最后一刻延时、异常取消、seq gap=0 | ✅ |
 | **T4** | Persistence + order + evidence v0 | 落锤生成幂等订单 + 证据卡时间线 + hash 链 | ✅ |
 | **T5** | Multi-gateway + catchup | 水平 gateway + 断线重连无缝续看（背压双 lane） | ✅ |
-| **T6** | **Replay Verifier + hash 校验 UI** | 一键验证三方一致 + 证据卡 verify 按钮 | ⏳ 进行中 |
-| **T7** | AI sidecar 全量（非裁决） | AI 控场冒泡 + 可下线 | ⬜ |
-| **T8** | 500/50 压测 + perf 调优 | 稳定压测 + 达标延时 + dashboard | ⬜ |
-| **T9** | 5 项故障演练 | MySQL/WS/Timer/AI/Redis 故障可降级+自愈+录像 | ⬜ |
-| **T10** | Demo materials + freeze | 公网 deploy + 本地 fallback + 备播 + 3-min demo | ⬜ |
+| **T6** | **Replay Verifier + hash 校验 UI** | 一键验证三方一致 + 证据卡 verify 按钮 | ✅ |
+| **T7** | AI sidecar 全量（非裁决） | AI 控场冒泡 + 可下线（VLM facts + SSRF 白名单 + 4 触发器） | ✅ |
+| **T8** | 500/50 压测 + perf 调优 | 稳定压测 + 达标延时 + dashboard（p50/p95/p99 + seq gap=0） | ✅ |
+| **T9** | 5 项故障演练 | MySQL/WS/Timer/AI/Redis 故障可降级+自愈（`make chaos` 可断言） | ✅ |
+| **T10** | Demo materials + freeze | 公网 deploy + 本地 fallback + 备播 + 3-min demo（`make demo` + [demo-runbook](docs/demo-runbook.md)） | ⏳ 进行中 |
 
 **Stretch lane（并行、可砍、不阻塞）**：1k/100 压测、风控黄红灯、动态加价建议、邮箱 OTP、TTS、物理拆 socket、reserve（先 ratify）。
 

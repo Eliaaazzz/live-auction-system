@@ -6,7 +6,8 @@ CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
-        chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer
+        chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
+        demo demo-smoke
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -310,3 +311,53 @@ chaos-timer:     ## phase 5: Timer Worker — LIVE outlives endAtMs while disabl
 chaos-smoke:     ## CI-cheap chaos check: AI phase only (already wired, ~30s) — keeps the harness a regression net
 	@echo "=== chaos-smoke (AI phase) ==="
 	@$(MAKE) chaos-ai
+
+## --- T10 demo orchestration (V9 §12 demo 动线 / §4.4 验收) ---
+## The whole point of T10: the demo path is a SEQUENCE OF MAKE TARGETS, not a
+## screen recording (§4.4 "每个 demo 节点须有对应 make 验证命令"). `make demo`
+## runs the full §12 path end-to-end as one assertable run; it is green iff every
+## node holds. That green run IS the T10 exit evidence ("3-min demo path = e2e
+## suite green"). Each sub-target already exits non-zero on any failed assertion,
+## and make aborts on the first failure — so a partial demo path can never report
+## success. Needs Docker (full local stack). Leaves the stack UP afterward so you
+## can show the admin/room UI live; run `make down` to tear down.
+
+demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves stack up)
+	@echo "+==============================================================+"
+	@echo "|  Lumen Auction - T10 demo path (V9 plan section 12)          |"
+	@echo "+==============================================================+"
+	@echo ">>> [1/6] stack up + seed (seller / product / LIVE auction)"
+	$(MAKE) up
+	$(MAKE) seed
+	@echo ">>> [2/6] section 12.1-3  list -> VLM facts draft -> seller confirm -> freeze rules -> start -> multi-viewer bid -> broadcast"
+	$(MAKE) e2e-dummy-bid
+	@echo ">>> [3/6] section 12.5  evidence chain -- recompute event_hash (exit!=0 on hash_break)"
+	$(MAKE) verify-evidence
+	@echo ">>> [4/6] section 12.6  Replay Verifier -- 3-way diff stream/redis/mysql + hash chain (consistent)"
+	$(MAKE) verify
+	@echo ">>> [5/6] section 12.7  monitoring 500 connected + 50 active -- ack/broadcast p95 + seq gap=0 + post-load verify"
+	$(MAKE) load
+	@echo ">>> [6/6] section 12.8  5 chaos drills -- ai/redis/mysql/ws/timer degrade + self-heal (chaos-ai proves V9 P3: AI down, bidding continues)"
+	$(MAKE) chaos
+	@echo "+==============================================================+"
+	@echo "|  DEMO PATH GREEN -- every section 12 node asserted via make  |"
+	@echo "|  UI: http://localhost:8080/admin.html                        |"
+	@echo "|      http://localhost:8080/room.html?auction=auc_demo        |"
+	@echo "+==============================================================+"
+
+demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestration regression net
+	@echo ">>> demo-smoke [1/6] stack up + seed"
+	$(MAKE) up
+	$(MAKE) seed
+	@echo ">>> demo-smoke [2/6] section 12.1-3 e2e roundtrip"
+	$(MAKE) e2e-dummy-bid
+	@echo ">>> demo-smoke [3/6] section 12.5 evidence hash chain"
+	$(MAKE) verify-evidence
+	@echo ">>> demo-smoke [4/6] section 12.6 replay verifier"
+	$(MAKE) verify
+	@echo ">>> demo-smoke [5/6] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
+	$(MAKE) load-smoke
+	$(MAKE) chaos-smoke
+	@echo ">>> demo-smoke [6/6] V9 P3 AI offline -> core bidding continues"
+	$(MAKE) e2e-ai-offline
+	@echo "demo-smoke GREEN -- demo path wiring intact"
