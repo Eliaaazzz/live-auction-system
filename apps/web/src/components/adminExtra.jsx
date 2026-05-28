@@ -67,16 +67,19 @@ function AdminPublish() {
         imageUrl,
         description,
       });
+      // Backend contract is model.Rules (startPriceCents/incrementCents/
+      // capPriceCents/durationSec/extendWindowSec/extendSec/maxExtensions) —
+      // money as string. The old payload used different field names and 400'd.
       const { auctionId } = await api.createDraft({
         productId,
         rules: {
-          startCents,
-          stepCents,
-          reserveCents,
-          capCents,
-          durationMs: duration * 60 * 1000,
-          maxExtensions: antiSnipe ? maxExtends : 0,
-          antiSnipeWindowMs: antiSnipe ? 10_000 : 0,
+          startPriceCents: startCents,
+          incrementCents:  stepCents,
+          capPriceCents:   capCents,
+          durationSec:     duration * 60,
+          extendWindowSec: antiSnipe ? 10 : 0,
+          extendSec:       antiSnipe ? 10 : 0,
+          maxExtensions:   antiSnipe ? maxExtends : 0,
         },
       });
       navigate(`/admin/auctions/${auctionId}/vlm`);
