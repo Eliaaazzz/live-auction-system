@@ -61,7 +61,17 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	}
 	switch mode {
 	case "all", "timer":
-		go runTimerWorker(ctx, st, s.auctioneer, s.metrics)
+		// LUMEN_CHAOS_DISABLE_TIMER is the T9 timer-fault knob: when set to "1",
+		// the Timer Worker goroutine is skipped at startup so the chaos drill
+		// can observe LIVE auctions outliving their endAtMs. The drill toggles
+		// the env via `docker compose up -d` with `-e` override; in prod the
+		// var is unset and behaviour is unchanged. Anything other than "1"
+		// (including missing) keeps the timer on — fail-closed.
+		if os.Getenv("LUMEN_CHAOS_DISABLE_TIMER") != "1" {
+			go runTimerWorker(ctx, st, s.auctioneer, s.metrics)
+		} else {
+			log.Printf("lumen: LUMEN_CHAOS_DISABLE_TIMER=1 — Timer Worker NOT started (T9 chaos drill)")
+		}
 	}
 
 	mux := http.NewServeMux()
