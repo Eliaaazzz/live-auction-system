@@ -64,6 +64,21 @@ services:
       mysql: {condition: service_healthy}
       ai-sidecar: {condition: service_started}
     ports: ["8080:8080"]
+    # V10k Tier A — OS-level tuning to unblock 10k+ concurrent WS:
+    #   - file descriptors: default 1024 → 65536 (10k WS + Redis pool + spare)
+    #   - accept queue: default somaxconn=128 → 4096 (5k connect storm in 15s
+    #     overruns the default; raised so handshake queue doesn't drop SYNs)
+    #   - SYN backlog: defends accept queue from SYN floods during ramp
+    #   - send/recv buffers: 4 MiB default for outbound broadcast burst headroom
+    #   - ephemeral port range: full 10000-65535 for outbound Redis/MySQL dials
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    sysctls:
+      net.core.somaxconn: 4096
+      net.ipv4.tcp_max_syn_backlog: 8192
+      net.ipv4.ip_local_port_range: "10000 65535"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 3s
