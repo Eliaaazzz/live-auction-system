@@ -193,6 +193,13 @@ func (h *Hub) leave(c *Conn) {
 	}
 }
 
+// viewerCount returns the number of connections currently in a room (参与人数).
+func (h *Hub) viewerCount(aid string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.rooms[aid])
+}
+
 func (h *Hub) broadcast(aid string, msg []byte) {
 	// V10k Tier B: pre-encode the WS text frame ONCE for the whole room. Each
 	// recipient's writePump ships the prepared frame without re-encoding the
@@ -936,6 +943,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 				}
 			}
 		}
+		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) // 参与人数 at join time (incl. self)
 		if out, err := model.NewEnvelope(model.TypeRoomSnapshot, d.AuctionID, snap.Seq, snap); err == nil {
 			c.push(out)
 		}

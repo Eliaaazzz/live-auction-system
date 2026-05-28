@@ -24,6 +24,7 @@ const DEMO_LEADERS = [
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   productImage = null,
+  viewerCount = 0,
   remainingMs = 30000,
   status = 'LIVE',
   currentCents = '12880000',
@@ -223,7 +224,7 @@ function MobileRoom({
             }}>琉</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <span style={{ fontSize: 11, fontWeight: 600 }}>琉森拍卖行</span>
-              <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>1.2万 在线</span>
+              <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>{viewerCount} 在线</span>
             </div>
             <button
               onClick={() => setFollowing(f => !f)}

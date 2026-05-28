@@ -179,6 +179,7 @@ export function LiveRoomRoute() {
     <PullToResync onResync={handleResync}>
     <MobileRoom
       productImage={productImage}
+      viewerCount={store.viewerCount}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
       stepCents={store.stepCents}

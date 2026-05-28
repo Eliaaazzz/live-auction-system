@@ -4,6 +4,50 @@
 
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { api } from '../lib/api.js';
+import { formatCentsCNY, StatusBadge } from '../components/primitives.jsx';
+
+// Real auction hall: browse live + past auctions (竞拍浏览 商品列表 / 历史竞拍记录).
+// LIVE/SCHEDULED → the room; terminal → the evidence card. Fed by GET /api/auctions.
+function AuctionHall() {
+  const [auctions, setAuctions] = React.useState([]);
+  const [err, setErr] = React.useState(null);
+  React.useEffect(() => {
+    let live = true;
+    api.listAuctions({ limit: 60 })
+      .then(res => { if (live) setAuctions(res.auctions || []); })
+      .catch(e => { if (live) setErr(e?.message || String(e)); });
+    return () => { live = false; };
+  }, []);
+  const isLive = (s) => s === 'LIVE' || s === 'SCHEDULED';
+  if (err) return <div style={{ color: '#9aa0b4', fontSize: 12 }}>拍品加载失败: {err}</div>;
+  if (auctions.length === 0) return <div style={{ color: '#6b7186', fontSize: 12 }}>暂无拍品 — 去「新建拍品」发布一场</div>;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
+      {auctions.map(a => (
+        <Link key={a.auctionId} to={isLive(a.status) ? `/room/${a.auctionId}` : `/evidence/${a.auctionId}`}
+          style={{ display: 'flex', gap: 12, padding: 12, borderRadius: 10, textDecoration: 'none',
+            background: 'rgba(255,255,255,.02)', border: '1px solid rgba(255,255,255,.06)', color: '#fff' }}>
+          <div style={{ width: 56, height: 56, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
+            background: 'linear-gradient(160deg,#2a1f2e,#0a0e1a)' }}>
+            {a.imageUrl && <img src={a.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}/>}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <StatusBadge status={a.status} size="sm"/>
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 4, overflow: 'hidden',
+              textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.productName || a.auctionId}</div>
+            <div className="mono" style={{ fontSize: 12, color: 'var(--solemn-gold)', marginTop: 2 }}>
+              {formatCentsCNY(a.currentPriceCents || '0')}
+            </div>
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
 
 const SECTIONS = [
   {
@@ -88,6 +132,16 @@ export function IndexPage() {
             时整站从 demo data 渲染（默认）；接好后端后设为 false。
           </p>
         </div>
+
+        {/* Real auction hall — live + history, from the backend */}
+        <section style={{ marginBottom: 36 }}>
+          <div style={{
+            fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--solemn-gold)',
+            letterSpacing: '.12em', marginBottom: 14, paddingBottom: 8,
+            borderBottom: '1px solid rgba(201,169,97,.2)',
+          }}>竞拍大厅 · LIVE & 历史 (REAL DATA)</div>
+          <AuctionHall/>
+        </section>
 
         {/* Sections */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 36 }}>
