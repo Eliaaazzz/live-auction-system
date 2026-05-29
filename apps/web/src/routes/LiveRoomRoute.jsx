@@ -18,7 +18,7 @@ import { MobileRoom } from '../components/mobile.jsx';
 import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
-import { msRemaining } from '../lib/clock.js';
+import { msRemaining, serverNow, getDriftMs } from '../lib/clock.js';
 import { api } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
 
@@ -162,7 +162,7 @@ export function LiveRoomRoute() {
 
   // Bids/sec over the last 5s window. recentEvents is bounded to 50 by the
   // store reducer; that's safely > 5s of typical bid traffic.
-  const nowMs = Date.now() + store.serverClockOffsetMs;
+  const nowMs = serverNow();
   const bidsLast5s = store.recentEvents.filter(
     (e) => e.type === 'BID_ACCEPTED' && e.ts && nowMs - e.ts < 5000,
   ).length;
@@ -195,7 +195,9 @@ export function LiveRoomRoute() {
       leaders={store.leaders}
       onBid={handleBid}
       bidsPerSec={bidsPerSec}
-      bidsPerSecPeak={6}
+      bidsPerSecPeak={bidsPerSecPeak}
+      serverClockOffsetMs={getDriftMs()}
+      lastSeq={store.lastSeq}
       ticker={store.recentEvents
         .filter((e) => e.type === 'BID_ACCEPTED')
         .slice(0, 6)
