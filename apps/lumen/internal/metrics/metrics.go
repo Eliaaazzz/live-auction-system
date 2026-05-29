@@ -33,11 +33,17 @@ type Registry struct {
 	//   HammerLatency    < 500ms (P0 gate; scan→fanout)
 	//   CatchupLatency   < 1s    (P0 gate; 200-event replay)
 	//   ScriptTime       < 5ms   (P0 *pre-gate*; place_bid.lua exec)
+	//   HandlerOverhead  < 5ms   (P8; BID_PLACE Go-side work MINUS the
+	//                             PlaceBid/Redis span — decode + canonicalize
+	//                             + ack push. Isolates synchronous handler
+	//                             work from the network RTT, which AckLatency
+	//                             already covers.)
 	AckLatency       *Histogram
 	BroadcastLatency *Histogram
 	HammerLatency    *Histogram
 	CatchupLatency   *Histogram
 	ScriptTime       *Histogram
+	HandlerOverhead  *Histogram
 
 	// Counters (monotonic). SeqGap=0 is the correctness invariant (§4.1).
 	BidsAccepted     *Counter
@@ -60,6 +66,7 @@ func New() *Registry {
 		HammerLatency:    NewHistogram(4096),
 		CatchupLatency:   NewHistogram(4096),
 		ScriptTime:       NewHistogram(4096),
+		HandlerOverhead:  NewHistogram(4096),
 		BidsAccepted:     &Counter{},
 		BidsRejected:     &Counter{},
 		BackpressureDrop: &Counter{},
@@ -90,6 +97,7 @@ type Snapshot struct {
 	Hammer           HistogramSnapshot `json:"hammerLatencyMs"`
 	Catchup          HistogramSnapshot `json:"catchupLatencyMs"`
 	ScriptTime       HistogramSnapshot `json:"placeBidScriptTimeMs"`
+	HandlerOverhead  HistogramSnapshot `json:"bidHandlerOverheadMs"`
 	BidsAccepted     int64             `json:"bidsAccepted"`
 	BidsRejected     int64             `json:"bidsRejected"`
 	BackpressureDrop int64             `json:"backpressureForceClose"`
@@ -107,6 +115,7 @@ func (r *Registry) Snapshot() Snapshot {
 		Hammer:           r.HammerLatency.Snapshot(),
 		Catchup:          r.CatchupLatency.Snapshot(),
 		ScriptTime:       r.ScriptTime.Snapshot(),
+		HandlerOverhead:  r.HandlerOverhead.Snapshot(),
 		BidsAccepted:     r.BidsAccepted.Load(),
 		BidsRejected:     r.BidsRejected.Load(),
 		BackpressureDrop: r.BackpressureDrop.Load(),

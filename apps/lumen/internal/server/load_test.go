@@ -100,8 +100,8 @@ func TestT8MetricsEndpointShapeIsStable(t *testing.T) {
 	}
 	for _, k := range []string{
 		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
-		"placeBidScriptTimeMs", "bidsAccepted", "bidsRejected", "backpressureForceClose",
-		"seqGapCount", "streamLenMax", "activeConns",
+		"placeBidScriptTimeMs", "bidHandlerOverheadMs", "bidsAccepted", "bidsRejected",
+		"backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
 	} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("/metrics missing field %q (shape break)", k)
@@ -351,15 +351,16 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 		BroadcastP95Budget: 150 * time.Millisecond,
 		HammerP95Budget:    500 * time.Millisecond,
 		ScriptP99Budget:    5 * time.Millisecond,
+		HandlerP99Budget:   5 * time.Millisecond,
 	}
 	type fields struct {
-		ackP95, bcastP95, hammerP95, catchupP95, scriptP99 float64
-		ackCount, bcastCount, hammerCount, catchupCount    int64
-		observerReadErrs                                   int64
-		preSeqGap, postSeqGap                              int64
-		sent, acked                                        int64
-		wantBreach                                         []string // substrings that must appear
-		wantClean                                          bool     // expect 0 breaches
+		ackP95, bcastP95, hammerP95, catchupP95, scriptP99, handlerP99 float64
+		ackCount, bcastCount, hammerCount, catchupCount                int64
+		observerReadErrs                                               int64
+		preSeqGap, postSeqGap                                          int64
+		sent, acked                                                    int64
+		wantBreach                                                     []string // substrings that must appear
+		wantClean                                                      bool     // expect 0 breaches
 	}
 	tt := []fields{
 		// happy path: ack 50, broadcast 80, hammer 200, script 1; seq 0; bids ok.
@@ -389,6 +390,9 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 			wantBreach: []string{"seqGapCount=3 (must be 0)"}},
 		{ackP95: 50, bcastP95: 80, scriptP99: 1, observerReadErrs: 2, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
 			wantBreach: []string{"observer readErrors=2 (must be 0)"}},
+		// P8 handler-overhead p99 just over (Go-side handler work, excl. Redis RTT).
+		{ackP95: 50, bcastP95: 80, scriptP99: 1, handlerP99: 6, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
+			wantBreach: []string{"handler-overhead p99 6.0ms > 5ms"}},
 		// bids sent but none acked (path probably broken).
 		{ackP95: 0, bcastP95: 0, scriptP99: 1, ackCount: 1, bcastCount: 1, sent: 5, acked: 0,
 			wantBreach: []string{"no bids acked"}},
@@ -399,12 +403,13 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 				Config: cfg,
 				Pre:    metrics.Snapshot{SeqGap: c.preSeqGap},
 				Post: metrics.Snapshot{
-					Ack:        metrics.HistogramSnapshot{P95: c.ackP95, Count: c.ackCount},
-					Broadcast:  metrics.HistogramSnapshot{P95: c.bcastP95, Count: c.bcastCount},
-					Hammer:     metrics.HistogramSnapshot{P95: c.hammerP95, Count: c.hammerCount},
-					Catchup:    metrics.HistogramSnapshot{P95: c.catchupP95, Count: c.catchupCount},
-					ScriptTime: metrics.HistogramSnapshot{P99: c.scriptP99, Count: 1},
-					SeqGap:     c.postSeqGap,
+					Ack:             metrics.HistogramSnapshot{P95: c.ackP95, Count: c.ackCount},
+					Broadcast:       metrics.HistogramSnapshot{P95: c.bcastP95, Count: c.bcastCount},
+					Hammer:          metrics.HistogramSnapshot{P95: c.hammerP95, Count: c.hammerCount},
+					Catchup:         metrics.HistogramSnapshot{P95: c.catchupP95, Count: c.catchupCount},
+					ScriptTime:      metrics.HistogramSnapshot{P99: c.scriptP99, Count: 1},
+					HandlerOverhead: metrics.HistogramSnapshot{P99: c.handlerP99, Count: 1},
+					SeqGap:          c.postSeqGap,
 				},
 				BidderStats:   bidderSnapshot{Sent: c.sent, Acked: c.acked},
 				ObserverStats: observerSnapshot{Errors: c.observerReadErrs},
