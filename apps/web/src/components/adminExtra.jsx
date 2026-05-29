@@ -661,6 +661,7 @@ const ORDER_ROWS = [
 ];
 
 function AdminOrders() {
+  const navigate = useNavigate();
   const [filter, setFilter] = React.useState('ALL');
   const counts = {
     ALL: ORDER_ROWS.length,
@@ -692,7 +693,9 @@ function AdminOrders() {
         </div>
         <div style={{ flex: 1 }}/>
         <button style={btnGhost2}>导出 CSV</button>
-        <button style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
+        <button
+          onClick={() => navigate('/admin/auctions/new')}
+          style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
           + 新建拍品
         </button>
       </div>
