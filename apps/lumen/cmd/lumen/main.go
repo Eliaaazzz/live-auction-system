@@ -84,6 +84,15 @@ func main() {
 			log.Fatalf("demo-auction: %v", err)
 		}
 
+	case "demo-sudden-death":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoSuddenDeath(target); err != nil {
+			log.Fatalf("demo-sudden-death: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

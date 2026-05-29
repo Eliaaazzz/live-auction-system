@@ -65,7 +65,12 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Auction mode (issue #114). Existing rows default to ENGLISH so pre-mode
+	// auctions keep behaving exactly as before.
+	return s.ensureColumn(ctx, "auction_rules", "mode", "VARCHAR(32) NOT NULL DEFAULT 'ENGLISH'")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -487,6 +492,7 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 		capCents = &cap
 	}
 	return &model.RoomSnapshotRules{
+		Mode:              model.NormalizeMode(m["mode"]),
 		StepCents:         moneyOrZero(m["incrementCents"]),
 		CapCents:          capCents,
 		ReserveCents:      moneyOrZero(m["startPriceCents"]),

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS auctions (
 CREATE TABLE IF NOT EXISTS auction_rules (
   id                BIGINT AUTO_INCREMENT PRIMARY KEY,
   auction_id        VARCHAR(64) NOT NULL,
+  mode              VARCHAR(32) NOT NULL DEFAULT 'ENGLISH', -- auction format/strategy (issue #114)
   start_price_cents BIGINT NOT NULL,
   increment_cents   BIGINT NOT NULL,
   cap_price_cents   BIGINT NOT NULL,
