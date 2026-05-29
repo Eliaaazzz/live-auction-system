@@ -649,6 +649,7 @@ function AdminConsole() {
   const recentRejects  = useAuctionStore((s) => s.recentRejects);
   const totalBidsCount = useAuctionStore((s) => s.totalBidsCount);
   const bidderIds      = useAuctionStore((s) => s.bidderIds);
+  const leaders        = useAuctionStore((s) => s.leaders);
   // init() is a stable function ref on the store — accessing via getState()
   // for the WS bootstrap effect (no need to subscribe).
   const rafRef = React.useRef(null);
@@ -683,6 +684,14 @@ function AdminConsole() {
         });
       } catch (e) {
         console.warn('[Console] snapshot failed (continuing — WS will rebuild)', e);
+      }
+      try {
+        // Seed the leaderboard so the console shows existing top bids on first
+        // paint, not just bids placed after the broadcaster opened it.
+        const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+        if (alive) useAuctionStore.getState().setLeaders(leaderboard);
+      } catch (e) {
+        console.warn('[Console] leaderboard seed failed', e);
       }
       const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
       client = new RoomClient({
@@ -908,7 +917,7 @@ function AdminConsole() {
             <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', fontWeight: 600, letterSpacing: '.06em', marginBottom: 8 }}>
               出价榜
             </div>
-            <Leaderboard leaders={DEMO_LEADERS.slice(0, 5)}/>
+            <Leaderboard leaders={(auctionId ? leaders : DEMO_LEADERS).slice(0, 5)}/>
           </div>
 
           {/* Last-N rejects panel — blueprint §3.5 */}
