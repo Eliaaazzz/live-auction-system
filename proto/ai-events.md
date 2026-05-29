@@ -110,3 +110,41 @@ After the sidecar returns, the backend wraps and broadcasts:
 | `hammer` | `AUCTION_SOLD` event (cap-hit or timer hammer) | Once per auction |
 
 `BID_REJECTED` does NOT trigger anything (only `BID_ACCEPTED` counts for `surge`). Cold trigger is suppressed for 5s after any `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` to avoid double-firing on `LIVE → terminal` transitions.
+
+## `POST /llm/recommend` (ai-sidecar · #111 advisory — NON-ADJUDICATING)
+
+Before the seller freezes rules, the admin console may call this for a **suggested** start price / step / reserve / auction mode + a short rationale, derived from the item estimate, online viewers, historical comparable sales, and (optionally) an aggregate sealed-warm-up summary.
+
+**Non-authoritative (CLAUDE.md hard rule · V9 P3):** `advisoryOnly` is always `true` and `disclaimer` is always present. The seller confirms / edits / ignores; the backend state machine adjudicates every accepted bid, winner, price, and terminal. This endpoint never writes auction state and the bid path never waits on it.
+
+**Out of scope (issue #111 stretch — needs V9 §2 all-member ratify):** the two-phase `SEALED` auction state and reserve-price **adjudication**. This endpoint may CONSUME a pre-computed aggregate `sealedSummary` (count / max / second / median — never individual bids), but never runs the sealed phase or decides a terminal. `recommendedMode: "SEALED_THEN_OPEN"` is a SUGGESTION only until ratified; `OPEN` is the only mode the engine runs today.
+
+Request:
+```json
+{
+  "auctionId": "auc_x",
+  "item":   { "category": "jewelry", "title": "...", "estValueCents": "10000000" },
+  "market": {
+    "onlineViewers": 500,
+    "historicalSoldCents": ["9000000", "11000000"],
+    "sealedSummary": { "count": 12, "maxCents": "13000000", "secondCents": "9000000", "medianCents": "9500000" }
+  }
+}
+```
+
+Response (always 200; generator failure → canned advice with `fallback: true`):
+```json
+{
+  "advisoryOnly":    true,
+  "recommendedMode": "OPEN",
+  "startPriceCents": "9000000",
+  "stepCents":       "100000",
+  "reserveCents":    "9000000",
+  "rationale":       "暗拍最高价远超次高 · 建议直接成交，提前锁定。",
+  "disclaimer":      "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。",
+  "fallback":        false,
+  "modelName":       "mock-advisor-111"
+}
+```
+
+Guardrail (sidecar-side, on `rationale` only): same rules as `/llm/auctioneer` (≤ 80 runes · no URL / phone / free-form money · no banned words). A trip swaps `rationale` to a safe canned line and keeps the numeric advice; a generator error returns the full canned fallback. Implemented + tested in `apps/ai-sidecar/internal/advisor`. The generator is pluggable — T1 ships `mock-advisor-111`; a real Doubao swap, the backend proxy (`POST /api/llm/recommend`), and admin-console wiring are follow-ups.
