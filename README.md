@@ -176,15 +176,26 @@ make seed
 #   Mobile H5  ：http://localhost:8080/room.html?auction=auc_demo
 ```
 
-**Demo path = make targets**（每个 demo 节点都有机器可验命令，非仅录屏）:
+**Demo path = make targets**（每个 demo 节点都有机器可验命令，非仅录屏）。一条命令跑完整 §12 全链路，全绿即 T10 验收证据：
+
+```bash
+make demo        # up→seed→e2e→demo-auction→verify-evidence→verify→load→chaos；任一节点失败即中止
+make demo-smoke  # CI-cheap 变体（小 N load-smoke + chaos-smoke），编排回归网
+```
+详见 [`docs/demo-runbook.md`](docs/demo-runbook.md)（3-min 脚本 + 节点↔命令映射 + 兜底梯度）。
 
 | 命令 Command | 作用 What it does | 验收 Gate |
 |---|---|---|
 | `make up` / `make down` | 起 / 停全栈（`down` 清卷） | health `/healthz` 全绿 |
 | `make seed` | 幂等 dev 种子 | — |
 | `make e2e-dummy-bid` | T1 端到端：上架→facts→冻结→开拍→出价→ack→持久化 | **exit 0** 即通过 |
+| `make demo-auction` | T10 §12.4-5：反狙击延时 (`AUCTION_EXTENDED`) → 落锤 (`AUCTION_SOLD`) → 证据卡 (`eventsHash`) | exit 0 + `extendCount` 断言 |
 | `make perf-smoke` | T2 性能地板检查 (ack/broadcast p95 vs 兜底预算) | floor-check |
-| `make verify` | Replay Verifier，期望 `consistent` | mismatch/hash_break → exit≠0 |
+| `make load` / `load-smoke` | T8 压测 500 connected + 50 active + 压测后 verify | p95 超预算 / seq gap≠0 → exit≠0 |
+| `make verify-evidence` | T4 证据链：重算 `event_hash` 链 | `hash_break` → exit≠0 |
+| `make verify` | T6 Replay Verifier：stream/redis/mysql 三方一致 | mismatch/hash_break → exit≠0 |
+| `make chaos` / `chaos-smoke` | T9 五项故障演练 (ai/redis/mysql/ws/timer) 降级+自愈 | 5× `CHAOS_OK` / 非 0 退出 |
+| `make e2e-ai-offline` | T7-5：AI 下线核心竞拍仍继续 (V9 P3) | exit 0 |
 | `make build / vet / test / fmt` | 纯 Go：编译 / vet / 测试 / 格式化 | CI 用 |
 | `make guard` | 禁 `*_v2.lua`、禁真实 DOUBAO endpoint id | CI grep |
 
@@ -353,9 +364,14 @@ cancel_auction.lua(aid,sellerId,reason) → OK_CANCELLED | ERR_ALREADY_TERMINAL 
 
 ## 15. CI gates & testing · CI 门禁与测试
 
-CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）以 **Redis + MySQL service container** 跑全部集成测试 —— **CI 内零 skip**，任何 `--- SKIP` 即失败。required checks：
+CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）以 **Redis + MySQL service container** 跑全部集成测试 —— **CI 内零 skip**，任何 `--- SKIP` 即失败。4 个 required check job：
 
-1. `go mod tidy` 干净 → 2. `gofmt` → 3. `go vet` → 4. `go build` → 5. **`go test -race`**（redis + mysql 真实集成）→ 6. guards（禁 `*_v2.lua`、禁真实 DOUBAO endpoint id、`proto/` 契约文件存在）→ 7. e2e job（`make up` + `/healthz` + seed + `e2e-dummy-bid` + `perf-smoke` + `verifier`）。
+1. **`go`** — `go mod tidy` 干净 → `gofmt` → `go vet` → `go build` → **`go test -race`**（redis + mysql 真实集成，零 skip）。
+2. **`guards`** — 禁 `*_v2.lua`、禁真实 DOUBAO endpoint id、`proto/` 契约文件存在。
+3. **`e2e`** — 全栈起 + `/healthz` + seed，然后链式跑 demo path 各原子节点：`e2e-dummy-bid`（T1）→ `perf-smoke`（T2）→ `verifier`（T6 三方一致）→ `verify-evidence`（T4 hash 链）→ `e2e-ai-offline`（T7-5 / V9 P3）→ `chaos-smoke`（T9 AI 相）→ `load-smoke`（T8 + 压测后 verify）→ 前端 smoke 脚本（catchup/schema/401/antisnipe/snapshot）。
+4. **`web`** — 前端 Vitest 套件（design-token 漂移检查 + `npm run build` + `npm test`）。
+
+> 完整 5 项故障演练 (`make chaos`) 与全量 500/50 压测 (`make load`) 需 Docker + 分钟级时长，故走 operator-run / 彩排，不入 CI；`chaos-smoke` + `load-smoke` 作为 CI 内的回归网。
 
 **覆盖率分区 floor**：状态机（纯函数）≥ 95%；Lua 每个 return code 须有 harness 覆盖；envelope codec / catchup / persistence-idempotency / order-idempotency 各有命名测试；全局 ≥ 80%。
 
@@ -400,6 +416,9 @@ trunk-driven + dev-log + 全局 review（全员从全局视角 build / review，
 | [`docs/ws-protocol.md`](docs/ws-protocol.md) · [`docs/redis-keys.md`](docs/redis-keys.md) · [`docs/mysql-schema.md`](docs/mysql-schema.md) | WS / Redis+Lua / MySQL 契约 |
 | [`proto/`](proto/README.md) | canonical 契约（the seam，全员 approve 边界） |
 | [`docs/roadmap.md`](docs/roadmap.md) | Sprint baseline（已被 T0–T10 取代，保留为基线） |
+| [`docs/demo-runbook.md`](docs/demo-runbook.md) | **T10 演示手册** — 3-min 脚本 + 节点↔`make` 映射 + 兜底梯度 + 备播清单 |
+| [`docs/t9-chaos.md`](docs/t9-chaos.md) | T9 五项故障演练 runbook（ai/redis/mysql/ws/timer） |
+| [`infra/`](infra/README.md) | 可观测性栈：Prometheus + Grafana dashboards + alerts；docker-compose 拓扑 |
 | [`docs/ai-usage/`](docs/ai-usage/README.md) | AI 使用日志（可追溯证据） |
 | [`docs/dev-log/`](docs/dev-log/) | 每节点开发叙事 |
 | [`docs/diagrams/`](docs/diagrams/) | Mermaid：系统/状态机/出价/重连/落锤/ER/RBAC |
