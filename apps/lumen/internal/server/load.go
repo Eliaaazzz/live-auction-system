@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -282,6 +283,11 @@ func (s *loadStats) bidderSnapshot() bidderSnapshot {
 func runObserver(ctx context.Context, target, token, aid string, stats *loadStats, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer func() {
+		// Defense-in-depth. With the read-deadline poll removed (below) the
+		// "repeated read on failed websocket connection" panic source is gone,
+		// so this should never fire. If it ever does it is a real regression:
+		// counting it FAILS the gate (readErrors>0) rather than letting an
+		// unrecovered panic crash the whole 500-goroutine run.
 		if recover() != nil {
 			stats.observerErr.Add(1)
 		}
@@ -292,25 +298,33 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 		return
 	}
 	defer c.Close()
+
+	// Cooperative cancel WITHOUT a per-read deadline. A gorilla read-deadline
+	// timeout permanently poisons the conn (it sets c.readErr), so the old
+	// SetReadDeadline(500ms)+continue-on-timeout loop spun ~1000 dead reads
+	// after the first quiet window until gorilla panicked with "repeated read
+	// on failed websocket connection"; #89's recover() then booked every panic
+	// as a readError, so the gate's readErrors==0 could never pass (#86).
+	// Instead, close the conn when ctx ends — that unblocks the blocking
+	// ReadMessage with a benign net.ErrClosed and the loop returns clean.
+	go func() {
+		<-ctx.Done()
+		_ = c.Close()
+	}()
+
 	for {
-		// Cooperative cancel: bound the read so a quiet room doesn't deadline us
-		// past ctx.Done.
-		_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, _, err := c.ReadMessage()
 		if err != nil {
-			if ctx.Err() != nil {
+			// Run over (we closed the conn on ctx.Done) or a normal end-of-run
+			// WS teardown → clean exit, not a lost frame. Anything else is a
+			// genuine mid-room read failure that counts toward the SLO gate.
+			if ctx.Err() != nil || isBenignClose(err) {
 				return
-			}
-			if isTimeout(err) {
-				continue
 			}
 			stats.observerErr.Add(1)
 			return
 		}
 		stats.observerFrame.Add(1)
-		if ctx.Err() != nil {
-			return
-		}
 	}
 }
 
@@ -493,15 +507,20 @@ func (r loadReport) breaches() []string {
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
-func isTimeout(err error) bool {
-	var ne interface{ Timeout() bool }
-	if errors.As(err, &ne) {
-		return ne.Timeout()
+// isBenignClose reports whether a read error is a normal connection teardown
+// (server-initiated close, or our own conn.Close at end-of-run) rather than a
+// mid-room frame-loss error. These must NOT count toward observer readErrors:
+// the gate measures frames lost while the room is LIVE, not shutdown. A
+// backpressure force-close (code 4000) is deliberately excluded — that IS a
+// real drop and should still count.
+func isBenignClose(err error) bool {
+	if errors.Is(err, net.ErrClosed) { // "use of closed network connection"
+		return true
 	}
-	// Gorilla wraps net.Error inside CloseError sometimes; also catch the
-	// read-deadline string for portability.
-	if ce, ok := err.(*websocket.CloseError); ok {
-		return ce.Code == websocket.CloseNoStatusReceived || ce.Code == websocket.CloseAbnormalClosure
-	}
-	return strings.Contains(err.Error(), "i/o timeout")
+	return websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,    // 1000
+		websocket.CloseGoingAway,        // 1001
+		websocket.CloseNoStatusReceived, // 1005
+		websocket.CloseAbnormalClosure,  // 1006
+	)
 }
