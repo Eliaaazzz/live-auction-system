@@ -31,9 +31,13 @@ import (
 	"unicode/utf8"
 )
 
-// Mode enumerates the auction modes the advisor may recommend. OPEN is the
-// spec's public English auction (the only mode wired today); SEALED_THEN_OPEN
-// is the issue #111 stretch and is recommendation-only until ratified.
+// Mode is the advisor's ADVISORY mode hint — not a canonical engine mode. OPEN
+// = public ascending (English) auction; SEALED_THEN_OPEN = sealed warm-up then
+// open (issue #111 stretch, recommendation-only until ratified). The engine's
+// auction-mode vocabulary is being designed in #114 (RFC: pluggable modes +
+// recommender) and will be unified with #111 at ratify; until then the admin UI
+// MAPS these hints (OPEN to ENGLISH, SEALED_THEN_OPEN to PREQUALIFY) rather than
+// feeding recommendedMode straight to create-auction. See proto/ai-events.md.
 type Mode string
 
 const (
@@ -111,6 +115,9 @@ type Advice struct {
 // HandlerFunc wires the endpoint in main.go. The model call is pluggable.
 func HandlerFunc(generate Generator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Cap the request body — advisory payloads are tiny; this bounds memory
+		// on a hostile/oversized POST. (Parity follow-up: /llm/auctioneer too.)
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		var req Request
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -308,10 +315,18 @@ func failsGuardrail(text string) (string, bool) {
 
 // ── small numeric helpers (money is a string at the boundary) ─────────
 
+// maxSaneCents caps parsed money well below int64 limits so downstream
+// arithmetic (second*13/10, anchor*80/100, …) can't overflow on a pathological
+// input. ¥10 trillion ceiling — far above any real lot (fariZzzz #116 nit).
+const maxSaneCents = 1_000_000_000_000_000
+
 func parseCents(s string) int64 {
 	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 	if err != nil || n < 0 {
 		return 0
+	}
+	if n > maxSaneCents {
+		return maxSaneCents
 	}
 	return n
 }
