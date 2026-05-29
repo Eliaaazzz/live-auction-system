@@ -20,6 +20,14 @@ vendor/
 .chaos-setup.log
 .chaos-recover.log
 .load-logs/
+# k6 stress harness artifacts (tools/loadtest/k6-setup.sh)
+.k6-aid
+.k6-tokens
+.k6-tokens.tmp/
+.k6-logs/
+tools/loadtest/.k6-aid
+tools/loadtest/.k6-tokens
+tools/loadtest/.k6-tokens-clean
 
 # node / web
 node_modules/
