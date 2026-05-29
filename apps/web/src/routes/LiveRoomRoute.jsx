@@ -22,7 +22,10 @@ import { msRemaining } from '../lib/clock.js';
 import { api } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
 
-const USE_MOCK = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'true') === 'true';
+// Default OFF: real backend unless a dev explicitly opts into demo data with
+// VITE_USE_MOCK_DATA=true. The old 'true' default shipped the production build
+// in mock mode (frozen room). #106.
+const USE_MOCK = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 'true';
 const WS_BASE  = import.meta.env.VITE_WS_BASE || undefined;
 
 export function LiveRoomRoute() {
