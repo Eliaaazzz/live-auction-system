@@ -160,6 +160,7 @@ func (s *Store) HasDedupe(ctx context.Context, aid, userID, clientBidID string) 
 //   - !isPaused
 //   - !isSellerSelfBid
 //   - !isDupe
+//
 // hold simultaneously. Any single negative falls through to Lua so the
 // authoritative error code (ERR_AUCTION_PAUSED / ERR_NOT_LIVE / ERR_NOT_ALLOWED
 // / DUPLICATE-replay) is returned instead of a mistaken ERR_TOO_LOW.
@@ -175,10 +176,10 @@ type FastPathState struct {
 // per-user dedupe Hash in ONE pipelined Redis round-trip.
 //
 // Mirrors place_bid.lua's check order:
-//   1. dedupe (step 1) → isDupe
-//   2. paused (step 2)  → isPaused
-//   3. status (step 2)  → !isLive when status != "LIVE"
-//   4. seller-self-bid (step 2) → isSellerSelfBid
+//  1. dedupe (step 1) → isDupe
+//  2. paused (step 2)  → isPaused
+//  3. status (step 2)  → !isLive when status != "LIVE"
+//  4. seller-self-bid (step 2) → isSellerSelfBid
 //
 // place_bid.lua step 3 (now >= endAtMs) is covered by the gateway-side
 // fastRejectExpiryMarginMs guard in dispatchWS — checking Redis TIME again here
