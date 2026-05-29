@@ -286,7 +286,7 @@ function Leaderboard({ leaders, mode = 'list' }) {
               boxShadow: halo ? `0 0 0 1.5px ${halo}` : 'none',
               fontFamily: 'var(--font-sans)',
             }}>
-              {u.displayName[0]}
+              {(u.displayName || u.userId || '?')[0]}
             </div>
             <span style={{
               flex: 1, minWidth: 0, fontSize: 13,
@@ -363,7 +363,7 @@ function LeaderboardPodium({ leaders }) {
               boxShadow: `0 0 0 2px ${medalColor[r]}`,
               fontFamily: 'var(--font-sans)',
             }}>
-              {u.displayName[0]}
+              {(u.displayName || u.userId || '?')[0]}
             </div>
             <span style={{
               maxWidth: 84,
@@ -373,7 +373,7 @@ function LeaderboardPodium({ leaders }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 3, justifyContent: 'center',
             }}>
-              {u.displayName}
+              {u.displayName || u.userId}
               {u.isYou && (
                 <span style={{
                   fontSize: 8, padding: '1px 4px',
