@@ -138,6 +138,88 @@ func lbKey(aid string) string          { return fmt.Sprintf("auction:{%s}:leader
 func streamKey(aid string) string      { return fmt.Sprintf("auction:{%s}:events", aid) }
 func dedupeKey(aid, uid string) string { return fmt.Sprintf("auction:{%s}:dedupe:%s", aid, uid) }
 
+// HasDedupe reports whether a clientBidID already has a cached BID_ACCEPTED
+// payload in the per-(auction,user) dedupe Hash. Used by the V10k Tier C
+// gateway-side fast-reject path to preserve DUPLICATE-replay semantics — if
+// a retry hits the gateway with a previously-accepted clientBidId, we must
+// fall through to Lua (which returns DUPLICATE with the original ack) rather
+// than fast-rejecting as ERR_TOO_LOW (which violates proto/error-codes.md
+// "DUPLICATE replays cached ack and is not an error").
+//
+// One HEXISTS RTT (~50μs localhost, ~1ms cross-host) — still much cheaper
+// than the full EVALSHA the fast-path is replacing. Errors fall through to
+// the caller (which treats them as "unsure → defer to Lua").
+func (s *Store) HasDedupe(ctx context.Context, aid, userID, clientBidID string) (bool, error) {
+	return s.rdb.HExists(ctx, dedupeKey(aid, userID), clientBidID).Result()
+}
+
+// FastPathState carries every gateway-side fact the V10k Tier C fast-reject
+// needs to mirror Lua's check ordering exactly. Loaded in ONE pipelined Redis
+// RTT by FastPathPrecheck. The caller fast-rejects ONLY when ALL of:
+//   - isLive (status=="LIVE")
+//   - !isPaused
+//   - !isSellerSelfBid
+//   - !isDupe
+//
+// hold simultaneously. Any single negative falls through to Lua so the
+// authoritative error code (ERR_AUCTION_PAUSED / ERR_NOT_LIVE / ERR_NOT_ALLOWED
+// / DUPLICATE-replay) is returned instead of a mistaken ERR_TOO_LOW.
+type FastPathState struct {
+	IsLive          bool // state.status == "LIVE"
+	IsPaused        bool // state.paused == "true" (Redis-down or operator pause)
+	IsSellerSelfBid bool // state.sellerId == userID (anti-shill-bidding)
+	IsDupe          bool // dedupe Hash has clientBidID for (aid,userID)
+}
+
+// FastPathPrecheck is the V10k Tier C fast-reject's authoritative state probe.
+// Returns a FastPathState reflecting Lua's view of `state:{<aid>}` + the
+// per-user dedupe Hash in ONE pipelined Redis round-trip.
+//
+// Mirrors place_bid.lua's check order:
+//  1. dedupe (step 1) → isDupe
+//  2. paused (step 2)  → isPaused
+//  3. status (step 2)  → !isLive when status != "LIVE"
+//  4. seller-self-bid (step 2) → isSellerSelfBid
+//
+// place_bid.lua step 3 (now >= endAtMs) is covered by the gateway-side
+// fastRejectExpiryMarginMs guard in dispatchWS — checking Redis TIME again here
+// would add another HGET; the margin avoids the round-trip without breaking
+// correctness under bounded clock skew.
+//
+// Cost: ONE pipelined Pipeline.Exec → single network RTT (~100μs localhost,
+// ~1ms cross-host). Still much cheaper than the full EVALSHA hot path (~6ms)
+// being skipped, so the throughput win is preserved.
+//
+// Errors fall through to Lua (caller treats as "unsure → defer to authoritative
+// source"; a Redis-down condition then surfaces on the Lua path as
+// ERR_AUCTION_PAUSED via bidErrCode, matching today's semantics).
+func (s *Store) FastPathPrecheck(ctx context.Context, aid, userID, clientBidID string) (FastPathState, error) {
+	pipe := s.rdb.Pipeline()
+	stateCmd := pipe.HMGet(ctx, stateKey(aid), "status", "paused", "sellerId")
+	dupeCmd := pipe.HExists(ctx, dedupeKey(aid, userID), clientBidID)
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return FastPathState{}, err
+	}
+	out := FastPathState{}
+	if fields, herr := stateCmd.Result(); herr == nil && len(fields) >= 3 {
+		if status, ok := fields[0].(string); ok {
+			out.IsLive = status == "LIVE"
+		}
+		if paused, ok := fields[1].(string); ok {
+			out.IsPaused = paused == "true"
+		}
+		if sellerID, ok := fields[2].(string); ok && sellerID != "" {
+			out.IsSellerSelfBid = sellerID == userID
+		}
+	}
+	dupe, derr := dupeCmd.Result()
+	if derr != nil && derr != redis.Nil {
+		return out, derr
+	}
+	out.IsDupe = dupe
+	return out, nil
+}
+
 // PubChannel is the per-auction Pub/Sub fanout hint channel.
 func PubChannel(aid string) string { return fmt.Sprintf("auction:{%s}:pub", aid) }
 
