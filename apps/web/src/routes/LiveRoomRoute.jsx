@@ -13,7 +13,7 @@
 // (useful when the backend isn't running). The component shape is the same.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { MobileRoom } from '../components/mobile.jsx';
 import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
@@ -30,6 +30,7 @@ const WS_BASE  = import.meta.env.VITE_WS_BASE || undefined;
 
 export function LiveRoomRoute() {
   const { auctionId } = useParams();
+  const navigate = useNavigate();
   const store  = useAuctionStore();
   const rafRef = useRef(null);
   const clientRef = useRef(null);
@@ -198,6 +199,8 @@ export function LiveRoomRoute() {
       bidsPerSecPeak={bidsPerSecPeak}
       serverClockOffsetMs={getDriftMs()}
       lastSeq={store.lastSeq}
+      winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
+      onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
       ticker={store.recentEvents
         .filter((e) => e.type === 'BID_ACCEPTED')
         .slice(0, 6)

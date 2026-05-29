@@ -13,11 +13,13 @@ COPY apps/web/package.json apps/web/package-lock.json ./
 RUN npm install --no-audit --no-fund
 COPY apps/web/ ./
 # Vite inlines VITE_* at build time. The deployed bundle MUST hit the real
-# backend (same-origin /api + /ws), NOT the inline demo data — without this the
-# whole app ships in mock mode (frozen room, no WS, dead bid button). #106.
+# backend, NOT the inline demo data — without this the whole app ships in mock
+# mode (frozen room, no WS, dead bid button). #106.
+# Only the mock flag is needed: api.js already targets same-origin '/api', and
+# buildRoomUrl() defaults to a same-origin ws:// URL when VITE_WS_BASE is unset.
+# (Setting VITE_WS_BASE=/ws was wrong — buildRoomUrl turned it into '/ws/ws',
+# a schemeless URL that throws in the WebSocket constructor.)
 ENV VITE_USE_MOCK_DATA=false
-ENV VITE_API_BASE=/api
-ENV VITE_WS_BASE=/ws
 RUN npm run build
 
 # Stage 2: build the Go backend.
