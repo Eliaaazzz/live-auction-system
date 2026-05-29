@@ -54,6 +54,17 @@ var ErrTooLarge = errors.New("ssrf: response exceeds size limit")
 // whose redirect policy is "never," and whose timeout is bounded. Use
 // FetchImage for the size-capped read.
 func NewClient() *http.Client {
+	return newClient(blocked)
+}
+
+// newClient is NewClient parameterized on the IP-block predicate. Production
+// uses NewClient() → newClient(blocked); tests pass a relaxed predicate so
+// they can drive the REAL transport — the dial-guard IP-pin, the no-redirect
+// CheckRedirect, and (via FetchImage) the size cap — against an httptest
+// server, which always binds loopback (itself a blocked range). Relaxing the
+// predicate isolates the redirect/size paths; it does not weaken what
+// production ships, since NewClient() still passes blocked().
+func newClient(isBlocked func(net.IP) bool) *http.Client {
 	dialer := &net.Dialer{Timeout: fetchTimeout}
 	return &http.Client{
 		Timeout: fetchTimeout,
@@ -73,7 +84,7 @@ func NewClient() *http.Client {
 					return nil, err
 				}
 				for _, ip := range ips {
-					if blocked(ip.IP) {
+					if isBlocked(ip.IP) {
 						return nil, fmt.Errorf("%w: %s resolves to %s", ErrBlockedAddress, host, ip.IP)
 					}
 				}
