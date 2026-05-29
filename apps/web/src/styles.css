@@ -109,6 +109,19 @@
 }
 .lumen-live-dot { animation: lumen-live-dot 1.4s ease-in-out infinite; }
 
+/* #110 — simulated live-feed sheen (used when no real videoUrl is provided;
+   spec §4 allows simulating the 直播画面). Slow looping diagonal light pass +
+   faint vertical scan so the placeholder reads as a live stream, not a still. */
+@keyframes lumen-livefeed {
+  0%   { transform: translateX(-60%); }
+  100% { transform: translateX(160%); }
+}
+.lumen-livefeed::after {
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,.06) 48%, rgba(255,255,255,.10) 50%, rgba(255,255,255,.06) 52%, transparent 70%);
+  animation: lumen-livefeed 6s ease-in-out infinite;
+}
+
 /* Connection bar shimmer */
 @keyframes lumen-shimmer {
   0% { background-position: -200% 0; }
