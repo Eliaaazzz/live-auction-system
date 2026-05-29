@@ -50,6 +50,12 @@ type Registry struct {
 	BidsRejected     *Counter
 	BackpressureDrop *Counter
 	SeqGap           *Counter
+	// V10k Tier C: count of BID_PLACE rejected by the gateway-side fast-path
+	// pre-aggregation filter (eventually-consistent room price cache; see
+	// hub.roomStateSnap). High value relative to BidsRejected indicates the
+	// filter is effective; low value indicates light bid contention. Always
+	// also bumps BidsRejected so the aggregate stays consistent.
+	BidsRejectedFastPath *Counter
 
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
@@ -61,16 +67,17 @@ type Registry struct {
 // (~60k per histogram at 500/50) are well within memory budget at cap=4096.
 func New() *Registry {
 	return &Registry{
-		AckLatency:       NewHistogram(4096),
-		BroadcastLatency: NewHistogram(4096),
-		HammerLatency:    NewHistogram(4096),
-		CatchupLatency:   NewHistogram(4096),
-		ScriptTime:       NewHistogram(4096),
-		HandlerOverhead:  NewHistogram(4096),
-		BidsAccepted:     &Counter{},
-		BidsRejected:     &Counter{},
-		BackpressureDrop: &Counter{},
-		SeqGap:           &Counter{},
+		AckLatency:           NewHistogram(4096),
+		BroadcastLatency:     NewHistogram(4096),
+		HammerLatency:        NewHistogram(4096),
+		CatchupLatency:       NewHistogram(4096),
+		ScriptTime:           NewHistogram(4096),
+		HandlerOverhead:      NewHistogram(4096),
+		BidsAccepted:         &Counter{},
+		BidsRejected:         &Counter{},
+		BidsRejectedFastPath: &Counter{},
+		BackpressureDrop:     &Counter{},
+		SeqGap:               &Counter{},
 	}
 }
 
@@ -92,36 +99,38 @@ func (r *Registry) ObserveStreamLen(n int64) {
 // proto/observed.md (T8 will materialize a doc; the field names here are the
 // source). Histograms render as {p50,p95,p99,count} in milliseconds.
 type Snapshot struct {
-	Ack              HistogramSnapshot `json:"ackLatencyMs"`
-	Broadcast        HistogramSnapshot `json:"broadcastLatencyMs"`
-	Hammer           HistogramSnapshot `json:"hammerLatencyMs"`
-	Catchup          HistogramSnapshot `json:"catchupLatencyMs"`
-	ScriptTime       HistogramSnapshot `json:"placeBidScriptTimeMs"`
-	HandlerOverhead  HistogramSnapshot `json:"bidHandlerOverheadMs"`
-	BidsAccepted     int64             `json:"bidsAccepted"`
-	BidsRejected     int64             `json:"bidsRejected"`
-	BackpressureDrop int64             `json:"backpressureForceClose"`
-	SeqGap           int64             `json:"seqGapCount"`
-	StreamLenMax     int64             `json:"streamLenMax"`
-	ActiveConns      int64             `json:"activeConns"`
+	Ack                  HistogramSnapshot `json:"ackLatencyMs"`
+	Broadcast            HistogramSnapshot `json:"broadcastLatencyMs"`
+	Hammer               HistogramSnapshot `json:"hammerLatencyMs"`
+	Catchup              HistogramSnapshot `json:"catchupLatencyMs"`
+	ScriptTime           HistogramSnapshot `json:"placeBidScriptTimeMs"`
+	HandlerOverhead      HistogramSnapshot `json:"bidHandlerOverheadMs"`
+	BidsAccepted         int64             `json:"bidsAccepted"`
+	BidsRejected         int64             `json:"bidsRejected"`
+	BidsRejectedFastPath int64             `json:"bidsRejectedFastPath"`
+	BackpressureDrop     int64             `json:"backpressureForceClose"`
+	SeqGap               int64             `json:"seqGapCount"`
+	StreamLenMax         int64             `json:"streamLenMax"`
+	ActiveConns          int64             `json:"activeConns"`
 }
 
 // Snapshot is non-blocking from the writer side: each histogram takes its own
 // mutex briefly to copy + sort a sample slice; counters/gauges are atomic.
 func (r *Registry) Snapshot() Snapshot {
 	return Snapshot{
-		Ack:              r.AckLatency.Snapshot(),
-		Broadcast:        r.BroadcastLatency.Snapshot(),
-		Hammer:           r.HammerLatency.Snapshot(),
-		Catchup:          r.CatchupLatency.Snapshot(),
-		ScriptTime:       r.ScriptTime.Snapshot(),
-		HandlerOverhead:  r.HandlerOverhead.Snapshot(),
-		BidsAccepted:     r.BidsAccepted.Load(),
-		BidsRejected:     r.BidsRejected.Load(),
-		BackpressureDrop: r.BackpressureDrop.Load(),
-		SeqGap:           r.SeqGap.Load(),
-		StreamLenMax:     r.StreamLenMax.Load(),
-		ActiveConns:      r.ActiveConns.Load(),
+		Ack:                  r.AckLatency.Snapshot(),
+		Broadcast:            r.BroadcastLatency.Snapshot(),
+		Hammer:               r.HammerLatency.Snapshot(),
+		Catchup:              r.CatchupLatency.Snapshot(),
+		ScriptTime:           r.ScriptTime.Snapshot(),
+		HandlerOverhead:      r.HandlerOverhead.Snapshot(),
+		BidsAccepted:         r.BidsAccepted.Load(),
+		BidsRejected:         r.BidsRejected.Load(),
+		BidsRejectedFastPath: r.BidsRejectedFastPath.Load(),
+		BackpressureDrop:     r.BackpressureDrop.Load(),
+		SeqGap:               r.SeqGap.Load(),
+		StreamLenMax:         r.StreamLenMax.Load(),
+		ActiveConns:          r.ActiveConns.Load(),
 	}
 }
 
