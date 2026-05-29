@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
@@ -132,6 +133,13 @@ func spaFileServer(webDir string) http.Handler {
 	fileServer := http.FileServer(http.Dir(webDir))
 	index := filepath.Join(webDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never fall through to the SPA for the API / WS namespaces. An unmatched
+		// /api/* or /ws path is a real 404 — without this guard it returned
+		// index.html with 200 and the frontend tried to JSON.parse HTML. #109.
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || p == "/api" || strings.HasPrefix(p, "/ws") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"code": "ERR_NOT_FOUND"})
+			return
+		}
 		if r.URL.Path != "/" {
 			// path.Clean on a rooted copy neutralizes any ../ traversal before
 			// we touch the filesystem; filepath.Join then keeps us under webDir.
