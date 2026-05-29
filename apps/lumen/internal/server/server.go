@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
@@ -112,5 +114,29 @@ func (s *Server) routes(mux *http.ServeMux) {
 	if webDir == "" {
 		webDir = "./web"
 	}
-	mux.Handle("/", http.FileServer(http.Dir(webDir)))
+	mux.Handle("/", spaFileServer(webDir))
+}
+
+// spaFileServer serves static assets from webDir, falling back to index.html
+// for any unmatched path so the React app's client-side routes (BrowserRouter:
+// /room/:id, /evidence/:id, /preview/*) resolve on direct load + refresh, not
+// just in-app navigation. The API / WS / metrics routes are registered on the
+// mux before this catch-all, so they always take precedence. Existing files
+// (the hashed /assets/* bundles) are served as-is; only genuinely-missing paths
+// fall through to the SPA entry point.
+func spaFileServer(webDir string) http.Handler {
+	fileServer := http.FileServer(http.Dir(webDir))
+	index := filepath.Join(webDir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			// path.Clean on a rooted copy neutralizes any ../ traversal before
+			// we touch the filesystem; filepath.Join then keeps us under webDir.
+			rel := filepath.FromSlash(path.Clean("/" + r.URL.Path))
+			if fi, err := os.Stat(filepath.Join(webDir, rel)); err == nil && !fi.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		http.ServeFile(w, r, index)
+	})
 }

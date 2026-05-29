@@ -13,8 +13,8 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
-	@echo "admin:  http://localhost:8080/admin.html"
-	@echo "mobile: http://localhost:8080/room.html?auction=auc_demo"
+	@echo "seller admin : http://localhost:8080/admin"
+	@echo "buyer room   : http://localhost:8080/room/auc_demo  (run 'make seed' first)"
 
 down:             ## stop stack + wipe volumes
 	$(COMPOSE) down -v
@@ -184,10 +184,17 @@ chaos-redis:     ## phase 2: Redis — bid -> ERR_AUCTION_PAUSED under outage; f
 		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
 		echo "waiting for lumen healthz ($$i)"; sleep 2; \
 	done
-	@echo "--- redis: fresh auction post-recovery ---"
+	@echo "--- redis: fresh auction post-recovery (setup warms 1 bid → seq=1) ---"
 	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-recover.log
 	@grep -m1 '^CHAOS_AID=' .chaos-recover.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
 	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID from recover setup"; cat .chaos-recover.log; exit 1; }
+	@# Wait for the warm bid to drain Stream → MySQL before verifying. After the
+	@# redis wipe + lumen restart the persistence worker re-establishes its
+	@# consumer group from scratch, so the projection of seq=1 lags the bid by a
+	@# tick; verifying immediately races it (mismatch_at_seq=1, stream=1 mysql=0).
+	@# Mirrors the chaos-mysql drain wait.
+	@echo "--- redis: wait for persistence drain (events-count >= 1) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=wait-events --aid="$$(cat $(CHAOS_AID_FILE))" --want-seq=1 --timeout-ms=30000
 	@echo "--- redis: verify recovered auction (3-way diff + hash chain) ---"
 	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
 	@echo "✓ chaos[2/5] redis PASSED · degrade=ERR_AUCTION_PAUSED · recover=fresh-auction-consistent"
@@ -344,8 +351,8 @@ demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves st
 	$(MAKE) chaos
 	@echo "+==============================================================+"
 	@echo "|  DEMO PATH GREEN -- every section 12 node asserted via make  |"
-	@echo "|  UI: http://localhost:8080/admin.html                        |"
-	@echo "|      http://localhost:8080/room.html?auction=auc_demo        |"
+	@echo "|  UI: http://localhost:8080/admin            (seller console) |"
+	@echo "|      http://localhost:8080/room/auc_demo    (buyer room)     |"
 	@echo "+==============================================================+"
 
 demo-auction:     ## T10 §12.4-5: anti-snipe extend -> hammer -> evidence on one auction (asserted)
