@@ -128,8 +128,8 @@ export function IndexPage() {
             Admin 用 DesktopShell 包裹。 <code>/room/:id</code> 是真正连接
             WebSocket 的入口， <code>/preview/*</code> 用 demo 数据渲染。
             <br/>
-            <span style={{ color: 'var(--solemn-gold)' }}>VITE_USE_MOCK_DATA=true</span>{' '}
-            时整站从 demo data 渲染（默认）；接好后端后设为 false。
+            默认连真实后端；设 <span style={{ color: 'var(--solemn-gold)' }}>VITE_USE_MOCK_DATA=true</span>{' '}
+            可让 <code>/room/:id</code> 改用 demo 数据（仅本地调试）。
           </p>
         </div>
 
