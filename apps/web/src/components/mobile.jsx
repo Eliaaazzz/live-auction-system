@@ -288,6 +288,7 @@ function MobileRoom({
 
         {/* Price + countdown row */}
         <div className={showOwnFlash ? 'lumen-gold-flash' : ''} style={{
+          flexShrink: 0,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
           padding: '6px 4px 0', borderRadius: 8,
         }}>
@@ -314,7 +315,7 @@ function MobileRoom({
         </div>
 
         {/* Anti-snipe badge row — F02 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
           <ExtendBadge count={extendCount} sweep={extendSweep}/>
           <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
             末 10s 出价自动延时
@@ -325,6 +326,13 @@ function MobileRoom({
           </span>
         </div>
 
+        {/* Scrollable middle — leaderboard + AI bubble squish/scroll here so the
+            bid bar below stays pinned and reachable even when the content is
+            taller than the panel (short viewports / the fixed MobileFrame). */}
+        <div className="no-scrollbar" style={{
+          flex: 1, minHeight: 0, overflowY: 'auto',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
         {/* Leaderboard */}
         <div style={{ marginTop: 4 }}>
           <div style={{
@@ -349,11 +357,13 @@ function MobileRoom({
 
         {/* AI bubble */}
         <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
+        </div>{/* end scrollable middle */}
 
         {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
             onBid is called with the absolute cents string the chip computed;
-            LiveRoomRoute wires it to placeBid. */}
-        <div style={{ marginTop: 'auto' }}>
+            LiveRoomRoute wires it to placeBid. Pinned (flex-shrink:0) so it is
+            always visible at the bottom of the panel. */}
+        <div style={{ flexShrink: 0, marginTop: 8 }}>
           <QuickBidChips
             currentCents={currentCents}
             stepCents={stepCents}
