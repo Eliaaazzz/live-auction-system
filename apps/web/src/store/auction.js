@@ -115,8 +115,14 @@ export const useAuctionStore = create((set, get) => ({
 
   // ── leaderboard reconcile (after REST GET /leaderboard) ──────
   setLeaders: (leaders) => set((s) => ({
+    // Normalize the REST /leaderboard shape ({ userId, amountCents }) to the
+    // render shape ({ displayName, cents }). The backend ZSET has no display
+    // name, so fall back to userId — rendering u.displayName[0] on an undefined
+    // name crashes the whole room (blank screen). cents<-amountCents likewise.
     leaders: leaders.map((l) => ({
       ...l,
+      displayName: l.displayName || l.userId,
+      cents: l.cents ?? l.amountCents ?? '0',
       isYou: l.userId === s.yourUserId,
     })),
   })),
