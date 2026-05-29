@@ -63,6 +63,8 @@ function MobileRoom({
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
   serverClockOffsetMs = 0, // now - serverTimeMs skew (P4); drives the drift chip
   lastSeq = null,          // latest applied Stream seq; null → not yet joined
+  videoUrl = null,         // optional fixed loop for the 直播画面 (spec §4); when
+                           // absent we simulate the feed (CSS sheen over poster)
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
@@ -198,12 +200,21 @@ function MobileRoom({
             backgroundImage: 'radial-gradient(rgba(255,255,255,.06) 1px, transparent 1.5px)',
             backgroundSize: '8px 8px',
           }}/>
-          {/* Item 3: real product image as the "live" feed, layered over the
-              placeholder. Non-authoritative ambiance; onError → keeps the SVG. */}
-          {productImage && (
+          {/* 直播画面 (spec §4). A real fixed loop plays when videoUrl is set;
+              otherwise we keep the product image / SVG placeholder and simulate
+              a feed with a slow sheen. Non-authoritative — never gates bidding. */}
+          {videoUrl ? (
+            <video src={videoUrl} poster={productImage || undefined}
+              autoPlay muted loop playsInline
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          ) : productImage ? (
             <img src={productImage} alt=""
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          ) : null}
+          {/* simulated-feed sheen — only when there's no real video and we're live */}
+          {!videoUrl && status === 'LIVE' && (
+            <div className="lumen-livefeed" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}/>
           )}
         </div>
 
