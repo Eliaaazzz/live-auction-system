@@ -68,6 +68,15 @@ func TestRecommend_AlwaysAdvisoryAndNeverErrors(t *testing.T) {
 	if resp.Disclaimer == "" {
 		t.Fatal("disclaimer must survive fallback")
 	}
+	// PDGGK #116: fallback must still carry a complete, non-zero suggestion so
+	// downstream never sees missing numeric fields — even with no input signal.
+	for _, f := range []struct{ name, v string }{
+		{"start", resp.StartPriceCents}, {"step", resp.StepCents}, {"reserve", resp.ReserveCents},
+	} {
+		if f.v == "" || f.v == "0" {
+			t.Errorf("fallback %s must be non-empty/non-zero, got %q", f.name, f.v)
+		}
+	}
 }
 
 func TestRecommend_GuardrailSwapsRationaleKeepsNumbers(t *testing.T) {
@@ -123,6 +132,23 @@ func TestMock_SealedCluster_RecommendsOpenClimb(t *testing.T) {
 	}
 	if strings.Contains(adv.Rationale, "直接成交") {
 		t.Fatalf("tight cluster should NOT advise early accept, got %q", adv.Rationale)
+	}
+}
+
+func TestMock_SealedSingleBid_AnchorsOnMax(t *testing.T) {
+	// One sealed bid → second = median = 0. Must NOT anchor on 0; floor falls
+	// back to max (PDGGK #116). Not an early-accept (no second to compare).
+	adv, err := MockGenerator(Request{
+		Market: Market{SealedSummary: &SealedSummary{Count: 1, MaxCents: "9000000"}},
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if adv.StartPriceCents != "9000000" || adv.ReserveCents != "9000000" {
+		t.Fatalf("single sealed bid should anchor on max, got start=%q reserve=%q", adv.StartPriceCents, adv.ReserveCents)
+	}
+	if strings.Contains(adv.Rationale, "直接成交") {
+		t.Fatalf("single bid (no second) should not be early-accept, got %q", adv.Rationale)
 	}
 }
 
