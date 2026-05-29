@@ -12,6 +12,12 @@ COPY apps/web/package.json apps/web/package-lock.json ./
 # check fails on Linux — the CI `web` job uses `npm install` for the same reason.
 RUN npm install --no-audit --no-fund
 COPY apps/web/ ./
+# Vite inlines VITE_* at build time. The deployed bundle MUST hit the real
+# backend (same-origin /api + /ws), NOT the inline demo data — without this the
+# whole app ships in mock mode (frozen room, no WS, dead bid button). #106.
+ENV VITE_USE_MOCK_DATA=false
+ENV VITE_API_BASE=/api
+ENV VITE_WS_BASE=/ws
 RUN npm run build
 
 # Stage 2: build the Go backend.

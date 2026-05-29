@@ -23,6 +23,8 @@ const DEMO_LEADERS = [
 
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
+  productImage = null,
+  viewerCount = 0,
   remainingMs = 30000,
   status = 'LIVE',
   currentCents = '12880000',
@@ -59,6 +61,10 @@ function MobileRoom({
   bidsPerSecPeak = 6,      // scale ceiling — calibrate from observed peak
   leaders: leadersProp,    // optional override; falls back to DEMO_LEADERS
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
+  serverClockOffsetMs = 0, // now - serverTimeMs skew (P4); drives the drift chip
+  lastSeq = null,          // latest applied Stream seq; null → not yet joined
+  videoUrl = null,         // optional fixed loop for the 直播画面 (spec §4); when
+                           // absent we simulate the feed (CSS sheen over poster)
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
@@ -194,6 +200,22 @@ function MobileRoom({
             backgroundImage: 'radial-gradient(rgba(255,255,255,.06) 1px, transparent 1.5px)',
             backgroundSize: '8px 8px',
           }}/>
+          {/* 直播画面 (spec §4). A real fixed loop plays when videoUrl is set;
+              otherwise we keep the product image / SVG placeholder and simulate
+              a feed with a slow sheen. Non-authoritative — never gates bidding. */}
+          {videoUrl ? (
+            <video src={videoUrl} poster={productImage || undefined}
+              autoPlay muted loop playsInline
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          ) : productImage ? (
+            <img src={productImage} alt=""
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          ) : null}
+          {/* simulated-feed sheen — only when there's no real video and we're live */}
+          {!videoUrl && status === 'LIVE' && (
+            <div className="lumen-livefeed" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}/>
+          )}
         </div>
 
         {/* Top chrome over video */}
@@ -215,7 +237,7 @@ function MobileRoom({
             }}>琉</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               <span style={{ fontSize: 11, fontWeight: 600 }}>琉森拍卖行</span>
-              <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>1.2万 在线</span>
+              <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>{viewerCount} 在线</span>
             </div>
             <button
               onClick={() => setFollowing(f => !f)}
@@ -280,7 +302,7 @@ function MobileRoom({
               <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em' }}>
                 {warn ? '即将落槌' : '距落槌'}
               </span>
-              <ClockDriftIndicator offsetMs={42}/>
+              <ClockDriftIndicator offsetMs={serverClockOffsetMs}/>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {showHourglass && warn && (
@@ -299,7 +321,7 @@ function MobileRoom({
           </span>
           <div style={{ flex: 1 }}/>
           <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-            seq #14921
+            seq #{lastSeq ?? '—'}
           </span>
         </div>
 
@@ -666,8 +688,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           </span>
         </div>
         <div style={{ flex: 1 }}/>
-        {/* Chain verified — or BREAK flag */}
-        {chainBreak ? (
+        {/* Chain verified — or BREAK flag. Uses effectiveBreak so a WIRED card
+            reflects the real evidence.chainVerified, not just the demo prop. */}
+        {effectiveBreak ? (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 10px', borderRadius: 999,
@@ -698,7 +721,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         )}
       </div>
 
-      {chainBreak && (
+      {effectiveBreak && (
         <div style={{
           margin: '0 16px 12px', padding: '10px 12px', borderRadius: 8,
           background: 'rgba(254,44,85,.08)', border: '1px solid rgba(254,44,85,.35)',
@@ -709,7 +732,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           </svg>
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--state-rejected)' }}>
-              检测到哈希链断裂 · seq #{breakAtSeq}
+              检测到哈希链断裂 · seq #{effectiveBreakAtSeq}
             </div>
             <div style={{ fontSize: 11, color: 'var(--solemn-cream-dim)', lineHeight: 1.5, marginTop: 4 }}>
               prev_hash 与上一条 event_hash 不匹配。该记录及之后所有事件不可信，需 Replay Verifier 复核。

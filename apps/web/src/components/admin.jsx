@@ -60,9 +60,45 @@ const HIGH_RISK_DISCLAIMER = '此项不可由 VLM 客观验证 · 信息以卖�
 function AdminVLMFacts() {
   const navigate = useNavigate();
   const { id: auctionId } = useParams();
-  const [facts, setFacts] = React.useState(VLM_FACTS);
+  const [facts, setFacts] = React.useState([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [loading, setLoading] = React.useState(true);
+
+  // Item 2 (#101): draft facts from the REAL VLM endpoint (/facts/draft,
+  // mock-backed) instead of a hardcoded array. Fetch the auction for its
+  // productId + image, then ask the sidecar to extract facts from that image.
+  // AI-down surfaces as a banner; the bid path is unaffected (V9 P3).
+  React.useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const a = await api.getAuction(auctionId);
+        const draft = await api.draftFacts({
+          productId: a.productId || '',
+          imageUrls: a.imageUrl ? [a.imageUrl] : [],
+          title: a.productName || '',
+          description: a.description || '',
+        });
+        if (!live) return;
+        const labelOf = { category: '类目', brand: '品牌', model: '型号', condition: '成色', flaws: '瑕疵', authenticity: '真伪', specs: '关键参数' };
+        setFacts((draft.facts || []).map((f) => ({
+          id: f.field,
+          label: labelOf[f.field] || f.field,
+          vlmText: String(f.value),
+          status: 'pending',
+          confidence: f.confidence,
+          evidence: draft.modelName || 'VLM',
+          highRisk: !!f.highRisk,
+        })));
+      } catch (e) {
+        if (live) setError('VLM 抽取失败(AI 旁路,出价不受影响): ' + (e?.message || String(e)));
+      } finally {
+        if (live) setLoading(false);
+      }
+    })();
+    return () => { live = false; };
+  }, [auctionId]);
   // T7-3 §4.3: read AI sidecar health for the on-page status pill +
   // the non-blocking freeze banner. Local component state for facts
   // stays unchanged when the sidecar is offline — the seller can still
@@ -613,6 +649,7 @@ function AdminConsole() {
   const recentRejects  = useAuctionStore((s) => s.recentRejects);
   const totalBidsCount = useAuctionStore((s) => s.totalBidsCount);
   const bidderIds      = useAuctionStore((s) => s.bidderIds);
+  const leaders        = useAuctionStore((s) => s.leaders);
   // init() is a stable function ref on the store — accessing via getState()
   // for the WS bootstrap effect (no need to subscribe).
   const rafRef = React.useRef(null);
@@ -647,6 +684,14 @@ function AdminConsole() {
         });
       } catch (e) {
         console.warn('[Console] snapshot failed (continuing — WS will rebuild)', e);
+      }
+      try {
+        // Seed the leaderboard so the console shows existing top bids on first
+        // paint, not just bids placed after the broadcaster opened it.
+        const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+        if (alive) useAuctionStore.getState().setLeaders(leaderboard);
+      } catch (e) {
+        console.warn('[Console] leaderboard seed failed', e);
       }
       const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
       client = new RoomClient({
@@ -872,7 +917,7 @@ function AdminConsole() {
             <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', fontWeight: 600, letterSpacing: '.06em', marginBottom: 8 }}>
               出价榜
             </div>
-            <Leaderboard leaders={DEMO_LEADERS.slice(0, 5)}/>
+            <Leaderboard leaders={(auctionId ? leaders : DEMO_LEADERS).slice(0, 5)}/>
           </div>
 
           {/* Last-N rejects panel — blueprint §3.5 */}

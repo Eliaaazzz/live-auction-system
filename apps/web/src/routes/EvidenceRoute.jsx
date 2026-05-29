@@ -36,12 +36,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { MobileEvidence } from '../components/mobile.jsx';
+import { formatCentsCNY } from '../components/primitives.jsx';
 import { ensureSession } from '../lib/auth.js';
 import { api } from '../lib/api.js';
 
 export function EvidenceRoute() {
   const { auctionId } = useParams();
   const [state, setState] = useState({ phase: 'loading', evidence: null, error: null });
+  const [order, setOrder] = useState(null); // settlement order (null = none / not sold)
 
   useEffect(() => {
     let alive = true;
@@ -51,11 +53,10 @@ export function EvidenceRoute() {
         const ev = await api.getEvidence(auctionId);
         if (!alive) return;
         setState({ phase: 'ready', evidence: ev, error: null });
+        // Best-effort: a SOLD auction has a settlement order (模拟支付). 404 = none.
+        try { const o = await api.getOrder(auctionId); if (alive) setOrder(o); } catch { /* no order */ }
       } catch (e) {
         if (!alive) return;
-        // Network / 404 / 401 — surface a minimal error state. The Evidence
-        // screen's solemn palette is held even on error so a teammate seeing
-        // the URL gets the right visual cue (this is a record, not the room).
         const msg = e?.message || String(e);
         setState({ phase: 'error', evidence: null, error: msg });
       }
@@ -69,7 +70,47 @@ export function EvidenceRoute() {
   if (state.phase === 'error') {
     return <EvidenceStatus message={`无法读取证据卡 · ${state.error}`} tone="error" />;
   }
-  return <MobileEvidence evidence={state.evidence} />;
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <MobileEvidence evidence={state.evidence} />
+      {order && <PaymentBar order={order} onPaid={setOrder} auctionId={auctionId} />}
+    </div>
+  );
+}
+
+// 结果查看 · 模拟支付流程. Shows the settlement amount + a pay button; idempotent
+// (POST /pay). 403 → only the winning buyer may pay.
+function PaymentBar({ order, onPaid, auctionId }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const paid = order.status === 'paid' || !!order.paidAt;
+  const pay = async () => {
+    setBusy(true); setMsg(null);
+    try { onPaid(await api.pay(auctionId)); }
+    catch (e) { setMsg(/403/.test(e?.message || '') ? '仅中拍买家可支付' : (e?.message || '支付失败')); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div style={{
+      position: 'absolute', left: 0, right: 0, bottom: 0, padding: '14px 18px',
+      background: 'rgba(10,10,20,.92)', borderTop: '1px solid rgba(201,169,97,.25)',
+      display: 'flex', alignItems: 'center', gap: 12, fontFamily: 'var(--font-sans)',
+    }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 11, color: 'var(--solemn-cream-dim, #9aa0b4)' }}>成交价 · 待支付</div>
+        <div className="mono" style={{ fontSize: 18, fontWeight: 700, color: 'var(--solemn-gold)' }}>
+          {formatCentsCNY(String(order.amountCents))}
+        </div>
+        {msg && <div style={{ fontSize: 11, color: 'var(--state-rejected,#ff6b6b)' }}>{msg}</div>}
+      </div>
+      {paid
+        ? <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--douyin-cyan,#25F4EE)' }}>已支付 ✓</span>
+        : <button onClick={pay} disabled={busy} style={{
+            padding: '10px 22px', borderRadius: 999, border: 'none', cursor: 'pointer',
+            background: 'var(--douyin-red,#FE2C55)', color: '#fff', fontSize: 14, fontWeight: 700,
+          }}>{busy ? '支付中…' : '模拟支付'}</button>}
+    </div>
+  );
 }
 
 function EvidenceStatus({ message, tone = 'info' }) {

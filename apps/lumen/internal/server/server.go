@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
@@ -100,14 +101,18 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
+	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
 	mux.HandleFunc("GET /api/auctions/{id}/evidence", s.handleEvidence)
+	mux.HandleFunc("GET /api/auctions/{id}/order", s.handleGetOrder)
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
 	mux.HandleFunc("GET /ws", s.handleWS)
 
 	webDir := os.Getenv("WEB_DIR")
@@ -128,6 +133,13 @@ func spaFileServer(webDir string) http.Handler {
 	fileServer := http.FileServer(http.Dir(webDir))
 	index := filepath.Join(webDir, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never fall through to the SPA for the API / WS namespaces. An unmatched
+		// /api/* or /ws path is a real 404 — without this guard it returned
+		// index.html with 200 and the frontend tried to JSON.parse HTML. #109.
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || p == "/api" || strings.HasPrefix(p, "/ws") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"code": "ERR_NOT_FOUND"})
+			return
+		}
 		if r.URL.Path != "/" {
 			// path.Clean on a rooted copy neutralizes any ../ traversal before
 			// we touch the filesystem; filepath.Join then keeps us under webDir.
