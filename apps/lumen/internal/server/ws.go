@@ -658,6 +658,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 
 	case model.TypeBidPlace:
+		handlerStart := time.Now() // P8: full handler span (decode → ack push)
 		var d model.BidPlaceData
 		_ = json.Unmarshal(env.Data, &d)
 		// §8: strictly validate AND canonicalize the amount BEFORE the Lua call. A
@@ -687,14 +688,21 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		ackStart := time.Now()
 		scriptStart := time.Now()
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		scriptDur := time.Since(scriptStart)
 		if c.metrics != nil {
-			c.metrics.ScriptTime.Observe(time.Since(scriptStart))
+			c.metrics.ScriptTime.Observe(scriptDur)
 		}
+		// P8: the BID_PLACE handler's own synchronous work must stay ≤5ms. Observe
+		// it as (full handler) − (PlaceBid/Redis span) so the network RTT (already
+		// covered by AckLatency p95<80ms) can't mask a Go-side regression. Observed
+		// inline at each exit branch rather than via a defer-closure — the per-bid
+		// hot path stays allocation-free (see metrics.Histogram.Time docs).
 		if err != nil {
 			log.Printf("place_bid %s: %v", c.aid, err)
 			c.push(rejected(c.aid, bidErrCode(err)))
 			if c.metrics != nil {
 				c.metrics.BidsRejected.Inc()
+				c.metrics.HandlerOverhead.Observe(time.Since(handlerStart) - scriptDur)
 			}
 			return
 		}
@@ -722,6 +730,11 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 				c.metrics.AckLatency.Observe(time.Since(ackStart))
 				c.metrics.BidsRejected.Inc()
 			}
+		}
+		if c.metrics != nil {
+			// P8 handler overhead for the non-error paths (accept / reject):
+			// full handler span minus the Redis PlaceBid span.
+			c.metrics.HandlerOverhead.Observe(time.Since(handlerStart) - scriptDur)
 		}
 	}
 }
