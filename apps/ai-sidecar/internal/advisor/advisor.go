@@ -134,7 +134,7 @@ func recommendWithGuardrail(req Request, generate Generator) Response {
 	adv, err := generate(req)
 	if err != nil {
 		log.Printf("[advisor] generator failed auction=%s err=%v · falling back", req.AuctionID, err)
-		return fallbackResponse()
+		return fallbackResponse(req)
 	}
 	mode := adv.Mode
 	if mode != ModeOpen && mode != ModeSealedThenOpen {
@@ -157,10 +157,25 @@ func recommendWithGuardrail(req Request, generate Generator) Response {
 	}
 }
 
-func fallbackResponse() Response {
+// fallbackResponse returns a COMPLETE advisory (non-empty start/step/reserve)
+// even when the generator fails, so downstream never sees missing numeric
+// fields (PDGGK review on #116). It anchors on the same signals MockGenerator
+// uses (estimate / historical), with a neutral placeholder when nothing is
+// provided.
+func fallbackResponse(req Request) Response {
+	anchor := parseCents(req.Item.EstValueCents)
+	if hi := maxCents(req.Market.HistoricalSoldCents); hi > anchor {
+		anchor = hi
+	}
+	if anchor <= 0 {
+		anchor = 10000000 // ¥100,000 neutral placeholder when there is no signal
+	}
 	return Response{
 		AdvisoryOnly:    true,
 		RecommendedMode: ModeOpen,
+		StartPriceCents: itoa(anchor * 60 / 100),
+		StepCents:       itoa(roundStep(anchor / 100)),
+		ReserveCents:    itoa(anchor * 80 / 100),
 		Rationale:       safeRationale,
 		Disclaimer:      disclaimer,
 		Fallback:        true,
@@ -229,9 +244,16 @@ func adviceFromSealed(s *SealedSummary) (Advice, error) {
 			Rationale:       "暗拍最高价远超次高 · 建议直接成交，提前锁定。",
 		}, nil
 	}
+	// Sparse / single sealed bid → median (and maybe second) are 0; never anchor
+	// on 0. Fall back second → max so the floor is always a real signal (PDGGK
+	// review on #116).
 	floor := median
 	if floor <= 0 {
-		floor = second
+		if second > 0 {
+			floor = second
+		} else {
+			floor = max
+		}
 	}
 	return Advice{
 		Mode:            ModeOpen,
