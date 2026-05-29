@@ -7,7 +7,8 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke demo-auction
+        demo demo-smoke demo-auction \
+        k6 k6-setup k6-run
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -374,3 +375,42 @@ demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke)
 	@echo ">>> demo-smoke [7/7] V9 P3 AI offline -> core bidding continues"
 	$(MAKE) e2e-ai-offline
 	@echo "demo-smoke GREEN -- demo path wiring intact"
+
+## --- T10 k6 stress (high-concurrency simulator, beyond V9 §4.2 stretch) ---
+## V9 §4.2 stretch lane is 1k connected + 100 active. `make k6` drives 5000
+## concurrent WS sessions (default) — proves the system holds 5×stretch
+## *connection* scale, with the bid path bounded by Lua hot-path throughput.
+## Not in CI (3-min run, needs k6 binary); operator-run + nightly schedule.
+##
+## See tools/loadtest/README.md for tunables (N_OBSERVERS / N_BIDDERS /
+## DURATION / RAMP).
+##
+## Prerequisites:
+##   - make up (stack live on :8080)
+##   - k6 v1.4+ in PATH (https://k6.io/docs/get-started/installation/)
+##   - python (json parser in setup script)
+
+k6:               ## T10 stretch: 5k concurrent WS — full pipeline (setup + run)
+	$(MAKE) k6-setup
+	$(MAKE) k6-run
+
+k6-setup:         ## stage 1: create auction + dev-login N_USERS buyer tokens
+	@N_USERS=$${N_USERS:-5000} bash tools/loadtest/k6-setup.sh
+
+k6-run:           ## stage 2: run k6 scenarios against the pre-staged AID + tokens
+	@test -f .k6-aid || { echo "missing .k6-aid — run make k6-setup first"; exit 1; }
+	@test -f .k6-tokens || { echo "missing .k6-tokens — run make k6-setup first"; exit 1; }
+	@# tools/loadtest/.k6-tokens is the script-relative copy k6 open() needs;
+	@# keep the repo-root file authoritative + copy into the script dir for k6.
+	@cp .k6-tokens tools/loadtest/.k6-tokens
+	k6 run \
+		-e TOKENS=.k6-tokens \
+		-e AID=$$(cat .k6-aid) \
+		-e N_OBSERVERS=$${N_OBSERVERS:-4950} \
+		-e N_BIDDERS=$${N_BIDDERS:-50} \
+		-e DURATION=$${DURATION:-60s} \
+		-e RAMP=$${RAMP:-15s} \
+		--summary-trend-stats="avg,p(50),p(95),p(99),max" \
+		tools/loadtest/k6-ws.js
+	@echo "k6 done — server-side delta:"
+	@curl -s http://localhost:8080/metrics | python -m json.tool | head -40
