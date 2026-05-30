@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -176,6 +177,7 @@ func (h *Hub) join(aid string, c *Conn) {
 		h.rooms[aid] = make(map[*Conn]struct{})
 	}
 	h.rooms[aid][c] = struct{}{}
+	c.roomEpoch.Add(1) // invalidate any in-flight broadcast snapshot of this conn (#118)
 }
 
 func (h *Hub) leave(c *Conn) {
@@ -183,6 +185,7 @@ func (h *Hub) leave(c *Conn) {
 	defer h.mu.Unlock()
 	if c.aid != "" && h.rooms[c.aid] != nil {
 		delete(h.rooms[c.aid], c)
+		c.roomEpoch.Add(1) // invalidate any in-flight broadcast snapshot of this conn (#118)
 		// Drop the room entry once it's empty so roomAIDs() / the fanout sweep
 		// don't keep scheduling work for zero-client rooms. Broadcasts to an
 		// empty room were already no-ops; this is read-side bookkeeping that
@@ -200,10 +203,17 @@ func (h *Hub) viewerCount(aid string) int {
 	return len(h.rooms[aid])
 }
 
+// bcastTarget pairs a recipient with the room epoch observed at snapshot time so
+// the lock-free fan-out can skip a conn that left/rejoined since the snapshot.
+type bcastTarget struct {
+	c     *Conn
+	epoch uint64
+}
+
 // connSnapPool reuses the per-broadcast recipient snapshot so fan-out at 10k
-// recipients doesn't allocate a fresh []*Conn per event. A *[]*Conn is pooled
-// (not []*Conn) to avoid boxing the slice header into the interface value.
-var connSnapPool = sync.Pool{New: func() any { s := make([]*Conn, 0, 256); return &s }}
+// recipients doesn't allocate a fresh []bcastTarget per event. A *[]bcastTarget
+// is pooled (not the slice) to avoid boxing the slice header into the interface.
+var connSnapPool = sync.Pool{New: func() any { s := make([]bcastTarget, 0, 256); return &s }}
 
 func (h *Hub) broadcast(aid string, msg []byte) {
 	// V10k Tier B: pre-encode the WS text frame ONCE for the whole room. Each
@@ -231,28 +241,36 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 	// send). A Conn that joins after the snapshot misses this one event and
 	// re-syncs via ROOM_SNAPSHOT on JOIN — identical to the prior under-lock
 	// semantics. The pooled snapshot keeps fan-out allocation-free after warmup.
-	bufp := connSnapPool.Get().(*[]*Conn)
+	bufp := connSnapPool.Get().(*[]bcastTarget)
 	buf := (*bufp)[:0]
 	h.mu.RLock()
 	for c := range h.rooms[aid] {
-		buf = append(buf, c)
+		buf = append(buf, bcastTarget{c: c, epoch: c.roomEpoch.Load()})
 	}
 	h.mu.RUnlock()
 
-	for _, c := range buf {
+	for _, t := range buf {
+		// Skip a conn that left or rejoined a different auction since the
+		// snapshot — its roomEpoch bumped, so it is no longer the member we
+		// captured. Prevents delivering THIS room's frame to a re-homed conn.
+		// (trySend*/closeWithCode are non-blocking + idempotent, so the send is
+		// safe even if the conn is mid-teardown.)
+		if t.c.roomEpoch.Load() != t.epoch {
+			continue
+		}
 		// critical room events: enqueue or force-close the slow client (it
 		// reconnects + re-snapshots) rather than silently lose the event.
-		if perr == nil && c.prepared != nil {
-			c.trySendPrepared(pm)
+		if perr == nil && t.c.prepared != nil {
+			t.c.trySendPrepared(aid, pm)
 		} else {
-			c.trySend(msg)
+			t.c.trySendRaw(aid, msg)
 		}
 	}
 
 	// Clear references + return the buffer to the pool so the pooled backing
 	// array doesn't pin Conns (and their socket buffers) between broadcasts.
 	for i := range buf {
-		buf[i] = nil
+		buf[i] = bcastTarget{}
 	}
 	*bufp = buf[:0]
 	connSnapPool.Put(bufp)
@@ -581,6 +599,12 @@ type Conn struct {
 	userID      string
 	displayName string // human nickname, resolved at connect (falls back to userID)
 	aid         string
+	// roomEpoch bumps on every hub.join/leave (membership change) for this conn.
+	// Hub.broadcast snapshots it with each recipient and re-checks it before the
+	// lock-free send, so a conn that left or rejoined a DIFFERENT auction between
+	// snapshot and send is skipped (never delivered this room's frame). Atomic so
+	// the lock-free fan-out reads it without hub.mu. (#118)
+	roomEpoch atomic.Uint64
 	// metrics is the process-wide T8 registry. Nil-safe (every Observe call
 	// checks for nil) so unit tests can construct a Conn without wiring it.
 	metrics *metrics.Registry
@@ -610,13 +634,13 @@ func (c *Conn) close() {
 // close() and the read/write error paths where the reason is "socket gone".
 // closeOnce guarantees one teardown across concurrent callers.
 //
-// MUST be non-blocking: this is invoked from trySend on the broadcast
-// goroutine while hub.RLock is held (ws.go:122 broadcast). The actual
-// CLOSE-frame WriteControl + ws.Close() are deferred to writePump's
-// flushClose (single-writer goroutine, no RLock), so a congested socket
-// can't stall the whole room — see flushClose for the bounded deadline.
-// Fairy PR #48 review: a writeWait-deadlined WriteControl here would have
-// blocked broadcast for up to 10s under hub.RLock when the socket was full.
+// MUST be non-blocking: this is invoked from the broadcast fan-out goroutine
+// (lock-free since #118) and the direct-send paths. The actual CLOSE-frame
+// WriteControl + ws.Close() are deferred to writePump's flushClose
+// (single-writer goroutine), so a congested socket can't stall the fan-out —
+// see flushClose for the bounded deadline. Fairy PR #48 review: a
+// writeWait-deadlined WriteControl here would have blocked the fan-out for up
+// to 10s when the socket was full.
 func (c *Conn) closeWithCode(code int, reason string) {
 	c.closeOnce.Do(func() {
 		c.closeCode = code
@@ -668,7 +692,11 @@ func (c *Conn) trySend(b []byte) {
 // PreparedMessage caches the frame header so writePump can ship it without
 // re-encoding per recipient. At 10k recipients × 500 bid/s this is a
 // measurable CPU win on the gateway.
-func (c *Conn) trySendPrepared(pm *websocket.PreparedMessage) {
+//
+// `aid` is the broadcast room, passed in rather than read from the mutable
+// c.aid: the fan-out runs lock-free (#118), so reading c.aid here would race a
+// concurrent ROOM_JOIN re-home of the connection.
+func (c *Conn) trySendPrepared(aid string, pm *websocket.PreparedMessage) {
 	select {
 	case <-c.done:
 		return
@@ -677,7 +705,29 @@ func (c *Conn) trySendPrepared(pm *websocket.PreparedMessage) {
 	select {
 	case c.prepared <- pm:
 	default:
-		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s, prepared lane full)", c.aid, c.userID)
+		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s, prepared lane full)", aid, c.userID)
+		if c.metrics != nil {
+			c.metrics.BackpressureDrop.Inc()
+		}
+		c.closeWithCode(closeCodeBackpressureDrop, "backpressure")
+	}
+}
+
+// trySendRaw is the raw-bytes twin of trySendPrepared, used only by Hub.broadcast
+// as the (defense-in-depth) fallback when PreparedMessage construction failed or
+// a unit-test conn has no `prepared` lane. Like trySendPrepared it takes the
+// broadcast `aid` (not the mutable c.aid) so the lock-free fan-out can't race a
+// concurrent ROOM_JOIN re-home. Same CRITICAL backpressure semantics. (#118)
+func (c *Conn) trySendRaw(aid string, b []byte) {
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	select {
+	case c.send <- b:
+	default:
+		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s)", aid, c.userID)
 		if c.metrics != nil {
 			c.metrics.BackpressureDrop.Inc()
 		}
