@@ -28,7 +28,7 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }` |
+| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs, livePlayUrl? }`. `livePlayUrl` (issue #121) is an optional HLS `.m3u8` / mp4 / webm URL the room player renders as the 直播画面; **non-authoritative** (display-only, never gates bidding/state). Empty/absent → the room falls back to the simulated feed (CSS sheen, #110). |
 | `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
