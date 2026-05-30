@@ -74,13 +74,14 @@ func IsSealedMode(m string) bool {
 	return false
 }
 
-// UsesSealedEngine reports whether the mode runs the sealed-bid engine
-// (place_bid_sealed.lua + close_auction_sealed.lua) — currently SEALED_FIRST and
-// VICKREY. Distinct from IsSealedMode, which also covers modes whose sealed
-// engine is not yet wired (ALL_PAY / PREQUALIFY).
+// UsesSealedEngine reports whether the mode runs the sealed BID path
+// (place_bid_sealed.lua) — currently SEALED_FIRST, VICKREY, and ALL_PAY. They
+// share the bid mechanics (private store + redacted SEALED_BID_RECEIVED + full
+// private ack); only the close differs (first-price / second-price / all-pay
+// coin settlement). PREQUALIFY remains a contract-only value (no engine yet).
 func UsesSealedEngine(m string) bool {
 	switch NormalizeMode(m) {
-	case ModeSealedFirst, ModeVickrey:
+	case ModeSealedFirst, ModeVickrey, ModeAllPay:
 		return true
 	}
 	return false

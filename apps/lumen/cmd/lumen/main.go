@@ -120,6 +120,15 @@ func main() {
 			log.Fatalf("demo-hybrid: %v", err)
 		}
 
+	case "demo-allpay":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoAllPay(target); err != nil {
+			log.Fatalf("demo-allpay: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

@@ -31,6 +31,7 @@ type Store struct {
 	shaStart          string
 	shaClose          string
 	shaCloseSealed    string // sealed reveal + hammer (issue #114)
+	shaCloseAllPay    string // ALL_PAY reveal + winner/runner-up coin settlement (issue #114)
 	shaCancel         string
 	evidenceKey       []byte // HMAC key for the auction_events hash chain (T4)
 }
@@ -73,7 +74,23 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	// Auction mode (issue #114). Existing rows default to ENGLISH so pre-mode
 	// auctions keep behaving exactly as before.
-	return s.ensureColumn(ctx, "auction_rules", "mode", "VARCHAR(32) NOT NULL DEFAULT 'ENGLISH'")
+	if err := s.ensureColumn(ctx, "auction_rules", "mode", "VARCHAR(32) NOT NULL DEFAULT 'ENGLISH'"); err != nil {
+		return err
+	}
+	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
+	// CREATE TABLE IF NOT EXISTS is idempotent — safe on existing volumes.
+	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (
+		id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+		auction_id  VARCHAR(64) NOT NULL,
+		user_id     VARCHAR(64) NOT NULL,
+		delta_coins BIGINT NOT NULL,
+		reason      VARCHAR(32) NOT NULL,
+		seq         BIGINT NOT NULL,
+		created_at  DATETIME NOT NULL,
+		UNIQUE KEY uq_coin (auction_id, user_id, seq),
+		KEY ix_coin_auction (auction_id)
+	)`)
+	return err
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -124,6 +141,9 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	}
 	if s.shaCloseSealed, err = s.rdb.ScriptLoad(ctx, lua.CloseSealed).Result(); err != nil {
 		return fmt.Errorf("load close_auction_sealed.lua: %w", err)
+	}
+	if s.shaCloseAllPay, err = s.rdb.ScriptLoad(ctx, lua.CloseAllPay).Result(); err != nil {
+		return fmt.Errorf("load close_auction_allpay.lua: %w", err)
 	}
 	if s.shaFreeze, err = s.rdb.ScriptLoad(ctx, lua.FreezeRules).Result(); err != nil {
 		return fmt.Errorf("load freeze_rules.lua: %w", err)
@@ -427,6 +447,9 @@ func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, er
 		}
 		keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), lbKey(aid), streamKey(aid)}
 		arr, err = s.eval(ctx, s.shaCloseSealed, keys, PubChannel(aid), priceMode)
+	case model.ModeAllPay:
+		keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), lbKey(aid), streamKey(aid)}
+		arr, err = s.eval(ctx, s.shaCloseAllPay, keys, PubChannel(aid))
 	default:
 		arr, err = s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
 	}

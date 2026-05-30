@@ -7,7 +7,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid \
+        demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid demo-allpay \
         k6 k6-setup k6-run
 
 ## --- local stack (needs Docker) ---
@@ -380,6 +380,10 @@ demo-hybrid: ## issue #114: HYBRID_REVEAL mode — broadcasts show only the 2nd-
 	@echo "=== demo-hybrid (mode #114: broadcasts hide leader -> SOLD reveals true winner -> evidence) ==="
 	$(COMPOSE) exec -T lumen /lumen demo-hybrid
 
+demo-allpay: ## issue #114: ALL_PAY chaos — winner pays AND runner-up forfeits (virtual coins); ZERO orders gate (asserted)
+	@echo "=== demo-allpay (mode #114: sealed bids -> SOLD@winner -> ALL_PAY_FORFEIT -> NO ORDER -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-allpay
+
 demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke) — orchestration regression net
 	@echo ">>> demo-smoke [1/7] stack up + seed"
 	$(MAKE) up
@@ -388,6 +392,12 @@ demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke)
 	$(MAKE) e2e-dummy-bid
 	@echo ">>> demo-smoke [3/7] section 12.4-5 anti-snipe extend -> hammer -> evidence"
 	$(MAKE) demo-auction
+	@echo ">>> demo-smoke [3a/7] issue #114 modes — sudden-death + sealed + vickrey + hybrid + allpay"
+	$(MAKE) demo-sudden-death
+	$(MAKE) demo-sealed
+	$(MAKE) demo-vickrey
+	$(MAKE) demo-hybrid
+	$(MAKE) demo-allpay
 	@echo ">>> demo-smoke [4/7] section 12.5 evidence hash chain"
 	$(MAKE) verify-evidence
 	@echo ">>> demo-smoke [5/7] section 12.6 replay verifier"

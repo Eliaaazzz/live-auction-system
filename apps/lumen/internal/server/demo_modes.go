@@ -220,6 +220,126 @@ func runDemoSealedCore(target, mode, label string) error {
 	return nil
 }
 
+// RunDemoAllPay proves ALL_PAY (issue #114): the Dollar-Auction / chaos mode.
+// Bid path is the sealed engine (amounts hidden during LIVE); at close the
+// winner pays their own bid AND the runner-up forfeits their bid — both
+// settled in VIRTUAL COINS only. The HARD money-safety gate asserts that
+// `GET /api/auctions/{id}/order` returns 404: no orders row is ever created
+// for an ALL_PAY auction, so a losing buyer can never be charged real money.
+func RunDemoAllPay(target string) error {
+	hc := &http.Client{Timeout: 10 * time.Second}
+
+	seller, err := devLogin(hc, target, "Demo Seller", "seller")
+	if err != nil {
+		return fmt.Errorf("seller dev-login: %w", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		return fmt.Errorf("create product: %w", err)
+	}
+	if err := assertFactsMock(hc, target, seller.Token, productID); err != nil {
+		return fmt.Errorf("VLM facts draft: %w", err)
+	}
+	rules := demoRules()
+	rules.Mode = model.ModeAllPay
+	aid, err := createDemoAuctionWithRules(hc, target, seller.Token, productID, rules)
+	if err != nil {
+		return fmt.Errorf("create auction: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		return fmt.Errorf("freeze rules: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/start", seller.Token,
+		map[string]int64{"durationMs": demoDurationMs}, model.CodeOKLive); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	buyerA, err := devLogin(hc, target, "Demo Bidder A", "user")
+	if err != nil {
+		return fmt.Errorf("bidder A dev-login: %w", err)
+	}
+	buyerB, err := devLogin(hc, target, "Demo Bidder B", "user")
+	if err != nil {
+		return fmt.Errorf("bidder B dev-login: %w", err)
+	}
+	connA, err := dialAndJoin(target, buyerA.Token, aid)
+	if err != nil {
+		return fmt.Errorf("bidder A connect: %w", err)
+	}
+	defer connA.Close()
+	connB, err := dialAndJoin(target, buyerB.Token, aid)
+	if err != nil {
+		return fmt.Errorf("bidder B connect: %w", err)
+	}
+	defer connB.Close()
+
+	if err := placeDemoBid(connA, aid, "11000"); err != nil {
+		return fmt.Errorf("bid A: %w", err)
+	}
+	if err := placeDemoBid(connB, aid, "12000"); err != nil {
+		return fmt.Errorf("bid B: %w", err)
+	}
+
+	reveal, err := waitForRevealedAssertSealed(connA, 40*time.Second)
+	if err != nil {
+		return fmt.Errorf("AUCTION_REVEALED: %w", err)
+	}
+	if len(reveal.Bids) != 2 {
+		return fmt.Errorf("reveal: got %d bids, want 2", len(reveal.Bids))
+	}
+	if reveal.WinnerID != buyerB.UserID {
+		return fmt.Errorf("reveal winner = %q, want %q (bidder B)", reveal.WinnerID, buyerB.UserID)
+	}
+	if reveal.AmountCents != "12000" {
+		return fmt.Errorf("reveal final price = %q, want %q (all-pay: winner pays OWN bid)", reveal.AmountCents, "12000")
+	}
+	if err := waitForType(connA, model.TypeAuctionSold, 10*time.Second); err != nil {
+		return fmt.Errorf("hammer (AUCTION_SOLD): %w", err)
+	}
+
+	// THE HARD MONEY-SAFETY GATE: no orders row may ever be created for an
+	// ALL_PAY auction. Poll briefly so persistence has a chance to catch up.
+	if err := assertNoOrder(hc, target, aid, seller.Token, 5*time.Second); err != nil {
+		return err
+	}
+
+	head, err := fetchEvidenceHead(hc, target, aid, seller.Token, 8*time.Second)
+	if err != nil {
+		return err
+	}
+	if len(head) > 8 {
+		head = head[:8]
+	}
+	fmt.Printf("DEMO_AUCTION_ID=%s\n", aid)
+	fmt.Printf("demo-allpay: PASS · reveal (2 bids) → AUCTION_SOLD@%s → NO ORDER (virtual coins) → eventsHash=%s…\n",
+		reveal.AmountCents, head)
+	return nil
+}
+
+// assertNoOrder polls GET /api/auctions/{id}/order and fails if any 2xx is ever
+// returned (any HTTP 2xx means an orders row exists, breaking the ALL_PAY
+// money-safety invariant). A 404 across the polling window is the success path.
+func assertNoOrder(hc *http.Client, target, aid, token string, d time.Duration) error {
+	deadline := time.Now().Add(d)
+	url := target + "/api/auctions/" + aid + "/order"
+	for {
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := hc.Do(req)
+		if err != nil {
+			return fmt.Errorf("order check: %w", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode == 200 {
+			return fmt.Errorf("MONEY-SAFETY BREACH: ALL_PAY auction %s has an orders row (HTTP 200 from /order)", aid)
+		}
+		if time.Now().After(deadline) {
+			return nil // 404 throughout the window — invariant holds.
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
 // RunDemoHybrid proves HYBRID_REVEAL (issue #114): English adjudication runs,
 // but the Stream/PubSub BID_ACCEPTED broadcast carries the PRIOR leader's
 // amount + identity (so the room sees the runner-up while the new leader stays

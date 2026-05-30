@@ -18,6 +18,13 @@ var PlaceBidSealed string
 //go:embed close_auction_sealed.lua
 var CloseSealed string
 
+// CloseAllPay implements ALL_PAY (issue #114) close. Shares place_bid_sealed.lua
+// for the bid path (private storage); at close, winner pays own bid + runner-up
+// forfeits in virtual coins (persistence routes to coin_ledger, not orders).
+//
+//go:embed close_auction_allpay.lua
+var CloseAllPay string
+
 // PlaceBidHybrid implements HYBRID_REVEAL (issue #114). Same ENGLISH adjudication
 // as place_bid.lua, but the Stream/PubSub broadcast carries the PRIOR leader's
 // amount + identity (so the room sees the runner-up while the new leader stays

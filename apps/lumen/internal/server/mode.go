@@ -56,7 +56,8 @@ var modeRegistry = map[string]AuctionMode{
 	model.ModeSuddenDeath:  suddenDeathMode{baseMode{model.ModeSuddenDeath}},
 	model.ModeSealedFirst:  sealedMode{baseMode{model.ModeSealedFirst}},
 	model.ModeVickrey:      sealedMode{baseMode{model.ModeVickrey}},
-	model.ModeHybridReveal: baseMode{model.ModeHybridReveal}, // ascending engine; redacted broadcast (issue #114)
+	model.ModeHybridReveal: baseMode{model.ModeHybridReveal},       // ascending engine; redacted broadcast (issue #114)
+	model.ModeAllPay:       sealedMode{baseMode{model.ModeAllPay}}, // sealed bid path + coin-ledger settlement (issue #114)
 }
 
 // modeFor returns the strategy for an enabled mode. ok=false means the mode is a
