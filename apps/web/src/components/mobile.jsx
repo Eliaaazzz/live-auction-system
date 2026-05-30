@@ -21,6 +21,48 @@ const DEMO_LEADERS = [
   { userId: 'u5', displayName: 'Echo🌙',        cents: '12200000', avatarBg: 'linear-gradient(135deg,#10b981,#059669)' },
 ];
 
+// LiveVideo renders the 直播画面 (spec §4, #121 火山直播). For an HLS .m3u8 it uses
+// hls.js on browsers without native HLS (Chrome/Firefox/Edge); Safari/iOS play
+// HLS natively, and a plain mp4/webm loop just sets src. hls.js is loaded lazily
+// (dynamic import) so the no-video path never pays for it. Display-only — never
+// gates bidding; on any failure the parent falls back to the sim sheen.
+function LiveVideo({ url, poster }) {
+  const ref = React.useRef(null);
+  React.useEffect(() => {
+    const video = ref.current;
+    if (!video || !url) return undefined;
+    const isHls = /\.m3u8(\?|$)/i.test(url);
+    const nativeHls = video.canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (isHls && !nativeHls) {
+      let cancelled = false;
+      let hls;
+      import('hls.js')
+        .then(({ default: Hls }) => {
+          if (cancelled || !ref.current) return;
+          if (Hls.isSupported()) {
+            hls = new Hls({ liveDurationInfinity: true });
+            hls.loadSource(url);
+            hls.attachMedia(ref.current);
+          } else {
+            ref.current.src = url; // last resort
+          }
+        })
+        .catch(() => { if (ref.current) ref.current.src = url; });
+      return () => { cancelled = true; if (hls) hls.destroy(); };
+    }
+    video.src = url; // native HLS (Safari/iOS) or a plain loop
+    return () => {
+      video.removeAttribute('src');
+      try { video.load(); } catch (_) { /* detach best-effort */ }
+    };
+  }, [url]);
+  return (
+    <video ref={ref} poster={poster || undefined}
+      autoPlay muted loop playsInline
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+  );
+}
+
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   productImage = null,
@@ -63,8 +105,8 @@ function MobileRoom({
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
   serverClockOffsetMs = 0, // now - serverTimeMs skew (P4); drives the drift chip
   lastSeq = null,          // latest applied Stream seq; null → not yet joined
-  videoUrl = null,         // optional fixed loop for the 直播画面 (spec §4); when
-                           // absent we simulate the feed (CSS sheen over poster)
+  videoUrl = null,         // 直播画面 URL (spec §4): HLS .m3u8 (火山直播 #121) or a
+                           // fixed loop; absent → simulate the feed (CSS sheen)
   winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
 }) {
@@ -206,9 +248,7 @@ function MobileRoom({
               otherwise we keep the product image / SVG placeholder and simulate
               a feed with a slow sheen. Non-authoritative — never gates bidding. */}
           {videoUrl ? (
-            <video src={videoUrl} poster={productImage || undefined}
-              autoPlay muted loop playsInline
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+            <LiveVideo url={videoUrl} poster={productImage}/>
           ) : productImage ? (
             <img src={productImage} alt=""
               onError={(e) => { e.currentTarget.style.display = 'none'; }}

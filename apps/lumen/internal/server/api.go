@@ -159,18 +159,24 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	if snap.Status == "" { // not yet frozen: no Redis state, fall back to MySQL status
 		snap.Status = a.Status
 	}
-	if snap.Rules == nil {
-		rules, err := s.st.GetRules(r.Context(), aid)
-		if err != nil {
-			if err == store.ErrNotFound {
-				writeErr(w, http.StatusNotFound, "rules not found")
-				return
-			}
-			writeErr(w, http.StatusInternalServerError, err.Error())
+	// Rules from MySQL: needed for the pre-freeze snapshot fallback AND for the
+	// live-stream play URL (#121), which rides the REST first-paint — display-only,
+	// deliberately OFF the Redis bid hot path (a frozen snapshot's Rules come from
+	// Redis and don't carry it). One read here (not the hot path) is fine.
+	livePlayURL := ""
+	if rules, rerr := s.st.GetRules(r.Context(), aid); rerr == nil {
+		livePlayURL = rules.LivePlayUrl
+		if snap.Rules == nil {
+			dto := rules.RoomSnapshotRules()
+			snap.Rules = &dto
+		}
+	} else if snap.Rules == nil {
+		if rerr == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "rules not found")
 			return
 		}
-		dto := rules.RoomSnapshotRules()
-		snap.Rules = &dto
+		writeErr(w, http.StatusInternalServerError, rerr.Error())
+		return
 	}
 	// Surface the product (name / image / 介绍) so the room shows the real item
 	// and the VLM page can draft facts from its image. Best-effort: a missing
@@ -182,12 +188,14 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 		ProductName string `json:"productName"`
 		ImageURL    string `json:"imageUrl"`
 		Description string `json:"description"`
+		LivePlayURL string `json:"livePlayUrl,omitempty"`
 	}{
 		RoomSnapshotData: snap,
 		ProductID:        a.ProductID,
 		ProductName:      prod.Name,
 		ImageURL:         prod.ImageURL,
 		Description:      prod.Description,
+		LivePlayURL:      livePlayURL,
 	})
 }
 
