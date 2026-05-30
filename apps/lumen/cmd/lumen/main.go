@@ -111,6 +111,15 @@ func main() {
 			log.Fatalf("demo-vickrey: %v", err)
 		}
 
+	case "demo-hybrid":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoHybrid(target); err != nil {
+			log.Fatalf("demo-hybrid: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

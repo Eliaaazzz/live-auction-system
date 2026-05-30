@@ -1035,6 +1035,12 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// never publish, so it would mis-handle sealed bids. Sealed defers
 		// entirely to the authoritative sealed Lua.
 		sealed := model.UsesSealedEngine(rsTop.mode)
+		// HYBRID_REVEAL still runs the English adjudication path, so the
+		// fast-reject stays SOUND: the broadcast carries the 2nd-highest amount,
+		// which is always <= the true currentPrice, so any bid <= cached is also
+		// <= actual (Lua would return ERR_TOO_LOW). Fast-reject just gets less
+		// effective for hybrid; correctness is preserved.
+		hybrid := model.UsesHybridEngine(rsTop.mode)
 		if rs := rsTop; !sealed && rs.priceCents != "" && !rs.terminal {
 			// Guard 0 (codex pass-2 Q1): rs.terminal is set under the same
 			// write lock as the price ratchet for cap-hit / AUCTION_SOLD /
@@ -1097,6 +1103,11 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 			// bidder's OWN ack (pushed only to their socket below). The room sees
 			// only the redacted SEALED_BID_RECEIVED stream event.
 			code, _, payload, err = s.st.PlaceBidSealed(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		} else if hybrid {
+			// Hybrid-reveal bid: English adjudication, but the Stream broadcast
+			// carries the PRIOR leader's amount + identity (so the room sees the
+			// runner-up). The returned payload is the bidder's full ack.
+			code, _, payload, err = s.st.PlaceBidHybrid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
 		} else {
 			code, _, payload, err = s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
 		}

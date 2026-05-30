@@ -18,6 +18,16 @@ var PlaceBidSealed string
 //go:embed close_auction_sealed.lua
 var CloseSealed string
 
+// PlaceBidHybrid implements HYBRID_REVEAL (issue #114). Same ENGLISH adjudication
+// as place_bid.lua, but the Stream/PubSub broadcast carries the PRIOR leader's
+// amount + identity (so the room sees the runner-up while the new leader stays
+// hidden until close). The bidder's direct ack carries their true amount. Close
+// reuses the standard close_auction.lua — state.currentPriceCents still holds
+// the true leading bid at hammer time.
+//
+//go:embed place_bid_hybrid.lua
+var PlaceBidHybrid string
+
 //go:embed freeze_rules.lua
 var FreezeRules string
 

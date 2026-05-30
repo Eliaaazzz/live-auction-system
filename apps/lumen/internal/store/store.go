@@ -26,6 +26,7 @@ type Store struct {
 	db                *sql.DB
 	shaPlaceBid       string
 	shaPlaceBidSealed string // sealed modes (issue #114)
+	shaPlaceBidHybrid string // hybrid-reveal mode (issue #114)
 	shaFreeze         string
 	shaStart          string
 	shaClose          string
@@ -117,6 +118,9 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	}
 	if s.shaPlaceBidSealed, err = s.rdb.ScriptLoad(ctx, lua.PlaceBidSealed).Result(); err != nil {
 		return fmt.Errorf("load place_bid_sealed.lua: %w", err)
+	}
+	if s.shaPlaceBidHybrid, err = s.rdb.ScriptLoad(ctx, lua.PlaceBidHybrid).Result(); err != nil {
+		return fmt.Errorf("load place_bid_hybrid.lua: %w", err)
 	}
 	if s.shaCloseSealed, err = s.rdb.ScriptLoad(ctx, lua.CloseSealed).Result(); err != nil {
 		return fmt.Errorf("load close_auction_sealed.lua: %w", err)
@@ -458,6 +462,33 @@ func (s *Store) PlaceBid(ctx context.Context, aid, userID, clientBidID, amountCe
 		// All three accept the bid; the secondary AUCTION_EXTENDED/AUCTION_SOLD
 		// event (arr[3..4]) is delivered to the room via Pub/Sub, so the gateway
 		// only needs the bid ack (arr[1..2]) for the originating socket.
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
+		return c, luaInt(arr[1]), luaStr(arr[2]), nil
+	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
+		return c, 0, luaStr(arr[1]), nil
+	default:
+		return c, 0, "", nil
+	}
+}
+
+// PlaceBidHybrid runs place_bid_hybrid.lua (HYBRID_REVEAL, issue #114). Same
+// shape as PlaceBid: returns the FULL bidder's ack (their own amount) as
+// payload — the Stream broadcast carries the prior leader's amount + identity
+// (the runner-up). On OK_EXTENDED / OK_SOLD the secondary event flows via
+// Pub/Sub like English, so the gateway only needs the bid ack.
+func (s *Store) PlaceBidHybrid(ctx context.Context, aid, userID, clientBidID, amountCents, displayName string) (string, int64, string, error) {
+	keys := []string{stateKey(aid), lbKey(aid), streamKey(aid), dedupeKey(aid, userID)}
+	arr, err := s.eval(ctx, s.shaPlaceBidHybrid, keys, userID, clientBidID, amountCents, displayName, PubChannel(aid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	switch c := luaStr(arr[0]); c {
+	case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold:
 		if len(arr) < 3 {
 			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
 		}

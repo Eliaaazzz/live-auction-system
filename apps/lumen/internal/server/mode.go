@@ -52,10 +52,11 @@ func (m sealedMode) SealedDuringLive() bool { return true }
 // handleCreateAuction rejects it as "not available yet". Add an entry as each
 // phase lands (HYBRID_REVEAL, ALL_PAY, PREQUALIFY are reserved but unbuilt).
 var modeRegistry = map[string]AuctionMode{
-	model.ModeEnglish:     baseMode{model.ModeEnglish},
-	model.ModeSuddenDeath: suddenDeathMode{baseMode{model.ModeSuddenDeath}},
-	model.ModeSealedFirst: sealedMode{baseMode{model.ModeSealedFirst}},
-	model.ModeVickrey:     sealedMode{baseMode{model.ModeVickrey}},
+	model.ModeEnglish:      baseMode{model.ModeEnglish},
+	model.ModeSuddenDeath:  suddenDeathMode{baseMode{model.ModeSuddenDeath}},
+	model.ModeSealedFirst:  sealedMode{baseMode{model.ModeSealedFirst}},
+	model.ModeVickrey:      sealedMode{baseMode{model.ModeVickrey}},
+	model.ModeHybridReveal: baseMode{model.ModeHybridReveal}, // ascending engine; redacted broadcast (issue #114)
 }
 
 // modeFor returns the strategy for an enabled mode. ok=false means the mode is a

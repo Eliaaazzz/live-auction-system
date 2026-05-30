@@ -7,7 +7,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey \
+        demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid \
         k6 k6-setup k6-run
 
 ## --- local stack (needs Docker) ---
@@ -375,6 +375,10 @@ demo-sealed: ## issue #114: SEALED_FIRST mode — hidden bids -> reveal at close
 demo-vickrey: ## issue #114: VICKREY mode — sealed bids; winner pays the 2nd-highest (asserted)
 	@echo "=== demo-vickrey (mode #114: hidden bids -> winner pays 2nd-price -> evidence) ==="
 	$(COMPOSE) exec -T lumen /lumen demo-vickrey
+
+demo-hybrid: ## issue #114: HYBRID_REVEAL mode — broadcasts show only the 2nd-highest; true leader revealed at SOLD (asserted)
+	@echo "=== demo-hybrid (mode #114: broadcasts hide leader -> SOLD reveals true winner -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-hybrid
 
 demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke) — orchestration regression net
 	@echo ">>> demo-smoke [1/7] stack up + seed"

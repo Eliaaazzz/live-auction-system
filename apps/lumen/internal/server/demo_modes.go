@@ -220,6 +220,151 @@ func runDemoSealedCore(target, mode, label string) error {
 	return nil
 }
 
+// RunDemoHybrid proves HYBRID_REVEAL (issue #114): English adjudication runs,
+// but the Stream/PubSub BID_ACCEPTED broadcast carries the PRIOR leader's
+// amount + identity (so the room sees the runner-up while the new leader stays
+// hidden). At close, the standard AUCTION_SOLD reveals the true winner +
+// price. A dedicated observer socket (no bids of its own → receives broadcasts
+// only) asserts no broadcast ever leaks the actual winning bid.
+func RunDemoHybrid(target string) error {
+	hc := &http.Client{Timeout: 10 * time.Second}
+
+	seller, err := devLogin(hc, target, "Demo Seller", "seller")
+	if err != nil {
+		return fmt.Errorf("seller dev-login: %w", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		return fmt.Errorf("create product: %w", err)
+	}
+	if err := assertFactsMock(hc, target, seller.Token, productID); err != nil {
+		return fmt.Errorf("VLM facts draft: %w", err)
+	}
+	rules := demoRules()
+	rules.Mode = model.ModeHybridReveal
+	aid, err := createDemoAuctionWithRules(hc, target, seller.Token, productID, rules)
+	if err != nil {
+		return fmt.Errorf("create auction: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		return fmt.Errorf("freeze rules: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/start", seller.Token,
+		map[string]int64{"durationMs": demoDurationMs}, model.CodeOKLive); err != nil {
+		return fmt.Errorf("start: %w", err)
+	}
+
+	buyerA, err := devLogin(hc, target, "Demo Bidder A", "user")
+	if err != nil {
+		return fmt.Errorf("bidder A dev-login: %w", err)
+	}
+	buyerB, err := devLogin(hc, target, "Demo Bidder B", "user")
+	if err != nil {
+		return fmt.Errorf("bidder B dev-login: %w", err)
+	}
+	observer, err := devLogin(hc, target, "Demo Observer", "user")
+	if err != nil {
+		return fmt.Errorf("observer dev-login: %w", err)
+	}
+	connA, err := dialAndJoin(target, buyerA.Token, aid)
+	if err != nil {
+		return fmt.Errorf("bidder A connect: %w", err)
+	}
+	defer connA.Close()
+	connB, err := dialAndJoin(target, buyerB.Token, aid)
+	if err != nil {
+		return fmt.Errorf("bidder B connect: %w", err)
+	}
+	defer connB.Close()
+	obs, err := dialAndJoin(target, observer.Token, aid)
+	if err != nil {
+		return fmt.Errorf("observer connect: %w", err)
+	}
+	defer obs.Close()
+
+	if err := placeDemoBid(connA, aid, "11000"); err != nil {
+		return fmt.Errorf("bid A: %w", err)
+	}
+	if err := placeDemoBid(connB, aid, "12000"); err != nil {
+		return fmt.Errorf("bid B: %w", err)
+	}
+
+	sold, err := observeHybridBroadcasts(obs, buyerA.UserID, buyerB.UserID, 40*time.Second)
+	if err != nil {
+		return err
+	}
+	if sold.WinnerID != buyerB.UserID {
+		return fmt.Errorf("AUCTION_SOLD winner = %q, want %q (true leader Bob)", sold.WinnerID, buyerB.UserID)
+	}
+	if sold.AmountCents != "12000" {
+		return fmt.Errorf("AUCTION_SOLD amount = %q, want %q (Bob's true bid)", sold.AmountCents, "12000")
+	}
+
+	head, err := fetchEvidenceHead(hc, target, aid, seller.Token, 8*time.Second)
+	if err != nil {
+		return err
+	}
+	if len(head) > 8 {
+		head = head[:8]
+	}
+	fmt.Printf("DEMO_AUCTION_ID=%s\n", aid)
+	fmt.Printf("demo-hybrid: PASS · broadcasts hide leader → AUCTION_SOLD@%s (true) → eventsHash=%s…\n",
+		sold.AmountCents, head)
+	return nil
+}
+
+// observeHybridBroadcasts reads broadcasts on a non-bidding observer socket and
+// asserts the hybrid-reveal invariants: NO broadcast ever leaks Bob's true
+// 12000; the 1st BID_ACCEPTED broadcast carries the reserve (10000) with an
+// empty userId (no prior leader); the 2nd carries Alice's prior 11000 + Alice's
+// userId (now the runner-up). Returns the eventual AUCTION_SOLD payload.
+func observeHybridBroadcasts(c *websocket.Conn, aliceID, bobID string, d time.Duration) (model.AuctionSoldData, error) {
+	_ = c.SetReadDeadline(time.Now().Add(d))
+	acceptedCount := 0
+	for {
+		var env model.Envelope
+		if err := c.ReadJSON(&env); err != nil {
+			return model.AuctionSoldData{}, err
+		}
+		switch env.Type {
+		case model.TypeBidAccepted:
+			var bd model.BidAcceptedData
+			if err := json.Unmarshal(env.Data, &bd); err != nil {
+				return model.AuctionSoldData{}, fmt.Errorf("parse BID_ACCEPTED: %w", err)
+			}
+			if bd.AmountCents == "12000" {
+				return model.AuctionSoldData{}, fmt.Errorf("hybrid broadcast LEAKED the true winning bid (seq=%d userId=%q amount=%q)", env.Seq, bd.UserID, bd.AmountCents)
+			}
+			if bd.UserID == bobID {
+				return model.AuctionSoldData{}, fmt.Errorf("hybrid broadcast LEAKED the true winner identity (seq=%d userId=%q)", env.Seq, bd.UserID)
+			}
+			acceptedCount++
+			switch acceptedCount {
+			case 1:
+				if bd.AmountCents != "10000" || bd.UserID != "" {
+					return model.AuctionSoldData{}, fmt.Errorf("1st hybrid broadcast = (userId=%q amount=%q), want (\"\", \"10000\") (reserve / no prior leader)", bd.UserID, bd.AmountCents)
+				}
+			case 2:
+				if bd.AmountCents != "11000" {
+					return model.AuctionSoldData{}, fmt.Errorf("2nd hybrid broadcast amount = %q, want %q (Alice's prior)", bd.AmountCents, "11000")
+				}
+				if bd.UserID != aliceID {
+					return model.AuctionSoldData{}, fmt.Errorf("2nd hybrid broadcast userId = %q, want Alice %q (now the runner-up)", bd.UserID, aliceID)
+				}
+			}
+		case model.TypeAuctionSold:
+			if acceptedCount < 2 {
+				return model.AuctionSoldData{}, fmt.Errorf("AUCTION_SOLD before both BID_ACCEPTED broadcasts (saw %d)", acceptedCount)
+			}
+			var sd model.AuctionSoldData
+			if err := json.Unmarshal(env.Data, &sd); err != nil {
+				return model.AuctionSoldData{}, fmt.Errorf("parse AUCTION_SOLD: %w", err)
+			}
+			return sd, nil
+		}
+	}
+}
+
 // waitForRevealedAssertSealed reads frames on ONE deadline until
 // AUCTION_REVEALED, failing if a BID_ACCEPTED with a non-empty amountCents
 // arrives first (the sealed-mode invariant: amounts are never broadcast to the

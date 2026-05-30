@@ -86,6 +86,11 @@ func UsesSealedEngine(m string) bool {
 	return false
 }
 
+// UsesHybridEngine reports whether the mode runs the hybrid-reveal engine
+// (place_bid_hybrid.lua + standard close): ascending English adjudication with
+// a runner-up-only broadcast.
+func UsesHybridEngine(m string) bool { return NormalizeMode(m) == ModeHybridReveal }
+
 // WS message types (SCREAMING_SNAKE — proto/ws-envelope.md).
 const (
 	TypeRoomJoin         = "ROOM_JOIN"
