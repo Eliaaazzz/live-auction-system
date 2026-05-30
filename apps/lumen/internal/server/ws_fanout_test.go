@@ -113,43 +113,40 @@ func TestBroadcastFanoutForceClosesSlowClient(t *testing.T) {
 }
 
 // TestBroadcastFanoutRaceWithRehome races the lock-free fan-out against a
-// cross-auction re-home of a connection — ROOM_JOIN to a different auction
-// reuses the same *Conn and reassigns c.aid (ws.go handleWS). Run under -race:
-// it catches the data race the lock-free fan-out would otherwise have on c.aid,
-// and the roomEpoch guard ensures a re-homed conn is skipped, not delivered a
-// stale frame. Asserts no panic/deadlock (wg completes). (#118)
+// cross-auction re-home (ROOM_JOIN to a different auction reuses the same *Conn
+// and reassigns c.aid in handleWS). Its PURPOSE is the `-race` detector: `mover`
+// keeps an UNDRAINED lane so every broadcast hits the backpressure-log path (the
+// old c.aid read site) WHILE the re-homer writes mover.aid — so a regression of
+// the c.aid fix would be flagged here under `go test -race`. It also exercises
+// the roomEpoch snapshot-skip. It deliberately does NOT assert the absence of a
+// stale frame: the post-epoch-check TOCTOU (epoch passes, conn re-homes, then the
+// frame enqueues) is an accepted property of lock-free fan-out — the envelope
+// carries auctionId so a re-homed client routes it correctly. Without -race this
+// is a no-panic / no-deadlock smoke test. (#118)
 func TestBroadcastFanoutRaceWithRehome(t *testing.T) {
 	h := newHub()
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
-	// mk builds a conn with a drained lane so it stays alive (no force-close)
-	// throughout the race, keeping the concurrent paths exercised.
-	mk := func(aid string) *Conn {
-		c := &Conn{
-			aid:      aid,
-			done:     make(chan struct{}),
-			prepared: make(chan *websocket.PreparedMessage, 256),
-			send:     make(chan []byte, 256),
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				select {
-				case <-stop:
-					return
-				case <-c.prepared:
-				case <-c.send:
-				}
+	// stable: drained lane → stays alive so the fan-out keeps delivering.
+	stable := &Conn{aid: "A", done: make(chan struct{}), prepared: make(chan *websocket.PreparedMessage, 256), send: make(chan []byte, 256)}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-stable.prepared:
+			case <-stable.send:
 			}
-		}()
-		return c
-	}
-
-	stable := mk("A")
+		}
+	}()
 	h.join("A", stable)
-	mover := mk("A")
+
+	// mover: tiny UNDRAINED lane → fills immediately, so the broadcast exercises
+	// the backpressure-log path concurrently with the re-homer's mover.aid write.
+	mover := &Conn{aid: "A", done: make(chan struct{}), prepared: make(chan *websocket.PreparedMessage, 1), send: make(chan []byte, 1)}
 	h.join("A", mover)
 
 	wg.Add(2)
