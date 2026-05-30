@@ -42,7 +42,7 @@ type recommendResp struct {
 //	any         + high value
 //	            + non-collectible → ENGLISH (price discovery on commodity)
 func recommendMode(viewerCount int, valueCents int64, category string) recommendResp {
-	const highValue = 50_000_00 // $500.00
+	const highValue = 50_000_00 // 5,000,000 cents = $50,000.00 (premium collectibles threshold)
 	const highViewers = 50
 	collectible := isCollectibleCategory(category)
 	switch {
@@ -85,7 +85,14 @@ func isCollectibleCategory(c string) bool {
 
 // POST /api/recommend-mode {auctionId?, viewerCount?, valueCents?, category?}
 // -> {recommendedMode, rationale, alternatives}
+// Auth-gated to match handleLeaderboard's posture (also uses an auctionId +
+// touches Hub state) — without auth this would be a viewer-count oracle for any
+// id (PR #117 review).
 func (s *Server) handleRecommendMode(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
 	var body recommendReq
 	if !readJSON(w, r, &body) {
 		return

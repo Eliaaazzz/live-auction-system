@@ -90,13 +90,15 @@ local count = redis.call('ZCARD', sz_key)
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 
--- commitment: binds (user, amount, seq) so the later AUCTION_REVEALED is
--- tamper-evident against the HMAC-SHA256 evidence chain. redis.sha1hex is the
--- only hash available in Redis Lua; the chain itself stays HMAC-SHA256 (Go).
-local commit = redis.sha1hex(userId .. ':' .. amountStr .. ':' .. seq)
-
 -- 7. REDACTED broadcast event (no amount) — the bytes every room client sees.
-local recv = {seq = seq, displayName = displayName, count = count, commit = commit, serverTimeMs = now}
+-- An earlier draft attached `commit = redis.sha1hex(user:amount:seq)` here so
+-- the reveal could be checked against the chain. It was DROPPED (PR #117
+-- review): SHA1 is unsalted and `amount` ∈ [startPrice, capPrice] is a small
+-- search space, so an observer could brute-force the amount in milliseconds
+-- and defeat the whole sealed mode. Integrity already lives in the HMAC-SHA256
+-- evidence chain (server-computed over the persisted payload). For SEALED
+-- bidding we rely on the same server-trust assumption ENGLISH already does.
+local recv = {seq = seq, displayName = displayName, count = count, serverTimeMs = now}
 local recvJson = cjson.encode(recv)
 redis.call('XADD', stream_key, seq .. '-0', 'type', 'SEALED_BID_RECEIVED', 'seq', seq, 'payload', recvJson)
 redis.call('PUBLISH', pub, cjson.encode({type = 'SEALED_BID_RECEIVED', seq = seq, data = recv}))

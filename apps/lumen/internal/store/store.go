@@ -442,7 +442,16 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 // Returns the code and, on ERR_NOT_DUE, the current endAtMs so the caller can
 // refresh the active score (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
-	mode := model.NormalizeMode(s.rdb.HGet(ctx, stateKey(aid), "mode").Val())
+	// Read mode from the state Hash; a Redis error here MUST surface (so the
+	// Timer retries) — silently defaulting to ENGLISH on a transient blip would
+	// run the wrong close script on a sealed auction and lose the sealed bids
+	// (PR #117 review). `redis.Nil` is the "no such field" case: a pre-mode
+	// auction (frozen before issue #114) has no `mode` field — that's ENGLISH.
+	modeRes := s.rdb.HGet(ctx, stateKey(aid), "mode")
+	if rerr := modeRes.Err(); rerr != nil && !errors.Is(rerr, redis.Nil) {
+		return "", 0, fmt.Errorf("close: read mode: %w", rerr)
+	}
+	mode := model.NormalizeMode(modeRes.Val())
 	var arr []interface{}
 	var err error
 	switch mode {

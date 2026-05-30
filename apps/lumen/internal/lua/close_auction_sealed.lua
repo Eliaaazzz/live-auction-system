@@ -104,4 +104,11 @@ local sold = {seq = sseq, winnerId = winnerId, amountCents = finalPrice, status 
 local soldJson = cjson.encode(sold)
 redis.call('XADD', stream_key, sseq .. '-0', 'type', 'AUCTION_SOLD', 'seq', sseq, 'payload', soldJson)
 redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_SOLD', seq = sseq, data = sold}))
+
+-- Memory hygiene (PR #117 review): the private sealed ZSET + names hash are
+-- only used to pick the winner at close. The amounts are now public via the
+-- AUCTION_REVEALED event + the (now populated) public leaderboard ZSET, so the
+-- private keys are dead weight on a finished auction. DEL is safe at the very
+-- end of the script — anything that could read them has already happened.
+redis.call('DEL', sz_key, sn_key)
 return {'OK_SOLD', sseq, soldJson}

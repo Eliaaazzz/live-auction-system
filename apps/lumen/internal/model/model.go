@@ -244,14 +244,16 @@ type AuctionCancelledData struct {
 // SealedBidReceivedData is the REDACTED broadcast for a sealed-mode bid: it
 // proves a bid landed (running count + who) WITHOUT revealing the amount, so the
 // room sees suspense ("N sealed bids placed") while the amount stays hidden. The
-// bidder's own amount comes back only on their direct ack. Commit is a SHA1
-// commitment (redis.sha1hex of userId:amount:seq) recorded at bid time so the
-// later AUCTION_REVEALED is tamper-evident against the HMAC-SHA256 chain.
+// bidder's own amount comes back only on their direct ack. A SHA1 `commit` field
+// was considered to make the reveal tamper-evident against the chain, but it
+// was DROPPED (PR #117 review): SHA1 is unsalted and the amount space is small
+// (startPrice..capPrice), so an observer could brute-force the amount before
+// reveal and defeat the sealed mode. Integrity already lives in the
+// server-computed HMAC-SHA256 evidence chain.
 type SealedBidReceivedData struct {
 	Seq          int64  `json:"seq"`
 	DisplayName  string `json:"displayName"`
 	Count        int64  `json:"count"`
-	Commit       string `json:"commit"`
 	ServerTimeMs int64  `json:"serverTimeMs"`
 }
 

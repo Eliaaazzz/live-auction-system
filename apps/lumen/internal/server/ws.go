@@ -524,6 +524,20 @@ func updateRoomStateFromEvent(h *Hub, aid string, e store.StreamEvent) {
 		// AuctionExtended doesn't carry a fresh amountCents — pass "" to skip
 		// the price ratchet, only update endAtMs.
 		h.updateRoomState(aid, "", p.EndAtMs)
+	case model.TypeAuctionRevealed:
+		// PR #117 review (hardening): sealed close emits AUCTION_REVEALED then
+		// AUCTION_SOLD with adjacent seqs. close_auction_sealed.lua already sets
+		// state.status=SOLD BEFORE the REVEALED event, so Lua rejects any further
+		// BID_PLACE as ERR_NOT_LIVE; but the gateway's roomState.terminal flag is
+		// not flipped until AUCTION_SOLD arrives. Marking terminal here too
+		// closes that brief REVEALED→SOLD fast-reject window without changing
+		// Lua's authority. Carry the revealed amount as the final cache value.
+		var p model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(e.Payload), &p); err == nil {
+			h.markTerminalAndUpdate(aid, p.AmountCents, 0)
+		} else {
+			h.markTerminalAndUpdate(aid, "", 0)
+		}
 	}
 }
 

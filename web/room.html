@@ -192,7 +192,7 @@
             if (!guard.apply(env.seq)) return;
             sealedCount = env.data.count || (sealedCount + 1);
             document.getElementById('sealed-count').textContent = sealedCount;
-            feed('SEALED_BID_RECEIVED seq=' + env.seq + ' by ' + env.data.displayName + ' (count=' + sealedCount + ', commit=' + (env.data.commit || '').slice(0,8) + '…)');
+            feed('SEALED_BID_RECEIVED seq=' + env.seq + ' by ' + env.data.displayName + ' (count=' + sealedCount + ')');
             break;
           case 'AUCTION_REVEALED':
             // The sealed bids become public: render the sorted list, winner,
