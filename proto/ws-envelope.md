@@ -35,6 +35,10 @@ type WsEnvelope<T = unknown> = {
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
 | `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
 | `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
+| `SEALED_BID_RECEIVED` | `{ seq, displayName, count, serverTimeMs }` | **redacted** bid-landed ping for `SEALED_FIRST` / `VICKREY` / `ALL_PAY` (issue #114). **No `amountCents`, no `userId`** — the bidder name + running count are all the room sees during LIVE. |
+| `AUCTION_REVEALED` | `{ seq, bids:[{userId,displayName,cents}], winnerId, amountCents, serverTimeMs }` | sealed-mode reveal at close (issue #114). Emitted **immediately before** `AUCTION_SOLD`; takes its own `seq` and is part of the hash chain. For `VICKREY`, `amountCents` is the **second-highest** price (winner pays runner-up); for `SEALED_FIRST` / `ALL_PAY`, it is the winner's own bid. |
+| `ALL_PAY_FORFEIT` | `{ seq, userId, coinsForfeit, serverTimeMs }` | `ALL_PAY` runner-up forfeits their bid (issue #114). Projects to `coin_ledger`, **never** to `orders` — settlement is virtual coins only. |
+| `PREQUALIFY_RESULT` | `{ seq, parentAuctionId, formalAuctionId, seededStartPriceCents, qualifiedUserIds?, serverTimeMs }` | `PREQUALIFY` parent's sealed result, emitted when the seller spawns the formal auction (issue #114). Two independent state machines linked by `parent_auction_id`; no cross-auction atomicity. |
 | `PONG` | `{}` | heartbeat response |
 
 `amountCents` is a **string** in every payload above (money-as-string boundary). All these events carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets both a direct `BID_ACCEPTED` ack and the Pub/Sub broadcast — and out-of-order frames).
@@ -42,6 +46,40 @@ type WsEnvelope<T = unknown> = {
 ## Leaderboard (REST, additive)
 
 `GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
+
+> **Sealed-mode gating (issue #114):** while a `SEALED_FIRST` / `VICKREY` / `ALL_PAY` auction is `LIVE`, this endpoint returns `{ sealed: true, leaderboard: [] }` (no amounts, no order). After `AUCTION_SOLD` the revealed list is returned in the normal shape. The `Hub.viewerCount` price-cache fast-reject is also disabled for `HYBRID_REVEAL` (since the broadcast carries the 2nd-highest, not the leader); Lua remains authoritative.
+
+## Auction modes (issue #114) — pluggable strategy
+
+`Rules` gains an optional `mode` field (`""` ≡ `ENGLISH` for back-compat). Catalogue:
+
+| Mode | Hot-path Lua | Reveal at close? | Settlement |
+|---|---|---|---|
+| `ENGLISH` (default) | `place_bid.lua` / `close_auction.lua` | no | `orders` row from `AUCTION_SOLD` |
+| `SUDDEN_DEATH` | same scripts, `MaxExtensions=0` preset | no | `orders` |
+| `SEALED_FIRST` | `place_bid_sealed.lua` / `close_auction_sealed.lua` | **yes** (`AUCTION_REVEALED` → `AUCTION_SOLD`) | `orders` at winner's own bid |
+| `VICKREY` | `place_bid_sealed.lua` / `close_auction_vickrey.lua` | **yes** | `orders` at **second-highest** price |
+| `HYBRID_REVEAL` | `place_bid_hybrid.lua` / `close_auction_hybrid.lua` | **yes** (leader unmasked at close) | `orders` |
+| `ALL_PAY` | `place_bid_sealed.lua` / `close_auction_allpay.lua` | **yes** | **`coin_ledger` only — never `orders`** (winner debited + runner-up `ALL_PAY_FORFEIT`). Hard invariant. |
+| `PREQUALIFY` | runs a `SEALED_FIRST`; result seeds a formal auction via `POST /api/auctions/{id}/spawn-formal` | **yes** | the SEALED parent's `orders` row is suppressed; the formal child handles settlement. |
+
+**Allowlist gate (server-side):** only `ENGLISH` / `SUDDEN_DEATH` / `SEALED_FIRST` / `VICKREY` / `HYBRID_REVEAL` / `ALL_PAY` are creatable via `POST /api/auctions` (Rules.mode); a request with `PREQUALIFY` or any unknown string returns **HTTP 400** `auction mode not available yet: <MODE>`. A `PREQUALIFY` auction is reached *only* through the parent SEALED → `/spawn-formal` workflow.
+
+**Sealed-broadcast invariant** (the redaction contract that makes 暗拍 sealed):
+- The hot-path Lua writes the redacted `SEALED_BID_RECEIVED` shape (`seq, displayName, count, serverTimeMs` — **never** `amountCents`, **never** `userId`) to the Stream + Pub/Sub.
+- The same Lua call **returns** the full bid JSON to the gateway so the originating socket's direct `BID_ACCEPTED` ack carries the bidder's own amount. The Stream + Pub/Sub are NEVER the source of the amount during LIVE.
+- The sealed ZSET (`auction:{aid}:sealed`, names hash `auction:{aid}:sealednames`) is read-only by the close script; `GET /leaderboard` and `ROOM_SNAPSHOT` do NOT read it during LIVE. After `AUCTION_REVEALED` the ZSET keys are `DEL`d (post-reveal hygiene; amounts are public anyway).
+
+**Close → reveal sequencing** (atomicity across two Lua-emitted events):
+```
+close_auction_{sealed,vickrey,allpay,hybrid}.lua
+  ├─ writes public state (currentPriceCents, winnerId, status=SOLD)
+  ├─ XADD <seq+1>-0  AUCTION_REVEALED  + PUBLISH
+  └─ XADD <seq+2>-0  AUCTION_SOLD      + PUBLISH
+```
+Both events are part of the seq-contiguous hash chain (`evidence-card.md`); a replay verifier sees REVEALED before SOLD. No new auction **state** is introduced — sealed reveal happens at close, the state machine stays at the canonical 7 (`DRAFT → SCHEDULED → LIVE → {SOLD | NO_BID | CANCELLED}`).
+
+**Strategy-pattern dispatch** (server-side, not on the wire): `apps/lumen/internal/server/mode.go` selects per-mode `place_bid_*.lua` / `close_*.lua` SHAs at runtime by reading `state.mode` from the room state hash (cached in `Hub.roomState`). The English hot path stays byte-identical (zero regression on the V10k 500-bid/s path).
 
 ## Semantics / known limitations (T2)
 

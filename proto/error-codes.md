@@ -37,3 +37,17 @@ T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ER
 **T2 adds** `OK_EXTENDED` (anti-snipe) and `OK_SOLD` (cap-hit / buy-now) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive / `> MaxMoneyCents` (2^53-1) `amountCents` (validated + canonicalized at the gateway before the Lua call); below-required / over-cap / over-MaxMoneyCents remain `ERR_TOO_LOW` (Lua defensive boundary). `place_bid` also surfaces `ERR_NOT_ALLOWED` (seller self-bid → `BID_REJECTED`) and `ERR_INTERNAL{'seq_stream_mismatch'}` (stream/state desync preflight).
 
 **T3 implements** `OK_NO_BID` / `OK_CANCELLED` (close_auction / cancel_auction → `AUCTION_NO_BID` / `AUCTION_CANCELLED`), `ERR_NOT_DUE` + `ERR_ALREADY_TERMINAL` (close/cancel engine control, not surfaced to clients), and `ERR_NOT_ALLOWED` for cancel (non-owner → `OPERATION_REJECTED`/403). The hammer-race oracle is pinned: at `now >= endAtMs`, `place_bid` → `ERR_AFTER_END` and `close_auction` → `OK_SOLD`.
+
+## REST contracts added by issue #114 (auction modes)
+
+These are **HTTP-level** result shapes for the new mode endpoints (no new Lua-internal codes). All `400`s carry a plain message body; no new `ERR_*` enum is introduced here so a future registry edit can lift an unbuilt mode in one place without touching the wire enum.
+
+| Endpoint | Status | Body | Trigger |
+|---|---|---|---|
+| `POST /api/auctions` | `400` | `auction mode not available yet: <NORMALIZED>` | `rules.mode` not in server allowlist (`ENGLISH | SUDDEN_DEATH | SEALED_FIRST | VICKREY | HYBRID_REVEAL | ALL_PAY`). `PREQUALIFY` is reached **only** via `/spawn-formal`. |
+| `POST /api/auctions/{id}/spawn-formal` | `400` | `parent must be SEALED_FIRST or VICKREY (got <mode>)` | parent's `rules.mode` is not a sealed mode |
+| `POST /api/auctions/{id}/spawn-formal` | `400` | `parent auction is not terminal SOLD (status=<status>)` | parent has not yet revealed / closed |
+| `POST /api/auctions/{id}/spawn-formal` | `400` | `parent has no revealed winning bid to seed from` | sealed parent terminated NO_BID / CANCELLED |
+| `POST /api/recommend-mode` | `401` (`authUser`-gated) | standard auth shape | unauthenticated caller (matches `/api/auctions/{id}/leaderboard` posture) |
+
+The bid path itself adds **no new codes** under any mode — sealed/Vickrey/all-pay/hybrid all reuse `OK_ACCEPTED` / `OK_EXTENDED` / `OK_SOLD` / `ERR_TOO_LOW` / `ERR_NOT_LIVE` etc. (only the Lua *script* selected by mode changes; the result-code enum is invariant — this is the deliberate stability point that lets the recommender + UI stay mode-agnostic on the wire).

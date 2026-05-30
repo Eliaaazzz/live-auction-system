@@ -77,6 +77,15 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 
 `auction_events(…, event_hash VARCHAR(128) NULL, prev_hash VARCHAR(128) NULL)` — nullable from T1, **filled by the Persistence Worker at T4** (idempotent, self-healing). `orders` UNIQUE(auction_id). See `proto/db-schema.md`.
 
+### Issue #114 (auction modes) additions to the chain
+
+- **`AUCTION_REVEALED`** is chained like any other event — the revealed sorted bid list (`[{userId, displayName, cents}]`) sits in `payload_json` and contributes to `event_hash`. For `VICKREY` the chain shows the winner alongside the second-highest `amountCents` (the price paid); a verifier sees the full ordering, which is the audit anchor for "winner pays runner-up".
+- **`ALL_PAY_FORFEIT`** is chained per runner-up. Settlement is **virtual coins only** — the `ALL_PAY` `AUCTION_SOLD` projects to `coin_ledger` (WIN), each `ALL_PAY_FORFEIT` to `coin_ledger` (RUNNER_UP_FORFEIT), and **zero rows are written to `orders`**. The evidence card surfaces a `settlement: "VIRTUAL_COINS_ONLY"` marker on the rendered card; the verifier asserts `count(orders WHERE auction_id=… AND rules.mode='ALL_PAY') == 0` as a money-safety gate (the single most important new check in the test surface).
+- **`PREQUALIFY_RESULT`** lives on the **parent** SEALED auction's chain (not the formal child's). The child auction's chain is independent; its evidence card lists `parent_auction_id` as a cross-link.
+- **Sealed live ≠ verifier-blind.** The hash chain still covers every `SEALED_BID_RECEIVED` (the redacted shape); the actual amounts enter the chain at `AUCTION_REVEALED`. A replay verifier checking the chain pre-reveal sees opacity (intended); post-reveal it sees the full sorted list and can recompute the order.
+
+The chain hash algorithm + canonical serialization (T4) are unchanged — payloads are JSON-canonicalized as before, and the algorithm is payload-generic.
+
 ## 5. Replay Verifier output contract (T6 — `make verify` / `lumen verify`)
 
 `[全员 approve]` surface for the T6 acceptance gate (issue #1 §10 T6 row). The T1 stream-vs-MySQL count check and the T4 hash-chain check fold into a single command with one machine-parseable status line on stdout. Exit code is 0 only when consistent — any failure exits 1 so CI / `make verify` can gate.
