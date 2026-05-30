@@ -200,6 +200,11 @@ func (h *Hub) viewerCount(aid string) int {
 	return len(h.rooms[aid])
 }
 
+// connSnapPool reuses the per-broadcast recipient snapshot so fan-out at 10k
+// recipients doesn't allocate a fresh []*Conn per event. A *[]*Conn is pooled
+// (not []*Conn) to avoid boxing the slice header into the interface value.
+var connSnapPool = sync.Pool{New: func() any { s := make([]*Conn, 0, 256); return &s }}
+
 func (h *Hub) broadcast(aid string, msg []byte) {
 	// V10k Tier B: pre-encode the WS text frame ONCE for the whole room. Each
 	// recipient's writePump ships the prepared frame without re-encoding the
@@ -212,18 +217,45 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 	if perr != nil {
 		log.Printf("ws prepared-message %s: %v (falling back to raw bytes)", aid, perr)
 	}
+	// Snapshot the recipient set under a brief RLock, then fan out WITHOUT the
+	// lock held. Holding hub.mu across the whole fan-out (the per-conn channel
+	// send AND a slow client's force-close) serialized every broadcast against
+	// join/leave/updateRoomState — at 10k recipients that O(N) lock-hold is the
+	// contention bottleneck. Bounding the hold to an O(N) pointer copy lets
+	// joins/leaves + the fast-reject cache update proceed between fan-outs.
+	//
+	// Correctness: broadcasts are serial (single subscribe goroutine) and each
+	// Conn has one channel, so per-conn ordering is preserved. trySend* /
+	// closeWithCode are non-blocking + idempotent (closeOnce), so a Conn that
+	// leaves between snapshot and send is safe (its leading done-check drops the
+	// send). A Conn that joins after the snapshot misses this one event and
+	// re-syncs via ROOM_SNAPSHOT on JOIN — identical to the prior under-lock
+	// semantics. The pooled snapshot keeps fan-out allocation-free after warmup.
+	bufp := connSnapPool.Get().(*[]*Conn)
+	buf := (*bufp)[:0]
 	h.mu.RLock()
-	defer h.mu.RUnlock()
 	for c := range h.rooms[aid] {
-		// critical room events: enqueue or drop the slow client (it reconnects +
-		// re-snapshots) rather than silently lose the event. close() defers the
-		// hub.leave to the read goroutine, so it can't deadlock under this RLock.
+		buf = append(buf, c)
+	}
+	h.mu.RUnlock()
+
+	for _, c := range buf {
+		// critical room events: enqueue or force-close the slow client (it
+		// reconnects + re-snapshots) rather than silently lose the event.
 		if perr == nil && c.prepared != nil {
 			c.trySendPrepared(pm)
 		} else {
 			c.trySend(msg)
 		}
 	}
+
+	// Clear references + return the buffer to the pool so the pooled backing
+	// array doesn't pin Conns (and their socket buffers) between broadcasts.
+	for i := range buf {
+		buf[i] = nil
+	}
+	*bufp = buf[:0]
+	connSnapPool.Put(bufp)
 }
 
 // updateRoomState ratchets the gateway-side price/endAtMs cache from observed
