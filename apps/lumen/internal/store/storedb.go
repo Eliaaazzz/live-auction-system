@@ -153,6 +153,15 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// SetParentAuction links a freshly-created formal auction to the sealed PREQUALIFY
+// parent it was seeded from (issue #114 phase 6). parent must already exist.
+func (s *Store) SetParentAuction(ctx context.Context, aid, parentAID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET parent_auction_id = ?, updated_at = ? WHERE id = ?`,
+		parentAID, time.Now().UTC(), aid)
+	return err
+}
+
 // UpdateRules replaces a pre-start auction's rules (商品管理: 修改未开始竞拍的规则).
 // The caller gates on status (DRAFT/SCHEDULED) and ownership; this validates +
 // writes. Also realigns the auctions display price with the new start price so

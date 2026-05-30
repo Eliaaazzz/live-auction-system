@@ -77,6 +77,12 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "auction_rules", "mode", "VARCHAR(32) NOT NULL DEFAULT 'ENGLISH'"); err != nil {
 		return err
 	}
+	// Pre-qualifying link (issue #114 phase 6): a formal auction can carry the
+	// id of the sealed PREQUALIFY parent it was seeded from. Nullable; standalone
+	// auctions leave it NULL.
+	if err := s.ensureColumn(ctx, "auctions", "parent_auction_id", "VARCHAR(64) NULL DEFAULT NULL"); err != nil {
+		return err
+	}
 	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
 	// CREATE TABLE IF NOT EXISTS is idempotent — safe on existing volumes.
 	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (

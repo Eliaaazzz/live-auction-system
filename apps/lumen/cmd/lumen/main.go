@@ -129,6 +129,15 @@ func main() {
 			log.Fatalf("demo-allpay: %v", err)
 		}
 
+	case "demo-prequalify":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoPrequalify(target); err != nil {
+			log.Fatalf("demo-prequalify: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

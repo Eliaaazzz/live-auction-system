@@ -220,6 +220,120 @@ func runDemoSealedCore(target, mode, label string) error {
 	return nil
 }
 
+// RunDemoPrequalify proves the PREQUALIFY two-act flow (issue #114 phase 6):
+// run a sealed-first-price PREQUALIFY auction, then `POST /spawn-formal` to
+// create a formal ENGLISH auction whose start price is SEEDED from the
+// prequalify winner's bid. The parent_auction_id links the two; the formal's
+// snapshot confirms the seeded start price persisted into its Rules. Asserted.
+func RunDemoPrequalify(target string) error {
+	hc := &http.Client{Timeout: 10 * time.Second}
+
+	seller, err := devLogin(hc, target, "Demo Seller", "seller")
+	if err != nil {
+		return fmt.Errorf("seller dev-login: %w", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		return fmt.Errorf("create product: %w", err)
+	}
+	if err := assertFactsMock(hc, target, seller.Token, productID); err != nil {
+		return fmt.Errorf("VLM facts draft: %w", err)
+	}
+
+	// Act 1: a sealed-first-price PREQUALIFY auction reveals a price floor.
+	parentRules := demoRules()
+	parentRules.Mode = model.ModeSealedFirst
+	parentAID, err := createDemoAuctionWithRules(hc, target, seller.Token, productID, parentRules)
+	if err != nil {
+		return fmt.Errorf("create parent: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+parentAID+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		return fmt.Errorf("freeze parent: %w", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+parentAID+"/start", seller.Token,
+		map[string]int64{"durationMs": demoDurationMs}, model.CodeOKLive); err != nil {
+		return fmt.Errorf("start parent: %w", err)
+	}
+	buyerA, err := devLogin(hc, target, "Demo Bidder A", "user")
+	if err != nil {
+		return fmt.Errorf("bidder A dev-login: %w", err)
+	}
+	buyerB, err := devLogin(hc, target, "Demo Bidder B", "user")
+	if err != nil {
+		return fmt.Errorf("bidder B dev-login: %w", err)
+	}
+	cA, err := dialAndJoin(target, buyerA.Token, parentAID)
+	if err != nil {
+		return fmt.Errorf("bidder A connect: %w", err)
+	}
+	defer cA.Close()
+	cB, err := dialAndJoin(target, buyerB.Token, parentAID)
+	if err != nil {
+		return fmt.Errorf("bidder B connect: %w", err)
+	}
+	defer cB.Close()
+	if err := placeDemoBid(cA, parentAID, "11000"); err != nil {
+		return fmt.Errorf("parent bid A: %w", err)
+	}
+	if err := placeDemoBid(cB, parentAID, "12000"); err != nil {
+		return fmt.Errorf("parent bid B: %w", err)
+	}
+	reveal, err := waitForRevealedAssertSealed(cA, 40*time.Second)
+	if err != nil {
+		return fmt.Errorf("parent AUCTION_REVEALED: %w", err)
+	}
+	if reveal.AmountCents != "12000" {
+		return fmt.Errorf("parent revealed final = %q, want %q", reveal.AmountCents, "12000")
+	}
+	if err := waitForType(cA, model.TypeAuctionSold, 10*time.Second); err != nil {
+		return fmt.Errorf("parent hammer: %w", err)
+	}
+
+	// Act 2: spawn the formal ENGLISH auction; start price seeds from parent's winner.
+	var spawn struct {
+		AuctionID             string `json:"auctionId"`
+		ParentAuctionID       string `json:"parentAuctionId"`
+		SeededStartPriceCents string `json:"seededStartPriceCents"`
+	}
+	body := map[string]any{
+		"rules": map[string]any{
+			"mode":            model.ModeEnglish,
+			"startPriceCents": "0", // ignored — server overrides from parent
+			"incrementCents":  "1000",
+			"capPriceCents":   "0",
+			"durationSec":     60,
+			"extendWindowSec": 10,
+			"extendSec":       10,
+			"maxExtensions":   2,
+		},
+	}
+	if err := postJSON(hc, target+"/api/auctions/"+parentAID+"/spawn-formal", seller.Token, body, &spawn); err != nil {
+		return fmt.Errorf("spawn-formal: %w", err)
+	}
+	if spawn.SeededStartPriceCents != "12000" {
+		return fmt.Errorf("seeded start = %q, want %q (parent winner)", spawn.SeededStartPriceCents, "12000")
+	}
+	if spawn.ParentAuctionID != parentAID {
+		return fmt.Errorf("parent link = %q, want %q", spawn.ParentAuctionID, parentAID)
+	}
+
+	// Verify the seeded start price made it into the formal's Rules + snapshot.
+	if err := postExpectCode(hc, target+"/api/auctions/"+spawn.AuctionID+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		return fmt.Errorf("freeze formal: %w", err)
+	}
+	var formalSnap model.RoomSnapshotData
+	if err := getJSONAuth(hc, target+"/api/auctions/"+spawn.AuctionID, seller.Token, &formalSnap); err != nil {
+		return fmt.Errorf("formal snapshot: %w", err)
+	}
+	if formalSnap.CurrentPriceCents != "12000" {
+		return fmt.Errorf("formal snapshot price = %q, want %q (seeded from parent)", formalSnap.CurrentPriceCents, "12000")
+	}
+	fmt.Printf("PARENT_AUCTION_ID=%s\nFORMAL_AUCTION_ID=%s\n", parentAID, spawn.AuctionID)
+	fmt.Printf("demo-prequalify: PASS · sealed parent reveal@12000 → spawn-formal seeded ENGLISH @ %s (parent_auction_id=%s)\n",
+		spawn.SeededStartPriceCents, spawn.ParentAuctionID)
+	return nil
+}
+
 // RunDemoAllPay proves ALL_PAY (issue #114): the Dollar-Auction / chaos mode.
 // Bid path is the sealed engine (amounts hidden during LIVE); at close the
 // winner pays their own bid AND the runner-up forfeits their bid — both
