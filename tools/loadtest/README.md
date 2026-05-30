@@ -1,8 +1,19 @@
-# `tools/loadtest/` — k6 high-concurrency stress harness
+# `tools/loadtest/` — high-concurrency WS stress harnesses
 
-> Drives **5,000+ concurrent WebSocket sessions** against the lumen stack.
-> Beyond V9 §4.2 stretch lane (1k connected / 100 active). Used to validate
-> "thousands-concurrent" demo claim with real numbers, not promises.
+> Drives **真·万人 (10,000) concurrent WebSocket sessions** against the lumen
+> stack. Beyond V9 §4.2 stretch lane (1k connected / 100 active). Used to
+> validate the "万人并发" claim with real numbers, not promises.
+>
+> **Three external harnesses, by job:**
+> - **`wsload/`** (Go) — the one that actually reaches **10k** on a single box
+>   (one goroutine + 1 KB buffer per conn). **Start here for 万人.** ✅
+> - **`k6-ws.js`** (k6) — 5k mixed observer/bidder, rich JS metrics; per-VU JS
+>   VM caps it on RAM well before 10k.
+> - **`locustfile.py`** (Locust) — behavioural mixed load; Python/gevent tops
+>   out ~1.5–2k WS/process (see issue #118 report).
+>
+> All three report the server's `/metrics` as ground truth — the harness tells
+> you what the *client* saw; `/metrics` tells you what `lumen` actually did.
 
 The Go-internal `lumen load` harness (T8, `apps/lumen/internal/server/load.go`)
 covers the §4.2 P0 gate (500/50) and stretch (1k/100). This k6 harness pushes
@@ -16,6 +27,61 @@ class of test:
 | CI gate | Required on every push (`make load-smoke`) | Operator-run + nightly schedule |
 | Bid coordination | Shared `atomic.Int64` counter | Each bidder watches BID_ACCEPTED + bids `current+1` |
 | Ack matching | direct ack on the originating socket | matches by `(amountCents, userId)` from broadcast |
+
+---
+
+## `wsload/` — Go 万人 (10k) harness ✅
+
+`wsload/` is a purpose-built Go WS load generator. It exists because the other
+two harnesses hit **client**-side ceilings far below 10k (Locust ~2k/process;
+k6 ≈ tens of GB RAM at 10k VUs). `wsload` opens **one goroutine + a 1 KB buffer
+per connection**, so a single box drives **10,000 live WS sessions in ~200 MB**.
+
+```bash
+cd tools/loadtest/wsload && go build -o wsload .
+# stack up + a LIVE auction seeded (k6-setup.sh writes .k6-aid + .k6-tokens)
+./wsload -host ws://localhost:8080 -aid "$(cat ../../../.k6-aid)" \
+  -tokens ../.k6-tokens -conns 9900 -bidders 100 -ramp 45s -hold 60s
+```
+
+### ⚠️ Measure over the real network, NOT the Windows dev loopback
+
+On **Windows Docker Desktop**, host `localhost:8080 → container` traverses a
+userspace port-forward proxy that **RSTs new connections past ~1,972**
+(`An existing connection was forcibly closed by the remote host`). That is a
+**dev-proxy artifact, not a server limit** — the gateway is Tier-A tuned
+(`nofile 65536`, `somaxconn 4096`; see `infra/docker-compose.yml`). To measure
+the real ceiling, drive load from a container **on the stack's network** (and in
+prod, from a separate box against `wss://`):
+
+```bash
+CGO_ENABLED=0 GOOS=linux go build -o wsload-linux .
+docker run --rm --network infra_default --ulimit nofile=1048576:1048576 \
+  -v "$PWD/..:/lt" alpine:3.20 /lt/wsload/wsload-linux \
+  -host ws://lumen:8080 -aid <AID> -tokens /lt/.k6-tokens \
+  -conns 9900 -bidders 100 -ramp 45s -hold 60s
+```
+
+### Result — 10,000 concurrent, server-side SLO crushed (2026-05-31)
+
+9,900 observers + 100 bidders, driven over the Docker network; server truth from
+`/metrics` (scraped in-container) at the 10k steady-state hold:
+
+| metric | value | SLO gate | margin |
+|---|---|---|---|
+| **peak concurrent** | **10,000** (0 connect-fail, 0 force-close) | — | — |
+| server **ack** p95 / p99 | **7.1 / 13.4 ms** | p95 < 80 ms | ~11× |
+| server **broadcast** p95 / p99 | **19.3 / 24.4 ms** | p95 < 150 ms | ~8× |
+| Lua `EVALSHA` p99 | ~12 ms | — | — |
+| `seqGapCount` | **0** | == 0 | ✅ |
+| `backpressureForceClose` | **0** | == 0 | ✅ |
+| frames delivered | **56.1 M** over 105 s | — | — |
+| lumen CPU / RAM @ 10k | ~10 cores / **~825 MiB** | — | — |
+
+Apples-to-apples: the **same binary** caps at 1,972 over Windows loopback (proxy
+RST) but reaches **10,000 cleanly** over the network — proving the **gateway**,
+not the fan-out design (#118), was never the limit. The production 火山云
+re-measure (Part A8 of #121) repeats this from a separate region.
 
 ---
 
@@ -145,5 +211,7 @@ The choice for k6 is documented in [issue #94 §4.G3](../../issues/94).
 ## Future work (issue #94 §5 phases)
 
 - **Phase 2** — sweep N_BIDDERS 50→500 to find Lua throughput ceiling
-- **Phase 3** — bump to 10k VUs (handshake queue + FD ceiling test)
+- ~~**Phase 3** — bump to 10k VUs (handshake queue + FD ceiling test)~~ ✅
+  **done** via `wsload/` (10,000 concurrent over the Docker network, 2026-05-31;
+  see the `wsload/` result table above)
 - **Phase 4** — nightly GitHub Actions schedule (free-tier 21 min/wk)
