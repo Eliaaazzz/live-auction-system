@@ -74,6 +74,18 @@ func IsSealedMode(m string) bool {
 	return false
 }
 
+// UsesSealedEngine reports whether the mode runs the sealed-bid engine
+// (place_bid_sealed.lua + close_auction_sealed.lua) — currently SEALED_FIRST and
+// VICKREY. Distinct from IsSealedMode, which also covers modes whose sealed
+// engine is not yet wired (ALL_PAY / PREQUALIFY).
+func UsesSealedEngine(m string) bool {
+	switch NormalizeMode(m) {
+	case ModeSealedFirst, ModeVickrey:
+		return true
+	}
+	return false
+}
+
 // WS message types (SCREAMING_SNAKE — proto/ws-envelope.md).
 const (
 	TypeRoomJoin         = "ROOM_JOIN"

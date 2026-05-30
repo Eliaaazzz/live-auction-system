@@ -22,14 +22,16 @@ import (
 )
 
 type Store struct {
-	rdb         *redis.Client
-	db          *sql.DB
-	shaPlaceBid string
-	shaFreeze   string
-	shaStart    string
-	shaClose    string
-	shaCancel   string
-	evidenceKey []byte // HMAC key for the auction_events hash chain (T4)
+	rdb               *redis.Client
+	db                *sql.DB
+	shaPlaceBid       string
+	shaPlaceBidSealed string // sealed modes (issue #114)
+	shaFreeze         string
+	shaStart          string
+	shaClose          string
+	shaCloseSealed    string // sealed reveal + hammer (issue #114)
+	shaCancel         string
+	evidenceKey       []byte // HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -113,6 +115,12 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	if s.shaPlaceBid, err = s.rdb.ScriptLoad(ctx, lua.PlaceBid).Result(); err != nil {
 		return fmt.Errorf("load place_bid.lua: %w", err)
 	}
+	if s.shaPlaceBidSealed, err = s.rdb.ScriptLoad(ctx, lua.PlaceBidSealed).Result(); err != nil {
+		return fmt.Errorf("load place_bid_sealed.lua: %w", err)
+	}
+	if s.shaCloseSealed, err = s.rdb.ScriptLoad(ctx, lua.CloseSealed).Result(); err != nil {
+		return fmt.Errorf("load close_auction_sealed.lua: %w", err)
+	}
 	if s.shaFreeze, err = s.rdb.ScriptLoad(ctx, lua.FreezeRules).Result(); err != nil {
 		return fmt.Errorf("load freeze_rules.lua: %w", err)
 	}
@@ -142,6 +150,11 @@ func stateKey(aid string) string       { return fmt.Sprintf("auction:{%s}:state"
 func lbKey(aid string) string          { return fmt.Sprintf("auction:{%s}:leaderboard", aid) }
 func streamKey(aid string) string      { return fmt.Sprintf("auction:{%s}:events", aid) }
 func dedupeKey(aid, uid string) string { return fmt.Sprintf("auction:{%s}:dedupe:%s", aid, uid) }
+
+// Private sealed-mode keys (issue #114): never read by Snapshot/Leaderboard
+// during LIVE, so bid amounts stay hidden until the reveal at close.
+func sealedKey(aid string) string      { return fmt.Sprintf("auction:{%s}:sealed", aid) }
+func sealedNamesKey(aid string) string { return fmt.Sprintf("auction:{%s}:sealednames", aid) }
 
 // HasDedupe reports whether a clientBidID already has a cached BID_ACCEPTED
 // payload in the per-(auction,user) dedupe Hash. Used by the V10k Tier C
@@ -391,11 +404,28 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 	return t.UnixMilli(), nil
 }
 
-// CloseAuction runs close_auction.lua (Timer hammer). Returns the code and, on
-// ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
-// (anti-snipe may have moved it forward since the scan).
+// CloseAuction runs the Timer hammer. For the sealed modes (issue #114) it
+// dispatches to close_auction_sealed.lua, which reveals the sealed bids and
+// picks the price (first-price vs Vickrey 2nd-price) at close; otherwise it runs
+// the standard close_auction.lua. The mode is read from the state Hash (one HGET
+// — the close path is the Timer's per-auction-once path, not the bid hot path).
+// Returns the code and, on ERR_NOT_DUE, the current endAtMs so the caller can
+// refresh the active score (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
-	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	mode := model.NormalizeMode(s.rdb.HGet(ctx, stateKey(aid), "mode").Val())
+	var arr []interface{}
+	var err error
+	switch mode {
+	case model.ModeSealedFirst, model.ModeVickrey:
+		priceMode := "FIRST"
+		if mode == model.ModeVickrey {
+			priceMode = "SECOND"
+		}
+		keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), lbKey(aid), streamKey(aid)}
+		arr, err = s.eval(ctx, s.shaCloseSealed, keys, PubChannel(aid), priceMode)
+	default:
+		arr, err = s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	}
 	if err != nil {
 		return "", 0, err
 	}
@@ -428,6 +458,32 @@ func (s *Store) PlaceBid(ctx context.Context, aid, userID, clientBidID, amountCe
 		// All three accept the bid; the secondary AUCTION_EXTENDED/AUCTION_SOLD
 		// event (arr[3..4]) is delivered to the room via Pub/Sub, so the gateway
 		// only needs the bid ack (arr[1..2]) for the originating socket.
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
+		return c, luaInt(arr[1]), luaStr(arr[2]), nil
+	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
+		return c, 0, luaStr(arr[1]), nil
+	default:
+		return c, 0, "", nil
+	}
+}
+
+// PlaceBidSealed runs place_bid_sealed.lua (sealed modes, issue #114). The bid
+// amount is recorded privately and NOT broadcast; the returned payload is the
+// bidder's own PRIVATE ack (shaped like BID_ACCEPTED), pushed only to their
+// socket. The room sees only the redacted SEALED_BID_RECEIVED stream event.
+func (s *Store) PlaceBidSealed(ctx context.Context, aid, userID, clientBidID, amountCents, displayName string) (string, int64, string, error) {
+	keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), streamKey(aid), dedupeKey(aid, userID)}
+	arr, err := s.eval(ctx, s.shaPlaceBidSealed, keys, userID, clientBidID, amountCents, displayName, PubChannel(aid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	switch c := luaStr(arr[0]); c {
+	case model.CodeOKAccepted:
 		if len(arr) < 3 {
 			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
 		}

@@ -8,6 +8,16 @@ import _ "embed"
 //go:embed place_bid.lua
 var PlaceBid string
 
+// PlaceBidSealed / CloseSealed implement the sealed modes (issue #114):
+// SEALED_FIRST and VICKREY. Bids are hidden during LIVE; reveal + winner/price
+// at close. The bid script is shared (price rule is chosen at close).
+//
+//go:embed place_bid_sealed.lua
+var PlaceBidSealed string
+
+//go:embed close_auction_sealed.lua
+var CloseSealed string
+
 //go:embed freeze_rules.lua
 var FreezeRules string
 

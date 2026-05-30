@@ -119,11 +119,16 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "productId required")
 		return
 	}
-	// Apply mode-specific rule normalization (e.g. Sudden Death disables
-	// anti-snipe) before validation + persistence, so the stored rules already
-	// encode the mode's semantics. Unknown modes fall back to ENGLISH here but
-	// are still rejected by Validate below.
-	body.Rules = modeFor(body.Rules.Mode).NormalizeRules(body.Rules)
+	// Resolve the auction mode's strategy and apply its rule normalization (e.g.
+	// Sudden Death disables anti-snipe) before validation + persistence, so the
+	// stored rules already encode the mode's semantics. A valid-but-not-yet-
+	// enabled mode (e.g. ALL_PAY before its phase lands) is rejected here.
+	mode, ok := modeFor(body.Rules.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "auction mode not available yet: "+model.NormalizeMode(body.Rules.Mode))
+		return
+	}
+	body.Rules = mode.NormalizeRules(body.Rules)
 	if err := body.Rules.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

@@ -93,6 +93,24 @@ func main() {
 			log.Fatalf("demo-sudden-death: %v", err)
 		}
 
+	case "demo-sealed":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoSealed(target); err != nil {
+			log.Fatalf("demo-sealed: %v", err)
+		}
+
+	case "demo-vickrey":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoVickrey(target); err != nil {
+			log.Fatalf("demo-vickrey: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

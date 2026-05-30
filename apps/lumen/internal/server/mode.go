@@ -47,22 +47,20 @@ type sealedMode struct{ baseMode }
 
 func (m sealedMode) SealedDuringLive() bool { return true }
 
+// modeRegistry holds the ENABLED auction modes. A mode that is a valid contract
+// value (model.ValidMode) but absent here is not yet runnable —
+// handleCreateAuction rejects it as "not available yet". Add an entry as each
+// phase lands (HYBRID_REVEAL, ALL_PAY, PREQUALIFY are reserved but unbuilt).
 var modeRegistry = map[string]AuctionMode{
-	model.ModeEnglish:      baseMode{model.ModeEnglish},
-	model.ModeSuddenDeath:  suddenDeathMode{baseMode{model.ModeSuddenDeath}},
-	model.ModeSealedFirst:  sealedMode{baseMode{model.ModeSealedFirst}},
-	model.ModeVickrey:      sealedMode{baseMode{model.ModeVickrey}},
-	model.ModeHybridReveal: baseMode{model.ModeHybridReveal}, // ascending; redaction wired in Phase 4
-	model.ModeAllPay:       sealedMode{baseMode{model.ModeAllPay}},
-	model.ModePrequalify:   sealedMode{baseMode{model.ModePrequalify}},
+	model.ModeEnglish:     baseMode{model.ModeEnglish},
+	model.ModeSuddenDeath: suddenDeathMode{baseMode{model.ModeSuddenDeath}},
+	model.ModeSealedFirst: sealedMode{baseMode{model.ModeSealedFirst}},
+	model.ModeVickrey:     sealedMode{baseMode{model.ModeVickrey}},
 }
 
-// modeFor returns the strategy for a mode name, defaulting to ENGLISH for the
-// empty string or any unknown value (Validate already rejects unknown modes at
-// the REST boundary, so this is a safe fallback).
-func modeFor(name string) AuctionMode {
-	if m, ok := modeRegistry[model.NormalizeMode(name)]; ok {
-		return m
-	}
-	return modeRegistry[model.ModeEnglish]
+// modeFor returns the strategy for an enabled mode. ok=false means the mode is a
+// valid contract value but not yet runnable, so the caller should reject it.
+func modeFor(name string) (AuctionMode, bool) {
+	m, ok := modeRegistry[model.NormalizeMode(name)]
+	return m, ok
 }
