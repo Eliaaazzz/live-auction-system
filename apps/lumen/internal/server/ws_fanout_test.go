@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/gorilla/websocket"
@@ -109,4 +110,73 @@ func TestBroadcastFanoutForceClosesSlowClient(t *testing.T) {
 	default:
 		t.Fatal("slow conn was not force-closed when its CRITICAL lane was full")
 	}
+}
+
+// TestBroadcastFanoutRaceWithRehome races the lock-free fan-out against a
+// cross-auction re-home of a connection — ROOM_JOIN to a different auction
+// reuses the same *Conn and reassigns c.aid (ws.go handleWS). Run under -race:
+// it catches the data race the lock-free fan-out would otherwise have on c.aid,
+// and the roomEpoch guard ensures a re-homed conn is skipped, not delivered a
+// stale frame. Asserts no panic/deadlock (wg completes). (#118)
+func TestBroadcastFanoutRaceWithRehome(t *testing.T) {
+	h := newHub()
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// mk builds a conn with a drained lane so it stays alive (no force-close)
+	// throughout the race, keeping the concurrent paths exercised.
+	mk := func(aid string) *Conn {
+		c := &Conn{
+			aid:      aid,
+			done:     make(chan struct{}),
+			prepared: make(chan *websocket.PreparedMessage, 256),
+			send:     make(chan []byte, 256),
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-c.prepared:
+				case <-c.send:
+				}
+			}
+		}()
+		return c
+	}
+
+	stable := mk("A")
+	h.join("A", stable)
+	mover := mk("A")
+	h.join("A", mover)
+
+	wg.Add(2)
+	go func() { // broadcaster: hammer room A
+		defer wg.Done()
+		msg := []byte(`{"type":"BID_ACCEPTED","auctionId":"A"}`)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				h.broadcast("A", msg)
+			}
+		}
+	}()
+	go func() { // re-homer: flip `mover` A↔B (mirrors the ROOM_JOIN handler)
+		defer wg.Done()
+		for i := 0; i < 5000; i++ {
+			h.leave(mover)
+			mover.aid = "B"
+			h.join("B", mover)
+			h.leave(mover)
+			mover.aid = "A"
+			h.join("A", mover)
+		}
+		close(stop)
+	}()
+
+	wg.Wait()
 }
