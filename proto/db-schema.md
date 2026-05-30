@@ -8,7 +8,7 @@ Materialized from PR #13 `docs/mysql-schema.md`. MySQL is the fact store; Redis 
 users(id, nickname, avatar, role, created_at)
 products(id, seller_id, name, image_url, description, status, created_at, updated_at)
 auction_rules(id, auction_id, start_price_cents, increment_cents, cap_price_cents,
-              duration_sec, extend_window_sec, extend_sec, max_extensions, frozen_at)
+              duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, frozen_at)
 auctions(id, product_id, seller_id, status, current_price_cents, winner_id, seq,
          start_at, end_at, finished_at, cancel_reason, created_at, updated_at)
 bids(id, auction_id, user_id, amount_cents, seq, client_bid_id, source, accepted_at)
@@ -17,6 +17,10 @@ auction_events(id, auction_id, seq, event_type, payload_json, created_at,
                event_hash, prev_hash)        -- hash columns nullable in T1; filled in T4
 ai_usage_logs(id, scenario, model_name, input_summary, output_summary, human_reviewed, created_at)
 ```
+
+### Issue #121 (火山直播 video) addition
+
+- **`auction_rules.live_play_url`** — `VARCHAR(512) NOT NULL DEFAULT ''`. Optional HLS `.m3u8` / mp4 / webm URL that the room player renders as the 直播画面. **Non-authoritative** (display-only, never gates bids or state). Empty string (default) → room falls back to the simulated feed (CSS sheen, #110). The PATCH `/api/auctions/{id}` partial-merge accepts an update to this field while the auction is `DRAFT` or `SCHEDULED` (owner-only; identical posture to other rules).
 
 ## Unique constraints (prove correctness)
 
