@@ -40,6 +40,38 @@ describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
   });
 });
 
+describe('MobileRoom · LiveVideo fallback (#126)', () => {
+  it('falls back to the simulated sheen when a configured video errors at runtime', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/live.m3u8"/>,
+    );
+
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+
+    fireEvent.error(video);
+
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('.lumen-livefeed')).not.toBeNull();
+  });
+
+  it('resets the runtime fallback when videoUrl changes', () => {
+    const { container, rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/broken.m3u8"/>,
+    );
+
+    fireEvent.error(container.querySelector('video'));
+    expect(container.querySelector('.lumen-livefeed')).not.toBeNull();
+
+    rerender(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/recovered.m3u8"/>,
+    );
+
+    expect(container.querySelector('video')).not.toBeNull();
+    expect(container.querySelector('.lumen-livefeed')).toBeNull();
+  });
+});
+
 describe('PullToResync · gesture handling (TC-T6-#51-H2)', () => {
   it('renders children unchanged', () => {
     const { getByTestId } = render(
