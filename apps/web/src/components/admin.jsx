@@ -107,7 +107,7 @@ function AdminVLMFacts() {
           highRisk: !!f.highRisk,
         })));
       } catch (e) {
-        if (live) setError('VLM 抽取失败(AI 旁路,出价不受影响): ' + (e?.message || String(e)));
+        console.warn('[AdminVLMFacts] VLM draft fetch failed (fallback facts stay editable)', e);
       } finally {
         if (live) setLoading(false);
       }
