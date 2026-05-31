@@ -29,11 +29,16 @@ const DEMO_LEADERS = [
 function LiveVideo({ url, poster, onPlayFailed }) {
   const ref = React.useRef(null);
   const reportedRef = React.useRef(false);
+  const onPlayFailedRef = React.useRef(onPlayFailed);
+  React.useEffect(() => {
+    onPlayFailedRef.current = onPlayFailed;
+  });
+
   const reportFailure = React.useCallback(() => {
     if (reportedRef.current) return;
     reportedRef.current = true;
-    onPlayFailed?.();
-  }, [onPlayFailed]);
+    onPlayFailedRef.current?.();
+  }, []);
 
   React.useEffect(() => {
     reportedRef.current = false;
@@ -69,7 +74,7 @@ function LiveVideo({ url, poster, onPlayFailed }) {
       video.removeAttribute('src');
       try { video.load(); } catch (_) { /* detach best-effort */ }
     };
-  }, [url, reportFailure]);
+  }, [url]);
   return (
     <video ref={ref} poster={poster || undefined}
       onError={reportFailure}
