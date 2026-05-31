@@ -87,11 +87,16 @@ def lane:
   elif $ci == "ci-green" then "needs-review"
   else "waiting-ci"
   end;
+def stack_state:
+  if (.baseRefName == "main" or .baseRefName == "master") then "direct"
+  else "stacked"
+  end;
 def row:
   {
     number,
     title,
     lane: lane,
+    stack: stack_state,
     ci: check_state,
     review: (.reviewDecision // ""),
     draft: .isDraft,
@@ -107,8 +112,8 @@ rows=$(jq -c "$jq_filter" "$json_file")
 
 write_report() {
   if [ "$FORMAT" = "tsv" ]; then
-    printf 'lane\tci\treview\tpr\tauthor\tbase\thead\tupdated\ttitle\turl\n'
-    printf '%s\n' "$rows" | jq -r '.[] | [.lane,.ci,.review,("#" + (.number|tostring)),.author,.base,.head,.updatedAt,.title,.url] | @tsv'
+    printf 'lane\tstack\tci\treview\tpr\tauthor\tbase\thead\tupdated\ttitle\turl\n'
+    printf '%s\n' "$rows" | jq -r '.[] | [.lane,.stack,.ci,.review,("#" + (.number|tostring)),.author,.base,.head,.updatedAt,.title,.url] | @tsv'
     return
   fi
 
@@ -119,6 +124,8 @@ write_report() {
   blocked=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "blocked")] | length')
   draft=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "draft")] | length')
   waiting_ci=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "waiting-ci")] | length')
+  direct=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "direct")] | length')
+  stacked=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "stacked")] | length')
 
   cat <<EOF_REPORT
 # Lumen PR queue report
@@ -132,14 +139,16 @@ Generated: $generated_at
 | blocked | $blocked |
 | draft | $draft |
 | waiting-ci | $waiting_ci |
+| direct-to-main | $direct |
+| stacked | $stacked |
 | total open | $total |
 
 ## Open PRs
 
-| lane | CI | review | PR | author | base <- head | title |
-|---|---|---|---|---|---|---|
+| lane | stack | CI | review | PR | author | base <- head | title |
+|---|---|---|---|---|---|---|---|
 EOF_REPORT
-  printf '%s\n' "$rows" | jq -r '.[] | "| " + .lane + " | " + .ci + " | " + (.review // "") + " | [#" + (.number|tostring) + "](" + .url + ") | " + .author + " | `" + .base + " <- " + .head + "` | " + (.title | gsub("\\|"; "\\|")) + " |"'
+  printf '%s\n' "$rows" | jq -r '.[] | "| " + .lane + " | " + .stack + " | " + .ci + " | " + (.review // "") + " | [#" + (.number|tostring) + "](" + .url + ") | " + .author + " | `" + .base + " <- " + .head + "` | " + (.title | gsub("\\|"; "\\|")) + " |"'
 }
 
 if [ -n "$OUT" ]; then
