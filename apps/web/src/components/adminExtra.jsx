@@ -22,6 +22,12 @@ function AdminPublish() {
   const [antiSnipe, setAntiSnipe] = React.useState(true);
   const [scheduleDate, setScheduleDate] = React.useState('2026-06-10');
   const [scheduleTime, setScheduleTime] = React.useState('21:00');
+  // Real product media (item 4): an image URL the room renders + the VLM page
+  // drafts facts from. Defaults to a sample so the demo has a real image;
+  // sellers can paste their own. (No binary upload endpoint — a URL is the
+  // spec-allowed input; the room degrades to a styled placeholder if it fails.)
+  const [imageUrl, setImageUrl] = React.useState('https://images.unsplash.com/photo-1547996160-81dfa63595aa?w=900&q=80');
+  const [description, setDescription] = React.useState('稀世腕表,蓝面,盘面完好,附原厂证书。');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
 
@@ -58,19 +64,22 @@ function AdminPublish() {
       await ensureSession('seller-demo');
       const { productId } = await api.createProduct({
         name: title,
-        imageUrl: '',                 // demo: no upload (T7 wires real VLM input)
-        description: '',
+        imageUrl,
+        description,
       });
+      // Backend contract is model.Rules (startPriceCents/incrementCents/
+      // capPriceCents/durationSec/extendWindowSec/extendSec/maxExtensions) —
+      // money as string. The old payload used different field names and 400'd.
       const { auctionId } = await api.createDraft({
         productId,
         rules: {
-          startCents,
-          stepCents,
-          reserveCents,
-          capCents,
-          durationMs: duration * 60 * 1000,
-          maxExtensions: antiSnipe ? maxExtends : 0,
-          antiSnipeWindowMs: antiSnipe ? 10_000 : 0,
+          startPriceCents: startCents,
+          incrementCents:  stepCents,
+          capPriceCents:   capCents,
+          durationSec:     duration * 60,
+          extendWindowSec: antiSnipe ? 10 : 0,
+          extendSec:       antiSnipe ? 10 : 0,
+          maxExtensions:   antiSnipe ? maxExtends : 0,
         },
       });
       navigate(`/admin/auctions/${auctionId}/vlm`);
@@ -137,39 +146,31 @@ function AdminPublish() {
             </div>
           </FormSection>
 
-          {/* ─ Section: media ─ */}
-          <FormSection step="02" title="拍品视频" desc="上传后 AI Sidecar 将自动运行 VLM 抽取关键事实">
-            <div style={{
-              border: '1.5px dashed rgba(255,255,255,.18)', borderRadius: 12, padding: '20px 22px',
-              display: 'flex', alignItems: 'center', gap: 14,
-            }}>
+          {/* ─ Section: media ─ (real image URL + 介绍; the room renders these
+               and the VLM page drafts facts from the image) */}
+          <FormSection step="02" title="商品图片 & 介绍" desc="图片 URL + 介绍 — 直播间渲染该图,VLM 据此抽取事实">
+            <div style={{ display: 'flex', gap: 16 }}>
               <div style={{
-                width: 72, height: 96, borderRadius: 8,
+                width: 96, height: 128, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
                 background: 'linear-gradient(160deg,#2a1f2e,#0a0e1a)',
-                position: 'relative', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
               }}>
-                <svg viewBox="0 0 100 100" style={{ position: 'absolute', inset: '15%' }}>
-                  <circle cx="50" cy="50" r="30" fill="none" stroke="#C9A961" strokeWidth="2"/>
-                  <circle cx="50" cy="50" r="24" fill="#0d0d14"/>
-                </svg>
-                <div style={{
-                  position: 'absolute', top: 6, right: 6,
-                  width: 18, height: 18, borderRadius: 9, background: 'var(--douyin-cyan)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: 11, fontWeight: 700, color: '#0a0a14',
-                }}>✓</div>
+                {imageUrl
+                  ? <img src={imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                         onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+                  : <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>无图</span>}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>watch-5711a-walkthrough.mp4</div>
-                <div className="mono" style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', marginTop: 2 }}>
-                  05:18 · 1080p · 42.8 MB · 已上传
-                </div>
-                <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-                  <span style={chip('cyan')}>VLM 已采样 28 帧</span>
-                  <span style={chip('warn')}>等待事实核对 · 0/5</span>
-                </div>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <FormRow label="图片 URL" required>
+                  <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)}
+                    placeholder="https://…/item.jpg" style={inp}/>
+                </FormRow>
+                <FormRow label="商品介绍">
+                  <textarea value={description} onChange={(e) => setDescription(e.target.value)}
+                    rows={2} placeholder="成色 / 瑕疵 / 关键参数(VLM 会把它当作卖家声明,不作裁决)"
+                    style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}/>
+                </FormRow>
               </div>
-              <button style={btnGhost2}>替换</button>
             </div>
           </FormSection>
 
@@ -659,21 +660,22 @@ function AdminCancelModal({
 }
 
 // ───────────────────────────────────────────────────────────────
-// Admin · Orders / Products
+// Admin · Orders / Products — real data from GET /api/auctions
 // ───────────────────────────────────────────────────────────────
-const ORDER_ROWS = [
-  { lot: '2024-0142', title: '百达翡丽 5711/1A · 蓝面',         status: 'ORDER_CREATED', winner: '海风_2024',   hammer: '12880000', settle: '已结算',   t: '2026-05-25 21:48' },
-  { lot: '2024-0141', title: '劳力士 GMT-Master II 116710',     status: 'SOLD',           winner: '陆_LU',       hammer: '6850000',  settle: '待结算',   t: '2026-05-25 20:14' },
-  { lot: '2024-0140', title: '清代翡翠手镯 · A货',                status: 'NO_BID',         winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-24 22:30' },
-  { lot: '2024-0139', title: '宋瓷青瓷莲花碗',                    status: 'CANCELLED',      winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-24 21:02' },
-  { lot: '2024-0138', title: 'Louis Vuitton Limited Edition 手袋', status: 'ORDER_CREATED',  winner: '盐渍生活',   hammer: '1850000',  settle: '已结算',   t: '2026-05-23 19:48' },
-  { lot: '2024-0137', title: '萧勤 抽象画作 1988',                status: 'SOLD',           winner: '听雨人',      hammer: '4200000',  settle: '待结算',   t: '2026-05-22 21:12' },
-  { lot: '2024-0136', title: '欧米茄 Speedmaster Moonwatch',     status: 'SCHEDULED',      winner: '—',           hammer: '0',        settle: '—',        t: '2026-05-26 21:00' },
-  { lot: '2024-0135', title: '田黄石印章 · 清乾隆',                status: 'LIVE',           winner: '—',           hammer: '0',        settle: '—',        t: '直播中' },
-  { lot: '2024-0134', title: '陶器 · 战国 灰陶罐',                 status: 'DRAFT',          winner: '—',           hammer: '0',        settle: '—',        t: '草稿' },
-];
+function auctionToRow(a) {
+  const sold = a.status === 'SOLD' || a.status === 'ORDER_CREATED';
+  return {
+    lot: a.auctionId,
+    title: a.productName || a.auctionId,
+    status: a.status,
+    winner: a.winnerId || '—',
+    hammer: sold ? (a.currentPriceCents || '0') : '0',
+    settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
+    t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
+  };
+}
 
-const USE_MOCK_DATA = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'true') === 'true';
+const USE_MOCK_DATA = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 'true';
 
 const normalizeCents = (raw) => {
   const s = String(raw == null ? '0' : raw).trim();
@@ -709,10 +711,10 @@ const normalizeSettlement = (status) => {
 };
 const mapBackendRows = (rows = []) => rows.map((it, i) => {
   const status = normalizeStatus(it?.status);
-  const lot = String(it?.lot ?? it?.id ?? `auc-${i + 1}`).trim() || `auc-${i + 1}`;
+  const lot = String(it?.lot ?? it?.auctionId ?? it?.id ?? `auc-${i + 1}`).trim() || `auc-${i + 1}`;
   return {
     lot,
-    title: String(it?.title ?? it?.name ?? '—'),
+    title: String(it?.title ?? it?.productName ?? it?.name ?? '—'),
     status,
     winner: String(it?.winner ?? it?.winnerId ?? it?.winnerName ?? '—'),
     hammer: normalizeCents(it?.hammer ?? it?.currentPriceCents ?? it?.currentPrice ?? '0'),
@@ -865,6 +867,25 @@ function AdminOrders() {
       document.body.removeChild(ta);
     }
   };
+  const handleEditRules = async (aid) => {
+    const sp = window.prompt('修改起拍价(分 cents) — 仅 DRAFT/SCHEDULED 可改:');
+    if (sp == null || !sp.trim()) return;
+    const inc = window.prompt('修改加价幅度(分 cents):');
+    if (inc == null || !inc.trim()) return;
+    try {
+      await api.updateRules(aid, { startPriceCents: sp.trim(), incrementCents: inc.trim() });
+      const data = await api.listAuctions();
+      const rawRows = Array.isArray(data?.auctions)
+        ? data.auctions
+        : Array.isArray(data)
+          ? data
+          : [];
+      setRows(rawRows.length ? mapBackendRows(rawRows) : ORDER_ROWS);
+      setIsDemoData(!rawRows.length);
+    } catch (e) {
+      window.alert('更新失败: ' + (e?.message || e));
+    }
+  };
 
   return (
     <div style={{
@@ -881,7 +902,9 @@ function AdminOrders() {
         </div>
         <div style={{ flex: 1 }}/>
         <button onClick={handleExportCsv} style={btnGhost2}>导出 CSV</button>
-        <button onClick={() => navigate('/admin/auctions/new')} style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
+        <button
+          onClick={() => navigate('/admin/auctions/new')}
+          style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
           + 新建拍品
         </button>
       </div>
@@ -945,7 +968,7 @@ function AdminOrders() {
             border: '1px solid ' + (filter === s ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.06)'),
             cursor: 'pointer', fontFamily: 'inherit',
           }}>
-            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? rows.filter(r=>r.status===s).length}</span>
+            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? rows.filter(r => r.status === s).length}</span>
           </button>
         ))}
       </div>
@@ -1022,10 +1045,27 @@ function AdminOrders() {
                   }}>{r.settle}</span>
                 </Td>
                 <Td><span className="mono" style={{ color: 'var(--douyin-ink-muted)', fontSize: 11 }}>{r.t}</span></Td>
-                <Td><button onClick={() => handleCopyRow(r)} aria-label={`复制 LOT ${r.lot} 明细`} style={{
-                  border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
-                  cursor: 'pointer', fontSize: 14, padding: '4px 8px',
-                  }} title="复制该行明细">⋯</button></Td>
+                <Td>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                    {(r.status === 'DRAFT' || r.status === 'SCHEDULED') ? (
+                      <button onClick={() => handleEditRules(r.lot)} style={{
+                        border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
+                        color: 'var(--douyin-ink-text)', cursor: 'pointer', fontSize: 11,
+                        padding: '3px 10px', borderRadius: 6,
+                      }}>编辑规则</button>
+                    ) : (
+                      <button onClick={() => navigate(
+                        (r.status === 'LIVE') ? `/room/${r.lot}` : `/evidence/${r.lot}`)} style={{
+                        border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
+                        cursor: 'pointer', fontSize: 14, padding: '4px 8px',
+                      }}>›</button>
+                    )}
+                    <button onClick={() => handleCopyRow(r)} aria-label={`复制 LOT ${r.lot} 明细`} style={{
+                      border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
+                      cursor: 'pointer', fontSize: 14, padding: '4px 8px',
+                    }} title="复制该行明细">⋯</button>
+                  </div>
+                </Td>
               </tr>
             ))}
           </tbody>
@@ -1060,5 +1100,4 @@ export {
   AdminPublish,
   AdminCancelModal,
   AdminOrders,
-  ORDER_ROWS
 };

@@ -1,0 +1,15 @@
+# Keep host build artifacts out of the Docker build context. Critical for the
+# React build stage: the host node_modules carries a macOS esbuild binary that
+# would fail in the Linux build, so node_modules must be re-installed via
+# `npm ci` inside the image. Also speeds up the Go stage's `COPY . .`.
+**/node_modules
+**/dist
+**/coverage
+.git
+.github
+*.log
+.load-logs
+.chaos-*
+.k6-*
+.e2e-auction-id
+.load-auction-id

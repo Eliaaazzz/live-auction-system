@@ -124,6 +124,15 @@ export const api = {
    */
   cancel: (id, payload) => request(`/auctions/${id}/cancel`, { method: 'POST', body: payload }),
 
+  /** Seller: modify a pre-start auction's rules (DRAFT/SCHEDULED). model.Rules shape. */
+  updateRules: (id, rules) => request(`/auctions/${id}`, { method: 'PATCH', body: { rules } }),
+
+  // ---------- Orders / 模拟支付 ----------
+  /** Settlement order for a SOLD auction (404 if not sold yet). */
+  getOrder: (id) => request(`/auctions/${id}/order`),
+  /** 模拟支付流程: mark the won order paid (idempotent; winner-only). */
+  pay: (id) => request(`/auctions/${id}/pay`, { method: 'POST' }),
+
   // ---------- VLM facts (ai-events.md) ----------
   /**
    * One-shot VLM facts draft. Returns:

@@ -3,6 +3,7 @@
 > **Status:** template — fill the §1 box-spec & §2 numbers AFTER `make load` runs on the team-deploy box.
 > Source instrumentation: `apps/lumen/internal/metrics/`. Source harness: `apps/lumen/internal/server/load.go` (`lumen load`).
 > SLO budget: V9 plan §4.2 (`ack p95 < 80 ms · broadcast p95 < 150 ms · hammer p95 < 500 ms · catchup 200 events < 1 s · 500 connected + 50 active, 60 s+ stable`).
+> **Measurement boundary:** the §2 p95s are **server-side** — `lumen load` scrapes them from `/metrics` (`load.go`), so they exclude client↔server network RTT and the SLO gate is insulated from WAN. The **client end-to-end** number (server + RTT, as felt in the browser / k6 `ack_latency_ms`) is re-measured under real network conditions after deploy — see §8 and `docs/deploy-and-latency.md` (#112).
 
 ---
 
@@ -120,3 +121,35 @@ make load-smoke      # 25/5/10s + post-load verify (~25 s)
 # inspect live counters
 curl -s http://localhost:8080/metrics | jq
 ```
+
+---
+
+## 8. Deployed / WAN re-measurement (#112)
+
+> The §2 numbers are same-box compose (loopback, no WAN). After a real deploy, re-measure under real
+> RTT. Method + gated decisions (target / cost / secrets): `docs/deploy-and-latency.md`.
+> **Boundary (§ top note):** server-side = SLO gate (RTT-insulated); client e2e = server + RTT (observed UX, not a gate).
+
+| Metric | Boundary | Same-box baseline (§2) | Real-RTT result | Notes |
+|---|---|---|---|---|
+| ack p95 | server-side (`/metrics`) | `____ ms` | `____ ms` | gate < 80 ms; should ≈ baseline (RTT-insulated) |
+| broadcast p95 | server-side (`/metrics`) | `____ ms` | `____ ms` | gate < 150 ms |
+| hammer p95 | server-side (`/metrics`) | `____ ms` | `____ ms` | gate < 500 ms; watch AOF fsync on cloud disk |
+| ack **e2e** p95 | client (k6 `ack_latency_ms`) | `____ ms` | `____ ms` | = server + RTT; observed UX, **not** a gate |
+| broadcast **e2e** p95 | client | `____ ms` | `____ ms` | observed UX |
+| RTT (idle ping) | network | ~0 (loopback) | `____ ms` | the WAN delta |
+| catchup 200 events | server-side | `____ ms` | `____ ms` | re-verify under real jitter (< 1 s) |
+| AOF fsync stalls | host | `__` | `__` | cloud disk stalls > loopback |
+
+Deploy context (fill):
+
+| Field | Value |
+|---|---|
+| Deploy target | `<cloud VM / container platform / preview>` (gated decision — #112) |
+| Region(s) | `<server region · client region>` |
+| TLS / proxy | `<wss via …>` |
+| Client→server RTT (measured) | `____ ms` |
+| Date / sha | `YYYY-MM-DDTHH:MMZ` / `<git sha>` |
+
+Reproduce: `docs/deploy-and-latency.md` §4 (server-side via `TARGET=https://…`; client e2e via
+`k6 -e HOST_WS=wss://…`) and §5 (toxiproxy WAN simulation without cloud).

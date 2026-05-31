@@ -184,6 +184,12 @@ func dialAndJoin(target, token, aid string) (*websocket.Conn, error) {
 		c.Close()
 		return nil, fmt.Errorf("no ROOM_SNAPSHOT: %w", err)
 	}
+	// Clear the handshake read deadline before handing the conn back. It is an
+	// ABSOLUTE time (dial + 5s); left in place it later fires mid-room and the
+	// caller's next read times out for no reason (this is what silently killed
+	// observers ~5s into a load run — #86). Callers that want a read deadline
+	// (e.g. the bidder's per-ack wait) set their own.
+	_ = c.SetReadDeadline(time.Time{})
 	return c, nil
 }
 

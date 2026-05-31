@@ -206,7 +206,7 @@ func TestSnapshotJSONShape(t *testing.T) {
 	}
 	required := []string{
 		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs",
-		"catchupLatencyMs", "placeBidScriptTimeMs",
+		"catchupLatencyMs", "placeBidScriptTimeMs", "bidHandlerOverheadMs",
 		"bidsAccepted", "bidsRejected", "backpressureForceClose",
 		"seqGapCount", "streamLenMax", "activeConns",
 	}

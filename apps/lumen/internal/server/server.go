@@ -8,6 +8,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
@@ -98,19 +101,61 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
+	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
 	mux.HandleFunc("GET /api/auctions/{id}/evidence", s.handleEvidence)
+	mux.HandleFunc("GET /api/auctions/{id}/order", s.handleGetOrder)
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
 	mux.HandleFunc("GET /ws", s.handleWS)
 
 	webDir := os.Getenv("WEB_DIR")
 	if webDir == "" {
 		webDir = "./web"
 	}
-	mux.Handle("/", http.FileServer(http.Dir(webDir)))
+	mux.Handle("/", spaFileServer(webDir))
+}
+
+// spaFileServer serves static assets from webDir, falling back to index.html
+// for any unmatched path so the React app's client-side routes (BrowserRouter:
+// /room/:id, /evidence/:id, /preview/*) resolve on direct load + refresh, not
+// just in-app navigation. The API / WS / metrics routes are registered on the
+// mux before this catch-all, so they always take precedence. Existing files
+// (the hashed /assets/* bundles) are served as-is; only genuinely-missing paths
+// fall through to the SPA entry point.
+func spaFileServer(webDir string) http.Handler {
+	fileServer := http.FileServer(http.Dir(webDir))
+	index := filepath.Join(webDir, "index.html")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Never fall through to the SPA for the API / WS namespaces. An unmatched
+		// /api/* or /ws path is a real 404 — without this guard it returned
+		// index.html with 200 and the frontend tried to JSON.parse HTML. #109.
+		if p := r.URL.Path; strings.HasPrefix(p, "/api/") || p == "/api" || strings.HasPrefix(p, "/ws") {
+			writeJSON(w, http.StatusNotFound, map[string]string{"code": "ERR_NOT_FOUND"})
+			return
+		}
+		if r.URL.Path != "/" {
+			// path.Clean on a rooted copy neutralizes any ../ traversal before
+			// we touch the filesystem; filepath.Join then keeps us under webDir.
+			rel := filepath.FromSlash(path.Clean("/" + r.URL.Path))
+			if fi, err := os.Stat(filepath.Join(webDir, rel)); err == nil && !fi.IsDir() {
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		// index.html must NOT be heuristically cached: it references the current
+		// hashed /assets/*.js bundle, which changes every build. A stale cached
+		// index.html points at an old hash that 404s after a redeploy → blank
+		// page. no-cache forces revalidation so the browser always gets the HTML
+		// that matches the deployed bundle. (The hashed assets themselves are
+		// safe to cache — their URL changes when content changes.)
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, index)
+	})
 }
