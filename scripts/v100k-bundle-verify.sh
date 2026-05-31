@@ -15,7 +15,7 @@ Checks:
   - MANIFEST.tsv exists and has the expected header.
   - Every manifest row points to a safe relative path inside the bundle.
   - Manifest byte counts and SHA-256 hashes match current file contents.
-  - Required review files exist: summary.md, metrics/metrics.json,
+  - Required review files exist: REVIEW.md, summary.md, metrics/metrics.json,
     workers/shards.tsv.
   - If --require-gate-pass is set, gate/gate.tsv must exist and all status rows
     must be PASS.
@@ -176,6 +176,7 @@ while IFS="$tab" read -r rel expected_bytes expected_sha source_path || [ -n "${
 done < "$rows_file"
 
 require_file "summary.md"
+require_file "REVIEW.md"
 require_file "metrics/metrics.json"
 require_file "workers/shards.tsv"
 
