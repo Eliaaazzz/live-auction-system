@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { formatCentsCNY, PriceDisplay, Countdown, StatusBadge,
   TypewriterText, Leaderboard, ClockDriftIndicator } from './primitives.jsx';
-import { DEMO_LEADERS } from './mobile.jsx';
+import { DEMO_LEADERS, LiveVideo } from './mobile.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
@@ -653,6 +653,8 @@ function AdminConsole() {
   // init() is a stable function ref on the store — accessing via getState()
   // for the WS bootstrap effect (no need to subscribe).
   const rafRef = React.useRef(null);
+  const [streamInfo, setStreamInfo] = React.useState(null);
+  const [publicLivePlayUrl, setPublicLivePlayUrl] = React.useState(null);
 
   // Broadcaster-side WS subscription: same RoomClient + store as the buyer
   // (LiveRoomRoute) — broadcaster just observes, never sends BID_PLACE. On
@@ -663,6 +665,8 @@ function AdminConsole() {
     if (!auctionId) return;
     let alive = true;
     let client;
+    setStreamInfo(null);
+    setPublicLivePlayUrl(null);
     (async () => {
       try {
         await ensureSession('seller-demo');
@@ -682,8 +686,17 @@ function AdminConsole() {
           endAtMs: snap.endAtMs ?? null,
           winnerId: snap.winnerId ?? null,
         });
+        setPublicLivePlayUrl(snap.livePlayUrl || null);
       } catch (e) {
         console.warn('[Console] snapshot failed (continuing — WS will rebuild)', e);
+      }
+      try {
+        const stream = await api.getAuctionStream(auctionId);
+        if (alive) setStreamInfo(stream);
+      } catch (e) {
+        // The endpoint is owner-only. A non-owner observer can still run the
+        // console view; they just won't see the seller push material.
+        console.warn('[Console] stream material unavailable', e);
       }
       try {
         // Seed the leaderboard so the console shows existing top bids on first
@@ -730,6 +743,7 @@ function AdminConsole() {
   // already excludes null userIds at the store level).
   const liveTotalBids   = auctionId ? totalBidsCount    : 126;
   const liveUniqueBids  = auctionId ? bidderIds.length  : 38;
+  const streamPreviewUrl = streamInfo?.livePlayUrl || publicLivePlayUrl || null;
 
   return (
     <div style={{
@@ -791,6 +805,7 @@ function AdminConsole() {
               <line x1="100" y1="100" x2="100" y2="60" stroke="#C9A961" strokeWidth="2.4" strokeLinecap="round"/>
               <line x1="100" y1="100" x2="135" y2="100" stroke="#dcbf7f" strokeWidth="2" strokeLinecap="round"/>
             </svg>
+            {streamPreviewUrl && <LiveVideo url={streamPreviewUrl}/>}
             <div style={{
               position: 'absolute', top: 8, left: 8, padding: '3px 8px',
               borderRadius: 4, background: 'rgba(254,44,85,.9)',
@@ -802,6 +817,16 @@ function AdminConsole() {
               background: 'rgba(0,0,0,.6)',
               fontSize: 10,
             }}>1080p · 30fps</div>
+          </div>
+
+          <div style={{
+            padding: '10px 12px', borderRadius: 8,
+            background: 'rgba(255,255,255,.02)', border: '1px solid rgba(255,255,255,.05)',
+            display: 'flex', flexDirection: 'column', gap: 7,
+          }}>
+            <StreamField label="STREAM KEY" value={streamInfo?.streamKey}/>
+            <StreamField label="OBS RTMP" value={streamInfo?.pushUrl}/>
+            <StreamField label="HLS PLAY" value={streamInfo?.livePlayUrl || publicLivePlayUrl}/>
           </div>
 
           {/* Stream health */}
@@ -1018,6 +1043,23 @@ function Health({ label, value, ok }) {
       }}/>
       <span style={{ color: 'var(--douyin-ink-muted)' }}>{label}</span>
       <span className="mono" style={{ marginLeft: 'auto', color: 'var(--douyin-ink-text)' }}>{value}</span>
+    </div>
+  );
+}
+
+function StreamField({ label, value }) {
+  const display = value || '-';
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '78px 1fr', gap: 8, alignItems: 'center' }}>
+      <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em' }}>
+        {label}
+      </span>
+      <span className="mono" title={display} style={{
+        minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        color: value ? 'var(--douyin-ink-text)' : 'var(--douyin-ink-dim)', fontSize: 10,
+      }}>
+        {display}
+      </span>
     </div>
   );
 }

@@ -62,6 +62,34 @@ describe('api.getAuction · happy path', () => {
   });
 });
 
+describe('api.getAuctionStream', () => {
+  it('GETs the seller-only stream endpoint with bearer auth', async () => {
+    const stream = {
+      auctionId: 'auc_demo',
+      streamKey: 'stream_demo',
+      pushUrl: 'rtmp://ecs.example:1935/live/stream_demo',
+      livePlayUrl: 'http://ecs.example:8081/live/stream_demo.m3u8',
+    };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => stream,
+    });
+
+    const got = await api.getAuctionStream('auc_demo');
+    expect(got).toEqual(stream);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_demo/stream',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-token',
+        }),
+      }),
+    );
+  });
+});
+
 describe('401 path triggers handleAuthFailure (PR #51-H4)', () => {
   it('clears cached session AND fires lumen:session-expired event', async () => {
     const sessionExpired = vi.fn();

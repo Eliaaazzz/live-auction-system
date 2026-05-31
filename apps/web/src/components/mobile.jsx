@@ -956,6 +956,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
 }
 
 export {
+  LiveVideo,
   MobileRoom,
   MobileHammer,
   MobileEvidence,

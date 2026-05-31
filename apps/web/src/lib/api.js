@@ -78,6 +78,9 @@ export const api = {
   /** Snapshot fallback used by LiveRoomRoute before the WS opens. */
   getAuction: (id) => request(`/auctions/${id}`),
 
+  /** Seller/admin-only live stream material: streamKey + OBS push URL + HLS play URL. */
+  getAuctionStream: (id) => request(`/auctions/${id}/stream`),
+
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
