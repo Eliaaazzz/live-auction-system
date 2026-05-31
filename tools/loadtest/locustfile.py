@@ -214,7 +214,10 @@ class Bidder(_WSBase):
                 _fire(self.environment, "bid_ack", (time.time() - t0) * 1000)
                 return
             if t == "BID_REJECTED":
-                # lost the race for current+1 (expected under contention); not a failure
-                _fire(self.environment, "bid_rejected", (time.time() - t0) * 1000)
+                # Lost the race for current+1 is expected under contention, but
+                # keep the machine code visible so a load run cannot hide bad
+                # rejects (ERR_BAD_INPUT / ERR_INTERNAL / ERR_AUCTION_PAUSED).
+                code = d.get("code") or "UNKNOWN"
+                _fire(self.environment, f"bid_rejected:{code}", (time.time() - t0) * 1000)
                 return
         _fire(self.environment, "bid_no_ack", (time.time() - t0) * 1000, exc=Exception("no ack in 3s"))
