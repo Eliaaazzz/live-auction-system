@@ -29,7 +29,9 @@ type Store struct {
 	shaStart    string
 	shaClose    string
 	shaCancel   string
-	evidenceKey []byte // HMAC key for the auction_events hash chain (T4)
+	evidenceKeySource  EvidenceKeySource
+	evidenceKeyVersion int
+	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -39,6 +41,20 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+}
+
+// NewWithEvidenceKeySource is the rotation-ready constructor: production still
+// passes an env-backed static source through New, while a future KMS/key-ring
+// source can implement EvidenceKeySource without changing Store callers again.
+func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	if evidenceKeys == nil {
+		return nil, errors.New("evidence key source is nil")
+	}
+	evidenceKeyVersion, evidenceKey, err := evidenceKeys.CurrentEvidenceKey()
+	if err != nil {
+		return nil, fmt.Errorf("evidence key source: %w", err)
+	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
@@ -50,7 +66,7 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
-	s := &Store{rdb: rdb, db: db, evidenceKey: []byte(evidenceKey)}
+	s := &Store{rdb: rdb, db: db, evidenceKeySource: evidenceKeys, evidenceKeyVersion: evidenceKeyVersion, evidenceKey: evidenceKey}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
