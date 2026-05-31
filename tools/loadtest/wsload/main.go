@@ -72,6 +72,7 @@ type stats struct {
 	mu      sync.Mutex
 	ackMs   []float64
 	dialErr map[string]int
+	rejCode map[string]int
 }
 
 func (s *stats) markActive(delta int64) {
@@ -103,6 +104,19 @@ func (s *stats) recordDialErr(err error) {
 func (s *stats) recordAck(ms float64) {
 	s.mu.Lock()
 	s.ackMs = append(s.ackMs, ms)
+	s.mu.Unlock()
+}
+
+func (s *stats) recordReject(code string) {
+	if code == "" {
+		code = "(missing)"
+	}
+	s.bidsRejected.Add(1)
+	s.mu.Lock()
+	if s.rejCode == nil {
+		s.rejCode = map[string]int{}
+	}
+	s.rejCode[code]++
 	s.mu.Unlock()
 }
 
@@ -253,7 +267,7 @@ func runConn(dialer *websocket.Dialer, host, aid, tok string, bidder bool, endAt
 					}
 				}
 			case "BID_REJECTED":
-				st.bidsRejected.Add(1)
+				st.recordReject(f.Data.Code)
 			}
 		})
 	}()
@@ -319,6 +333,7 @@ func report(st *stats, target int, elapsed time.Duration) {
 	st.mu.Lock()
 	acks := append([]float64(nil), st.ackMs...)
 	dialErr := st.dialErr
+	rejCode := st.rejCode
 	st.mu.Unlock()
 	sort.Float64s(acks)
 
@@ -330,6 +345,17 @@ func report(st *stats, target int, elapsed time.Duration) {
 	fmt.Printf("closed early (server): %d   (>0 = gateway dropped live conns — investigate)\n", st.closedEarly.Load())
 	fmt.Printf("frames received      : %d\n", st.framesRecv.Load())
 	fmt.Printf("bids sent / acc / rej: %d / %d / %d\n", st.bidsSent.Load(), st.bidsAccepted.Load(), st.bidsRejected.Load())
+	if len(rejCode) > 0 {
+		codes := make([]string, 0, len(rejCode))
+		for code := range rejCode {
+			codes = append(codes, code)
+		}
+		sort.Strings(codes)
+		fmt.Printf("bid rejects by code  :\n")
+		for _, code := range codes {
+			fmt.Printf("  %7d  %s\n", rejCode[code], code)
+		}
+	}
 	if len(acks) > 0 {
 		fmt.Printf("bid-ack RTT (client) : p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms  (n=%d, incl wire+client sched)\n",
 			pct(acks, 50), pct(acks, 95), pct(acks, 99), acks[len(acks)-1], len(acks))
