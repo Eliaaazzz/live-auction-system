@@ -36,7 +36,7 @@ type WsEnvelope<T = unknown> = {
 | `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
 | `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
 | `SEALED_BID_RECEIVED` | `{ seq, displayName, count, serverTimeMs }` | **redacted** bid-landed ping for `SEALED_FIRST` / `VICKREY` / `ALL_PAY` (issue #114). **No `amountCents`, no `userId`** — the bidder name + running count are all the room sees during LIVE. |
-| `AUCTION_REVEALED` | `{ seq, bids:[{userId,displayName,cents}], winnerId, amountCents, serverTimeMs }` | sealed-mode reveal at close (issue #114). Emitted **immediately before** `AUCTION_SOLD`; takes its own `seq` and is part of the hash chain. For `VICKREY`, `amountCents` is the **second-highest** price (winner pays runner-up); for `SEALED_FIRST` / `ALL_PAY`, it is the winner's own bid. |
+| `AUCTION_REVEALED` | `{ seq, bids:[{userId,displayName,amountCents}], winnerId, amountCents, serverTimeMs }` | sealed-mode reveal at close (issue #114). Emitted **immediately before** `AUCTION_SOLD`; takes its own `seq` and is part of the hash chain. Each revealed bid uses money-as-string `amountCents`. For `VICKREY`, top-level `amountCents` is the **second-highest** price (winner pays runner-up); for `SEALED_FIRST` / `ALL_PAY`, it is the winner's own bid. |
 | `ALL_PAY_FORFEIT` | `{ seq, userId, coinsForfeit, serverTimeMs }` | `ALL_PAY` runner-up forfeits their bid (issue #114). Projects to `coin_ledger`, **never** to `orders` — settlement is virtual coins only. |
 | `PREQUALIFY_RESULT` | `{ seq, parentAuctionId, formalAuctionId, seededStartPriceCents, qualifiedUserIds?, serverTimeMs }` | `PREQUALIFY` parent's sealed result, emitted when the seller spawns the formal auction (issue #114). Two independent state machines linked by `parent_auction_id`; no cross-auction atomicity. |
 | `PONG` | `{}` | heartbeat response |
@@ -47,7 +47,7 @@ type WsEnvelope<T = unknown> = {
 
 `GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
 
-> **Sealed-mode gating (issue #114):** while a `SEALED_FIRST` / `VICKREY` / `ALL_PAY` auction is `LIVE`, this endpoint returns `{ sealed: true, leaderboard: [] }` (no amounts, no order). After `AUCTION_SOLD` the revealed list is returned in the normal shape. The `Hub.viewerCount` price-cache fast-reject is also disabled for `HYBRID_REVEAL` (since the broadcast carries the 2nd-highest, not the leader); Lua remains authoritative.
+> **Sealed-mode gating (issue #114):** while a `SEALED_FIRST` / `VICKREY` / `ALL_PAY` auction is `LIVE`, this endpoint returns `{ sealed: true, leaderboard: [] }` (no amounts, no order). After `AUCTION_SOLD` the revealed list is returned in the normal shape. The gateway price-cache fast-reject is skipped only for sealed-engine modes. `HYBRID_REVEAL` keeps the English-engine fast-reject: the cached broadcast price is the runner-up price, which is always `<=` the true current leader price, so a cached-price rejection remains sound but may be less aggressive than the authoritative Lua check. Lua remains authoritative.
 
 ## Auction modes (issue #114) — pluggable strategy
 
