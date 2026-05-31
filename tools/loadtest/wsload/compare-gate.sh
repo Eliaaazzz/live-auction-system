@@ -108,7 +108,7 @@ num_or_empty() {
 env_value() {
   local key="$1"
   local file="$2"
-  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); print; found=1; exit } END { if (!found) exit 1 }' "$file" 2>/dev/null || true
+  awk -F= -v key="$key" '$1 == key { sub(/^[^=]*=/, ""); gsub(/\r$/, ""); print; found=1; exit } END { if (!found) exit 1 }' "$file" 2>/dev/null || true
 }
 
 strip_commas() {
@@ -181,8 +181,8 @@ collect_side() {
   fi
   if [[ -f "$log" ]]; then
     peak="$(log_number 's/.*peak concurrent[[:space:]]*:[[:space:]]*([0-9,]+).*/\1/p' "$log")"
-    connect_fail="$(log_number 's/.*FAIL[[:space:]]+([0-9,]+).*/\1/p' "$log")"
-    closed_early="$(log_number 's/.*closed[- ]early[[:space:]]+([0-9,]+).*/\1/p' "$log")"
+    connect_fail="$(log_number 's/.*(connect FAIL|FAIL)[^0-9]*([0-9,]+).*/\2/p' "$log")"
+    closed_early="$(log_number 's/.*closed[- ]early[^0-9]*([0-9,]+).*/\1/p' "$log")"
     [[ -n "$peak" ]] || peak="NA"
     [[ -n "$connect_fail" ]] || connect_fail="NA"
     [[ -n "$closed_early" ]] || closed_early="NA"
