@@ -128,6 +128,21 @@ curl -s http://localhost:8080/metrics | jq
 
 > The §2 numbers are same-box compose (loopback, no WAN). After a real deploy, re-measure under real
 > RTT. Method + gated decisions (target / cost / secrets): `docs/deploy-and-latency.md`.
+
+---
+
+## 9. V100k sharded rehearsal (non-gate)
+
+`make load` remains the authoritative P0 gate for one gateway at 500 connected / 50 active. A 100k connected-user rehearsal must be multi-shard: run many load-agent hosts against the same deployed `TARGET` and the same LIVE auction id.
+
+Use `tools/v100k-load-plan.sh` to generate per-shard commands:
+
+```bash
+LOAD_AUCTION_ID=auc_<shared> TOTAL_OBSERVERS=100000 TOTAL_BIDDERS=100 SHARDS=20 \
+  TARGET=https://<deployed-lumen> tools/v100k-load-plan.sh
+```
+
+Boundary: only shard 0 should bid until the harness has a global bid allocator. Other shards are observer-only so they pressure WebSocket fanout without creating cross-shard bid amount collisions. After all shards finish, run `VERIFY_AID="$LOAD_AUCTION_ID" make verify` and attach both the active shard load report and the verifier output.
 > **Boundary (§ top note):** server-side = SLO gate (RTT-insulated); client e2e = server + RTT (observed UX, not a gate).
 
 | Metric | Boundary | Same-box baseline (§2) | Real-RTT result | Notes |
