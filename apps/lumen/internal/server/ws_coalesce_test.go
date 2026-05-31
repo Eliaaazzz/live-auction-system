@@ -424,7 +424,7 @@ func TestCoalesceDrainPreservesEnqueueOrder(t *testing.T) {
 func TestJoinBarrierBuffersLiveBroadcasts(t *testing.T) {
 	c := &Conn{crit: make(chan outboundFrame, 16), done: make(chan struct{}), aid: "auc_jb"}
 
-	c.beginJoinBarrier() // joining = true
+	c.beginJoinBarrier()            // joining = true
 	c.trySend([]byte(`{"seq":10}`)) // catchup  → crit (direct, not buffered)
 	c.trySend([]byte(`{"seq":11}`)) // snapshot → crit
 	pm12, _ := websocket.NewPreparedMessage(websocket.TextMessage, []byte(`{"seq":12}`))
