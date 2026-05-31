@@ -95,6 +95,19 @@ Expected log names are `worker-NN.log`, `wsload-worker-NN.log`, or `NN.log`.
 The output columns are `worker target_conns connect_ok connect_fail
 closed_early`, matching the v100k gate.
 
+To execute one shard without copying the command hint by hand:
+
+```bash
+tools/loadtest/wsload/run-worker.sh \
+  --plan /tmp/lumen-wsload-shards-<timestamp>/workers.tsv \
+  --worker 00 \
+  --bin ./tools/loadtest/wsload/wsload
+```
+
+The runner reads the worker row, invokes `wsload` with that shard's token file,
+and writes `worker-NN.log` under the shard artifact directory. Those logs are the
+input for `summarize-workers.sh`.
+
 ### Result — 10,000 concurrent, server-side SLO crushed (2026-05-31)
 
 9,900 observers + 100 bidders, driven over the Docker network; server truth from
