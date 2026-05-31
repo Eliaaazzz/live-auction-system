@@ -333,6 +333,14 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	var body struct {
+		FactsConfirmed bool            `json:"factsConfirmed"`
+		ConfirmedFacts json.RawMessage `json:"confirmedFacts"`
+	}
+	if err := readJSONOptional(r, &body); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
 	aid := r.PathValue("id")
 	a, ok := s.ownsAuction(w, r, aid, userID)
 	if !ok {
@@ -369,6 +377,11 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		if !cur.FactsConfirmed {
 			code = model.CodeErrFacts
 			return nil
+		}
+		if confirmedFacts := strings.TrimSpace(string(body.ConfirmedFacts)); confirmedFacts != "" && confirmedFacts != "null" {
+			if err := s.st.UpdateConfirmedFacts(r.Context(), aid, confirmedFacts); err != nil {
+				return err
+			}
 		}
 		code, err = s.st.FreezeRules(r.Context(), aid, cur.SellerID, rules)
 		if err != nil || code != model.CodeOKFrozen {

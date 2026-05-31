@@ -115,6 +115,27 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 	return tx.Commit()
 }
 
+// UpdateConfirmedFacts persists the seller-confirmed facts snapshot at the
+// freeze boundary. The caller holds the auction transition lock, so the
+// confirmed snapshot and DRAFT->SCHEDULED transition stay together from the
+// product/audit perspective.
+func (s *Store) UpdateConfirmedFacts(ctx context.Context, id, confirmedFacts string) error {
+	var facts any
+	if confirmedFacts != "" {
+		facts = confirmedFacts
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET facts_confirmed = TRUE, confirmed_facts_json = ?, updated_at = ? WHERE id = ?`,
+		facts, time.Now().UTC(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // Auction is the minimal row used for ownership + state checks.
 type Auction struct {
 	ID             string
