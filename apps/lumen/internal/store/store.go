@@ -65,7 +65,26 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "auction_events", "updated_at", "DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"); err != nil {
+		return err
+	}
+	if err := s.ensureIndex(ctx, "auction_events", "idx_events_auction_updated", "(auction_id, updated_at)"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS evidence_chain_cache (
+		auction_id           VARCHAR(64) PRIMARY KEY,
+		verified_seq         BIGINT       NOT NULL,
+		events_count         BIGINT       NOT NULL,
+		chain_head           VARCHAR(128) NOT NULL,
+		max_event_updated_at DATETIME(6)  NOT NULL,
+		verified_at          DATETIME(6)  NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create evidence_chain_cache: %w", err)
+	}
+	return nil
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -84,6 +103,25 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) err
 	}
 	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)); err != nil {
 		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// ensureIndex creates an index when it is absent. table, indexName, and columns are
+// trusted constants from migrate(), never user input.
+func (s *Store) ensureIndex(ctx context.Context, table, indexName, columns string) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+		table, indexName).Scan(&n); err != nil {
+		return fmt.Errorf("check index %s.%s: %w", table, indexName, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("CREATE INDEX %s ON %s %s", indexName, table, columns)); err != nil {
+		return fmt.Errorf("create index %s.%s: %w", table, indexName, err)
 	}
 	return nil
 }

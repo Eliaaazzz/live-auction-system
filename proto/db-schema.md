@@ -13,8 +13,10 @@ auctions(id, product_id, seller_id, status, current_price_cents, winner_id, seq,
          start_at, end_at, finished_at, cancel_reason, created_at, updated_at)
 bids(id, auction_id, user_id, amount_cents, seq, client_bid_id, source, accepted_at)
 orders(id, auction_id, product_id, buyer_id, amount_cents, status, created_at, paid_at)
-auction_events(id, auction_id, seq, event_type, payload_json, created_at,
+auction_events(id, auction_id, seq, event_type, payload_json, created_at, updated_at,
                event_hash, prev_hash)        -- hash columns nullable in T1; filled in T4
+evidence_chain_cache(auction_id, verified_seq, events_count, chain_head,
+                     max_event_updated_at, verified_at)
 ai_usage_logs(id, scenario, model_name, input_summary, output_summary, human_reviewed, created_at)
 ```
 
@@ -25,6 +27,7 @@ bids:           UNIQUE(auction_id, seq)
 bids:           UNIQUE(auction_id, user_id, client_bid_id)
 orders:         UNIQUE(auction_id)
 auction_events: UNIQUE(auction_id, seq)
+evidence_chain_cache: PRIMARY KEY(auction_id)
 ```
 
 `event_hash` / `prev_hash` are present from T1 (nullable) so the schema is stable, but the **hash chain is computed by the Persistence Worker at T4** (integrity check on the MySQL projection — per fariZzzz #14 challenge #3), not in T1 and not in Lua.
@@ -32,3 +35,9 @@ auction_events: UNIQUE(auction_id, seq)
 ## Persistence (T1 → T4)
 
 Persistence Worker consumes the `auction:{aid}:events` Stream and writes one `auction_events` row per event (idempotent via UNIQUE(auction_id, seq)). **T4** added, on the same Stream-first projection: the `event_hash`/`prev_hash` chain (filled idempotently + self-healing) and an idempotent `orders` row on `AUCTION_SOLD` (UNIQUE(auction_id) ⇒ exactly-once). The hash algorithm + canonical serialization are the `[全员 approve]` surface in **`proto/evidence-card.md`**.
+
+`evidence_chain_cache` is a read-path acceleration for `VerifyEvidenceChain`: it stores
+the highest verified seq and chain head, but callers only trust it when the auction's
+event count, tip hash, and `auction_events.updated_at` watermark prove the verified
+prefix has not changed. Any append, delete, or post-hoc row update falls back to
+incremental/full recomputation before the cache is refreshed.

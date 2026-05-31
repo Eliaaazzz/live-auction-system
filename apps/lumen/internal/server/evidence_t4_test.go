@@ -60,6 +60,7 @@ func TestT4HashChainIdempotentReprojection(t *testing.T) {
 	ctx := context.Background()
 	aid := fmt.Sprintf("test_t4_idem_%d", time.Now().UnixNano())
 	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
 		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
 	})
 
@@ -85,6 +86,58 @@ func TestT4HashChainIdempotentReprojection(t *testing.T) {
 	}
 	if ok, _, _ := st.VerifyEvidenceChain(ctx, aid); !ok {
 		t.Fatal("chain must still verify after re-projection")
+	}
+}
+
+func TestT4VerifyEvidenceChainCacheExtendsAndInvalidatesOnTamper(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_cache_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	if err := st.InsertEvent(ctx, aid, 1, model.TypeBidAccepted, `{"seq":1,"userId":"u1","amountCents":"11000"}`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify seq1: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, st, aid, 1)
+
+	if err := st.InsertEvent(ctx, aid, 2, model.TypeBidAccepted, `{"seq":2,"userId":"u2","amountCents":"12000"}`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify seq2 via cache extension: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, st, aid, 2)
+
+	time.Sleep(2 * time.Millisecond)
+	if _, err := st.DB().ExecContext(ctx,
+		`UPDATE auction_events SET payload_json=? WHERE auction_id=? AND seq=1`,
+		`{"seq":1,"userId":"u1","amountCents":"99999"}`, aid); err != nil {
+		t.Fatal(err)
+	}
+	ok, brk, err := st.VerifyEvidenceChain(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || brk != 1 {
+		t.Fatalf("cached prefix after tamper: ok=%v break=%d want ok=false break_at_seq=1", ok, brk)
+	}
+}
+
+func assertEvidenceCacheSeq(t *testing.T, st *store.Store, aid string, want int64) {
+	t.Helper()
+	var got int64
+	if err := st.DB().QueryRowContext(context.Background(),
+		"SELECT verified_seq FROM evidence_chain_cache WHERE auction_id=?", aid).Scan(&got); err != nil {
+		t.Fatalf("cache seq query: %v", err)
+	}
+	if got != want {
+		t.Fatalf("cache verified_seq=%d want %d", got, want)
 	}
 }
 
