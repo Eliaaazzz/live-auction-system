@@ -4,7 +4,7 @@ set -eu
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/review-stacked-fixes.sh [--limit N] [--format markdown|tsv] [--out FILE]
+  scripts/review-stacked-fixes.sh [--limit N] [--format markdown|tsv] [--json|--json-only] [--out FILE]
 
 Find open PRs that are blocked, then show whether an open stacked child PR is
 already ready to merge into that blocked branch.
@@ -21,11 +21,15 @@ A child PR is considered `fix-ready` when:
 Environment overrides:
   LIMIT=100
   FORMAT=markdown
+  OUTPUT_JSON=0
+  JSON_ONLY=0
 USAGE
 }
 
 LIMIT="${LIMIT:-100}"
 FORMAT="${FORMAT:-markdown}"
+OUTPUT_JSON="${OUTPUT_JSON:-0}"
+JSON_ONLY="${JSON_ONLY:-0}"
 OUT=""
 
 while [ "$#" -gt 0 ]; do
@@ -37,6 +41,15 @@ while [ "$#" -gt 0 ]; do
     --format)
       FORMAT="${2:-}"
       shift 2
+      ;;
+    --json)
+      OUTPUT_JSON=1
+      shift
+      ;;
+    --json-only)
+      OUTPUT_JSON=1
+      JSON_ONLY=1
+      shift
       ;;
     --out)
       OUT="${2:-}"
@@ -135,6 +148,20 @@ map(row) as $rows |
 
 rows=$(jq -c "$jq_filter" "$json_file")
 
+write_json() {
+  generated_at=$(date -u +%s)
+  printf '%s\n' "$rows" | jq --argjson generatedAt "$generated_at" --argjson limit "$LIMIT" '{
+    generatedAt: $generatedAt,
+    limit: $limit,
+    summary: {
+      totalHandoffs: length,
+      fixReady: ([.[] | select(.handoff == "fix-ready")] | length),
+      fixNotReady: ([.[] | select(.handoff == "fix-not-ready")] | length)
+    },
+    handoffs: .
+  }'
+}
+
 write_report() {
   if [ "$FORMAT" = "tsv" ]; then
     printf 'handoff\tblocked_pr\tblocked_lane\tblocked_review\tblocked_ci\tfix_pr\tfix_lane\tfix_review\tfix_ci\tblocked_head\tfix_head\tblocked_title\tfix_title\n'
@@ -166,9 +193,29 @@ EOF_REPORT
   printf '%s\n' "$rows" | jq -r '.[] | "| " + .handoff + " | [#" + (.blockedNumber|tostring) + "](" + .blockedUrl + ") | " + .blockedLane + " / " + .blockedReview + " / " + .blockedCi + " | [#" + (.fixNumber|tostring) + "](" + .fixUrl + ") | " + .fixLane + " / " + .fixReview + " / " + .fixCi + " | `" + .blockedHead + " <- " + .fixHead + "` | " + (.blockedTitle | gsub("\\|"; "\\|")) + " ⇢ " + (.fixTitle | gsub("\\|"; "\\|")) + " |"'
 }
 
+if [ "$JSON_ONLY" = "1" ]; then
+  if [ -n "$OUT" ]; then
+    write_json > "$OUT"
+    printf 'wrote %s\n' "$OUT"
+  else
+    write_json
+  fi
+  exit 0
+fi
+
 if [ -n "$OUT" ]; then
-  write_report > "$OUT"
+  {
+    write_report
+    if [ "$OUTPUT_JSON" = "1" ]; then
+      printf '\nJSON payload:\n'
+      write_json
+    fi
+  } > "$OUT"
   printf 'wrote %s\n' "$OUT"
 else
   write_report
+  if [ "$OUTPUT_JSON" = "1" ]; then
+    printf '\nJSON payload:\n'
+    write_json
+  fi
 fi
