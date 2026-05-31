@@ -22,13 +22,13 @@ import (
 )
 
 type Store struct {
-	rdb         *redis.Client
-	db          *sql.DB
-	shaPlaceBid string
-	shaFreeze   string
-	shaStart    string
-	shaClose    string
-	shaCancel   string
+	rdb                *redis.Client
+	db                 *sql.DB
+	shaPlaceBid        string
+	shaFreeze          string
+	shaStart           string
+	shaClose           string
+	shaCancel          string
 	evidenceKeySource  EvidenceKeySource
 	evidenceKeyVersion int
 	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
