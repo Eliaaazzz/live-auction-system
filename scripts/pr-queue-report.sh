@@ -87,6 +87,12 @@ def lane:
   elif $ci == "ci-green" then "needs-review"
   else "waiting-ci"
   end;
+def review_state:
+  if .isDraft then "DRAFT"
+  elif .reviewDecision == "APPROVED" then "APPROVED"
+  elif .reviewDecision == "CHANGES_REQUESTED" then "CHANGES_REQUESTED"
+  else "REVIEW_REQUIRED"
+  end;
 def stack_state:
   if (.baseRefName == "main" or .baseRefName == "master") then "direct"
   else "stacked"
@@ -98,7 +104,7 @@ def row:
     lane: lane,
     stack: stack_state,
     ci: check_state,
-    review: (.reviewDecision // ""),
+    review: review_state,
     draft: .isDraft,
     author: .author.login,
     base: .baseRefName,
@@ -140,6 +146,7 @@ write_report() {
   blocked=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "blocked")] | length')
   draft=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "draft")] | length')
   waiting_ci=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "waiting-ci")] | length')
+  review_required=$(printf '%s\n' "$rows" | jq '[.[] | select(.review == "REVIEW_REQUIRED")] | length')
   direct=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "direct")] | length')
   stacked=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "stacked")] | length')
   ready_after_base=$(printf '%s\n' "$rows" | jq '[.[] | select(.handoff == "ready-after-base")] | length')
@@ -156,6 +163,7 @@ Generated: $generated_at
 | blocked | $blocked |
 | draft | $draft |
 | waiting-ci | $waiting_ci |
+| review-required | $review_required |
 | direct-to-main | $direct |
 | stacked | $stacked |
 | ready-after-base | $ready_after_base |
