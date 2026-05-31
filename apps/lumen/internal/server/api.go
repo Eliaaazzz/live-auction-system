@@ -124,6 +124,7 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := "auc_" + newID()
+	s.prepareLiveStreamRules(id, &body.Rules)
 	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
 		if err == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "product not found")
@@ -137,6 +138,71 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
+}
+
+// GET /api/auctions/{id}/stream -> seller/admin-only live push material.
+// The public room only receives livePlayUrl from GET /api/auctions/{id}; pushUrl
+// and streamKey stay off public snapshots so video remains display-only and
+// outside the Redis/Lua bid hot path.
+func (s *Server) handleGetAuctionStream(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	if _, ok := s.ownsAuction(w, r, aid, userID); !ok {
+		return
+	}
+	rules, err := s.st.GetRules(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "rules not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	livePlayURL := rules.LivePlayUrl
+	if livePlayURL == "" {
+		livePlayURL = s.livePlayURL(rules.LiveStreamKey)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		AuctionID   string `json:"auctionId"`
+		StreamKey   string `json:"streamKey,omitempty"`
+		PushURL     string `json:"pushUrl,omitempty"`
+		LivePlayURL string `json:"livePlayUrl,omitempty"`
+	}{
+		AuctionID:   aid,
+		StreamKey:   rules.LiveStreamKey,
+		PushURL:     s.livePushURL(rules.LiveStreamKey),
+		LivePlayURL: livePlayURL,
+	})
+}
+
+func (s *Server) prepareLiveStreamRules(aid string, rules *model.Rules) {
+	if rules.LiveStreamKey == "" {
+		rules.LiveStreamKey = "stream_" + newID()
+	}
+	if rules.LivePlayUrl == "" {
+		rules.LivePlayUrl = s.livePlayURL(rules.LiveStreamKey)
+	}
+	_ = aid // keeps the seam explicit if we later switch to deterministic keys.
+}
+
+func (s *Server) livePushURL(streamKey string) string {
+	return joinStreamURL(s.cfg.LivePushURLBase, streamKey, "")
+}
+
+func (s *Server) livePlayURL(streamKey string) string {
+	return joinStreamURL(s.cfg.LivePlayURLBase, streamKey, ".m3u8")
+}
+
+func joinStreamURL(base, streamKey, suffix string) string {
+	if base == "" || streamKey == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(streamKey, "/") + suffix
 }
 
 // GET /api/auctions/{id} -> room snapshot from Redis (404 if unknown).
