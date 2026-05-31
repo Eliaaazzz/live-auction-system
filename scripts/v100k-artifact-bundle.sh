@@ -25,6 +25,7 @@ Optional inputs:
 Outputs:
   MANIFEST.tsv        file, bytes, sha256, and source path for copied artifacts.
   summary.md          bundle index and claim-boundary reminder.
+  REVIEW.md           reviewer checklist for integrity, gate, and claim boundary.
 
 The helper intentionally copies only aggregate evidence files. It does not copy
 token shards, per-worker raw logs, .env files, or credentials.
@@ -117,6 +118,7 @@ mkdir -p "$out_dir"
 
 manifest="$out_dir/MANIFEST.tsv"
 summary="$out_dir/summary.md"
+review="$out_dir/REVIEW.md"
 printf 'file\tbytes\tsha256\tsource\n' > "$manifest"
 
 copy_artifact() {
@@ -167,6 +169,7 @@ cat > "$summary" <<EOF_SUMMARY
 
 Included files:
 
+- REVIEW.md
 - metrics/metrics.json
 - metrics/metrics-samples.jsonl, when present
 - metrics/summary.md, when present
@@ -183,9 +186,43 @@ Claim boundary:
   credentials, and cloud provider state.
 EOF_SUMMARY
 
+cat > "$review" <<EOF_REVIEW
+# Lumen v100k bundle review guide
+
+This bundle contains no-secret aggregate evidence for a distributed v100k run.
+It is a review artifact, not a load-test runner and not a claim by itself.
+
+Minimum review sequence:
+
+1. Verify bundle integrity:
+   \`scripts/v100k-bundle-verify.sh --bundle-dir "$out_dir"\`
+2. If this bundle is used to support an external 100k claim, require the gate:
+   \`scripts/v100k-bundle-verify.sh --bundle-dir "$out_dir" --require-gate-pass\`
+3. Inspect \`gate/gate.tsv\` and \`gate/summary.md\` when present. Every gate row
+   must pass before saying 100k is verified.
+4. Inspect \`metrics/metrics.json\` for active connection count, ack p95,
+   broadcast p95, sequence gaps, and backpressure force closes.
+5. Inspect \`workers/shards.tsv\` for attempted capacity, connected capacity,
+   connect failures, and early closes across every distributed worker.
+6. If any gate artifact is missing, failed, or produced from an incomplete hold
+   window, keep the external claim at 10k verified and 100k not yet verified.
+
+Claim boundary:
+
+- A passing bundle verifier only proves packaging integrity.
+- A passing verifier with \`--require-gate-pass\` proves that the included
+  aggregate artifacts passed the repository's v100k gate.
+- The raw distributed run logs and token shards are intentionally not bundled;
+  keep them separately on the load box for deeper debugging if a gate fails.
+EOF_REVIEW
+
 summary_bytes="$(file_size "$summary")"
 summary_sha="$(hash_file "$summary")"
 printf '%s\t%s\t%s\t%s\n' "summary.md" "$summary_bytes" "$summary_sha" "$summary" >> "$manifest"
 
-printf 'bundle_dir=%s\nmanifest=%s\nsummary=%s\ngate_result=%s\n' \
-  "$out_dir" "$manifest" "$summary" "$gate_status"
+review_bytes="$(file_size "$review")"
+review_sha="$(hash_file "$review")"
+printf '%s\t%s\t%s\t%s\n' "REVIEW.md" "$review_bytes" "$review_sha" "$review" >> "$manifest"
+
+printf 'bundle_dir=%s\nmanifest=%s\nsummary=%s\nreview=%s\ngate_result=%s\n' \
+  "$out_dir" "$manifest" "$summary" "$review" "$gate_status"
