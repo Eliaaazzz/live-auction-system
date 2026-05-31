@@ -64,16 +64,17 @@ const send = (ws, type, data, auctionId) => {
   );
 };
 
-console.log('[setup] login buyer');
+console.log('[setup] login seller + buyer');
+const seller = await devLogin('fari-multitab-seller');
 const buyer = await devLogin('fari-multitab-buyer');
 
 console.log('[setup] create product + auction');
-const { productId } = await api(buyer.token, '/products', {
+const { productId } = await api(seller.token, '/products', {
   method: 'POST',
   body: { name: 'Multi-tab smoke', imageUrl: '', description: '' },
 });
 
-const { auctionId } = await api(buyer.token, '/auctions', {
+const { auctionId } = await api(seller.token, '/auctions', {
   method: 'POST',
   body: {
     productId,
@@ -91,8 +92,8 @@ const { auctionId } = await api(buyer.token, '/auctions', {
 });
 
 console.log('[setup] freeze + start');
-await api(buyer.token, `/auctions/${auctionId}/freeze`, { method: 'POST' });
-await api(buyer.token, `/auctions/${auctionId}/start`, { method: 'POST' });
+await api(seller.token, `/auctions/${auctionId}/freeze`, { method: 'POST' });
+await api(seller.token, `/auctions/${auctionId}/start`, { method: 'POST' });
 
 const state = {
   ws1: { snapshot: false, acceptedSeqs: [], snapshotPrice: null },
