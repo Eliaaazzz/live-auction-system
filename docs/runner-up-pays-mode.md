@@ -92,6 +92,36 @@ The evidence card should include:
 It must be impossible for this mode to create a normal fiat `orders` row unless a
 future contract explicitly changes that rule.
 
+## 100k readiness requirements
+
+This mode must not weaken the project's large-room target. The implementation
+cannot add per-viewer settlement work, MySQL reads, HTTP calls, or LLM calls to
+the bid hot path.
+
+Minimum enterprise-readiness gates before runtime wiring:
+
+| Gate | Requirement |
+|---|---|
+| Lua complexity | bid acceptance remains Redis-authoritative and O(log n) or better |
+| Top-two correctness | concurrent same-user rebids cannot occupy both winner and runner-up slots |
+| Broadcast cost | settlement emits one room event, not per-viewer personalized fanout |
+| Replay | verifier rebuilds winner and runner-up from Stream events without Redis state |
+| Load | 100k observer run records zero sequence gaps and no winner/runner-up mismatch |
+| Backpressure | runner-up settlement does not increase forced close rate versus standard mode |
+
+The load report should expose runner-up-specific counters:
+
+```text
+runnerUpPaysSettledTotal
+runnerUpPaysNoRunnerUpTotal
+runnerUpPaysCapRejectTotal
+runnerUpPaysWinnerRunnerUpMismatchTotal
+runnerUpPaysReplayMismatchTotal
+```
+
+These counters are evidence requirements, not UI-only analytics. If any mismatch
+counter is non-zero, the mode is not production-ready.
+
 ## Tests before runtime wiring
 
 Minimum tests before implementation can merge:
