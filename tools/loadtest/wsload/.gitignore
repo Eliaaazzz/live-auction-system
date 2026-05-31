@@ -1,0 +1,4 @@
+# Build artifacts (rebuilt from source) + run logs. Source is committed; binaries are not.
+/wsload
+/wsload-linux
+*.log
