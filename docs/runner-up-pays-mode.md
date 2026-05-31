@@ -101,6 +101,8 @@ from design note to contract.
 Machine-readable fixture source: `docs/runner-up-pays-fixtures.json`. Future Lua,
 Replay Verifier, and evidence-card tests should treat that JSON file as the
 copy-paste target and keep this markdown table as the human explanation.
+Fixture contract verifier: `scripts/runner-up-pays-fixtures-check.sh
+docs/runner-up-pays-fixtures.json`.
 
 Assumptions for the examples:
 
