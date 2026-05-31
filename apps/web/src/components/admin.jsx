@@ -655,6 +655,7 @@ function AdminConsole() {
   const rafRef = React.useRef(null);
   const [streamInfo, setStreamInfo] = React.useState(null);
   const [publicLivePlayUrl, setPublicLivePlayUrl] = React.useState(null);
+  const [streamPreviewBroken, setStreamPreviewBroken] = React.useState(false);
 
   // Broadcaster-side WS subscription: same RoomClient + store as the buyer
   // (LiveRoomRoute) — broadcaster just observes, never sends BID_PLACE. On
@@ -744,6 +745,10 @@ function AdminConsole() {
   const liveTotalBids   = auctionId ? totalBidsCount    : 126;
   const liveUniqueBids  = auctionId ? bidderIds.length  : 38;
   const streamPreviewUrl = streamInfo?.livePlayUrl || publicLivePlayUrl || null;
+  React.useEffect(() => {
+    setStreamPreviewBroken(false);
+  }, [streamPreviewUrl]);
+  const effectiveStreamPreviewUrl = streamPreviewBroken ? null : streamPreviewUrl;
 
   return (
     <div style={{
@@ -805,7 +810,14 @@ function AdminConsole() {
               <line x1="100" y1="100" x2="100" y2="60" stroke="#C9A961" strokeWidth="2.4" strokeLinecap="round"/>
               <line x1="100" y1="100" x2="135" y2="100" stroke="#dcbf7f" strokeWidth="2" strokeLinecap="round"/>
             </svg>
-            {streamPreviewUrl && <LiveVideo url={streamPreviewUrl}/>}
+            {effectiveStreamPreviewUrl ? (
+              <LiveVideo
+                url={effectiveStreamPreviewUrl}
+                onPlayFailed={() => setStreamPreviewBroken(true)}
+              />
+            ) : (
+              <div className="lumen-livefeed" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}/>
+            )}
             <div style={{
               position: 'absolute', top: 8, left: 8, padding: '3px 8px',
               borderRadius: 4, background: 'rgba(254,44,85,.9)',

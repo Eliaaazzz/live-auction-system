@@ -26,8 +26,24 @@ const DEMO_LEADERS = [
 // HLS natively, and a plain mp4/webm loop just sets src. hls.js is loaded lazily
 // (dynamic import) so the no-video path never pays for it. Display-only — never
 // gates bidding; on any failure the parent falls back to the sim sheen.
-function LiveVideo({ url, poster }) {
+function LiveVideo({ url, poster, onPlayFailed }) {
   const ref = React.useRef(null);
+  const reportedRef = React.useRef(false);
+  const onPlayFailedRef = React.useRef(onPlayFailed);
+  React.useEffect(() => {
+    onPlayFailedRef.current = onPlayFailed;
+  });
+
+  const reportFailure = React.useCallback(() => {
+    if (reportedRef.current) return;
+    reportedRef.current = true;
+    onPlayFailedRef.current?.();
+  }, []);
+
+  React.useEffect(() => {
+    reportedRef.current = false;
+  }, [url]);
+
   React.useEffect(() => {
     const video = ref.current;
     if (!video || !url) return undefined;
@@ -41,6 +57,9 @@ function LiveVideo({ url, poster }) {
           if (cancelled || !ref.current) return;
           if (Hls.isSupported()) {
             hls = new Hls({ liveDurationInfinity: true });
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              if (data?.fatal) reportFailure();
+            });
             hls.loadSource(url);
             hls.attachMedia(ref.current);
           } else {
@@ -55,9 +74,10 @@ function LiveVideo({ url, poster }) {
       video.removeAttribute('src');
       try { video.load(); } catch (_) { /* detach best-effort */ }
     };
-  }, [url]);
+  }, [url, reportFailure]);
   return (
     <video ref={ref} poster={poster || undefined}
+      onError={reportFailure}
       autoPlay muted loop playsInline
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
   );

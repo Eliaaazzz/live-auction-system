@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MobileRoom } from './mobile.jsx';
+import { LiveVideo, MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
 
 describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
@@ -37,6 +37,34 @@ describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
   it('does NOT render the overlay during SOLD (hammer transition handles SOLD)', () => {
     const { container } = render(<MobileRoom status="SOLD" leaders={[]}/>);
     expect(container.textContent).not.toMatch(/本场无人出价|本场已取消/);
+  });
+});
+
+describe('LiveVideo playback failure callback', () => {
+  it('reports runtime video errors once per URL', () => {
+    const onPlayFailed = vi.fn();
+    const { container } = render(
+      <LiveVideo url="https://cdn.example.invalid/live.mp4" onPlayFailed={onPlayFailed}/>,
+    );
+    const video = container.querySelector('video');
+
+    fireEvent.error(video);
+    fireEvent.error(video);
+
+    expect(onPlayFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('resets failure reporting when the URL changes', () => {
+    const onPlayFailed = vi.fn();
+    const { container, rerender } = render(
+      <LiveVideo url="https://cdn.example.invalid/one.mp4" onPlayFailed={onPlayFailed}/>,
+    );
+
+    fireEvent.error(container.querySelector('video'));
+    rerender(<LiveVideo url="https://cdn.example.invalid/two.mp4" onPlayFailed={onPlayFailed}/>);
+    fireEvent.error(container.querySelector('video'));
+
+    expect(onPlayFailed).toHaveBeenCalledTimes(2);
   });
 });
 
