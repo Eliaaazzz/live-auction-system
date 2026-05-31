@@ -320,7 +320,7 @@ func TestT5KeepaliveHealthyClientSurvivesPastPongWait(t *testing.T) {
 // WriteControl here, the nil ws will panic and this test will fail loudly.
 func TestT5CloseWithCodeIsNetworkFree(t *testing.T) {
 	c := &Conn{
-		send:  make(chan []byte, 1),
+		crit:  make(chan outboundFrame, 1),
 		lossy: make(chan []byte, 1),
 		done:  make(chan struct{}),
 		ws:    nil, // any network access would panic
@@ -374,15 +374,15 @@ func TestT5BroadcastReturnsImmediatelyOnForceClose(t *testing.T) {
 	aid := "test_t5_no_stall_hub"
 
 	stalled := &Conn{
-		send:  make(chan []byte, 1),
+		crit:  make(chan outboundFrame, 1),
 		lossy: make(chan []byte, 1),
 		done:  make(chan struct{}),
 		aid:   aid,
 	}
-	stalled.send <- []byte("filler") // send full → next trySend force-closes
+	stalled.crit <- outboundFrame{raw: []byte("filler")} // crit full → next trySend force-closes
 
 	healthy := &Conn{
-		send:  make(chan []byte, 4),
+		crit:  make(chan outboundFrame, 4),
 		lossy: make(chan []byte, 1),
 		done:  make(chan struct{}),
 		aid:   aid,
@@ -394,8 +394,8 @@ func TestT5BroadcastReturnsImmediatelyOnForceClose(t *testing.T) {
 			select {
 			case <-drainStop:
 				return
-			case msg := <-healthy.send:
-				delivered <- msg
+			case f := <-healthy.crit:
+				delivered <- f.raw
 			}
 		}
 	}()
@@ -438,7 +438,7 @@ func TestT5BroadcastReturnsImmediatelyOnForceClose(t *testing.T) {
 //
 // End-to-end variant: two real WS clients, one with SetReadBuffer(1) and
 // silent (its server-side TCP send queue fills → writePump blocks in
-// ws.WriteMessage → c.send fills → trySend force-closes), one healthy. We
+// ws.WriteMessage → c.crit fills → trySend force-closes), one healthy. We
 // then time a burst of broadcasts and assert the total stays well below
 // writeWait. With the pre-fix WriteControl-inside-broadcast, the first
 // force-close triggered by the burst would have pinned hub.RLock for
@@ -530,7 +530,7 @@ func TestT5BroadcastDoesNotStallOnCongestedSocket(t *testing.T) {
 // connection instead of producing weird socket behavior — a fail-fast for a
 // future contributor who pushes a fat event payload.
 func TestT5OversizeOutboundFrameClosesConn(t *testing.T) {
-	c := &Conn{ws: nil, send: make(chan []byte, 1), lossy: make(chan []byte, 1), done: make(chan struct{})}
+	c := &Conn{ws: nil, crit: make(chan outboundFrame, 1), lossy: make(chan []byte, 1), done: make(chan struct{})}
 	huge := make([]byte, maxOutboundFrameBytes+1)
 	if c.write(huge) {
 		t.Fatal("write(huge) should return false on oversized frame")

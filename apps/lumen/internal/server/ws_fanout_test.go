@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-
-	"github.com/gorilla/websocket"
 )
 
 // Fan-out tests for the lock-free broadcast snapshot (issue #118).
@@ -26,10 +24,9 @@ func BenchmarkBroadcastFanout(b *testing.B) {
 			const aid = "auc_bench"
 			for i := 0; i < n; i++ {
 				h.join(aid, &Conn{
-					aid:      aid,
-					done:     make(chan struct{}),
-					send:     make(chan []byte, 1),
-					prepared: make(chan *websocket.PreparedMessage, b.N+1),
+					aid:  aid,
+					done: make(chan struct{}),
+					crit: make(chan outboundFrame, b.N+1),
 				})
 			}
 			b.ReportAllocs()
@@ -41,8 +38,10 @@ func BenchmarkBroadcastFanout(b *testing.B) {
 	}
 }
 
-// TestBroadcastFanoutDeliversToAll verifies the lock-free fan-out enqueues the
-// prepared frame to every recipient.
+// TestBroadcastFanoutDeliversToAll verifies the lock-free fan-out enqueues a
+// frame to EVERY recipient. These hand-built conns have no socket (ws==nil), so
+// the fan-out uses the raw fallback (the PreparedMessage path is covered by the
+// real-client harness tests); the point here is reach, not frame encoding.
 func TestBroadcastFanoutDeliversToAll(t *testing.T) {
 	h := newHub()
 	const aid = "auc_t"
@@ -50,10 +49,9 @@ func TestBroadcastFanoutDeliversToAll(t *testing.T) {
 	conns := make([]*Conn, n)
 	for i := 0; i < n; i++ {
 		conns[i] = &Conn{
-			aid:      aid,
-			done:     make(chan struct{}),
-			prepared: make(chan *websocket.PreparedMessage, 4),
-			send:     make(chan []byte, 4),
+			aid:  aid,
+			done: make(chan struct{}),
+			crit: make(chan outboundFrame, 4),
 		}
 		h.join(aid, conns[i])
 	}
@@ -62,9 +60,9 @@ func TestBroadcastFanoutDeliversToAll(t *testing.T) {
 
 	for i, c := range conns {
 		select {
-		case pm := <-c.prepared:
-			if pm == nil {
-				t.Fatalf("conn %d received a nil prepared frame", i)
+		case f := <-c.crit:
+			if f.pm == nil && f.raw == nil {
+				t.Fatalf("conn %d received an empty frame (neither raw nor prepared)", i)
 			}
 		default:
 			t.Fatalf("conn %d did not receive the broadcast frame", i)
@@ -81,19 +79,17 @@ func TestBroadcastFanoutForceClosesSlowClient(t *testing.T) {
 	const aid = "auc_bp"
 
 	good := &Conn{
-		aid:      aid,
-		done:     make(chan struct{}),
-		prepared: make(chan *websocket.PreparedMessage, 4),
-		send:     make(chan []byte, 4),
+		aid:  aid,
+		done: make(chan struct{}),
+		crit: make(chan outboundFrame, 4),
 	}
-	// slow: single-slot prepared lane pre-filled to capacity → next enqueue overflows.
+	// slow: single-slot critical lane pre-filled to capacity → next enqueue overflows.
 	slow := &Conn{
-		aid:      aid,
-		done:     make(chan struct{}),
-		prepared: make(chan *websocket.PreparedMessage, 1),
-		send:     make(chan []byte, 1),
+		aid:  aid,
+		done: make(chan struct{}),
+		crit: make(chan outboundFrame, 1),
 	}
-	slow.prepared <- nil
+	slow.crit <- outboundFrame{} // fill the 1-slot critical lane
 
 	h.join(aid, good)
 	h.join(aid, slow)
@@ -101,7 +97,7 @@ func TestBroadcastFanoutForceClosesSlowClient(t *testing.T) {
 	h.broadcast(aid, []byte(`{"type":"BID_ACCEPTED"}`))
 
 	select {
-	case <-good.prepared:
+	case <-good.crit:
 	default:
 		t.Fatal("healthy conn did not receive the broadcast (slow client blocked the lock-free fan-out?)")
 	}
@@ -129,7 +125,7 @@ func TestBroadcastFanoutRaceWithRehome(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// stable: drained lane → stays alive so the fan-out keeps delivering.
-	stable := &Conn{aid: "A", done: make(chan struct{}), prepared: make(chan *websocket.PreparedMessage, 256), send: make(chan []byte, 256)}
+	stable := &Conn{aid: "A", done: make(chan struct{}), crit: make(chan outboundFrame, 256)}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -137,8 +133,7 @@ func TestBroadcastFanoutRaceWithRehome(t *testing.T) {
 			select {
 			case <-stop:
 				return
-			case <-stable.prepared:
-			case <-stable.send:
+			case <-stable.crit:
 			}
 		}
 	}()
@@ -146,7 +141,7 @@ func TestBroadcastFanoutRaceWithRehome(t *testing.T) {
 
 	// mover: tiny UNDRAINED lane → fills immediately, so the broadcast exercises
 	// the backpressure-log path concurrently with the re-homer's mover.aid write.
-	mover := &Conn{aid: "A", done: make(chan struct{}), prepared: make(chan *websocket.PreparedMessage, 1), send: make(chan []byte, 1)}
+	mover := &Conn{aid: "A", done: make(chan struct{}), crit: make(chan outboundFrame, 1)}
 	h.join("A", mover)
 
 	wg.Add(2)
