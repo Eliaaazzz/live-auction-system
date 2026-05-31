@@ -449,6 +449,9 @@ func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, er
 	// auction (frozen before issue #114) has no `mode` field — that's ENGLISH.
 	modeRes := s.rdb.HGet(ctx, stateKey(aid), "mode")
 	if rerr := modeRes.Err(); rerr != nil && !errors.Is(rerr, redis.Nil) {
+		if redis.HasErrorPrefix(rerr, "WRONGTYPE") {
+			return model.CodeErrInternal, 0, nil
+		}
 		return "", 0, fmt.Errorf("close: read mode: %w", rerr)
 	}
 	mode := model.NormalizeMode(modeRes.Val())
