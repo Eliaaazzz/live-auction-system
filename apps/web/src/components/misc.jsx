@@ -312,7 +312,7 @@ function ConnStateFrame({ status, title, sub, detail, color, progress, danger })
         </div>
 
         <button style={{
-          width: '100%', padding: '10px', borderRadius: 8, border: 'none', cursor: 'pointer',
+          width: '100%', padding: '10px', borderRadius: 8, cursor: 'pointer',
           background: danger ? color : 'rgba(255,255,255,.04)',
           color: danger ? '#fff' : color, fontFamily: 'inherit',
           fontSize: 12, fontWeight: 600, border: '1px solid ' + (danger ? color : color + '40'),

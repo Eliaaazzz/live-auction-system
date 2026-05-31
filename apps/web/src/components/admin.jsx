@@ -61,8 +61,13 @@ function AdminVLMFacts() {
   const navigate = useNavigate();
   const { id: auctionId } = useParams();
   const [facts, setFacts] = React.useState(VLM_FACTS);
+  const [editingFactId, setEditingFactId] = React.useState(null);
+  const [editDrafts, setEditDrafts] = React.useState({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
+  const [draftHint, setDraftHint] = React.useState(null);
+  const draftHintTimerRef = React.useRef(null);
+  const draftStorageKey = auctionId ? `lumen:vlm-facts-draft:${auctionId}` : null;
   // T7-3 §4.3: read AI sidecar health for the on-page status pill +
   // the non-blocking freeze banner. Local component state for facts
   // stays unchanged when the sidecar is offline — the seller can still
@@ -70,21 +75,99 @@ function AdminVLMFacts() {
   const aiSidecarHealth = useAuctionStore((s) => s.aiSidecarHealth);
   const aiOffline = aiSidecarHealth === 'offline';
 
-  // Per-fact action handlers. Local state only — backend persists the final
-  // confirmed snapshot atomically on api.freeze (handler at api.go:165 reads
-  // factsConfirmed from MySQL). Future T7 work can call PATCH per-fact for
-  // server-side per-edit persistence if needed.
+  const clearDraftHint = () => {
+    if (draftHintTimerRef.current != null) {
+      window.clearTimeout(draftHintTimerRef.current);
+      draftHintTimerRef.current = null;
+    }
+  };
+  React.useEffect(() => () => {
+    clearDraftHint();
+  }, []);
+
+  React.useEffect(() => {
+    if (!draftStorageKey || typeof window === 'undefined') return;
+    try {
+      const raw = window.localStorage.getItem(draftStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed?.facts)) setFacts(parsed.facts);
+    } catch (e) {
+      console.warn('[AdminVLMFacts] restore draft failed', e);
+    }
+  }, [draftStorageKey, auctionId]);
+
+  // Per-fact action handlers. Local state drives the gate (`facts` in `confirmed/edited`),
+  // and freeze submits a final confirmed snapshot to the backend so it's persisted
+  // into `auctions.confirmed_facts_json` for later evidence/audit usage.
   const setStatus = (factId, next) => setFacts((curr) =>
     curr.map((f) => f.id === factId ? { ...f, ...next } : f),
   );
   const handleConfirm = (id) => setStatus(id, { status: 'confirmed', editedText: facts.find((f) => f.id === id).vlmText });
-  const handleEdit    = (id) => {
+  const handleEdit = (id) => {
     const f = facts.find((x) => x.id === id);
-    const input = window.prompt(`编辑「${f.label}」`, f.editedText || f.vlmText);
-    if (input != null && input.trim()) setStatus(id, { status: 'edited', editedText: input });
+    if (!f) return;
+    setEditingFactId(id);
+    setEditDrafts((curr) => ({ ...curr, [id]: f.editedText || f.vlmText || '' }));
   };
-  const handleRestore = (id) => setStatus(id, { status: 'pending', editedText: '' });
-  const handleDelete  = (id) => setFacts((curr) => curr.filter((f) => f.id !== id));
+  const handleDraftChange = (id, value) => {
+    setEditDrafts((curr) => ({ ...curr, [id]: value }));
+  };
+  const handleSaveEdit = (id) => {
+    const value = (editDrafts[id] || '').trim();
+    if (!value) return;
+    setStatus(id, { status: 'edited', editedText: value });
+    setEditingFactId((curr) => curr === id ? null : curr);
+  };
+  const handleCancelEdit = (id) => {
+    setEditingFactId((curr) => curr === id ? null : curr);
+  };
+  const handleRestore = (id) => {
+    handleCancelEdit(id);
+    setStatus(id, { status: 'pending', editedText: '' });
+  };
+  const handleDelete  = (id) => {
+    handleCancelEdit(id);
+    setFacts((curr) => curr.filter((f) => f.id !== id));
+    setEditDrafts((curr) => {
+      const next = { ...curr };
+      delete next[id];
+      return next;
+    });
+  };
+  const buildConfirmedFactsPayload = () => ({
+    version: 1,
+    highRiskFieldsDisclaimer: HIGH_RISK_DISCLAIMER,
+    facts: facts
+      .filter((f) => f.status === 'confirmed' || f.status === 'edited')
+      .map((f) => ({
+        field: f.id,
+        label: f.label,
+        value: (f.editedText || f.vlmText || '').trim(),
+        status: f.status,
+        confidence: f.confidence,
+        highRisk: !!f.highRisk,
+      })),
+  });
+
+  const handleSaveDraft = () => {
+    if (!draftStorageKey || typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(draftStorageKey, JSON.stringify({ at: new Date().toISOString(), facts }));
+      clearDraftHint();
+      setDraftHint('已保存草稿');
+      draftHintTimerRef.current = window.setTimeout(() => {
+        setDraftHint(null);
+        draftHintTimerRef.current = null;
+      }, 1400);
+    } catch (e) {
+      setDraftHint(e instanceof Error ? `草稿保存失败：${e.message}` : '草稿保存失败');
+      draftHintTimerRef.current = window.setTimeout(() => {
+        setDraftHint(null);
+        draftHintTimerRef.current = null;
+      }, 1800);
+    }
+  };
 
   const confirmedN = facts.filter((f) => f.status === 'confirmed' || f.status === 'edited').length;
   const total = facts.length;
@@ -117,7 +200,10 @@ function AdminVLMFacts() {
       // Step 1: freeze (idempotent — ERR_BAD_STATE = already frozen, skip)
       let alreadyFrozen = false;
       try {
-        const fz = await api.freeze(auctionId);
+        const fz = await api.freeze(auctionId, {
+          factsConfirmed: true,
+          confirmedFacts: buildConfirmedFactsPayload(),
+        });
         if (fz?.code && fz.code !== 'OK_FROZEN') {
           if (fz.code === 'ERR_BAD_STATE') {
             alreadyFrozen = true;  // proceed to startLive
@@ -334,8 +420,13 @@ function AdminVLMFacts() {
           {/* Fact cards */}
           {facts.map((f) => (
             <FactCard key={f.id} f={f}
+              editing={editingFactId === f.id}
+              draftValue={editDrafts[f.id] ?? f.editedText ?? f.vlmText ?? ''}
               onConfirm={() => handleConfirm(f.id)}
               onEdit={() => handleEdit(f.id)}
+              onDraftChange={(value) => handleDraftChange(f.id, value)}
+              onSaveEdit={() => handleSaveEdit(f.id)}
+              onCancelEdit={() => handleCancelEdit(f.id)}
               onRestore={() => handleRestore(f.id)}
               onDelete={() => handleDelete(f.id)}/>
           ))}
@@ -403,9 +494,14 @@ function AdminVLMFacts() {
               ? `开拍失败 · ${error}`
               : gateOpen ? '全部确认 · 点击开拍即进入 LIVE' : `还差 ${total - confirmedN} 项未核对`}
           </span>
+          {draftHint && (
+            <span style={{ marginTop: 4, color: 'var(--douyin-cyan)', fontSize: 11 }}>
+              {draftHint}
+            </span>
+          )}
         </div>
         <div style={{ flex: 1 }}/>
-        <button disabled={busy} style={{
+        <button onClick={handleSaveDraft} disabled={busy} style={{
           padding: '10px 18px', borderRadius: 8, border: '1px solid rgba(255,255,255,.14)',
           background: 'transparent', color: 'var(--douyin-ink-text)', fontFamily: 'inherit',
           fontSize: 13, cursor: busy ? 'not-allowed' : 'pointer',
@@ -433,9 +529,10 @@ function AdminVLMFacts() {
   );
 }
 
-function FactCard({ f, onConfirm, onEdit, onRestore, onDelete }) {
+function FactCard({ f, editing, draftValue, onConfirm, onEdit, onDraftChange, onSaveEdit, onCancelEdit, onRestore, onDelete }) {
   const isDirty = f.editedText && f.editedText !== f.vlmText;
   const isEmpty = !f.editedText;
+  const canSave = (draftValue || '').trim().length > 0;
   const statusColor = f.status === 'confirmed' ? 'var(--solemn-gold)'
                     : f.status === 'edited'    ? 'var(--douyin-cyan)'
                     :                            'var(--state-extended)';
@@ -512,7 +609,7 @@ function FactCard({ f, onConfirm, onEdit, onRestore, onDelete }) {
           }}>{f.vlmText}</span>
         </div>
 
-        {(isDirty || f.status === 'confirmed') && (
+        {(isDirty || f.status === 'confirmed' || f.status === 'edited') && (
           <div style={{
             padding: '8px 10px', borderRadius: 6,
             background: isDirty ? 'rgba(37,244,238,.06)' : 'rgba(201,169,97,.06)',
@@ -531,6 +628,36 @@ function FactCard({ f, onConfirm, onEdit, onRestore, onDelete }) {
           </div>
         )}
 
+        {editing && (
+          <div style={{
+            display: 'flex', flexDirection: 'column', gap: 8,
+            padding: '10px', borderRadius: 6,
+            background: 'rgba(37,244,238,.05)', border: '1px solid rgba(37,244,238,.2)',
+          }}>
+            <textarea
+              aria-label={`编辑${f.label}`}
+              value={draftValue}
+              onChange={(e) => onDraftChange(e.target.value)}
+              rows={3}
+              style={{
+                resize: 'vertical', minHeight: 64, borderRadius: 6,
+                border: '1px solid rgba(255,255,255,.16)',
+                background: 'rgba(0,0,0,.32)', color: 'var(--douyin-ink-text)',
+                padding: '8px 10px', fontFamily: 'var(--font-sans)', fontSize: 12,
+                lineHeight: 1.45, outline: 'none',
+              }}
+            />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button onClick={onCancelEdit} style={btnGhost}>取消</button>
+              <button onClick={onSaveEdit} disabled={!canSave} style={{
+                ...btnPrimary,
+                opacity: canSave ? 1 : 0.45,
+                cursor: canSave ? 'pointer' : 'not-allowed',
+              }}>保存修改</button>
+            </div>
+          </div>
+        )}
+
         {isEmpty && (
           <div style={{
             padding: '10px 12px', borderRadius: 6,
@@ -545,7 +672,11 @@ function FactCard({ f, onConfirm, onEdit, onRestore, onDelete }) {
 
       {/* Actions */}
       <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        {f.status === 'pending' ? (
+        {editing ? (
+          <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-cyan)', alignSelf: 'center' }}>
+            正在编辑
+          </span>
+        ) : f.status === 'pending' ? (
           <>
             <button onClick={onConfirm} style={btnPrimary}>采纳并补录</button>
             <button onClick={onEdit} style={btnGhost}>修改</button>
@@ -613,9 +744,56 @@ function AdminConsole() {
   const recentRejects  = useAuctionStore((s) => s.recentRejects);
   const totalBidsCount = useAuctionStore((s) => s.totalBidsCount);
   const bidderIds      = useAuctionStore((s) => s.bidderIds);
+  const leaders        = useAuctionStore((s) => s.leaders);
   // init() is a stable function ref on the store — accessing via getState()
   // for the WS bootstrap effect (no need to subscribe).
   const rafRef = React.useRef(null);
+  const leaderboardAtMsRef = React.useRef(0);
+  const pendingLeaderBumpRef = React.useRef(0);
+  const leaderboardFlightRef = React.useRef(false);
+  const maybeRefreshLeaders = React.useCallback(async (opts) => {
+    if (!auctionId) return;
+    const now = Date.now();
+    const force = opts?.force === true;
+    const shouldThrottle = now - leaderboardAtMsRef.current < 2_500;
+    const shouldRefresh = force || !shouldThrottle;
+    if (!shouldRefresh || leaderboardFlightRef.current) return;
+
+    leaderboardFlightRef.current = true;
+    try {
+      const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+      useAuctionStore.getState().setLeaders(leaderboard);
+      leaderboardAtMsRef.current = now;
+    } catch (e) {
+      console.warn('[Console] leaderboard reconcile failed', e);
+    } finally {
+      leaderboardFlightRef.current = false;
+    }
+  }, [auctionId]);
+  const handleEvent = React.useCallback((env) => {
+    const s = useAuctionStore.getState();
+    if (!s) return;
+    s.applyEvent(env);
+
+    if (env?.type === 'BID_ACCEPTED') {
+      pendingLeaderBumpRef.current += 1;
+      if (pendingLeaderBumpRef.current >= 3) {
+        pendingLeaderBumpRef.current = 0;
+        void maybeRefreshLeaders({ force: false });
+      }
+      return;
+    }
+
+    if (
+      env?.type === 'AUCTION_SOLD' ||
+      env?.type === 'AUCTION_NO_BID' ||
+      env?.type === 'AUCTION_CANCELLED' ||
+      env?.type === 'ROOM_SNAPSHOT'
+    ) {
+      pendingLeaderBumpRef.current = 0;
+      void maybeRefreshLeaders({ force: true });
+    }
+  }, [maybeRefreshLeaders]);
 
   // Broadcaster-side WS subscription: same RoomClient + store as the buyer
   // (LiveRoomRoute) — broadcaster just observes, never sends BID_PLACE. On
@@ -648,12 +826,20 @@ function AdminConsole() {
       } catch (e) {
         console.warn('[Console] snapshot failed (continuing — WS will rebuild)', e);
       }
+
+      try {
+        const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+        if (alive) useAuctionStore.getState().setLeaders(leaderboard);
+      } catch (e) {
+        console.warn('[Console] leaderboard seed failed', e);
+      }
+
       const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
       client = new RoomClient({
         url, auctionId,
         getLastSeq: () => useAuctionStore.getState().lastSeq,
         onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
-        onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
+        onEvent:    handleEvent,
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
       client.connect();
@@ -685,6 +871,12 @@ function AdminConsole() {
   // already excludes null userIds at the store level).
   const liveTotalBids   = auctionId ? totalBidsCount    : 126;
   const liveUniqueBids  = auctionId ? bidderIds.length  : 38;
+  const liveLeaders     = auctionId ? (leaders.length ? leaders : []) : DEMO_LEADERS;
+  const leaderboardRows = liveLeaders.slice(0, 5);
+  const liveBidRows     = (liveBids && liveBids.length) ? mapStoreEventsToBidStream(liveBids) : CONSOLE_BIDS;
+  const seqFirst = liveBidRows[0]?.seq;
+  const seqLast = liveBidRows[liveBidRows.length - 1]?.seq;
+  const seqRange = (seqFirst != null && seqLast != null) ? `seq ${seqLast} → ${seqFirst}` : 'seq —';
 
   return (
     <div style={{
@@ -819,7 +1011,7 @@ function AdminConsole() {
             <div style={{ flex: 1 }}/>
             <ClockDriftIndicator offsetMs={42}/>
             <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-              seq 14000 → 14998
+              {seqRange}
             </span>
           </div>
 
@@ -834,7 +1026,7 @@ function AdminConsole() {
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }} className="no-scrollbar">
-            {((liveBids && liveBids.length) ? mapStoreEventsToBidStream(liveBids) : CONSOLE_BIDS).map((b) => {
+            {liveBidRows.map((b) => {
               const tc = TYPE_COLOR[b.type] ?? TYPE_COLOR.BID_ACCEPTED;
               return (
                 <div key={b.seq} className="mono" style={{
@@ -872,7 +1064,7 @@ function AdminConsole() {
             <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', fontWeight: 600, letterSpacing: '.06em', marginBottom: 8 }}>
               出价榜
             </div>
-            <Leaderboard leaders={DEMO_LEADERS.slice(0, 5)}/>
+            <Leaderboard leaders={leaderboardRows}/>
           </div>
 
           {/* Last-N rejects panel — blueprint §3.5 */}

@@ -6,7 +6,7 @@
 // counters added in PR #64 (totalBidsCount + bidderIds), and the
 // self-vs-other BID_ACCEPTED branches.
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { useAuctionStore } from './auction.js';
 import { AuctionStatus, EventType } from '../lib/types.js';
 
@@ -118,6 +118,22 @@ describe('applyEvent · BID_ACCEPTED', () => {
       data: { status: 'SOLD', amountCents: '50000000', userId: 'u_other', displayName: 'Winner', endAtMs: Date.now() + 28_000 },
     }));
     expect(useAuctionStore.getState().status).toBe('SOLD');
+  });
+
+  it('clears active reject state when BID_ACCEPTED arrives', () => {
+    useAuctionStore.getState().applyReject({
+      type: EventType.BID_REJECTED,
+      requestId: 'r-1',
+      data: { code: 'ERR_RATE_LIMITED' },
+    });
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
+
+    useAuctionStore.getState().applyEvent(env({
+      seq: 2,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'u_other', displayName: 'Winner', endAtMs: Date.now() + 28_000 },
+    }));
+    expect(useAuctionStore.getState().lastRejectCode).toBeNull();
+    expect(useAuctionStore.getState().lastRejectAt).toBeNull();
   });
 });
 
@@ -241,6 +257,43 @@ describe('applyEvent · ROOM_SNAPSHOT', () => {
     expect(s.capCents).toBeNull();
     expect(s.reserveCents).toBe('10000000');
     expect(s.startCents).toBe('10000000');
+  });
+});
+
+describe('setLeaders · REST normalization', () => {
+  beforeEach(RESET);
+
+  it('normalizes displayName and cents from REST /leaderboard payload', () => {
+    useAuctionStore.getState().setLeaders([
+      { userId: 'alice', amountCents: '12000000' },
+      { userId: 'bob', cents: '13000000', displayName: 'BobName' },
+    ]);
+
+    const s = useAuctionStore.getState();
+    expect(s.leaders).toHaveLength(2);
+    expect(s.leaders[0]).toMatchObject({
+      userId: 'alice',
+      displayName: 'alice',
+      cents: '12000000',
+      isYou: false,
+    });
+    expect(s.leaders[1]).toMatchObject({
+      userId: 'bob',
+      displayName: 'BobName',
+      cents: '13000000',
+      isYou: false,
+    });
+  });
+
+  it('marks current user as self even when displayName is missing', () => {
+    useAuctionStore.getState().setSelfUserId('alice');
+    useAuctionStore.getState().setLeaders([
+      { userId: 'alice', amountCents: '100' },
+    ]);
+
+    const s = useAuctionStore.getState();
+    expect(s.leaders).toHaveLength(1);
+    expect(s.leaders[0]).toMatchObject({ userId: 'alice', displayName: 'alice', isYou: true });
   });
 });
 
@@ -416,6 +469,11 @@ describe('applyEvent · leaderboard mergeLeader', () => {
 
 describe('applyReject', () => {
   beforeEach(RESET);
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
 
   it('appends to recentRejects with a code + ts', () => {
     useAuctionStore.getState().applyReject({
@@ -434,6 +492,56 @@ describe('applyReject', () => {
       reject({ type: EventType.BID_REJECTED, requestId: `r-${i}`, data: { code: 'ERR_TOO_LOW' } });
     }
     expect(useAuctionStore.getState().recentRejects.length).toBe(10);
+  });
+
+  it('auto-clears the last reject code after timeout', () => {
+    vi.useFakeTimers();
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1_000);
+
+    useAuctionStore.getState().applyReject({
+      type: EventType.BID_REJECTED,
+      requestId: 'req-1',
+      data: { code: 'ERR_RATE_LIMITED' },
+    });
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
+    expect(useAuctionStore.getState().lastRejectAt).toBe(1_000);
+
+    vi.advanceTimersByTime(1_799);
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
+
+    vi.advanceTimersByTime(1);
+    expect(useAuctionStore.getState().lastRejectCode).toBeNull();
+    expect(useAuctionStore.getState().lastRejectAt).toBeNull();
+  });
+
+  it('keeps latest reject when multiple rejects land in same ms', () => {
+    vi.useFakeTimers();
+    const nowSpy = vi.spyOn(Date, 'now');
+    nowSpy.mockReturnValue(1_000);
+
+    const reject = useAuctionStore.getState().applyReject;
+    reject({ type: EventType.BID_REJECTED, requestId: 'r-1', data: { code: 'ERR_TOO_LOW' } });
+    reject({ type: EventType.BID_REJECTED, requestId: 'r-2', data: { code: 'ERR_RATE_LIMITED' } });
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
+
+    vi.advanceTimersByTime(1_799);
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
+
+    vi.advanceTimersByTime(1);
+    expect(useAuctionStore.getState().lastRejectCode).toBeNull();
+  });
+
+  it('clearLastReject resets reject state immediately', () => {
+    useAuctionStore.getState().applyReject({
+      type: EventType.BID_REJECTED,
+      requestId: 'req-1',
+      data: { code: 'ERR_INTERNAL' },
+    });
+    expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_INTERNAL');
+    useAuctionStore.getState().clearLastReject();
+    expect(useAuctionStore.getState().lastRejectCode).toBeNull();
+    expect(useAuctionStore.getState().lastRejectAt).toBeNull();
   });
 });
 

@@ -30,6 +30,9 @@ export function LiveRoomRoute() {
   const store  = useAuctionStore();
   const rafRef = useRef(null);
   const clientRef = useRef(null);
+  const leaderboardAtMsRef = useRef(0);
+  const pendingLeaderBumpRef = useRef(0);
+  const leaderboardFlightRef = useRef(false);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -49,6 +52,54 @@ export function LiveRoomRoute() {
       : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     client.placeBid({ clientBidId, amountCents });
   }, []);
+
+  const maybeRefreshLeaders = useCallback(async (opts) => {
+    if (!auctionId) return;
+    const now = Date.now();
+    const force = opts?.force === true;
+    if (leaderboardFlightRef.current) return;
+
+    const shouldThrottle = now - leaderboardAtMsRef.current < 2_500;
+    const shouldRefresh = force || (!shouldThrottle);
+    if (!shouldRefresh) return;
+
+    leaderboardFlightRef.current = true;
+    try {
+      const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+      useAuctionStore.getState().setLeaders(leaderboard);
+      leaderboardAtMsRef.current = now;
+    } catch (e) {
+      // Non-fatal: local mergeLeader already keeps the UI responsive.
+      console.warn('[LiveRoom] leaderboard reconcile failed', e);
+    } finally {
+      leaderboardFlightRef.current = false;
+    }
+  }, [auctionId]);
+
+  const handleEvent = useCallback((env) => {
+    const s = useAuctionStore.getState();
+    if (!s) return;
+    s.applyEvent(env);
+
+    if (env?.type === 'BID_ACCEPTED') {
+      pendingLeaderBumpRef.current += 1;
+      if (pendingLeaderBumpRef.current >= 3) {
+        pendingLeaderBumpRef.current = 0;
+        void maybeRefreshLeaders({ force: false });
+      }
+      return;
+    }
+
+    if (
+      env?.type === 'AUCTION_SOLD' ||
+      env?.type === 'AUCTION_NO_BID' ||
+      env?.type === 'AUCTION_CANCELLED' ||
+      env?.type === 'ROOM_SNAPSHOT'
+    ) {
+      pendingLeaderBumpRef.current = 0;
+      void maybeRefreshLeaders({ force: true });
+    }
+  }, [maybeRefreshLeaders]);
 
   // ── Bootstrap: session → snapshot → leaderboard → WS ──
   useEffect(() => {
@@ -119,7 +170,7 @@ export function LiveRoomRoute() {
         auctionId,
         getLastSeq: () => useAuctionStore.getState().lastSeq,
         onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
-        onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
+        onEvent:    handleEvent,
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
       clientRef.current = client;
@@ -173,7 +224,7 @@ export function LiveRoomRoute() {
 
   return (
     <PullToResync onResync={handleResync}>
-    <MobileRoom
+      <MobileRoom
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
       stepCents={store.stepCents}
@@ -186,7 +237,7 @@ export function LiveRoomRoute() {
       leaders={store.leaders}
       onBid={handleBid}
       bidsPerSec={bidsPerSec}
-      bidsPerSecPeak={6}
+      bidsPerSecPeak={bidsPerSecPeak}
       ticker={store.recentEvents
         .filter((e) => e.type === 'BID_ACCEPTED')
         .slice(0, 6)
