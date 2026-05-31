@@ -53,6 +53,38 @@ func TestHiddenEnvelopeCarriesSchemaVersion(t *testing.T) {
 	}
 }
 
+func FuzzEnvelopeJSONBoundary(f *testing.F) {
+	f.Add(`{"type":"ROOM_JOIN","auctionId":"auc_1","serverTimeMs":1700000000000,"data":{"auctionId":"auc_1","lastSeq":7}}`)
+	f.Add(`{"type":"BID_PLACE","auctionId":"auc_1","requestId":"r1","serverTimeMs":1700000000000,"data":{"clientBidId":"cb1","amountCents":"11000"}}`)
+	f.Add(`{"schemaVersion":1,"type":"BID_ACCEPTED","auctionId":"auc_1","seq":8,"serverTimeMs":1700000000000,"data":{"seq":8,"userId":"u1","displayName":"U","amountCents":"12000","endAtMs":1700000010000,"status":"LIVE","serverTimeMs":1700000000000}}`)
+	f.Add(`{"type":"PING","serverTimeMs":0}`)
+	f.Add(`not-json`)
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var env Envelope
+		if err := json.Unmarshal([]byte(input), &env); err != nil {
+			return // malformed client frames must be rejectable without panics.
+		}
+		out, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal decoded envelope: %v", err)
+		}
+		if !json.Valid(out) {
+			t.Fatalf("marshaled envelope is invalid json: %q", out)
+		}
+		if !contains(string(out), `"schemaVersion":1`) {
+			t.Fatalf("marshaled envelope missing schemaVersion: %s", out)
+		}
+		var roundTrip Envelope
+		if err := json.Unmarshal(out, &roundTrip); err != nil {
+			t.Fatalf("round-trip decode: %v\n%s", err, out)
+		}
+		if roundTrip.Type != env.Type || roundTrip.AuctionID != env.AuctionID || roundTrip.RequestID != env.RequestID || roundTrip.Seq != env.Seq {
+			t.Fatalf("round-trip envelope drift: got=%+v want type=%q auction=%q request=%q seq=%d", roundTrip, env.Type, env.AuctionID, env.RequestID, env.Seq)
+		}
+	})
+}
+
 func TestNewEnvelopeMarshalError(t *testing.T) {
 	// a value that cannot be JSON-marshaled surfaces the error.
 	if _, err := NewEnvelope(TypePong, "", 0, make(chan int)); err == nil {
