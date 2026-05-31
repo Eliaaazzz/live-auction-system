@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ import (
 //	LOAD_HAMMER_P95_MS     = 500    (only asserted if the auction hammered inside the window)
 //	LOAD_CATCHUP_P95_MS    = 1000   (only asserted if catchup stream replay was observed)
 //	LOAD_SCRIPT_P99_MS     =   5    (hot-path Lua exec budget, V9 §4.2 footnote)
+//	LOAD_HANDLER_P99_MS    =   5    (P8: BID_PLACE Go-side handler work, excl. Redis RTT)
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
@@ -169,6 +171,7 @@ type loadConfig struct {
 	CatchupP95Budget   time.Duration
 	HammerP95Budget    time.Duration
 	ScriptP99Budget    time.Duration
+	HandlerP99Budget   time.Duration
 	AuctionDuration    time.Duration
 	ObserverStaggerMs  int
 }
@@ -184,6 +187,7 @@ func loadConfigFromEnv() loadConfig {
 		CatchupP95Budget:   time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
 		HammerP95Budget:    time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
 		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
+		HandlerP99Budget:   time.Duration(envInt("LOAD_HANDLER_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
 		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
 	}
@@ -279,6 +283,11 @@ func (s *loadStats) bidderSnapshot() bidderSnapshot {
 func runObserver(ctx context.Context, target, token, aid string, stats *loadStats, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer func() {
+		// Defense-in-depth. With the read-deadline poll removed (below) the
+		// "repeated read on failed websocket connection" panic source is gone,
+		// so this should never fire. If it ever does it is a real regression:
+		// counting it FAILS the gate (readErrors>0) rather than letting an
+		// unrecovered panic crash the whole 500-goroutine run.
 		if recover() != nil {
 			stats.observerErr.Add(1)
 		}
@@ -289,25 +298,33 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 		return
 	}
 	defer c.Close()
+
+	// Cooperative cancel WITHOUT a per-read deadline. A gorilla read-deadline
+	// timeout permanently poisons the conn (it sets c.readErr), so the old
+	// SetReadDeadline(500ms)+continue-on-timeout loop spun ~1000 dead reads
+	// after the first quiet window until gorilla panicked with "repeated read
+	// on failed websocket connection"; #89's recover() then booked every panic
+	// as a readError, so the gate's readErrors==0 could never pass (#86).
+	// Instead, close the conn when ctx ends — that unblocks the blocking
+	// ReadMessage with a benign net.ErrClosed and the loop returns clean.
+	go func() {
+		<-ctx.Done()
+		_ = c.Close()
+	}()
+
 	for {
-		// Cooperative cancel: bound the read so a quiet room doesn't deadline us
-		// past ctx.Done.
-		_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, _, err := c.ReadMessage()
 		if err != nil {
-			if ctx.Err() != nil {
+			// Run over (we closed the conn on ctx.Done) or a normal end-of-run
+			// WS teardown → clean exit, not a lost frame. Anything else is a
+			// genuine mid-room read failure that counts toward the SLO gate.
+			if ctx.Err() != nil || isBenignClose(err) {
 				return
-			}
-			if isTimeout(err) {
-				continue
 			}
 			stats.observerErr.Add(1)
 			return
 		}
 		stats.observerFrame.Add(1)
-		if ctx.Err() != nil {
-			return
-		}
 	}
 }
 
@@ -432,6 +449,9 @@ func (r loadReport) print() {
 	fmt.Printf("script    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v)\n",
 		r.Post.ScriptTime.P50, r.Post.ScriptTime.P95, r.Post.ScriptTime.P99, r.Post.ScriptTime.Count,
 		r.Config.ScriptP99Budget)
+	fmt.Printf("handler   p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v · P8 Go-side, excl. Redis RTT)\n",
+		r.Post.HandlerOverhead.P50, r.Post.HandlerOverhead.P95, r.Post.HandlerOverhead.P99, r.Post.HandlerOverhead.Count,
+		r.Config.HandlerP99Budget)
 	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
 		r.Post.BidsAccepted-r.Pre.BidsAccepted,
 		r.Post.BidsRejected-r.Pre.BidsRejected,
@@ -466,6 +486,12 @@ func (r loadReport) breaches() []string {
 	if r.Post.ScriptTime.P99 > ms(r.Config.ScriptP99Budget) {
 		out = append(out, fmt.Sprintf("script p99 %.1fms > %v (V9 §4.2 footnote: ack-p95<80 pre-gate)", r.Post.ScriptTime.P99, r.Config.ScriptP99Budget))
 	}
+	if r.Post.HandlerOverhead.Count > 0 && r.Post.HandlerOverhead.P99 > ms(r.Config.HandlerP99Budget) {
+		// P8: the WS BID_PLACE handler's own synchronous work (decode + canonicalize
+		// + ack push), measured excluding the PlaceBid/Redis span so this is pure
+		// Go-side time — the network RTT is already covered by ack p95<80ms.
+		out = append(out, fmt.Sprintf("handler-overhead p99 %.1fms > %v (P8: WS handler Go-side work, excl. Redis RTT)", r.Post.HandlerOverhead.P99, r.Config.HandlerP99Budget))
+	}
 	if r.ObserverStats.Errors > 0 {
 		out = append(out, fmt.Sprintf("observer readErrors=%d (must be 0)", r.ObserverStats.Errors))
 	}
@@ -481,15 +507,20 @@ func (r loadReport) breaches() []string {
 
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
-func isTimeout(err error) bool {
-	var ne interface{ Timeout() bool }
-	if errors.As(err, &ne) {
-		return ne.Timeout()
+// isBenignClose reports whether a read error is a normal connection teardown
+// (server-initiated close, or our own conn.Close at end-of-run) rather than a
+// mid-room frame-loss error. These must NOT count toward observer readErrors:
+// the gate measures frames lost while the room is LIVE, not shutdown. A
+// backpressure force-close (code 4000) is deliberately excluded — that IS a
+// real drop and should still count.
+func isBenignClose(err error) bool {
+	if errors.Is(err, net.ErrClosed) { // "use of closed network connection"
+		return true
 	}
-	// Gorilla wraps net.Error inside CloseError sometimes; also catch the
-	// read-deadline string for portability.
-	if ce, ok := err.(*websocket.CloseError); ok {
-		return ce.Code == websocket.CloseNoStatusReceived || ce.Code == websocket.CloseAbnormalClosure
-	}
-	return strings.Contains(err.Error(), "i/o timeout")
+	return websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,    // 1000
+		websocket.CloseGoingAway,        // 1001
+		websocket.CloseNoStatusReceived, // 1005
+		websocket.CloseAbnormalClosure,  // 1006
+	)
 }

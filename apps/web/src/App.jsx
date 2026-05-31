@@ -16,6 +16,7 @@ import { TweaksPanel } from './components/TweaksPanel.jsx';
 
 import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
 import { EvidenceRoute } from './routes/EvidenceRoute.jsx';
+import { HallRoute } from './routes/HallRoute.jsx';
 import { IndexPage } from './routes/IndexPage.jsx';
 import { api } from './lib/api.js';
 import { ensureSession } from './lib/auth.js';
@@ -25,7 +26,10 @@ export default function App() {
   return (
     <>
       <Routes>
-      <Route path="/" element={<IndexPage/>}/>
+      {/* Consumer landing: browse auctions + set identity (spec §4 竞拍浏览). */}
+      <Route path="/" element={<MobileFrame><HallRoute/></MobileFrame>}/>
+      {/* Dev index (all screens) moved off the root. */}
+      <Route path="/dev" element={<IndexPage/>}/>
 
       {/* ─── Buyer flow (mobile) ─────────────────────────── */}
       {/* Real, WS-wired room. Falls back to mock data if VITE_USE_MOCK_DATA=true. */}

@@ -191,6 +191,7 @@ type RoomSnapshotData struct {
 	WinnerID          string             `json:"winnerId"`
 	EndAtMs           int64              `json:"endAtMs"`
 	Seq               int64              `json:"seq"`
+	ViewerCount       int                `json:"viewerCount"` // live room occupancy (参与人数) at snapshot time
 	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
 }
 

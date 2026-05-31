@@ -22,6 +22,7 @@ const DEFAULT_STATE = {
   status: AuctionStatus.DRAFT,
   connStatus: ConnStatus.IDLE,
   connDetail: null,
+  viewerCount: 0, // 参与人数 — real room occupancy from ROOM_SNAPSHOT
 
   // pricing — ALL string-cents (blueprint P1).
   //
@@ -115,6 +116,10 @@ export const useAuctionStore = create((set, get) => ({
 
   // ── leaderboard reconcile (after REST GET /leaderboard) ──────
   setLeaders: (leaders) => set((s) => ({
+    // Normalize the REST /leaderboard shape ({ userId, amountCents }) to the
+    // render shape ({ displayName, cents }). The backend ZSET has no display
+    // name, so fall back to userId — rendering u.displayName[0] on an undefined
+    // name crashes the whole room (blank screen). cents<-amountCents likewise.
     leaders: leaders.map((l) => ({
       ...l,
       displayName: l.displayName || l.userId,
@@ -187,6 +192,8 @@ export const useAuctionStore = create((set, get) => ({
           next.winnerId       = data.winnerId ?? null;
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
+          if (data.viewerCount != null) next.viewerCount = data.viewerCount; // 参与人数
+
           if (data.rules) {
             if (data.rules.stepCents != null) next.stepCents = data.rules.stepCents;
             if (hasOwn(data.rules, 'capCents')) next.capCents = data.rules.capCents;

@@ -7,13 +7,14 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke
+        demo demo-smoke demo-auction \
+        k6 k6-setup k6-run
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
-	@echo "admin:  http://localhost:8080/admin.html"
-	@echo "mobile: http://localhost:8080/room.html?auction=auc_demo"
+	@echo "seller admin : http://localhost:8080/admin"
+	@echo "buyer room   : http://localhost:8080/room/auc_demo  (run 'make seed' first)"
 
 down:             ## stop stack + wipe volumes
 	$(COMPOSE) down -v
@@ -83,7 +84,7 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@# on failure so an operator can `make verify VERIFY_AID=<id>` manually.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+	set +e; bash -c 'set -o pipefail; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$1"' _ "$$logfile"; rc=$$?; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; fi; \
 	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
@@ -96,13 +97,13 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-smoke-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build \
+	set +e; bash -c 'set -o pipefail; $(COMPOSE) --profile tools run --rm --build \
 		-e LOAD_OBSERVERS=25 -e LOAD_BIDDERS=5 -e LOAD_DURATION_SEC=10 \
 		-e LOAD_BID_INTERVAL_MS=100 \
 		-e LOAD_ACK_P95_MS=400 -e LOAD_BROADCAST_P95_MS=800 \
 		-e LOAD_HAMMER_P95_MS=2000 -e LOAD_SCRIPT_P99_MS=20 \
 		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
-		load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+		load 2>&1 | tee "$$1"' _ "$$logfile"; rc=$$?; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
@@ -183,10 +184,17 @@ chaos-redis:     ## phase 2: Redis — bid -> ERR_AUCTION_PAUSED under outage; f
 		if curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then break; fi; \
 		echo "waiting for lumen healthz ($$i)"; sleep 2; \
 	done
-	@echo "--- redis: fresh auction post-recovery ---"
+	@echo "--- redis: fresh auction post-recovery (setup warms 1 bid → seq=1) ---"
 	@$(COMPOSE) exec -T lumen /lumen chaos --phase=setup > .chaos-recover.log
 	@grep -m1 '^CHAOS_AID=' .chaos-recover.log | sed 's/^CHAOS_AID=//' > $(CHAOS_AID_FILE)
 	@test -s $(CHAOS_AID_FILE) || { echo "FAIL: missing CHAOS_AID from recover setup"; cat .chaos-recover.log; exit 1; }
+	@# Wait for the warm bid to drain Stream → MySQL before verifying. After the
+	@# redis wipe + lumen restart the persistence worker re-establishes its
+	@# consumer group from scratch, so the projection of seq=1 lags the bid by a
+	@# tick; verifying immediately races it (mismatch_at_seq=1, stream=1 mysql=0).
+	@# Mirrors the chaos-mysql drain wait.
+	@echo "--- redis: wait for persistence drain (events-count >= 1) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=wait-events --aid="$$(cat $(CHAOS_AID_FILE))" --want-seq=1 --timeout-ms=30000
 	@echo "--- redis: verify recovered auction (3-way diff + hash chain) ---"
 	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
 	@echo "✓ chaos[2/5] redis PASSED · degrade=ERR_AUCTION_PAUSED · recover=fresh-auction-consistent"
@@ -326,38 +334,90 @@ demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves st
 	@echo "+==============================================================+"
 	@echo "|  Lumen Auction - T10 demo path (V9 plan section 12)          |"
 	@echo "+==============================================================+"
-	@echo ">>> [1/6] stack up + seed (seller / product / LIVE auction)"
+	@echo ">>> [1/7] stack up + seed (seller / product / LIVE auction)"
 	$(MAKE) up
 	$(MAKE) seed
-	@echo ">>> [2/6] section 12.1-3  list -> VLM facts draft -> seller confirm -> freeze rules -> start -> multi-viewer bid -> broadcast"
+	@echo ">>> [2/7] section 12.1-3  list -> VLM facts draft -> seller confirm -> freeze rules -> start -> multi-viewer bid -> broadcast"
 	$(MAKE) e2e-dummy-bid
-	@echo ">>> [3/6] section 12.5  evidence chain -- recompute event_hash (exit!=0 on hash_break)"
+	@echo ">>> [3/7] section 12.4-5  anti-snipe extend (AUCTION_EXTENDED) -> hammer (AUCTION_SOLD) -> evidence card (events_hash)"
+	$(MAKE) demo-auction
+	@echo ">>> [4/7] section 12.5  evidence chain -- recompute event_hash (exit!=0 on hash_break)"
 	$(MAKE) verify-evidence
-	@echo ">>> [4/6] section 12.6  Replay Verifier -- 3-way diff stream/redis/mysql + hash chain (consistent)"
+	@echo ">>> [5/7] section 12.6  Replay Verifier -- 3-way diff stream/redis/mysql + hash chain (consistent)"
 	$(MAKE) verify
-	@echo ">>> [5/6] section 12.7  monitoring 500 connected + 50 active -- ack/broadcast p95 + seq gap=0 + post-load verify"
+	@echo ">>> [6/7] section 12.7  monitoring 500 connected + 50 active -- ack/broadcast p95 + seq gap=0 + post-load verify"
 	$(MAKE) load
-	@echo ">>> [6/6] section 12.8  5 chaos drills -- ai/redis/mysql/ws/timer degrade + self-heal (chaos-ai proves V9 P3: AI down, bidding continues)"
+	@echo ">>> [7/7] section 12.8  5 chaos drills -- ai/redis/mysql/ws/timer degrade + self-heal (chaos-ai proves V9 P3: AI down, bidding continues)"
 	$(MAKE) chaos
 	@echo "+==============================================================+"
 	@echo "|  DEMO PATH GREEN -- every section 12 node asserted via make  |"
-	@echo "|  UI: http://localhost:8080/admin.html                        |"
-	@echo "|      http://localhost:8080/room.html?auction=auc_demo        |"
+	@echo "|  UI: http://localhost:8080/admin            (seller console) |"
+	@echo "|      http://localhost:8080/room/auc_demo    (buyer room)     |"
 	@echo "+==============================================================+"
 
-demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestration regression net
-	@echo ">>> demo-smoke [1/6] stack up + seed"
+demo-auction:     ## T10 §12.4-5: anti-snipe extend -> hammer -> evidence on one auction (asserted)
+	@# Drives the parts RunE2E stops short of: an in-window bid that extends the
+	@# countdown (AUCTION_EXTENDED), a competing snipe that extends again, then —
+	@# once bidding stops — the Timer Worker hammering to AUCTION_SOLD, and the
+	@# evidence card publishing the hash-chain head. Runs inside the lumen
+	@# container (mirrors `make chaos`), targeting its own :8080.
+	@echo "=== demo-auction (section 12.4-5: anti-snipe -> hammer -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-auction
+
+demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke) — orchestration regression net
+	@echo ">>> demo-smoke [1/7] stack up + seed"
 	$(MAKE) up
 	$(MAKE) seed
-	@echo ">>> demo-smoke [2/6] section 12.1-3 e2e roundtrip"
+	@echo ">>> demo-smoke [2/7] section 12.1-3 e2e roundtrip"
 	$(MAKE) e2e-dummy-bid
-	@echo ">>> demo-smoke [3/6] section 12.5 evidence hash chain"
+	@echo ">>> demo-smoke [3/7] section 12.4-5 anti-snipe extend -> hammer -> evidence"
+	$(MAKE) demo-auction
+	@echo ">>> demo-smoke [4/7] section 12.5 evidence hash chain"
 	$(MAKE) verify-evidence
-	@echo ">>> demo-smoke [4/6] section 12.6 replay verifier"
+	@echo ">>> demo-smoke [5/7] section 12.6 replay verifier"
 	$(MAKE) verify
-	@echo ">>> demo-smoke [5/6] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
+	@echo ">>> demo-smoke [6/7] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
 	$(MAKE) load-smoke
 	$(MAKE) chaos-smoke
-	@echo ">>> demo-smoke [6/6] V9 P3 AI offline -> core bidding continues"
+	@echo ">>> demo-smoke [7/7] V9 P3 AI offline -> core bidding continues"
 	$(MAKE) e2e-ai-offline
 	@echo "demo-smoke GREEN -- demo path wiring intact"
+
+## --- T10 k6 stress (high-concurrency simulator, beyond V9 §4.2 stretch) ---
+## V9 §4.2 stretch lane is 1k connected + 100 active. `make k6` drives 5000
+## concurrent WS sessions (default) — proves the system holds 5×stretch
+## *connection* scale, with the bid path bounded by Lua hot-path throughput.
+## Not in CI (3-min run, needs k6 binary); operator-run + nightly schedule.
+##
+## See tools/loadtest/README.md for tunables (N_OBSERVERS / N_BIDDERS /
+## DURATION / RAMP).
+##
+## Prerequisites:
+##   - make up (stack live on :8080)
+##   - k6 v1.4+ in PATH (https://k6.io/docs/get-started/installation/)
+##   - python (json parser in setup script)
+
+k6:               ## T10 stretch: 5k concurrent WS — full pipeline (setup + run)
+	$(MAKE) k6-setup
+	$(MAKE) k6-run
+
+k6-setup:         ## stage 1: create auction + dev-login N_USERS buyer tokens
+	@N_USERS=$${N_USERS:-5000} bash tools/loadtest/k6-setup.sh
+
+k6-run:           ## stage 2: run k6 scenarios against the pre-staged AID + tokens
+	@test -f .k6-aid || { echo "missing .k6-aid — run make k6-setup first"; exit 1; }
+	@test -f .k6-tokens || { echo "missing .k6-tokens — run make k6-setup first"; exit 1; }
+	@# tools/loadtest/.k6-tokens is the script-relative copy k6 open() needs;
+	@# keep the repo-root file authoritative + copy into the script dir for k6.
+	@cp .k6-tokens tools/loadtest/.k6-tokens
+	k6 run \
+		-e TOKENS=.k6-tokens \
+		-e AID=$$(cat .k6-aid) \
+		-e N_OBSERVERS=$${N_OBSERVERS:-4950} \
+		-e N_BIDDERS=$${N_BIDDERS:-50} \
+		-e DURATION=$${DURATION:-60s} \
+		-e RAMP=$${RAMP:-15s} \
+		--summary-trend-stats="avg,p(50),p(95),p(99),max" \
+		tools/loadtest/k6-ws.js
+	@echo "k6 done — server-side delta:"
+	@curl -s http://localhost:8080/metrics | python -m json.tool | head -40
