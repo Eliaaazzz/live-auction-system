@@ -106,14 +106,30 @@ def row:
     updatedAt,
     url
   };
-map(row)'
+map(row) as $rows |
+($rows | map({key: .head, value: {number, lane, ci, review, url}}) | from_entries) as $by_head |
+$rows | map(
+  . as $r |
+  ($by_head[$r.base] // null) as $base_pr |
+  . + {
+    basePr: (if $base_pr then ("#" + ($base_pr.number | tostring)) else "" end),
+    baseLane: ($base_pr.lane // ""),
+    handoff: (
+      if .stack == "stacked" and $base_pr and .lane == "merge-candidate" then "ready-after-base"
+      elif .stack == "stacked" and $base_pr then "wait-base"
+      elif .stack == "stacked" then "external-base"
+      else ""
+      end
+    )
+  }
+)'
 
 rows=$(jq -c "$jq_filter" "$json_file")
 
 write_report() {
   if [ "$FORMAT" = "tsv" ]; then
-    printf 'lane\tstack\tci\treview\tpr\tauthor\tbase\thead\tupdated\ttitle\turl\n'
-    printf '%s\n' "$rows" | jq -r '.[] | [.lane,.stack,.ci,.review,("#" + (.number|tostring)),.author,.base,.head,.updatedAt,.title,.url] | @tsv'
+    printf 'lane\tstack\thandoff\tbase_pr\tbase_lane\tci\treview\tpr\tauthor\tbase\thead\tupdated\ttitle\turl\n'
+    printf '%s\n' "$rows" | jq -r '.[] | [.lane,.stack,.handoff,.basePr,.baseLane,.ci,.review,("#" + (.number|tostring)),.author,.base,.head,.updatedAt,.title,.url] | @tsv'
     return
   fi
 
@@ -126,6 +142,7 @@ write_report() {
   waiting_ci=$(printf '%s\n' "$rows" | jq '[.[] | select(.lane == "waiting-ci")] | length')
   direct=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "direct")] | length')
   stacked=$(printf '%s\n' "$rows" | jq '[.[] | select(.stack == "stacked")] | length')
+  ready_after_base=$(printf '%s\n' "$rows" | jq '[.[] | select(.handoff == "ready-after-base")] | length')
 
   cat <<EOF_REPORT
 # Lumen PR queue report
@@ -141,14 +158,15 @@ Generated: $generated_at
 | waiting-ci | $waiting_ci |
 | direct-to-main | $direct |
 | stacked | $stacked |
+| ready-after-base | $ready_after_base |
 | total open | $total |
 
 ## Open PRs
 
-| lane | stack | CI | review | PR | author | base <- head | title |
-|---|---|---|---|---|---|---|---|
+| lane | stack | handoff | base PR | CI | review | PR | author | base <- head | title |
+|---|---|---|---|---|---|---|---|---|---|
 EOF_REPORT
-  printf '%s\n' "$rows" | jq -r '.[] | "| " + .lane + " | " + .stack + " | " + .ci + " | " + (.review // "") + " | [#" + (.number|tostring) + "](" + .url + ") | " + .author + " | `" + .base + " <- " + .head + "` | " + (.title | gsub("\\|"; "\\|")) + " |"'
+  printf '%s\n' "$rows" | jq -r '.[] | "| " + .lane + " | " + .stack + " | " + .handoff + " | " + (.basePr // "") + " " + (.baseLane // "") + " | " + .ci + " | " + (.review // "") + " | [#" + (.number|tostring) + "](" + .url + ") | " + .author + " | `" + .base + " <- " + .head + "` | " + (.title | gsub("\\|"; "\\|")) + " |"'
 }
 
 if [ -n "$OUT" ]; then
