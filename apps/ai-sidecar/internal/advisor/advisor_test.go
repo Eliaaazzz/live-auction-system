@@ -39,6 +39,9 @@ func TestHandler_AdvisoryShape(t *testing.T) {
 	if resp.ModelName == "" {
 		t.Fatal("modelName must be set")
 	}
+	if resp.RecommendedMode == "" || resp.EngineModeHint == "" {
+		t.Fatalf("mode hints must be present, got recommended=%q engine=%q", resp.RecommendedMode, resp.EngineModeHint)
+	}
 	if resp.StartPriceCents == "" || resp.StepCents == "" {
 		t.Fatalf("expected numeric suggestions, got start=%q step=%q", resp.StartPriceCents, resp.StepCents)
 	}
@@ -67,6 +70,9 @@ func TestRecommend_AlwaysAdvisoryAndNeverErrors(t *testing.T) {
 	}
 	if resp.Disclaimer == "" {
 		t.Fatal("disclaimer must survive fallback")
+	}
+	if resp.RecommendedMode != ModeOpen || resp.EngineModeHint != "ENGLISH" {
+		t.Fatalf("fallback must map OPEN to ENGLISH, got recommended=%q engine=%q", resp.RecommendedMode, resp.EngineModeHint)
 	}
 	// PDGGK #116: fallback must still carry a complete, non-zero suggestion so
 	// downstream never sees missing numeric fields — even with no input signal.
@@ -102,6 +108,36 @@ func TestRecommend_NormalizesUnknownMode(t *testing.T) {
 	})
 	if resp.RecommendedMode != ModeOpen {
 		t.Fatalf("unknown mode should normalize to OPEN, got %s", resp.RecommendedMode)
+	}
+	if resp.EngineModeHint != "ENGLISH" {
+		t.Fatalf("unknown mode should map to ENGLISH after normalize, got %s", resp.EngineModeHint)
+	}
+}
+
+func TestRecommend_EngineModeHintMapping(t *testing.T) {
+	cases := []struct {
+		name string
+		mode Mode
+		want string
+	}{
+		{name: "open", mode: ModeOpen, want: "ENGLISH"},
+		{name: "sealed then open", mode: ModeSealedThenOpen, want: "PREQUALIFY"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := recommendWithGuardrail(Request{}, func(Request) (Advice, error) {
+				return Advice{
+					Mode:            tc.mode,
+					StartPriceCents: "1",
+					StepCents:       "1",
+					ReserveCents:    "1",
+					Rationale:       "ok",
+				}, nil
+			})
+			if resp.EngineModeHint != tc.want {
+				t.Fatalf("engineModeHint=%q want %q", resp.EngineModeHint, tc.want)
+			}
+		})
 	}
 }
 
