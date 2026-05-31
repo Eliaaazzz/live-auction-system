@@ -66,6 +66,7 @@ function AdminVLMFacts() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  const [draftFallback, setDraftFallback] = React.useState(false);
   const [draftHint, setDraftHint] = React.useState(null);
   const draftHintTimerRef = React.useRef(null);
   const draftStorageKey = auctionId ? `lumen:vlm-facts-draft:${auctionId}` : null;
@@ -84,6 +85,7 @@ function AdminVLMFacts() {
             const parsed = JSON.parse(raw);
             if (Array.isArray(parsed?.facts)) {
               if (live) setFacts(parsed.facts);
+              if (live) setDraftFallback(false);
               return;
             }
           }
@@ -96,6 +98,7 @@ function AdminVLMFacts() {
           description: a.description || '',
         });
         if (!live) return;
+        setDraftFallback(false);
         const labelOf = { category: '类目', brand: '品牌', model: '型号', condition: '成色', flaws: '瑕疵', authenticity: '真伪', specs: '关键参数' };
         setFacts((draft.facts || []).map((f) => ({
           id: f.field,
@@ -108,6 +111,7 @@ function AdminVLMFacts() {
         })));
       } catch (e) {
         console.warn('[AdminVLMFacts] VLM draft fetch failed (fallback facts stay editable)', e);
+        if (live) setDraftFallback(true);
       } finally {
         if (live) setLoading(false);
       }
@@ -149,7 +153,11 @@ function AdminVLMFacts() {
   const setStatus = (factId, next) => setFacts((curr) =>
     curr.map((f) => f.id === factId ? { ...f, ...next } : f),
   );
-  const handleConfirm = (id) => setStatus(id, { status: 'confirmed', editedText: facts.find((f) => f.id === id).vlmText });
+  const handleConfirm = (id) => {
+    const f = facts.find((x) => x.id === id);
+    if (!f) return;
+    setStatus(id, { status: 'confirmed', editedText: f.vlmText });
+  };
   const handleEdit = (id) => {
     const f = facts.find((x) => x.id === id);
     if (!f) return;
@@ -429,7 +437,9 @@ function AdminVLMFacts() {
                 {aiOffline ? 'AI Sidecar · 离线' : 'AI Sidecar · 在线'}
               </div>
               <div style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
-                {aiOffline ? '事实仍可手动确认 · freeze 不受影响' : 'VLM gpt-4o-vision · 节流 1Hz'}
+                {aiOffline
+                  ? '事实仍可手动确认 · freeze 不受影响'
+                  : draftFallback ? 'VLM 草稿拉取失败 · 当前为可编辑兜底事实' : 'VLM gpt-4o-vision · 节流 1Hz'}
               </div>
             </div>
           </div>
