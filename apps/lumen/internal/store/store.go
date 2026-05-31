@@ -65,7 +65,11 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
+	return s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
