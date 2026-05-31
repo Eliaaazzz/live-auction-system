@@ -74,6 +74,8 @@ function CancelOverlay() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [currentCents, setCurrentCents] = React.useState(null);
+  const [eventsCount, setEventsCount] = React.useState(null);
+  const [lastSeq, setLastSeq] = React.useState(null);
 
   // #51-H4 fix: previously hardcoded '12880000' as the modal's confirm-by-
   // typing amount. It happened to match the seed `auc_demo` but would be
@@ -87,17 +89,23 @@ function CancelOverlay() {
         await ensureSession('seller-demo');
         const snap = await api.getAuction(id);
         if (!alive) return;
+        const events = await api.getEventsCount(id);
+        if (!alive) return;
         // currentPriceCents '' on a brand-new SCHEDULED auction with no
         // bids; AdminCancelModal handles empty string as "0" via its
         // formatCentsCNY pipeline — but more useful for the seller is to
         // see the start price as the fallback. Backend's GetAuction
         // returns currentPriceCents per ws-envelope.md §3.2.
         setCurrentCents(snap?.currentPriceCents ?? '0');
+        setEventsCount(typeof events?.count === 'number' ? events.count : 0);
+        setLastSeq(snap?.seq ?? null);
       } catch (e) {
         // Non-fatal — modal renders with a sentinel so seller can still
         // cancel; backend ultimately enforces ownership + state.
         console.warn('[CancelOverlay] getAuction failed', e);
         if (alive) setCurrentCents('0');
+        if (alive) setEventsCount(0);
+        if (alive) setLastSeq(null);
       }
     })();
     return () => { alive = false; };
@@ -125,13 +133,21 @@ function CancelOverlay() {
   // of the wrong amount where the seller might type the old hardcoded
   // 12880000 and have the verify check fail confusingly.
   if (currentCents == null) {
-    return <AdminCancelModal currentCents="0"
+    return <AdminCancelModal
+      currentCents="0"
+      auctionId={id || ''}
+      eventsCount={0}
+      lastSeq={lastSeq}
       busy={true}
       error={null}
       onClose={() => nav('..')}
       onCancelAuction={() => {}}/>;
   }
-  return <AdminCancelModal currentCents={currentCents}
+  return <AdminCancelModal
+    currentCents={currentCents}
+    auctionId={id || ''}
+    eventsCount={eventsCount ?? 0}
+    lastSeq={lastSeq}
     busy={busy}
     error={error}
     onClose={() => nav('..')}

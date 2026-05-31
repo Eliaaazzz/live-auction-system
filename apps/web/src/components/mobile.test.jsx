@@ -7,6 +7,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
+import { BidErrorCode, bidRejectCopy } from '../lib/types.js';
 
 describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
   it('does NOT render the overlay during LIVE status', () => {
@@ -37,6 +38,19 @@ describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
   it('does NOT render the overlay during SOLD (hammer transition handles SOLD)', () => {
     const { container } = render(<MobileRoom status="SOLD" leaders={[]}/>);
     expect(container.textContent).not.toMatch(/本场无人出价|本场已取消/);
+  });
+});
+
+describe('MobileRoom · reject toast copy', () => {
+  it('renders canonical reject copy for known rejection codes', () => {
+    render(<MobileRoom rejectCode={BidErrorCode.ERR_NOT_ALLOWED} leaders={[]}/>);
+    expect(screen.getByText('✗')).toBeInTheDocument();
+    expect(screen.getByText(bidRejectCopy[BidErrorCode.ERR_NOT_ALLOWED])).toBeInTheDocument();
+  });
+
+  it('falls back to raw code when copy is unavailable', () => {
+    render(<MobileRoom rejectCode={'ERR_UNKNOWN_REJECTION'} leaders={[]}/>);
+    expect(screen.getAllByText('ERR_UNKNOWN_REJECTION')).toHaveLength(2);
   });
 });
 
