@@ -18,7 +18,7 @@ import (
 // A full CRITICAL lane force-closes the connection (client reconnects + re-syncs)
 // rather than silently dropping a bid ack / terminal event.
 func TestT5BackpressureCriticalDropsConn(t *testing.T) {
-	c := &Conn{send: make(chan []byte, 2), lossy: make(chan []byte, 2), done: make(chan struct{})}
+	c := &Conn{crit: make(chan outboundFrame, 2), lossy: make(chan []byte, 2), done: make(chan struct{})}
 	c.trySend([]byte("a"))
 	c.trySend([]byte("b")) // fills the critical buffer (cap 2)
 	c.trySend([]byte("c")) // full → force-close
@@ -33,7 +33,7 @@ func TestT5BackpressureCriticalDropsConn(t *testing.T) {
 // A full LOSSY lane drops the overflow frame but keeps the connection — a slow client
 // is never force-closed over a replaceable frame (e.g. a heartbeat).
 func TestT5BackpressureLossyDropsFrameKeepsConn(t *testing.T) {
-	c := &Conn{send: make(chan []byte, 2), lossy: make(chan []byte, 1), done: make(chan struct{})}
+	c := &Conn{crit: make(chan outboundFrame, 2), lossy: make(chan []byte, 1), done: make(chan struct{})}
 	c.trySendLossy([]byte("a")) // fills the lossy buffer (cap 1)
 	c.trySendLossy([]byte("b")) // full → drop the frame, keep the conn
 
@@ -73,8 +73,8 @@ func TestT5MultiGatewayFanout(t *testing.T) {
 	hubA, hubB := newHub(), newHub()
 	go hubA.subscribe(ctx, st, nil, nil)
 	go hubB.subscribe(ctx, st, nil, nil)
-	cA := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
-	cB := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
+	cA := &Conn{crit: make(chan outboundFrame, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
+	cB := &Conn{crit: make(chan outboundFrame, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
 	hubA.join(aid, cA)
 	hubB.join(aid, cB)
 
@@ -94,7 +94,7 @@ func TestT5CatchupFitsInSendBuffer(t *testing.T) {
 	if sendBufFrames <= catchupMaxGap {
 		t.Fatalf("sendBufFrames=%d must exceed catchupMaxGap=%d (catchup replay would force-close)", sendBufFrames, catchupMaxGap)
 	}
-	c := &Conn{send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
+	c := &Conn{crit: make(chan outboundFrame, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
 	for i := 0; i < catchupMaxGap; i++ {
 		c.trySend([]byte("catchup-event"))
 	}
@@ -103,7 +103,7 @@ func TestT5CatchupFitsInSendBuffer(t *testing.T) {
 		t.Fatalf("a full catchupMaxGap replay must NOT force-close (sendBufFrames=%d catchupMaxGap=%d)", sendBufFrames, catchupMaxGap)
 	default: // still open, as expected
 	}
-	if got := len(c.send); got != catchupMaxGap {
+	if got := len(c.crit); got != catchupMaxGap {
 		t.Fatalf("buffered=%d want %d (no drops, no loss)", got, catchupMaxGap)
 	}
 }
@@ -113,13 +113,13 @@ func TestT5CatchupFitsInSendBuffer(t *testing.T) {
 // and would otherwise accumulate dead-conn frames in the buffer (stale memory,
 // and arbitrarily many re-broadcasts call trySend on the same closed conn).
 func TestT5TrySendAfterCloseDoesNotEnqueue(t *testing.T) {
-	c := &Conn{send: make(chan []byte, 8), lossy: make(chan []byte, 4), done: make(chan struct{})}
+	c := &Conn{crit: make(chan outboundFrame, 8), lossy: make(chan []byte, 4), done: make(chan struct{})}
 	c.close()
 	for i := 0; i < 100; i++ {
 		c.trySend([]byte("post-close"))
 		c.trySendLossy([]byte("post-close"))
 	}
-	if got := len(c.send); got != 0 {
+	if got := len(c.crit); got != 0 {
 		t.Fatalf("post-close critical buffered=%d want 0 (frames must drop, not accumulate)", got)
 	}
 	if got := len(c.lossy); got != 0 {
@@ -134,9 +134,9 @@ func assertConnReceives(t *testing.T, c *Conn, typ string, d time.Duration) {
 	deadline := time.After(d)
 	for {
 		select {
-		case b := <-c.send:
+		case f := <-c.crit:
 			var env model.Envelope
-			if json.Unmarshal(b, &env) == nil && env.Type == typ {
+			if json.Unmarshal(f.raw, &env) == nil && env.Type == typ {
 				return
 			}
 		case <-deadline:
