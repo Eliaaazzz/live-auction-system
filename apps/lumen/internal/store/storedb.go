@@ -416,6 +416,10 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 			return true, 0, nil
 		}
 		if c.verifiedSeq > 0 && c.verifiedSeq < stats.maxSeq {
+			verifyStartedAt, err := s.dbNow(ctx)
+			if err != nil {
+				return false, 0, err
+			}
 			prefixOK, err := s.evidencePrefixUnchanged(ctx, aid, c)
 			if err != nil {
 				return false, 0, err
@@ -425,18 +429,22 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 				if err != nil || !ok {
 					return ok, brk, err
 				}
-				if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head); err != nil {
+				if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head, verifyStartedAt); err != nil {
 					return false, 0, err
 				}
 				return true, 0, nil
 			}
 		}
 	}
+	verifyStartedAt, err := s.dbNow(ctx)
+	if err != nil {
+		return false, 0, err
+	}
 	ok, brk, lastSeq, head, err := s.verifyEvidenceChainRows(ctx, aid, 1, 1, "")
 	if err != nil || !ok {
 		return ok, brk, err
 	}
-	if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head); err != nil {
+	if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head, verifyStartedAt); err != nil {
 		return false, 0, err
 	}
 	return true, 0, nil
@@ -548,7 +556,15 @@ func (s *Store) evidencePrefixUnchanged(ctx context.Context, aid string, c evide
 	return head.Valid && head.String == c.chainHead, nil
 }
 
-func (s *Store) storeEvidenceChainCache(ctx context.Context, aid string, verifiedSeq int64, chainHead string) error {
+func (s *Store) dbNow(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("db now: %w", err)
+	}
+	return now, nil
+}
+
+func (s *Store) storeEvidenceChainCache(ctx context.Context, aid string, verifiedSeq int64, chainHead string, verifiedAt time.Time) error {
 	stats, err := s.evidenceChainStats(ctx, aid)
 	if err != nil {
 		return err
@@ -559,14 +575,14 @@ func (s *Store) storeEvidenceChainCache(ctx context.Context, aid string, verifie
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO evidence_chain_cache
 		    (auction_id, verified_seq, events_count, chain_head, max_event_updated_at, verified_at)
-		 VALUES (?, ?, ?, ?, ?, NOW(6))
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON DUPLICATE KEY UPDATE
 		    verified_seq = VALUES(verified_seq),
 		    events_count = VALUES(events_count),
 		    chain_head = VALUES(chain_head),
 		    max_event_updated_at = VALUES(max_event_updated_at),
 		    verified_at = VALUES(verified_at)`,
-		aid, verifiedSeq, stats.count, chainHead, stats.maxUpdatedAt); err != nil {
+		aid, verifiedSeq, stats.count, chainHead, stats.maxUpdatedAt, verifiedAt); err != nil {
 		return fmt.Errorf("store evidence chain cache: %w", err)
 	}
 	return nil
