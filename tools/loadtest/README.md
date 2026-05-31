@@ -81,6 +81,20 @@ default it fails if the token file has fewer lines than `TOTAL_CONNS +
 TOTAL_BIDDERS`; set `ALLOW_TOKEN_WRAP=1` only for socket-count stress where
 identity reuse is acceptable.
 
+After the workers finish, aggregate their non-secret log counts into the shard
+summary consumed by `scripts/v100k-evidence-gate.sh`:
+
+```bash
+tools/loadtest/wsload/summarize-workers.sh \
+  --plan /tmp/lumen-wsload-shards-<timestamp>/workers.tsv \
+  --logs-dir /tmp/wsload-worker-logs \
+  --out /tmp/lumen-v100k-shards.tsv
+```
+
+Expected log names are `worker-NN.log`, `wsload-worker-NN.log`, or `NN.log`.
+The output columns are `worker target_conns connect_ok connect_fail
+closed_early`, matching the v100k gate.
+
 ### Result — 10,000 concurrent, server-side SLO crushed (2026-05-31)
 
 9,900 observers + 100 bidders, driven over the Docker network; server truth from
