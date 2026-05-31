@@ -71,15 +71,6 @@ def _fire(env, name, ms, exc=None, length=0):
     )
 
 
-def _runner_stopping(env):
-    # True once Locust has hit its run-time limit and is tearing users down. A
-    # recv error in that window is the harness closing its own sockets (blocked
-    # recv → BrokenPipe/ConnectionReset), not a server fault, so we don't count
-    # it — the report then reflects server health, not shutdown noise.
-    r = getattr(env, "runner", None)
-    return r is not None and getattr(r, "state", "") in ("stopping", "stopped", "cleanup")
-
-
 class _WSBase(User):
     abstract = True
 
@@ -92,16 +83,7 @@ class _WSBase(User):
         t0 = time.time()
         try:
             self.ws = websocket.create_connection(
-                f"{self.host}/ws?token={self.token}",
-                timeout=15,
-                # Send no Origin header (like the wsload harness). The gateway's
-                # CheckOrigin (auth.OriginAllowed) allows an empty Origin for
-                # non-browser clients but exact-matches a present one against
-                # FRONTEND_ORIGIN. Without this, websocket-client auto-sends
-                # Origin: http://<host>, which fails when host != the browser
-                # origin (e.g. ws://lumen:8080 over the Docker network) → 403 on
-                # every connect.
-                suppress_origin=True,
+                f"{self.host}/ws?token={self.token}", timeout=15
             )
             _fire(self.environment, "connect", (time.time() - t0) * 1000)
         except Exception as e:  # noqa: BLE001
@@ -163,8 +145,7 @@ class Observer(_WSBase):
         except websocket.WebSocketTimeoutException:
             pass  # quiet room window — fine
         except Exception as e:  # noqa: BLE001
-            if not _runner_stopping(self.environment):
-                _fire(self.environment, "recv_err", 0, exc=e)
+            _fire(self.environment, "recv_err", 0, exc=e)
             raise StopUser()
 
 
@@ -202,8 +183,7 @@ class Bidder(_WSBase):
             except websocket.WebSocketTimeoutException:
                 break
             except Exception as e:  # noqa: BLE001
-                if not _runner_stopping(self.environment):
-                    _fire(self.environment, "recv_err", 0, exc=e)
+                _fire(self.environment, "recv_err", 0, exc=e)
                 raise StopUser()
             env = self._apply(raw)
             if not env:
@@ -214,10 +194,7 @@ class Bidder(_WSBase):
                 _fire(self.environment, "bid_ack", (time.time() - t0) * 1000)
                 return
             if t == "BID_REJECTED":
-                # Lost the race for current+1 is expected under contention, but
-                # keep the machine code visible so a load run cannot hide bad
-                # rejects (ERR_BAD_INPUT / ERR_INTERNAL / ERR_AUCTION_PAUSED).
-                code = d.get("code") or "UNKNOWN"
-                _fire(self.environment, f"bid_rejected:{code}", (time.time() - t0) * 1000)
+                # lost the race for current+1 (expected under contention); not a failure
+                _fire(self.environment, "bid_rejected", (time.time() - t0) * 1000)
                 return
         _fire(self.environment, "bid_no_ack", (time.time() - t0) * 1000, exc=Exception("no ack in 3s"))
