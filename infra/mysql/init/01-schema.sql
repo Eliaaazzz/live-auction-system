@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS auction_events (
   created_at   DATETIME NOT NULL,
   event_hash   VARCHAR(128) NULL,
   prev_hash    VARCHAR(128) NULL,
+  hmac_key_version SMALLINT NOT NULL DEFAULT 1,
   UNIQUE KEY uq_events_seq (auction_id, seq),
   INDEX idx_events_auction (auction_id, seq)
 );

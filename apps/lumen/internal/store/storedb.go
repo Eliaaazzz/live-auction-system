@@ -332,7 +332,19 @@ func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventTyp
 // writer (fillEventHash) and the verifier (VerifyEvidenceChain) — both of which read
 // that column — hash byte-identical input regardless of cjson key order/whitespace.
 func (s *Store) evidenceHash(prevHash string, seq int64, eventType, payload string) string {
-	mac := hmac.New(sha256.New, s.evidenceKey)
+	return evidenceHashWithKey(s.evidenceKey, prevHash, seq, eventType, payload)
+}
+
+func (s *Store) evidenceHashForVersion(version int, prevHash string, seq int64, eventType, payload string) (string, error) {
+	key, err := s.evidenceKeySource.EvidenceKey(version)
+	if err != nil {
+		return "", err
+	}
+	return evidenceHashWithKey(key, prevHash, seq, eventType, payload), nil
+}
+
+func evidenceHashWithKey(key []byte, prevHash string, seq int64, eventType, payload string) string {
+	mac := hmac.New(sha256.New, key)
 	// Byte-identical to fmt.Fprintf("%s\n%d\n%s\n%s", ...) but zero-alloc (no reflection)
 	// — matters on a long VerifyEvidenceChain (1 HMAC/row). Output is unchanged, so this
 	// does not invalidate existing chains. (@fariZzzz #34 second-pass §4.)
@@ -391,8 +403,8 @@ func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventT
 	}
 	h := s.evidenceHash(prev.String, seq, eventType, payloadNorm.String)
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE auction_events SET event_hash = ?, prev_hash = ? WHERE auction_id = ? AND seq = ? AND event_hash IS NULL`,
-		h, prev.String, aid, seq); err != nil {
+		`UPDATE auction_events SET event_hash = ?, prev_hash = ?, hmac_key_version = ? WHERE auction_id = ? AND seq = ? AND event_hash IS NULL`,
+		h, prev.String, s.evidenceKeyVersion, aid, seq); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -406,7 +418,7 @@ func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventT
 // (hash_break_at_seq).
 func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, breakAtSeq int64, err error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, event_type, payload_json, event_hash, prev_hash FROM auction_events WHERE auction_id = ? ORDER BY seq ASC`, aid)
+		`SELECT seq, event_type, payload_json, event_hash, prev_hash, hmac_key_version FROM auction_events WHERE auction_id = ? ORDER BY seq ASC`, aid)
 	if err != nil {
 		return false, 0, err
 	}
@@ -417,7 +429,8 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 		var seq int64
 		var eventType string
 		var payload, eventHash, prevHash sql.NullString
-		if err := rows.Scan(&seq, &eventType, &payload, &eventHash, &prevHash); err != nil {
+		var hmacKeyVersion int
+		if err := rows.Scan(&seq, &eventType, &payload, &eventHash, &prevHash, &hmacKeyVersion); err != nil {
 			return false, 0, err
 		}
 		if seq != expectedSeq {
@@ -427,7 +440,11 @@ func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, b
 		if prevHash.String != prev {
 			return false, seq, nil // chain link broken (prev_hash doesn't match the running head)
 		}
-		if !eventHash.Valid || s.evidenceHash(prev, seq, eventType, payload.String) != eventHash.String {
+		expectedHash, err := s.evidenceHashForVersion(hmacKeyVersion, prev, seq, eventType, payload.String)
+		if err != nil {
+			return false, seq, err
+		}
+		if !eventHash.Valid || expectedHash != eventHash.String {
 			return false, seq, nil // missing or tampered event_hash
 		}
 		prev = eventHash.String

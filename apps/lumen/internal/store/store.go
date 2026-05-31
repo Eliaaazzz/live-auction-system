@@ -81,7 +81,10 @@ func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, e
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "auction_events", "hmac_key_version", "SMALLINT NOT NULL DEFAULT 1")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
