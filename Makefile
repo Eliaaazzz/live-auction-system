@@ -1,5 +1,9 @@
 # Lumen Auction — T1 targets. Demo path = a sequence of make targets (per #14).
 COMPOSE := docker compose -f infra/docker-compose.yml
+HOST_WS ?= ws://localhost:8080
+TOXI_URL ?= http://localhost:8474
+WAN_LATENCY_MS ?= 50
+WAN_JITTER_MS ?= 10
 E2E_AID_FILE := .e2e-auction-id
 LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
@@ -8,7 +12,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke demo-auction \
-        k6 k6-setup k6-run
+        k6 k6-setup k6-run up-toxiproxy toxiproxy-reset k6-wan k6-wan-run
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -413,6 +417,7 @@ k6-run:           ## stage 2: run k6 scenarios against the pre-staged AID + toke
 	k6 run \
 		-e TOKENS=.k6-tokens \
 		-e AID=$$(cat .k6-aid) \
+		-e HOST_WS=$(HOST_WS) \
 		-e N_OBSERVERS=$${N_OBSERVERS:-4950} \
 		-e N_BIDDERS=$${N_BIDDERS:-50} \
 		-e DURATION=$${DURATION:-60s} \
@@ -421,3 +426,30 @@ k6-run:           ## stage 2: run k6 scenarios against the pre-staged AID + toke
 		tools/loadtest/k6-ws.js
 	@echo "k6 done — server-side delta:"
 	@curl -s http://localhost:8080/metrics | python -m json.tool | head -40
+
+up-toxiproxy:     ## start stack plus toxiproxy profile for client->lumen WAN-latency preview
+	$(COMPOSE) --profile toxiproxy up -d --build --wait --wait-timeout 300 toxiproxy
+	@echo "toxiproxy admin : $(TOXI_URL)"
+	@echo "proxied gateway : ws://localhost:18080"
+
+toxiproxy-reset:  ## remove WAN latency toxics from the lumen-ws proxy
+	@curl -s -X DELETE "$(TOXI_URL)/proxies/lumen-ws/toxics/wan_downstream" >/dev/null 2>&1 || true
+	@curl -s -X DELETE "$(TOXI_URL)/proxies/lumen-ws/toxics/wan_upstream" >/dev/null 2>&1 || true
+	@echo "toxiproxy reset: lumen-ws has no WAN latency toxics"
+
+k6-wan:           ## #112 preview: k6 via toxiproxy with WAN-like client<->gateway latency
+	$(MAKE) up-toxiproxy
+	$(MAKE) k6-setup
+	$(MAKE) k6-wan-run
+
+k6-wan-run:       ## run existing staged k6 auction through toxiproxy (:18080)
+	@curl -sf "$(TOXI_URL)/version" >/dev/null
+	$(MAKE) toxiproxy-reset
+	@curl -sf -X POST "$(TOXI_URL)/proxies/lumen-ws/toxics" \
+		-H 'content-type: application/json' \
+		-d '{"name":"wan_downstream","type":"latency","stream":"downstream","toxicity":1.0,"attributes":{"latency":$(WAN_LATENCY_MS),"jitter":$(WAN_JITTER_MS)}}' >/dev/null
+	@curl -sf -X POST "$(TOXI_URL)/proxies/lumen-ws/toxics" \
+		-H 'content-type: application/json' \
+		-d '{"name":"wan_upstream","type":"latency","stream":"upstream","toxicity":1.0,"attributes":{"latency":$(WAN_LATENCY_MS),"jitter":$(WAN_JITTER_MS)}}' >/dev/null
+	@echo "toxiproxy WAN preview: +$(WAN_LATENCY_MS)ms +/-$(WAN_JITTER_MS)ms on upstream and downstream"
+	$(MAKE) k6-run HOST_WS=ws://localhost:18080

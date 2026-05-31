@@ -65,7 +65,33 @@ N_OBSERVERS=1000 N_BIDDERS=500 make k6
 
 # Short smoke (CI-cheap variant; not yet wired to GA)
 N_USERS=100 N_OBSERVERS=80 N_BIDDERS=20 DURATION=10s RAMP=3s make k6
+
+# #112 local WAN preview: same k6 auction, but WS goes through Toxiproxy
+# on localhost:18080 with 50ms +/- 10ms injected each way.
+WAN_LATENCY_MS=50 WAN_JITTER_MS=10 N_USERS=1000 N_OBSERVERS=900 N_BIDDERS=100 make k6-wan
 ```
+
+---
+
+## Local WAN preview (`make k6-wan`)
+
+`make k6-wan` is the no-cloud rehearsal for #112 real-latency re-measurement:
+
+1. starts the normal stack plus the profile-gated `toxiproxy` service,
+2. pre-stages the normal k6 auction and token files against `http://localhost:8080`,
+3. injects upstream and downstream latency on the `lumen-ws` proxy,
+4. runs k6 with `HOST_WS=ws://localhost:18080`.
+
+The setup REST traffic is intentionally not proxied. The measured buyer path is the WebSocket path,
+which is where the client-side `ack_latency_ms` delta shows up.
+
+| env | default | meaning |
+|---|---:|---|
+| `WAN_LATENCY_MS` | 50 | added one-way latency in each direction |
+| `WAN_JITTER_MS` | 10 | jitter applied around `WAN_LATENCY_MS` |
+| `TOXI_URL` | `http://localhost:8474` | Toxiproxy admin API |
+
+Use `make toxiproxy-reset` before switching latency values after a failed/interrupted run.
 
 ---
 
