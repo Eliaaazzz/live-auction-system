@@ -117,7 +117,7 @@ Before the seller freezes rules, the admin console may call this for a **suggest
 
 **Non-authoritative (CLAUDE.md hard rule · V9 P3):** `advisoryOnly` is always `true` and `disclaimer` is always present. The seller confirms / edits / ignores; the backend state machine adjudicates every accepted bid, winner, price, and terminal. This endpoint never writes auction state and the bid path never waits on it.
 
-**Out of scope (issue #111 stretch — needs V9 §2 all-member ratify):** the two-phase `SEALED` auction state and reserve-price **adjudication**. This endpoint may CONSUME a pre-computed aggregate `sealedSummary` (count / max / second / median — never individual bids), but never runs the sealed phase or decides a terminal. `recommendedMode` (`OPEN` = public ascending / `SEALED_THEN_OPEN` = sealed warm-up → open) is an **advisory hint, NOT a canonical engine mode**. The engine's auction-mode vocabulary is being designed in **#114** (RFC: pluggable modes + recommender) and will be unified with **#111** at ratify; until then the admin UI must **map** the hint to the engine's accepted mode (`OPEN→ENGLISH`, `SEALED_THEN_OPEN→PREQUALIFY`) rather than feeding `recommendedMode` directly to create-auction. (The system is single-mode — public English — today, so there is no engine `ValidMode` to mismatch yet.)
+**Out of scope (issue #111 stretch — needs V9 §2 all-member ratify):** the two-phase `SEALED` auction state and reserve-price **adjudication**. This endpoint may CONSUME a pre-computed aggregate `sealedSummary` (count / max / second / median — never individual bids), but never runs the sealed phase or decides a terminal. `recommendedMode` (`OPEN` = public ascending / `SEALED_THEN_OPEN` = sealed warm-up → open) is an **advisory hint, NOT a canonical engine mode**. `engineModeHint` is the machine-readable bridge to the #114 engine vocabulary (`OPEN→ENGLISH`, `SEALED_THEN_OPEN→PREQUALIFY`) for admin integration; seller confirmation and backend validation still decide the actual `rules.mode`.
 
 Request:
 ```json
@@ -137,6 +137,7 @@ Response (always 200; generator failure → canned advice with `fallback: true`)
 {
   "advisoryOnly":    true,
   "recommendedMode": "OPEN",
+  "engineModeHint":  "ENGLISH",
   "startPriceCents": "9000000",
   "stepCents":       "100000",
   "reserveCents":    "9000000",
