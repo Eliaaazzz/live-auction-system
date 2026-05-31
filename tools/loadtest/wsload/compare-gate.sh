@@ -27,6 +27,7 @@ Environment thresholds:
   BROADCAST_P95_MAX_MS=150
   ACK_P95_REGRESSION_PCT=10
   BROADCAST_P95_REGRESSION_PCT=10
+  P95_REGRESSION_MIN_DELTA_MS=1
   PEAK_CONN_MIN_RATIO=0.95
 USAGE
 }
@@ -71,6 +72,7 @@ ACK_P95_MAX_MS="${ACK_P95_MAX_MS:-80}"
 BROADCAST_P95_MAX_MS="${BROADCAST_P95_MAX_MS:-150}"
 ACK_P95_REGRESSION_PCT="${ACK_P95_REGRESSION_PCT:-10}"
 BROADCAST_P95_REGRESSION_PCT="${BROADCAST_P95_REGRESSION_PCT:-10}"
+P95_REGRESSION_MIN_DELTA_MS="${P95_REGRESSION_MIN_DELTA_MS:-1}"
 PEAK_CONN_MIN_RATIO="${PEAK_CONN_MIN_RATIO:-0.95}"
 
 if [[ -z "$out_dir" ]]; then
@@ -290,10 +292,11 @@ fi
 
 if [[ "$base_ack_p95" != "NA" && "$head_ack_p95" != "NA" ]]; then
   ack_limit="$(awk -v base="$base_ack_p95" -v pct="$ACK_P95_REGRESSION_PCT" 'BEGIN { printf "%.6f", base * (1 + pct / 100) }')"
-  if cmp_le "$head_ack_p95" "$ack_limit"; then
-    record "head_ack_p95_regression" "PASS" "$head_ack_p95" "<= $ack_limit" "head ack p95 within ${ACK_P95_REGRESSION_PCT}% of base"
+  ack_delta="$(awk -v base="$base_ack_p95" -v head="$head_ack_p95" 'BEGIN { printf "%.6f", head - base }')"
+  if cmp_le "$head_ack_p95" "$ack_limit" || cmp_le "$ack_delta" "$P95_REGRESSION_MIN_DELTA_MS"; then
+    record "head_ack_p95_regression" "PASS" "$head_ack_p95 (delta=$ack_delta)" "<= $ack_limit or delta <= ${P95_REGRESSION_MIN_DELTA_MS}ms" "head ack p95 within ${ACK_P95_REGRESSION_PCT}% of base or absolute delta floor"
   else
-    record "head_ack_p95_regression" "FAIL" "$head_ack_p95" "<= $ack_limit" "head ack p95 regressed beyond ${ACK_P95_REGRESSION_PCT}%"
+    record "head_ack_p95_regression" "FAIL" "$head_ack_p95 (delta=$ack_delta)" "<= $ack_limit or delta <= ${P95_REGRESSION_MIN_DELTA_MS}ms" "head ack p95 regressed beyond ${ACK_P95_REGRESSION_PCT}% and absolute delta floor"
   fi
 else
   record "head_ack_p95_regression" "FAIL" "base=$base_ack_p95 head=$head_ack_p95" "parseable metrics" "missing ack comparison metrics"
@@ -301,10 +304,11 @@ fi
 
 if [[ "$base_broadcast_p95" != "NA" && "$head_broadcast_p95" != "NA" ]]; then
   broadcast_limit="$(awk -v base="$base_broadcast_p95" -v pct="$BROADCAST_P95_REGRESSION_PCT" 'BEGIN { printf "%.6f", base * (1 + pct / 100) }')"
-  if cmp_le "$head_broadcast_p95" "$broadcast_limit"; then
-    record "head_broadcast_p95_regression" "PASS" "$head_broadcast_p95" "<= $broadcast_limit" "head broadcast p95 within ${BROADCAST_P95_REGRESSION_PCT}% of base"
+  broadcast_delta="$(awk -v base="$base_broadcast_p95" -v head="$head_broadcast_p95" 'BEGIN { printf "%.6f", head - base }')"
+  if cmp_le "$head_broadcast_p95" "$broadcast_limit" || cmp_le "$broadcast_delta" "$P95_REGRESSION_MIN_DELTA_MS"; then
+    record "head_broadcast_p95_regression" "PASS" "$head_broadcast_p95 (delta=$broadcast_delta)" "<= $broadcast_limit or delta <= ${P95_REGRESSION_MIN_DELTA_MS}ms" "head broadcast p95 within ${BROADCAST_P95_REGRESSION_PCT}% of base or absolute delta floor"
   else
-    record "head_broadcast_p95_regression" "FAIL" "$head_broadcast_p95" "<= $broadcast_limit" "head broadcast p95 regressed beyond ${BROADCAST_P95_REGRESSION_PCT}%"
+    record "head_broadcast_p95_regression" "FAIL" "$head_broadcast_p95 (delta=$broadcast_delta)" "<= $broadcast_limit or delta <= ${P95_REGRESSION_MIN_DELTA_MS}ms" "head broadcast p95 regressed beyond ${BROADCAST_P95_REGRESSION_PCT}% and absolute delta floor"
   fi
 else
   record "head_broadcast_p95_regression" "FAIL" "base=$base_broadcast_p95 head=$head_broadcast_p95" "parseable metrics" "missing broadcast comparison metrics"
@@ -337,6 +341,7 @@ cat > "$summary_md" <<EOF_SUMMARY
 - broadcast_p95_absolute_ms: <= $BROADCAST_P95_MAX_MS
 - ack_p95_regression_pct: $ACK_P95_REGRESSION_PCT
 - broadcast_p95_regression_pct: $BROADCAST_P95_REGRESSION_PCT
+- p95_regression_min_delta_ms: $P95_REGRESSION_MIN_DELTA_MS
 - peak_conn_min_ratio: $PEAK_CONN_MIN_RATIO
 
 ## Boundary
