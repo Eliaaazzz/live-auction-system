@@ -50,6 +50,9 @@ async function api(token, path, opts = {}) {
 }
 
 const send = (ws, type, data, auctionId) => {
+  if (ws.readyState !== WebSocket.OPEN) {
+    throw new Error(`cannot send ${type}: websocket state=${ws.readyState}`);
+  }
   ws.send(
     JSON.stringify({
       schemaVersion: SCHEMA,
@@ -101,6 +104,7 @@ let bidPlaced = false;
 let done = false;
 let sharedSeq = null;
 let doneTimer = null;
+let openCount = 0;
 
 const maybeResolve = (resolve, cleanup) => {
   const seq1 = state.ws1.acceptedSeqs[0];
@@ -132,6 +136,8 @@ await new Promise((resolve, reject) => {
   };
 
   const onOpen = () => {
+    openCount += 1;
+    if (openCount < 2) return;
     send(ws1, 'ROOM_JOIN', joinEvent, auctionId);
     send(ws2, 'ROOM_JOIN', joinEvent, auctionId);
   };
