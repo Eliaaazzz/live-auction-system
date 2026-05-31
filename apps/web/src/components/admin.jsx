@@ -60,12 +60,12 @@ const HIGH_RISK_DISCLAIMER = '此项不可由 VLM 客观验证 · 信息以卖�
 function AdminVLMFacts() {
   const navigate = useNavigate();
   const { id: auctionId } = useParams();
-  const [facts, setFacts] = React.useState([]);
+  const [facts, setFacts] = React.useState(VLM_FACTS);
   const [editingFactId, setEditingFactId] = React.useState(null);
   const [editDrafts, setEditDrafts] = React.useState({});
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState(false);
   const [draftHint, setDraftHint] = React.useState(null);
   const draftHintTimerRef = React.useRef(null);
   const draftStorageKey = auctionId ? `lumen:vlm-facts-draft:${auctionId}` : null;
