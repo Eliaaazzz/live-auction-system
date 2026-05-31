@@ -98,6 +98,10 @@ These fixtures are not runtime behavior yet. They define the minimum examples a
 future Lua + Replay Verifier implementation should preserve when this mode moves
 from design note to contract.
 
+Machine-readable fixture source: `docs/runner-up-pays-fixtures.json`. Future Lua,
+Replay Verifier, and evidence-card tests should treat that JSON file as the
+copy-paste target and keep this markdown table as the human explanation.
+
 Assumptions for the examples:
 
 - `liabilityCapCents = "12000"`
