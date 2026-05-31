@@ -71,6 +71,13 @@ def _fire(env, name, ms, exc=None, length=0):
     )
 
 
+def _runner_stopping(env):
+    # Once Locust is stopping, a blocked recv can surface local socket teardown
+    # noise as BrokenPipe/ConnectionReset. Do not count that as a server failure.
+    r = getattr(env, "runner", None)
+    return r is not None and getattr(r, "state", "") in ("stopping", "stopped", "cleanup")
+
+
 class _WSBase(User):
     abstract = True
 
@@ -83,7 +90,12 @@ class _WSBase(User):
         t0 = time.time()
         try:
             self.ws = websocket.create_connection(
-                f"{self.host}/ws?token={self.token}", timeout=15
+                f"{self.host}/ws?token={self.token}",
+                timeout=15,
+                # Match the Go wsload harness: non-browser clients send no
+                # Origin. websocket-client otherwise emits Origin: http://<host>,
+                # which fails when Docker-network hosts differ from FRONTEND_ORIGIN.
+                suppress_origin=True,
             )
             _fire(self.environment, "connect", (time.time() - t0) * 1000)
         except Exception as e:  # noqa: BLE001
@@ -145,7 +157,8 @@ class Observer(_WSBase):
         except websocket.WebSocketTimeoutException:
             pass  # quiet room window — fine
         except Exception as e:  # noqa: BLE001
-            _fire(self.environment, "recv_err", 0, exc=e)
+            if not _runner_stopping(self.environment):
+                _fire(self.environment, "recv_err", 0, exc=e)
             raise StopUser()
 
 
@@ -183,7 +196,8 @@ class Bidder(_WSBase):
             except websocket.WebSocketTimeoutException:
                 break
             except Exception as e:  # noqa: BLE001
-                _fire(self.environment, "recv_err", 0, exc=e)
+                if not _runner_stopping(self.environment):
+                    _fire(self.environment, "recv_err", 0, exc=e)
                 raise StopUser()
             env = self._apply(raw)
             if not env:
@@ -194,7 +208,9 @@ class Bidder(_WSBase):
                 _fire(self.environment, "bid_ack", (time.time() - t0) * 1000)
                 return
             if t == "BID_REJECTED":
-                # lost the race for current+1 (expected under contention); not a failure
-                _fire(self.environment, "bid_rejected", (time.time() - t0) * 1000)
+                # Contention rejects are expected, but keep the machine code
+                # visible so abnormal rejects cannot hide in one aggregate bucket.
+                code = d.get("code") or "UNKNOWN"
+                _fire(self.environment, f"bid_rejected:{code}", (time.time() - t0) * 1000)
                 return
         _fire(self.environment, "bid_no_ack", (time.time() - t0) * 1000, exc=Exception("no ack in 3s"))
