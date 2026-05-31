@@ -104,6 +104,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	mux.HandleFunc("GET /api/auctions/{id}/stream", s.handleGetAuctionStream)
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)

@@ -69,7 +69,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
-	return s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''")
+	if err := s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// #121 SRS primary path: per-auction stream key for seller/admin push material.
+	return s.ensureColumn(ctx, "auction_rules", "live_stream_key", "VARCHAR(128) NOT NULL DEFAULT ''")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
