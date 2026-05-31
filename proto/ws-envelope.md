@@ -28,7 +28,7 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs, livePlayUrl? }`. `livePlayUrl` (issue #121) is an optional HLS `.m3u8` / mp4 / webm URL the room player renders as the 直播画面; **non-authoritative** (display-only, never gates bidding/state). Empty/absent → the room falls back to the simulated feed (CSS sheen, #110). |
+| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }` |
 | `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
@@ -42,6 +42,10 @@ type WsEnvelope<T = unknown> = {
 ## Leaderboard (REST, additive)
 
 `GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
+
+## Auction snapshot (REST first paint, additive)
+
+`GET /api/auctions/{id}` includes top-level `livePlayUrl?: string` (issue #121). It is an optional HLS `.m3u8` / mp4 / webm URL the room player renders as the 直播画面 on first paint. **Non-authoritative**: it is display-only, never gates bids, close, evidence, or any Redis/WS state transition. Empty/absent → the room falls back to the simulated feed (CSS sheen, #110).
 
 ## Semantics / known limitations (T2)
 
