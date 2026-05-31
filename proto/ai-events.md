@@ -119,6 +119,17 @@ Before the seller freezes rules, the admin console may call this for a **suggest
 
 **Out of scope (issue #111 stretch — needs V9 §2 all-member ratify):** the two-phase `SEALED` auction state and reserve-price **adjudication**. This endpoint may CONSUME a pre-computed aggregate `sealedSummary` (count / max / second / median — never individual bids), but never runs the sealed phase or decides a terminal. `recommendedMode` (`OPEN` = public ascending / `SEALED_THEN_OPEN` = sealed warm-up → open) is an **advisory hint, NOT a canonical engine mode**. `engineModeHint` is the machine-readable bridge to the #114 engine vocabulary (`OPEN→ENGLISH`, `SEALED_THEN_OPEN→PREQUALIFY`) for admin integration; seller confirmation and backend validation still decide the actual `rules.mode`.
 
+### Engine-mode bridge contract
+
+`recommendedMode` keeps the advisory vocabulary used by the AI prompt. `engineModeHint` is the additive integration bridge to the auction-engine vocabulary:
+
+| `recommendedMode` | `engineModeHint` | Meaning |
+|---|---|---|
+| `OPEN` | `ENGLISH` | Public ascending auction; existing default engine mode. |
+| `SEALED_THEN_OPEN` | `PREQUALIFY` | Advisory two-stage idea; maps to the #114 pre-qualifying engine mode when that mode is ratified and available. |
+
+Admin clients MUST treat `engineModeHint` as a pre-filled suggestion only. They may display it in the mode selector, but must still submit the selected `rules.mode` through the normal backend create/freeze path. If a client does not recognize `engineModeHint`, it should ignore the hint and leave the selector unchanged rather than falling back to a different mode silently.
+
 Request:
 ```json
 {
@@ -142,6 +153,22 @@ Response (always 200; generator failure → canned advice with `fallback: true`)
   "stepCents":       "100000",
   "reserveCents":    "9000000",
   "rationale":       "暗拍最高价远超次高 · 建议直接成交，提前锁定。",
+  "disclaimer":      "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。",
+  "fallback":        false,
+  "modelName":       "mock-advisor-111"
+}
+```
+
+Second-stage advisory example:
+```json
+{
+  "advisoryOnly":    true,
+  "recommendedMode": "SEALED_THEN_OPEN",
+  "engineModeHint":  "PREQUALIFY",
+  "startPriceCents": "9000000",
+  "stepCents":       "100000",
+  "reserveCents":    "9000000",
+  "rationale":       "先收集暗拍意向，再进入公开竞价。",
   "disclaimer":      "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。",
   "fallback":        false,
   "modelName":       "mock-advisor-111"
