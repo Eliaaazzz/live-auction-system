@@ -10,5 +10,11 @@
     "listen": "0.0.0.0:13306",
     "upstream": "mysql:3306",
     "enabled": true
+  },
+  {
+    "name": "lumen-ws",
+    "listen": "0.0.0.0:18080",
+    "upstream": "lumen:8080",
+    "enabled": true
   }
 ]

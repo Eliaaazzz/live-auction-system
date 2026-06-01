@@ -73,10 +73,26 @@ Capture **both** and compare to the same-box baseline in `perf-report.md` §2.
 To preview realistic numbers before/independent of a real deploy, use the existing toxiproxy infra
 (`infra/toxiproxy/toxiproxy.json`, driven by `tools/chaos-runner`):
 
-- Today toxiproxy only fronts `redis` (`:16379`) and `mysql` (`:13306`) for the T9 chaos drills.
-- **Follow-up to wire (tracked in #112):** add a proxy in front of `lumen:8080` (the client↔WS path)
-  with a `latency` toxic (e.g. 25 / 50 / 100 ms ± jitter), then point the harness at the proxied port.
-  This injects realistic RTT on the path that actually feeds the ack/broadcast e2e curve.
+- `redis` (`:16379`) and `mysql` (`:13306`) remain available for T9 chaos drills.
+- `lumen-ws` (`localhost:18080` -> `lumen:8080`) fronts the client↔gateway path used by k6.
+  This injects realistic RTT on the path that actually feeds the client e2e ack curve.
+
+Run a local WAN preview:
+
+```bash
+# Starts the normal stack plus the profile-gated toxiproxy container.
+make up-toxiproxy
+
+# Pre-stage the normal k6 auction/tokens, then run k6 through ws://localhost:18080
+# with 50 ms +/- 10 ms on both upstream and downstream.
+WAN_LATENCY_MS=50 WAN_JITTER_MS=10 make k6-wan
+```
+
+Operator notes:
+- `make k6-setup` still uses direct REST on `http://localhost:8080` because setup is not the
+  measured buyer path.
+- `make k6-wan-run` points only WebSocket traffic at `ws://localhost:18080`.
+- Use `make toxiproxy-reset` before changing latency values or after an interrupted run.
 
 This previews the e2e curve and the `AOF everysec` p99 interaction with disk fsync before we commit a
 cloud target — cheap, no secrets, reversible.

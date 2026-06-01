@@ -167,4 +167,5 @@ Deploy context (fill):
 | Date / sha | `YYYY-MM-DDTHH:MMZ` / `<git sha>` |
 
 Reproduce: `docs/deploy-and-latency.md` §4 (server-side via `TARGET=https://…`; client e2e via
-`k6 -e HOST_WS=wss://…`) and §5 (toxiproxy WAN simulation without cloud).
+`k6 -e HOST_WS=wss://…`) and §5 (local WAN preview via `make k6-wan`, which runs k6 through
+`ws://localhost:18080` behind Toxiproxy).

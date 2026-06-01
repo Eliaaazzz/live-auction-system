@@ -214,6 +214,18 @@ services:
     depends_on:
       mysql: {condition: service_healthy}
 
+  toxiproxy:
+    profiles: ["toxiproxy"]
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    volumes:
+      - ./toxiproxy/toxiproxy.json:/config/toxiproxy.json:ro
+    ports:
+      - "8474:8474"   # admin API
+      - "18080:18080" # client -> lumen WS/HTTP proxy for WAN-latency preview
+    depends_on:
+      lumen: {condition: service_healthy}
+
 volumes:
   prometheus-data:
   grafana-data:
