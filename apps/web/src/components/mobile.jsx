@@ -21,6 +21,68 @@ const DEMO_LEADERS = [
   { userId: 'u5', displayName: 'Echo🌙',        cents: '12200000', avatarBg: 'linear-gradient(135deg,#10b981,#059669)' },
 ];
 
+// LiveVideo renders the 直播画面 (spec §4, #121 火山直播). For an HLS .m3u8 it uses
+// hls.js on browsers without native HLS (Chrome/Firefox/Edge); Safari/iOS play
+// HLS natively, and a plain mp4/webm loop just sets src. hls.js is loaded lazily
+// (dynamic import) so the no-video path never pays for it. Display-only — never
+// gates bidding; on any failure the parent falls back to the sim sheen.
+function LiveVideo({ url, poster, onPlayFailed }) {
+  const ref = React.useRef(null);
+  const reportedRef = React.useRef(false);
+  const onPlayFailedRef = React.useRef(onPlayFailed);
+  React.useEffect(() => {
+    onPlayFailedRef.current = onPlayFailed;
+  });
+
+  const reportFailure = React.useCallback(() => {
+    if (reportedRef.current) return;
+    reportedRef.current = true;
+    onPlayFailedRef.current?.();
+  }, []);
+
+  React.useEffect(() => {
+    reportedRef.current = false;
+  }, [url]);
+
+  React.useEffect(() => {
+    const video = ref.current;
+    if (!video || !url) return undefined;
+    const isHls = /\.m3u8(\?|$)/i.test(url);
+    const nativeHls = video.canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (isHls && !nativeHls) {
+      let cancelled = false;
+      let hls;
+      import('hls.js')
+        .then(({ default: Hls }) => {
+          if (cancelled || !ref.current) return;
+          if (Hls.isSupported()) {
+            hls = new Hls({ liveDurationInfinity: true });
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              if (data?.fatal) reportFailure();
+            });
+            hls.loadSource(url);
+            hls.attachMedia(ref.current);
+          } else {
+            ref.current.src = url; // last resort
+          }
+        })
+        .catch(() => { if (ref.current) ref.current.src = url; });
+      return () => { cancelled = true; if (hls) hls.destroy(); };
+    }
+    video.src = url; // native HLS (Safari/iOS) or a plain loop
+    return () => {
+      video.removeAttribute('src');
+      try { video.load(); } catch (_) { /* detach best-effort */ }
+    };
+  }, [url]);
+  return (
+    <video ref={ref} poster={poster || undefined}
+      onError={reportFailure}
+      autoPlay muted loop playsInline
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+  );
+}
+
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   productImage = null,
@@ -63,14 +125,20 @@ function MobileRoom({
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
   serverClockOffsetMs = 0, // now - serverTimeMs skew (P4); drives the drift chip
   lastSeq = null,          // latest applied Stream seq; null → not yet joined
-  videoUrl = null,         // optional fixed loop for the 直播画面 (spec §4); when
-                           // absent we simulate the feed (CSS sheen over poster)
+  videoUrl = null,         // 直播画面 URL (spec §4): HLS .m3u8 (火山直播 #121) or a
+                           // fixed loop; absent → simulate the feed (CSS sheen)
   winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
   const [following, setFollowing] = React.useState(false);
+  const [videoBroken, setVideoBroken] = React.useState(false);
+  React.useEffect(() => {
+    setVideoBroken(false);
+  }, [videoUrl]);
+  const effectiveVideoUrl = videoBroken ? null : videoUrl;
+
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs <= 10000 && status === 'LIVE';
   const bg = warn && showColorRamp
@@ -205,17 +273,19 @@ function MobileRoom({
           {/* 直播画面 (spec §4). A real fixed loop plays when videoUrl is set;
               otherwise we keep the product image / SVG placeholder and simulate
               a feed with a slow sheen. Non-authoritative — never gates bidding. */}
-          {videoUrl ? (
-            <video src={videoUrl} poster={productImage || undefined}
-              autoPlay muted loop playsInline
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          {effectiveVideoUrl ? (
+            <LiveVideo
+              url={effectiveVideoUrl}
+              poster={productImage}
+              onPlayFailed={() => setVideoBroken(true)}
+            />
           ) : productImage ? (
             <img src={productImage} alt=""
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
           ) : null}
           {/* simulated-feed sheen — only when there's no real video and we're live */}
-          {!videoUrl && status === 'LIVE' && (
+          {!effectiveVideoUrl && status === 'LIVE' && (
             <div className="lumen-livefeed" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}/>
           )}
         </div>

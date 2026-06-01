@@ -4,10 +4,36 @@
 // and the PullToResync gesture component (TC-T6-#51-H2 added in #63).
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
 import { BidErrorCode, bidRejectCopy } from '../lib/types.js';
+
+const hlsMock = vi.hoisted(() => ({ instances: [] }));
+vi.mock('hls.js', () => {
+  class MockHls {
+    static Events = { ERROR: 'ERROR' };
+    static isSupported() { return true; }
+
+    constructor() {
+      this.handlers = new Map();
+      this.destroyed = false;
+      hlsMock.instances.push(this);
+    }
+
+    on(event, handler) {
+      this.handlers.set(event, handler);
+    }
+
+    loadSource() {}
+    attachMedia() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  return { default: MockHls };
+});
 
 describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
   it('does NOT render the overlay during LIVE status', () => {
@@ -51,6 +77,68 @@ describe('MobileRoom · reject toast copy', () => {
   it('falls back to raw code when copy is unavailable', () => {
     render(<MobileRoom rejectCode={'ERR_UNKNOWN_REJECTION'} leaders={[]}/>);
     expect(screen.getAllByText('ERR_UNKNOWN_REJECTION')).toHaveLength(2);
+  });
+});
+
+describe('MobileRoom · LiveVideo fallback (#126)', () => {
+  it('falls back to the simulated sheen when a configured video errors at runtime', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/live.m3u8"/>,
+    );
+
+    const video = container.querySelector('video');
+    expect(video).not.toBeNull();
+
+    fireEvent.error(video);
+
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('.lumen-livefeed')).not.toBeNull();
+  });
+
+  it('resets the runtime fallback when videoUrl changes', () => {
+    const { container, rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/broken.m3u8"/>,
+    );
+
+    fireEvent.error(container.querySelector('video'));
+    expect(container.querySelector('.lumen-livefeed')).not.toBeNull();
+
+    rerender(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/recovered.m3u8"/>,
+    );
+
+    expect(container.querySelector('video')).not.toBeNull();
+    expect(container.querySelector('.lumen-livefeed')).toBeNull();
+  });
+
+  it('falls back when hls.js reports a fatal runtime error', async () => {
+    hlsMock.instances.length = 0;
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} videoUrl="https://cdn.example.invalid/live.m3u8"/>,
+    );
+
+    await waitFor(() => expect(hlsMock.instances.length).toBe(1));
+    act(() => {
+      hlsMock.instances[0].handlers.get('ERROR')?.('ERROR', { fatal: true });
+    });
+
+    expect(container.querySelector('video')).toBeNull();
+    expect(container.querySelector('.lumen-livefeed')).not.toBeNull();
+  });
+
+  it('does not recreate hls.js on parent rerender when the url is unchanged', async () => {
+    hlsMock.instances.length = 0;
+    const { rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} remainingMs={30000} videoUrl="https://cdn.example.invalid/live.m3u8"/>,
+    );
+
+    await waitFor(() => expect(hlsMock.instances.length).toBe(1));
+    rerender(
+      <MobileRoom status="LIVE" leaders={[]} remainingMs={29984} videoUrl="https://cdn.example.invalid/live.m3u8"/>,
+    );
+
+    expect(hlsMock.instances.length).toBe(1);
+    expect(hlsMock.instances[0].destroyed).toBe(false);
   });
 });
 

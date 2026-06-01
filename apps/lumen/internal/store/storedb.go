@@ -107,9 +107,9 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions); err != nil {
+		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -159,9 +159,9 @@ func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
 	var r model.Rules
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions
+		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key
 		 FROM auction_rules WHERE auction_id = ?`, aid).
-		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions)
+		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions, &r.LivePlayUrl, &r.LiveStreamKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -184,10 +184,10 @@ func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) erro
 	}
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE auction_rules SET start_price_cents=?, increment_cents=?, cap_price_cents=?,
-		        duration_sec=?, extend_window_sec=?, extend_sec=?, max_extensions=?
+		        duration_sec=?, extend_window_sec=?, extend_sec=?, max_extensions=?, live_play_url=?, live_stream_key=?
 		  WHERE auction_id=?`,
 		int64(r.StartPriceCents), int64(r.IncrementCents), int64(r.CapPriceCents),
-		r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, aid)
+		r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey, aid)
 	if err != nil {
 		return err
 	}

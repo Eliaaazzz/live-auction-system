@@ -119,7 +119,7 @@ func TestT8BackpressureForceCloseIncrementsCounter(t *testing.T) {
 	// immediately — same shape as TestT5BackpressureCriticalDropsConn but with
 	// the T8 wiring asserted.
 	c := &Conn{
-		send: make(chan []byte, 2), lossy: make(chan []byte, 2),
+		crit: make(chan outboundFrame, 2), lossy: make(chan []byte, 2),
 		done: make(chan struct{}), metrics: m, aid: "test", userID: "u",
 	}
 	c.trySend([]byte("a")) // fills slot 1
@@ -483,7 +483,7 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 // Conn without a registry continues to work. Pin that by passing nil through
 // the hot-path entry points.
 func TestT8MetricsRegistryNilSafeInTests(t *testing.T) {
-	c := &Conn{send: make(chan []byte, 1), lossy: make(chan []byte, 1), done: make(chan struct{}), metrics: nil}
+	c := &Conn{crit: make(chan outboundFrame, 1), lossy: make(chan []byte, 1), done: make(chan struct{}), metrics: nil}
 	c.trySend([]byte("ok")) // fits the buffer
 	// Force a force-close path with metrics=nil; must not panic.
 	c.trySend([]byte("overflow"))

@@ -40,6 +40,9 @@ export function LiveRoomRoute() {
   // Item 3: the real product image, rendered as the "live" feed in the room
   // (V9: video is non-authoritative — purely the ambiance; never gates bids).
   const [productImage, setProductImage] = useState(null);
+  // #121: optional live-stream play URL (火山直播 HLS .m3u8) for the 直播画面.
+  // Non-authoritative — null → the room simulates the feed (CSS sheen).
+  const [livePlayUrl, setLivePlayUrl] = useState(null);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -158,6 +161,7 @@ export function LiveRoomRoute() {
           yourUserId:   useAuctionStore.getState().yourUserId,
         });
         if (snap.imageUrl) setProductImage(snap.imageUrl);
+        if (snap.livePlayUrl) setLivePlayUrl(snap.livePlayUrl);
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
       }
@@ -232,9 +236,10 @@ export function LiveRoomRoute() {
 
   return (
     <PullToResync onResync={handleResync}>
-      <MobileRoom
-        productImage={productImage}
-        viewerCount={store.viewerCount}
+    <MobileRoom
+      productImage={productImage}
+      videoUrl={livePlayUrl}
+      viewerCount={store.viewerCount}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
       stepCents={store.stepCents}

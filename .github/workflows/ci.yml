@@ -66,6 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -v ./... 2>&1 | tee /tmp/gotest.txt
+          (cd tools/chaos-runner && go test -race -v ./...) 2>&1 | tee -a /tmp/gotest.txt
           if grep -q -- '--- SKIP' /tmp/gotest.txt; then
             echo "FAIL: a test was SKIPPED in CI (all infra must be provided so nothing skips)";
             grep -- '--- SKIP' /tmp/gotest.txt; exit 1

@@ -143,10 +143,11 @@ func TestT2HiddenWSRejectsSchemaMismatchWithProtocolClose(t *testing.T) {
 func dispatchHiddenWS(t *testing.T, aid string, env model.Envelope) model.Envelope {
 	t.Helper()
 	s := &Server{}
-	c := &Conn{send: make(chan []byte, 1), aid: aid, userID: "hidden_user", displayName: "Hidden User"}
+	c := &Conn{crit: make(chan outboundFrame, 1), aid: aid, userID: "hidden_user", displayName: "Hidden User"}
 	s.dispatchWS(context.Background(), c, env)
 	select {
-	case raw := <-c.send:
+	case f := <-c.crit:
+		raw := f.raw
 		var out model.Envelope
 		if err := json.Unmarshal(raw, &out); err != nil {
 			t.Fatalf("decode pushed envelope: %v; raw=%s", err, string(raw))
