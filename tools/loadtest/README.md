@@ -104,6 +104,73 @@ re-measure (Part A8 of #121) repeats this from a separate region.
 
 ---
 
+## v100k target — enterprise capacity path, not a marketing claim yet
+
+The current verified ceiling is **10,000 concurrent WS sessions in one room**.
+Do **not** claim "100,000 concurrent" until the run below has passed and the
+raw artifacts are linked from `docs/perf-report.md`.
+
+At 100k, there are three different claims. Keep them separate:
+
+| Claim | Meaning | Expected bottleneck | Evidence required |
+|---|---|---|---|
+| **100k idle watchers** | 100k connected observers, minimal bid traffic | gateway FDs, memory, heartbeat, load balancer | activeConns=100k, 0 connect-fail after ramp, stable 10 min |
+| **100k single-room fanout** | every accepted bid broadcasts to 100k sockets | network egress + per-gateway fanout CPU | broadcast p95 < 150 ms, 0 backpressure, 0 seq gap |
+| **100k aggregate users** | many rooms sum to 100k users | routing, Redis/MySQL aggregate, ops topology | per-room SLO plus aggregate host metrics |
+
+The hardest product claim is **100k single-room fanout**. One 200-byte
+`BID_ACCEPTED` at 500 accepted bid/s to 100k viewers is roughly **10 GB/s** of
+raw outbound payload before TCP/TLS/WebSocket overhead. That is not a single
+Mac/Docker proof; it needs cloud NIC sizing, multiple gateway replicas, and a
+fanout-aware load balancer.
+
+### Required topology for a real 100k proof
+
+- **Server**: production-like Linux hosts, not Docker Desktop loopback.
+- **Gateway tier**: at least 4 gateway replicas behind L4/L7 WebSocket-capable
+  load balancing; `ulimit -n >= 1048576` per host.
+- **Redis/MySQL**: managed instances or isolated Linux containers on the same
+  VPC; Redis latency and CPU scraped during the run.
+- **Load generators**: 5-10 separate Linux workers, each running `wsload` with
+  10k-20k connections. Do not run the generators on the gateway hosts.
+- **Metrics source of truth**: server `/metrics` plus host metrics
+  (`ss -s`, `pidstat`, `sar -n DEV`, container CPU/RAM, Redis INFO).
+
+### Distributed `wsload` shape
+
+Each worker gets a shard id and a target connection count. Example 10 x 10k:
+
+```bash
+# on each load worker i=0..9, with the same .k6-aid and token file copied over
+./wsload -host wss://<gateway-domain> \
+  -aid "$(cat .k6-aid)" \
+  -tokens .k6-tokens \
+  -conns 9900 \
+  -bidders 10 \
+  -ramp 120s \
+  -hold 600s
+```
+
+This totals **99k observers + 100 bidders**. Use longer ramp than the 10k local
+run; a connection storm is a different test from steady-state capacity.
+
+### Pass/fail bar for "100k ready"
+
+- `activeConns >= 100000` for at least 10 minutes after ramp.
+- `wsload` aggregate connect failures < 0.1%; closed-early = 0 after ramp.
+- server `ackLatencyMs.p95 < 80 ms`.
+- server `broadcastLatencyMs.p95 < 150 ms`.
+- `seqGapCount == 0`.
+- `backpressureForceClose == 0` during steady-state.
+- Redis CPU < 70%, p99 command latency < 5 ms, no reconnect storms.
+- Gateway CPU < 75%, memory steady (no monotonic leak), GC p99 < 10 ms.
+- Evidence verifier on the post-load auction returns `consistent`.
+
+If any line fails, the correct output is **"10k verified; 100k not yet
+verified"** with the failing bottleneck named. That is the enterprise bar.
+
+---
+
 ## Quick start
 
 ```bash
@@ -259,4 +326,6 @@ The choice for k6 is documented in [issue #94 §4.G3](../../issues/94).
 - ~~**Phase 3** — bump to 10k VUs (handshake queue + FD ceiling test)~~ ✅
   **done** via `wsload/` (10,000 concurrent over the Docker network, 2026-05-31;
   see the `wsload/` result table above)
+- **Phase 3b** — distributed `wsload` v100k proof (5-10 load workers, 100k
+  aggregate WS, 10-minute hold, artifacts linked in `docs/perf-report.md`)
 - **Phase 4** — nightly GitHub Actions schedule (free-tier 21 min/wk)
