@@ -77,6 +77,12 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 
 `auction_events(…, event_hash VARCHAR(128) NULL, prev_hash VARCHAR(128) NULL)` — nullable from T1, **filled by the Persistence Worker at T4** (idempotent, self-healing). `orders` UNIQUE(auction_id). See `proto/db-schema.md`.
 
+### `ALL_PAY` compliance framing (mandatory whenever ALL_PAY ships)
+
+If/when the `ALL_PAY` auction mode lands (via #114 / #117), the evidence card and every other ALL_PAY-visible surface (admin labels, room copy, demo material, presentation slides) **MUST** mark the auction as **「虚拟币 · 非真实支付 · 非赌博」** — virtual coins, non-payment, non-gambling. The Dollar-Auction mechanic (winner pays + runner-up forfeits) is a well-known game-theory pattern that reads as gambling without explicit framing, and spec evaluators must be able to tell at-a-glance that this is a virtual-coin demo, not a payment product. On the evidence card itself, the `settlement: "VIRTUAL_COINS_ONLY"` row is the audit anchor; the verifier money-safety assertion (zero `orders` rows for ALL_PAY) is the technical anchor.
+
+This is a **hard product gate**, not stylistic preference — per @Eliaaazzz's review on the (now-superseded) #119 contract PR. Pinned here ahead of any ALL_PAY implementation so the constraint isn't rediscovered at merge time.
+
 ## 5. Replay Verifier output contract (T6 — `make verify` / `lumen verify`)
 
 `[全员 approve]` surface for the T6 acceptance gate (issue #1 §10 T6 row). The T1 stream-vs-MySQL count check and the T4 hash-chain check fold into a single command with one machine-parseable status line on stdout. Exit code is 0 only when consistent — any failure exits 1 so CI / `make verify` can gate.
