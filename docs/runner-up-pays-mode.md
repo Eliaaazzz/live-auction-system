@@ -92,6 +92,57 @@ The evidence card should include:
 It must be impossible for this mode to create a normal fiat `orders` row unless a
 future contract explicitly changes that rule.
 
+## Settlement fixtures for later tests
+
+These fixtures are not runtime behavior yet. They define the minimum examples a
+future Lua + Replay Verifier implementation should preserve when this mode moves
+from design note to contract.
+
+Machine-readable fixture source: `docs/runner-up-pays-fixtures.json`. Future Lua,
+Replay Verifier, and evidence-card tests should treat that JSON file as the
+copy-paste target and keep this markdown table as the human explanation.
+Fixture contract verifier: `scripts/runner-up-pays-fixtures-check.sh
+docs/runner-up-pays-fixtures.json`.
+
+Assumptions for the examples:
+
+- `liabilityCapCents = "12000"`
+- liability is `min(runnerUpBidCents, liabilityCapCents)`
+- each bidder can hold only one leaderboard rank; their highest accepted bid
+  replaces earlier bids by the same bidder
+- all settlement amounts are virtual coins only
+- no fixture creates a normal fiat `orders` row
+
+| Case | Accepted bids by sequence | Winner | Runner-up | Runner-up liability | Required settlement |
+|---|---|---|---|---|---|
+| No bid | none | none | none | `"0"` | emit `AUCTION_NO_BID`; emit no `RUNNER_UP_SETTLED` |
+| One bidder | `A:10000`, `A:11000` | `A` | none | `"0"` | winner may be symbolic, but no runner-up liability exists |
+| Normal top two | `A:10000`, `B:13000`, `C:14000` | `C` | `B` | `"12000"` | cap clamps B's `13000` bid to `12000` |
+| Same-user rebid | `A:10000`, `B:11000`, `A:15000` | `A` | `B` | `"11000"` | A cannot occupy both winner and runner-up slots |
+| Cap below runner-up | `A:9000`, `B:20000`, `C:30000` | `C` | `B` | `"12000"` | B's virtual liability is capped, not `20000` |
+
+Illustrative close-time event shape:
+
+```json
+{
+  "type": "RUNNER_UP_SETTLED",
+  "schemaVersion": 1,
+  "seq": 42,
+  "data": {
+    "auctionId": "auc_demo",
+    "mode": "RUNNER_UP_PAYS",
+    "modeVersion": "rup-v1",
+    "winnerId": "C",
+    "runnerUpId": "B",
+    "winnerBidCents": "30000",
+    "runnerUpBidCents": "20000",
+    "runnerUpLiabilityCents": "12000",
+    "liabilityCapCents": "12000",
+    "settlementType": "VIRTUAL_COINS_ONLY"
+  }
+}
+```
+
 ## 100k readiness requirements
 
 This mode must not weaken the project's large-room target. The implementation
