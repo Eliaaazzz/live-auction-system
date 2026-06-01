@@ -161,6 +161,7 @@ type roomState struct {
 	priceCents string // monotonically non-decreasing; "" until first observed event
 	endAtMs    int64  // 0 until first observed snapshot/event; used to skip filter past hammer time
 	terminal   bool   // true after AUCTION_SOLD/NO_BID/CANCELLED or cap-hit BID_ACCEPTED(SOLD)
+	mode       string // auction mode (issue #114), cached from ROOM_SNAPSHOT.rules.mode; "" == ENGLISH
 }
 
 func newHub() *Hub {
@@ -331,6 +332,24 @@ func (h *Hub) roomStateSnap(aid string) roomState {
 		return *rs
 	}
 	return roomState{}
+}
+
+// setMode caches the auction mode (issue #114) for a room from the ROOM_SNAPSHOT
+// the gateway sends at join, so the BID_PLACE hot path can route sealed bids to
+// the sealed engine (and skip the English fast-reject) without a per-bid lookup.
+// A no-op for the empty/ENGLISH default.
+func (h *Hub) setMode(aid, mode string) {
+	if mode == "" || mode == model.ModeEnglish {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	rs := h.state[aid]
+	if rs == nil {
+		rs = &roomState{}
+		h.state[aid] = rs
+	}
+	rs.mode = mode
 }
 
 // dropRoomState clears the cache for a terminal auction (SOLD/NO_BID/CANCELLED).
@@ -561,6 +580,20 @@ func updateRoomStateFromEvent(h *Hub, aid string, e store.StreamEvent) {
 		// AuctionExtended doesn't carry a fresh amountCents — pass "" to skip
 		// the price ratchet, only update endAtMs.
 		h.updateRoomState(aid, "", p.EndAtMs)
+	case model.TypeAuctionRevealed:
+		// PR #117 review (hardening): sealed close emits AUCTION_REVEALED then
+		// AUCTION_SOLD with adjacent seqs. close_auction_sealed.lua already sets
+		// state.status=SOLD BEFORE the REVEALED event, so Lua rejects any further
+		// BID_PLACE as ERR_NOT_LIVE; but the gateway's roomState.terminal flag is
+		// not flipped until AUCTION_SOLD arrives. Marking terminal here too
+		// closes that brief REVEALED→SOLD fast-reject window without changing
+		// Lua's authority. Carry the revealed amount as the final cache value.
+		var p model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(e.Payload), &p); err == nil {
+			h.markTerminalAndUpdate(aid, p.AmountCents, 0)
+		} else {
+			h.markTerminalAndUpdate(aid, "", 0)
+		}
 	}
 }
 
@@ -1286,6 +1319,9 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 			}
 		}
 		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) // 参与人数 at join time (incl. self)
+		if snap.Rules != nil {
+			s.hub.setMode(d.AuctionID, snap.Rules.Mode) // cache mode for the BID_PLACE hot path
+		}
 		if out, err := model.NewEnvelope(model.TypeRoomSnapshot, d.AuctionID, snap.Seq, snap); err == nil {
 			c.push(out)
 		}
@@ -1349,7 +1385,19 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// Lua's response would specifically be ERR_TOO_LOW. No bid that Lua
 		// would accept (or return DUPLICATE/ERR_AFTER_END/ERR_NOT_LIVE for) is
 		// wrongly handled as ERR_TOO_LOW.
-		if rs := s.hub.roomStateSnap(c.aid); rs.priceCents != "" && !rs.terminal {
+		rsTop := s.hub.roomStateSnap(c.aid)
+		// Sealed modes (issue #114) skip the V10k Tier C fast-reject below: it
+		// compares the bid against the cached BROADCAST price, which sealed modes
+		// never publish, so it would mis-handle sealed bids. Sealed defers
+		// entirely to the authoritative sealed Lua.
+		sealed := model.UsesSealedEngine(rsTop.mode)
+		// HYBRID_REVEAL still runs the English adjudication path, so the
+		// fast-reject stays SOUND: the broadcast carries the 2nd-highest amount,
+		// which is always <= the true currentPrice, so any bid <= cached is also
+		// <= actual (Lua would return ERR_TOO_LOW). Fast-reject just gets less
+		// effective for hybrid; correctness is preserved.
+		hybrid := model.UsesHybridEngine(rsTop.mode)
+		if rs := rsTop; !sealed && rs.priceCents != "" && !rs.terminal {
 			// Guard 0 (codex pass-2 Q1): rs.terminal is set under the same
 			// write lock as the price ratchet for cap-hit / AUCTION_SOLD /
 			// NO_BID / CANCELLED. Any reader observing a populated cache also
@@ -1404,7 +1452,21 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// contract change and dedupe already makes retries cheap. At T2 scale (single
 		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.
 		scriptStart := time.Now()
-		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		var code, payload string
+		var err error
+		if sealed {
+			// Sealed bid: amount recorded privately; the returned payload is the
+			// bidder's OWN ack (pushed only to their socket below). The room sees
+			// only the redacted SEALED_BID_RECEIVED stream event.
+			code, _, payload, err = s.st.PlaceBidSealed(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		} else if hybrid {
+			// Hybrid-reveal bid: English adjudication, but the Stream broadcast
+			// carries the PRIOR leader's amount + identity (so the room sees the
+			// runner-up). The returned payload is the bidder's full ack.
+			code, _, payload, err = s.st.PlaceBidHybrid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		} else {
+			code, _, payload, err = s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
+		}
 		scriptDur := time.Since(scriptStart)
 		if c.metrics != nil {
 			c.metrics.ScriptTime.Observe(scriptDur)

@@ -107,9 +107,9 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey); err != nil {
+		`INSERT INTO auction_rules (auction_id, mode, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, model.NormalizeMode(r.Mode), r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -159,9 +159,9 @@ func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
 	var r model.Rules
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key
+		`SELECT mode, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key
 		 FROM auction_rules WHERE auction_id = ?`, aid).
-		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions, &r.LivePlayUrl, &r.LiveStreamKey)
+		Scan(&r.Mode, &r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions, &r.LivePlayUrl, &r.LiveStreamKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
@@ -174,6 +174,15 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// SetParentAuction links a freshly-created formal auction to the sealed PREQUALIFY
+// parent it was seeded from (issue #114 phase 6). parent must already exist.
+func (s *Store) SetParentAuction(ctx context.Context, aid, parentAID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET parent_auction_id = ?, updated_at = ? WHERE id = ?`,
+		parentAID, time.Now().UTC(), aid)
+	return err
+}
+
 // UpdateRules replaces a pre-start auction's rules (商品管理: 修改未开始竞拍的规则).
 // The caller gates on status (DRAFT/SCHEDULED) and ownership; this validates +
 // writes. Also realigns the auctions display price with the new start price so
@@ -183,10 +192,10 @@ func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) erro
 		return err
 	}
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE auction_rules SET start_price_cents=?, increment_cents=?, cap_price_cents=?,
+		`UPDATE auction_rules SET mode=?, start_price_cents=?, increment_cents=?, cap_price_cents=?,
 		        duration_sec=?, extend_window_sec=?, extend_sec=?, max_extensions=?, live_play_url=?, live_stream_key=?
 		  WHERE auction_id=?`,
-		int64(r.StartPriceCents), int64(r.IncrementCents), int64(r.CapPriceCents),
+		model.NormalizeMode(r.Mode), int64(r.StartPriceCents), int64(r.IncrementCents), int64(r.CapPriceCents),
 		r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey, aid)
 	if err != nil {
 		return err
@@ -633,6 +642,51 @@ type Order struct {
 // INSERT IGNORE make it idempotent under re-projection or a double persistence worker,
 // and the id is derived from the auction id so the primary key is stable too. Returns
 // nil when the order already exists.
+// ProjectAllPayWin records the WINNER's coin debit for an ALL_PAY auction's
+// hammer (issue #114). Idempotent via UNIQUE(auction_id,user_id,seq) — a retry
+// is a no-op. NEVER touches the orders table; the persistence worker branches on
+// the auction's mode before getting here.
+func (s *Store) ProjectAllPayWin(ctx context.Context, aid, payload string) error {
+	var d model.AuctionSoldData
+	if err := json.Unmarshal([]byte(payload), &d); err != nil {
+		return fmt.Errorf("parse AUCTION_SOLD: %w", err)
+	}
+	if d.WinnerID == "" {
+		return fmt.Errorf("AUCTION_SOLD has empty winnerId")
+	}
+	coins, err := strconv.ParseInt(d.AmountCents, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid winner amount %q: %w", d.AmountCents, err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO coin_ledger (auction_id, user_id, delta_coins, reason, seq, created_at)
+		 VALUES (?, ?, ?, 'WIN', ?, ?)`,
+		aid, d.WinnerID, -coins, d.Seq, time.Now().UTC())
+	return err
+}
+
+// ProjectAllPayForfeit records the RUNNER-UP's coin forfeit for an ALL_PAY
+// auction's hammer (issue #114). Idempotent. The hard money-safety invariant:
+// this writes ONLY to coin_ledger, never to orders. Settlement is virtual coins.
+func (s *Store) ProjectAllPayForfeit(ctx context.Context, aid, payload string) error {
+	var d model.AllPayForfeitData
+	if err := json.Unmarshal([]byte(payload), &d); err != nil {
+		return fmt.Errorf("parse ALL_PAY_FORFEIT: %w", err)
+	}
+	if d.UserID == "" {
+		return fmt.Errorf("ALL_PAY_FORFEIT has empty userId")
+	}
+	coins, err := strconv.ParseInt(d.CoinsForfeit, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid forfeit amount %q: %w", d.CoinsForfeit, err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO coin_ledger (auction_id, user_id, delta_coins, reason, seq, created_at)
+		 VALUES (?, ?, ?, 'RUNNER_UP_FORFEIT', ?, ?)`,
+		aid, d.UserID, -coins, d.Seq, time.Now().UTC())
+	return err
+}
+
 func (s *Store) CreateOrderFromSold(ctx context.Context, aid, payload string) error {
 	var p model.AuctionSoldData
 	if err := json.Unmarshal([]byte(payload), &p); err != nil {

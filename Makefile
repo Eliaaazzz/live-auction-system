@@ -11,7 +11,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke demo-auction \
+        demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid demo-allpay demo-prequalify \
         k6 k6-setup k6-run up-toxiproxy toxiproxy-reset k6-wan k6-wan-run
 
 ## --- local stack (needs Docker) ---
@@ -368,6 +368,30 @@ demo-auction:     ## T10 §12.4-5: anti-snipe extend -> hammer -> evidence on on
 	@echo "=== demo-auction (section 12.4-5: anti-snipe -> hammer -> evidence) ==="
 	$(COMPOSE) exec -T lumen /lumen demo-auction
 
+demo-sudden-death: ## issue #114: SUDDEN_DEATH mode — a bid does NOT extend; hammer at original endAtMs (asserted)
+	@echo "=== demo-sudden-death (mode #114: anti-snipe OFF -> no extend -> hammer -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-sudden-death
+
+demo-sealed: ## issue #114: SEALED_FIRST mode — hidden bids -> reveal at close -> winner pays own bid (asserted)
+	@echo "=== demo-sealed (mode #114: hidden bids -> AUCTION_REVEALED -> AUCTION_SOLD -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-sealed
+
+demo-vickrey: ## issue #114: VICKREY mode — sealed bids; winner pays the 2nd-highest (asserted)
+	@echo "=== demo-vickrey (mode #114: hidden bids -> winner pays 2nd-price -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-vickrey
+
+demo-hybrid: ## issue #114: HYBRID_REVEAL mode — broadcasts show only the 2nd-highest; true leader revealed at SOLD (asserted)
+	@echo "=== demo-hybrid (mode #114: broadcasts hide leader -> SOLD reveals true winner -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-hybrid
+
+demo-allpay: ## issue #114: ALL_PAY chaos — winner pays AND runner-up forfeits (virtual coins); ZERO orders gate (asserted)
+	@echo "=== demo-allpay (mode #114: sealed bids -> SOLD@winner -> ALL_PAY_FORFEIT -> NO ORDER -> evidence) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-allpay
+
+demo-prequalify: ## issue #114: PREQUALIFY — sealed parent seeds a formal auction's start price via /spawn-formal (asserted)
+	@echo "=== demo-prequalify (mode #114: sealed parent -> spawn-formal -> seeded ENGLISH start price) ==="
+	$(COMPOSE) exec -T lumen /lumen demo-prequalify
+
 demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke) — orchestration regression net
 	@echo ">>> demo-smoke [1/7] stack up + seed"
 	$(MAKE) up
@@ -376,6 +400,13 @@ demo-smoke: ## T10: CI-cheap demo path (demo-auction + load-smoke + chaos-smoke)
 	$(MAKE) e2e-dummy-bid
 	@echo ">>> demo-smoke [3/7] section 12.4-5 anti-snipe extend -> hammer -> evidence"
 	$(MAKE) demo-auction
+	@echo ">>> demo-smoke [3a/7] issue #114 modes — sudden-death + sealed + vickrey + hybrid + allpay + prequalify"
+	$(MAKE) demo-sudden-death
+	$(MAKE) demo-sealed
+	$(MAKE) demo-vickrey
+	$(MAKE) demo-hybrid
+	$(MAKE) demo-allpay
+	$(MAKE) demo-prequalify
 	@echo ">>> demo-smoke [4/7] section 12.5 evidence hash chain"
 	$(MAKE) verify-evidence
 	@echo ">>> demo-smoke [5/7] section 12.6 replay verifier"

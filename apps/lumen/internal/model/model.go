@@ -31,6 +31,67 @@ func IsTerminal(s string) bool {
 	return false
 }
 
+// Auction modes — the auction "format"/strategy the engine runs for a room
+// (issue #114). The empty string means ENGLISH for back-compat: old payloads,
+// old DB rows, and old state Hashes that carry no mode behave exactly as before.
+// Each mode is still atomically adjudicated in Lua, sequence-guaranteed, and
+// provable in the hash-chain evidence card — the mode only changes WHICH script
+// runs and WHAT the broadcast reveals.
+const (
+	ModeEnglish      = "ENGLISH"       // ascending + anti-snipe (default)
+	ModeSuddenDeath  = "SUDDEN_DEATH"  // ascending, anti-snipe disabled (Whatnot-style)
+	ModeSealedFirst  = "SEALED_FIRST"  // sealed-bid; winner pays own bid; reveal at close
+	ModeVickrey      = "VICKREY"       // sealed-bid; winner pays the 2nd-highest bid
+	ModeHybridReveal = "HYBRID_REVEAL" // ascending, but broadcast only the 2nd-highest (leader hidden)
+	ModeAllPay       = "ALL_PAY"       // dollar-auction; runner-up also forfeits (virtual coins only)
+	ModePrequalify   = "PREQUALIFY"    // sealed round whose result seeds a formal auction
+)
+
+// NormalizeMode maps the empty default to ENGLISH.
+func NormalizeMode(m string) string {
+	if m == "" {
+		return ModeEnglish
+	}
+	return m
+}
+
+// ValidMode reports whether m is a known auction mode ("" == ENGLISH).
+func ValidMode(m string) bool {
+	switch NormalizeMode(m) {
+	case ModeEnglish, ModeSuddenDeath, ModeSealedFirst, ModeVickrey, ModeHybridReveal, ModeAllPay, ModePrequalify:
+		return true
+	}
+	return false
+}
+
+// IsSealedMode reports whether bids are hidden from the room during LIVE (no
+// live price/leaderboard; reveal happens at close).
+func IsSealedMode(m string) bool {
+	switch NormalizeMode(m) {
+	case ModeSealedFirst, ModeVickrey, ModeAllPay, ModePrequalify:
+		return true
+	}
+	return false
+}
+
+// UsesSealedEngine reports whether the mode runs the sealed BID path
+// (place_bid_sealed.lua) — currently SEALED_FIRST, VICKREY, and ALL_PAY. They
+// share the bid mechanics (private store + redacted SEALED_BID_RECEIVED + full
+// private ack); only the close differs (first-price / second-price / all-pay
+// coin settlement). PREQUALIFY remains a contract-only value (no engine yet).
+func UsesSealedEngine(m string) bool {
+	switch NormalizeMode(m) {
+	case ModeSealedFirst, ModeVickrey, ModeAllPay:
+		return true
+	}
+	return false
+}
+
+// UsesHybridEngine reports whether the mode runs the hybrid-reveal engine
+// (place_bid_hybrid.lua + standard close): ascending English adjudication with
+// a runner-up-only broadcast.
+func UsesHybridEngine(m string) bool { return NormalizeMode(m) == ModeHybridReveal }
+
 // WS message types (SCREAMING_SNAKE — proto/ws-envelope.md).
 const (
 	TypeRoomJoin         = "ROOM_JOIN"
@@ -48,6 +109,12 @@ const (
 	// proto/ai-events.md §POST /llm/auctioneer.
 	TypeAICommentary = "AI_COMMENTARY"
 	TypePong         = "PONG"
+	// Auction-mode events (issue #114). Additive under SchemaVersion 1 — clients
+	// ignore unknown types. Sealed / hybrid / all-pay modes emit these.
+	TypeSealedBidReceived = "SEALED_BID_RECEIVED" // redacted: a sealed bid landed (count only, no amount)
+	TypeAuctionRevealed   = "AUCTION_REVEALED"    // sealed reveal at close: sorted bids made public
+	TypeAllPayForfeit     = "ALL_PAY_FORFEIT"     // all-pay: runner-up forfeits (virtual coins)
+	TypePrequalifyResult  = "PREQUALIFY_RESULT"   // pre-qualifying round result seeding the formal auction
 )
 
 // Wire / result codes (proto/error-codes.md). T1 subset + T2 (OK_EXTENDED/OK_SOLD).
@@ -174,6 +241,49 @@ type AuctionCancelledData struct {
 	ServerTimeMs int64  `json:"serverTimeMs"`
 }
 
+// SealedBidReceivedData is the REDACTED broadcast for a sealed-mode bid: it
+// proves a bid landed (running count + who) WITHOUT revealing the amount, so the
+// room sees suspense ("N sealed bids placed") while the amount stays hidden. The
+// bidder's own amount comes back only on their direct ack. A SHA1 `commit` field
+// was considered to make the reveal tamper-evident against the chain, but it
+// was DROPPED (PR #117 review): SHA1 is unsalted and the amount space is small
+// (startPrice..capPrice), so an observer could brute-force the amount before
+// reveal and defeat the sealed mode. Integrity already lives in the
+// server-computed HMAC-SHA256 evidence chain.
+type SealedBidReceivedData struct {
+	Seq          int64  `json:"seq"`
+	DisplayName  string `json:"displayName"`
+	Count        int64  `json:"count"`
+	ServerTimeMs int64  `json:"serverTimeMs"`
+}
+
+// RevealedBid is one row of the post-close reveal (sorted high→low).
+type RevealedBid struct {
+	UserID      string `json:"userId"`
+	DisplayName string `json:"displayName"`
+	AmountCents string `json:"amountCents"`
+}
+
+// AuctionRevealedData unmasks the sealed bids at close. AmountCents is the final
+// price the winner pays, which is mode-dependent (own bid for SEALED_FIRST, the
+// 2nd-highest for VICKREY, etc.).
+type AuctionRevealedData struct {
+	Seq          int64         `json:"seq"`
+	Bids         []RevealedBid `json:"bids"`
+	WinnerID     string        `json:"winnerId"`
+	AmountCents  string        `json:"amountCents"`
+	ServerTimeMs int64         `json:"serverTimeMs"`
+}
+
+// AllPayForfeitData records the runner-up's forfeited bid in an ALL_PAY auction.
+// Settlement is VIRTUAL COINS ONLY — never real fiat from a loser (issue #114).
+type AllPayForfeitData struct {
+	Seq          int64  `json:"seq"`
+	UserID       string `json:"userId"`
+	CoinsForfeit string `json:"coinsForfeit"`
+	ServerTimeMs int64  `json:"serverTimeMs"`
+}
+
 // PubMessage is the Pub/Sub fanout envelope written by the Lua hot-path scripts
 // and consumed by the gateway subscriber. It carries the wire type so one
 // channel can fan out BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD without the
@@ -196,6 +306,10 @@ type RoomSnapshotData struct {
 }
 
 type RoomSnapshotRules struct {
+	// Mode is the auction format the room is running ("" normalized to ENGLISH),
+	// so the client can render mode-aware UI (hide price in sealed, show 2nd in
+	// hybrid, etc.). Additive under SchemaVersion 1.
+	Mode      string  `json:"mode"`
 	StepCents string  `json:"stepCents"`
 	CapCents  *string `json:"capCents"`
 	// ReserveCents mirrors StartPriceCents until a separate reserve rule lands.
@@ -261,12 +375,15 @@ func (c *Cents) Scan(v any) error {
 func (c Cents) Value() (driver.Value, error) { return int64(c), nil }
 
 type Rules struct {
-	StartPriceCents Cents `json:"startPriceCents"`
-	IncrementCents  Cents `json:"incrementCents"`
-	CapPriceCents   Cents `json:"capPriceCents"`
-	DurationSec     int64 `json:"durationSec"`
-	ExtendWindowSec int64 `json:"extendWindowSec"`
-	ExtendSec       int64 `json:"extendSec"`
+	// Mode is the auction format/strategy ("" == ENGLISH for back-compat). See
+	// the Mode* constants. The hot path reads it from the state Hash (frozen).
+	Mode            string `json:"mode,omitempty"`
+	StartPriceCents Cents  `json:"startPriceCents"`
+	IncrementCents  Cents  `json:"incrementCents"`
+	CapPriceCents   Cents  `json:"capPriceCents"`
+	DurationSec     int64  `json:"durationSec"`
+	ExtendWindowSec int64  `json:"extendWindowSec"`
+	ExtendSec       int64  `json:"extendSec"`
 	// MaxExtensions caps anti-snipe extensions to bound an auction's lifetime
 	// (two bidders bouncing the price inside the window could otherwise extend
 	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
@@ -289,6 +406,7 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 		capCents = &c
 	}
 	return RoomSnapshotRules{
+		Mode:              NormalizeMode(r.Mode),
 		StepCents:         strconv.FormatInt(int64(r.IncrementCents), 10),
 		CapCents:          capCents,
 		ReserveCents:      strconv.FormatInt(int64(r.StartPriceCents), 10),
@@ -302,6 +420,8 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 // unwinnable room. `capPriceCents == 0` means "no buy-now ceiling".
 func (r Rules) Validate() error {
 	switch {
+	case !ValidMode(r.Mode):
+		return fmt.Errorf("unknown auction mode %q", r.Mode)
 	case r.StartPriceCents < 0:
 		return fmt.Errorf("startPriceCents must be >= 0")
 	case r.IncrementCents <= 0:

@@ -58,6 +58,12 @@ func runPersistenceWorker(ctx context.Context, st *store.Store) {
 					log.Printf("persistence sold-order %s seq=%d: %v (will retry)", aid, e.Seq, err)
 					break
 				}
+			} else if e.Type == model.TypeAllPayForfeit {
+				// ALL_PAY runner-up forfeit (issue #114): coin_ledger only.
+				if err := st.ProjectAllPayForfeit(ctx, aid, e.Payload); err != nil {
+					log.Printf("persistence allpay-forfeit %s seq=%d: %v (will retry)", aid, e.Seq, err)
+					break
+				}
 			} else if status := terminalStatus(e.Type); status != "" {
 				if err := st.UpdateAuctionStatus(ctx, aid, status); err != nil {
 					log.Printf("persistence status %s seq=%d -> %s: %v (will retry)", aid, e.Seq, status, err)
@@ -110,6 +116,14 @@ func projectSold(ctx context.Context, st *store.Store, aid string, e store.Strea
 		if err := st.UpdateAuctionStatus(ctx, aid, model.StateSold); err != nil {
 			return err
 		}
+	}
+	// ALL_PAY money-safety gate (issue #114): the winner's debit goes to
+	// coin_ledger; NO orders row is ever created for an ALL_PAY auction. The
+	// status stays at SOLD (not ORDER_CREATED) because there is no order to
+	// create — the asserted hard test is "zero orders rows for ALL_PAY".
+	rules, rerr := st.GetRules(ctx, aid)
+	if rerr == nil && model.NormalizeMode(rules.Mode) == model.ModeAllPay {
+		return st.ProjectAllPayWin(ctx, aid, e.Payload)
 	}
 	if err := st.CreateOrderFromSold(ctx, aid, e.Payload); err != nil {
 		return err
