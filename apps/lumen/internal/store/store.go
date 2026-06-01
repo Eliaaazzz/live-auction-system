@@ -578,6 +578,17 @@ type LeaderEntry struct {
 
 // Leaderboard returns the top-n bidders by accepted max amount, descending.
 // Money is a string at the boundary (proto/ws-envelope.md money-as-string).
+//
+// Mode-aware gating during LIVE (issue #114):
+//   - SEALED_FIRST / VICKREY / ALL_PAY: returns empty — amounts are private
+//     until AUCTION_REVEALED at close.
+//   - HYBRID_REVEAL: filters out the current leader so the REST surface mirrors
+//     the WS Stream (which broadcasts only the runner-up); without this gate
+//     handleLeaderboard would expose the leader the WS broadcast hides.
+//   - ENGLISH / SUDDEN_DEATH / terminal status: pass through unchanged.
+//
+// The ZSET itself stores all bids (the engine uses state.* fields for
+// adjudication, not the ZSET, so we don't have to change the writer Lua).
 func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEntry, error) {
 	if n <= 0 {
 		n = 10
@@ -591,6 +602,38 @@ func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEnt
 		uid, _ := m.Member.(string)
 		// scores are integer cents stored via ZADD; format without exponent/decimal.
 		out = append(out, LeaderEntry{UserID: uid, AmountCents: strconv.FormatInt(int64(m.Score), 10)})
+	}
+
+	// Mode-aware gating. Read status/mode/winnerId in a single HMGET to keep
+	// the cost flat; on any Redis error fall through to the unfiltered path
+	// (defense-in-depth: never leak more than the current code would, never
+	// less). HGET'ing fields not in the hash returns nil → empty strings; the
+	// switch below treats unknown mode as ENGLISH (no gate), preserving back-
+	// compat for pre-#114 auctions whose state hash has no `mode` field.
+	state, herr := s.rdb.HMGet(ctx, stateKey(aid), "status", "mode", "winnerId").Result()
+	if herr != nil || len(state) < 3 {
+		return out, nil
+	}
+	status, _ := state[0].(string)
+	modeRaw, _ := state[1].(string)
+	winnerID, _ := state[2].(string)
+	if status != model.StateLive {
+		return out, nil
+	}
+	switch model.NormalizeMode(modeRaw) {
+	case model.ModeSealedFirst, model.ModeVickrey, model.ModeAllPay:
+		// Sealed family: hide everything during LIVE; reveal at close.
+		return []LeaderEntry{}, nil
+	case model.ModeHybridReveal:
+		// Hide the current leader; runner-up + below stay visible to mirror
+		// the broadcast surface (place_bid_hybrid.lua broadcasts the 2nd-place).
+		filtered := out[:0]
+		for _, e := range out {
+			if e.UserID != winnerID {
+				filtered = append(filtered, e)
+			}
+		}
+		return filtered, nil
 	}
 	return out, nil
 }

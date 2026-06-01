@@ -26,7 +26,11 @@ local function bad_type(key, want)
   local t = redis.call('TYPE', key).ok
   return t ~= 'none' and t ~= want
 end
-if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream') then
+-- Mirror the type-guard pattern from close_auction_sealed.lua: cover all keys
+-- the close script touches (#114 adversarial test pinned sz_key as the gap).
+if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream')
+   or bad_type(sz_key, 'zset') or bad_type(sn_key, 'hash')
+   or bad_type(lb_key, 'zset') then
   return {'ERR_INTERNAL', 'key_type'}
 end
 

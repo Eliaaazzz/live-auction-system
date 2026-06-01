@@ -28,7 +28,15 @@ local function bad_type(key, want)
   local t = redis.call('TYPE', key).ok
   return t ~= 'none' and t ~= want
 end
-if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream') then
+-- Type guard ALL keys the close script touches, not just state+stream. A
+-- corrupted sealedZ / sealedNames / leaderboard would otherwise let the script
+-- mutate snapshot/stream before tripping a downstream redis.error_reply on the
+-- ZRANGE / HGETALL — partial mutation is worse than a clean fail-closed. The
+-- adversarial test deliberately corrupts sealedZ; this gate makes it the same
+-- shape as the existing state+stream gate. (#114)
+if bad_type(state_key, 'hash') or bad_type(stream_key, 'stream')
+   or bad_type(sz_key, 'zset') or bad_type(sn_key, 'hash')
+   or bad_type(lb_key, 'zset') then
   return {'ERR_INTERNAL', 'key_type'}
 end
 
