@@ -62,6 +62,25 @@ docker run --rm --network infra_default --ulimit nofile=1048576:1048576 \
   -conns 9900 -bidders 100 -ramp 45s -hold 60s
 ```
 
+### Distributed token shards for 100k rehearsals
+
+For multi-worker runs, do not point every worker at the same `.k6-tokens` file:
+that reuses bidder identities across workers and makes reject-code evidence hard
+to interpret. Generate disjoint worker token shards first:
+
+```bash
+N_USERS=100000 ./tools/loadtest/k6-setup.sh
+WORKERS=10 TOTAL_CONNS=99000 TOTAL_BIDDERS=1000 \
+  tools/loadtest/wsload/split-tokens.sh
+```
+
+The helper writes a no-secret `/tmp/lumen-wsload-shards-*` artifact directory
+with `tokens-worker-NN.txt`, `workers.tsv`, and `summary.env`. `workers.tsv`
+contains one `./wsload ... -tokens <shard>` command hint per load worker. By
+default it fails if the token file has fewer lines than `TOTAL_CONNS +
+TOTAL_BIDDERS`; set `ALLOW_TOKEN_WRAP=1` only for socket-count stress where
+identity reuse is acceptable.
+
 ### Result — 10,000 concurrent, server-side SLO crushed (2026-05-31)
 
 9,900 observers + 100 bidders, driven over the Docker network; server truth from
