@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/advisor"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/auctioneer"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/vlm"
 )
@@ -29,6 +30,12 @@ func main() {
 	// is a follow-up. Guardrail (length/URL/phone/money/banned-word) runs
 	// regardless of generator. See proto/ai-events.md §POST /llm/auctioneer.
 	mux.HandleFunc("POST /llm/auctioneer", auctioneer.HandlerFunc(auctioneer.MockGenerator))
+	// #111 (advisory, non-adjudicating): pricing / mode recommendation for the
+	// seller BEFORE freeze. advisoryOnly=true + disclaimer always; never writes
+	// auction state, bid path never waits on it. SEALED state + reserve
+	// adjudication are OUT of scope here (ratify-gated). See
+	// proto/ai-events.md §POST /llm/recommend.
+	mux.HandleFunc("POST /llm/recommend", advisor.HandlerFunc(advisor.MockGenerator))
 
 	addr := os.Getenv("SIDECAR_ADDR")
 	if addr == "" {
