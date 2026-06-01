@@ -22,14 +22,16 @@ import (
 )
 
 type Store struct {
-	rdb         *redis.Client
-	db          *sql.DB
-	shaPlaceBid string
-	shaFreeze   string
-	shaStart    string
-	shaClose    string
-	shaCancel   string
-	evidenceKey []byte // HMAC key for the auction_events hash chain (T4)
+	rdb                *redis.Client
+	db                 *sql.DB
+	shaPlaceBid        string
+	shaFreeze          string
+	shaStart           string
+	shaClose           string
+	shaCancel          string
+	evidenceKeySource  EvidenceKeySource
+	evidenceKeyVersion int
+	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -39,6 +41,20 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+}
+
+// NewWithEvidenceKeySource is the rotation-ready constructor: production still
+// passes an env-backed static source through New, while a future KMS/key-ring
+// source can implement EvidenceKeySource without changing Store callers again.
+func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	if evidenceKeys == nil {
+		return nil, errors.New("evidence key source is nil")
+	}
+	evidenceKeyVersion, evidenceKey, err := evidenceKeys.CurrentEvidenceKey()
+	if err != nil {
+		return nil, fmt.Errorf("evidence key source: %w", err)
+	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
@@ -50,7 +66,7 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
-	s := &Store{rdb: rdb, db: db, evidenceKey: []byte(evidenceKey)}
+	s := &Store{rdb: rdb, db: db, evidenceKeySource: evidenceKeys, evidenceKeyVersion: evidenceKeyVersion, evidenceKey: evidenceKey}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
@@ -65,7 +81,15 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
+	if err := s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// #121 SRS primary path: per-auction stream key for seller/admin push material.
+	return s.ensureColumn(ctx, "auction_rules", "live_stream_key", "VARCHAR(128) NOT NULL DEFAULT ''")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
