@@ -81,6 +81,7 @@ type SealedSummary struct {
 type Response struct {
 	AdvisoryOnly    bool   `json:"advisoryOnly"`
 	RecommendedMode Mode   `json:"recommendedMode"`
+	EngineModeHint  string `json:"engineModeHint"`
 	StartPriceCents string `json:"startPriceCents"`
 	StepCents       string `json:"stepCents"`
 	ReserveCents    string `json:"reserveCents"`
@@ -154,6 +155,7 @@ func recommendWithGuardrail(req Request, generate Generator) Response {
 	return Response{
 		AdvisoryOnly:    true,
 		RecommendedMode: mode,
+		EngineModeHint:  engineModeHint(mode),
 		StartPriceCents: adv.StartPriceCents,
 		StepCents:       adv.StepCents,
 		ReserveCents:    adv.ReserveCents,
@@ -180,6 +182,7 @@ func fallbackResponse(req Request) Response {
 	return Response{
 		AdvisoryOnly:    true,
 		RecommendedMode: ModeOpen,
+		EngineModeHint:  engineModeHint(ModeOpen),
 		StartPriceCents: itoa(anchor * 60 / 100),
 		StepCents:       itoa(roundStep(anchor / 100)),
 		ReserveCents:    itoa(anchor * 80 / 100),
@@ -187,6 +190,15 @@ func fallbackResponse(req Request) Response {
 		Disclaimer:      disclaimer,
 		Fallback:        true,
 		ModelName:       modelName,
+	}
+}
+
+func engineModeHint(mode Mode) string {
+	switch mode {
+	case ModeSealedThenOpen:
+		return "PREQUALIFY"
+	default:
+		return "ENGLISH"
 	}
 }
 
