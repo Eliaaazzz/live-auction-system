@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
-
-	"github.com/gorilla/websocket"
 )
 
 // BenchmarkBroadcastFanoutWithRoomChurn measures the lock-free broadcast path
@@ -23,18 +21,16 @@ func BenchmarkBroadcastFanoutWithRoomChurn(b *testing.B) {
 
 			for i := 0; i < n; i++ {
 				h.join(aid, &Conn{
-					aid:      aid,
-					done:     make(chan struct{}),
-					send:     make(chan []byte, 1),
-					prepared: make(chan *websocket.PreparedMessage, b.N+1),
+					aid:  aid,
+					done: make(chan struct{}),
+					crit: make(chan outboundFrame, b.N+1),
 				})
 			}
 
 			churn := &Conn{
-				aid:      aid,
-				done:     make(chan struct{}),
-				send:     make(chan []byte, 1),
-				prepared: make(chan *websocket.PreparedMessage, b.N+1),
+				aid:  aid,
+				done: make(chan struct{}),
+				crit: make(chan outboundFrame, b.N+1),
 			}
 			h.join(aid, churn)
 
