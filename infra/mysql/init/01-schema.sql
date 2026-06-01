@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS auction_rules (
   extend_sec        BIGINT NOT NULL DEFAULT 0,
   max_extensions    BIGINT NOT NULL DEFAULT 0, -- 0 = unlimited anti-snipe extensions
   live_play_url     VARCHAR(512) NOT NULL DEFAULT '', -- #121 火山直播 play URL (display-only)
+  live_stream_key   VARCHAR(128) NOT NULL DEFAULT '', -- #121 seller/admin-only SRS stream key
   frozen_at         DATETIME NULL,
   UNIQUE KEY uq_rules_auction (auction_id)
 );
