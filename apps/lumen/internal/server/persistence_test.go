@@ -29,6 +29,10 @@ func envOr(key, def string) string {
 // fullStore builds a Redis+MySQL store, skipping fast (no 30s retry) when either
 // backend is unreachable.
 func fullStore(t *testing.T) *store.Store {
+	return fullStoreWithEvidenceKeys(t, store.NewStaticEvidenceKeySource("test-evidence-key"))
+}
+
+func fullStoreWithEvidenceKeys(t *testing.T, evidenceKeys store.EvidenceKeySource) *store.Store {
 	t.Helper()
 	redisAddr := envOr("REDIS_ADDR", "127.0.0.1:6379")
 	dsn := envOr("MYSQL_DSN", "lumen:lumen@tcp(127.0.0.1:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4")
@@ -47,9 +51,9 @@ func fullStore(t *testing.T) *store.Store {
 	if rerr != nil || derr != nil || perr != nil {
 		t.Skipf("full store unavailable (redis=%v mysql_open=%v mysql_ping=%v)", rerr, derr, perr)
 	}
-	st, err := store.New(context.Background(), redisAddr, dsn, "test-evidence-key")
+	st, err := store.NewWithEvidenceKeySource(context.Background(), redisAddr, dsn, evidenceKeys)
 	if err != nil {
-		t.Skipf("store.New: %v", err)
+		t.Skipf("store.NewWithEvidenceKeySource: %v", err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st

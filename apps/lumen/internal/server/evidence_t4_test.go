@@ -19,6 +19,27 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
+type testVersionedEvidenceKeys struct {
+	current int
+	keys    map[int][]byte
+}
+
+func (k testVersionedEvidenceKeys) CurrentEvidenceKey() (int, []byte, error) {
+	key, ok := k.keys[k.current]
+	if !ok {
+		return 0, nil, fmt.Errorf("test evidence key version %d unavailable", k.current)
+	}
+	return k.current, append([]byte(nil), key...), nil
+}
+
+func (k testVersionedEvidenceKeys) EvidenceKey(version int) ([]byte, error) {
+	key, ok := k.keys[version]
+	if !ok {
+		return nil, fmt.Errorf("test evidence key version %d unavailable", version)
+	}
+	return append([]byte(nil), key...), nil
+}
+
 // TC-T4-01 — genesis prev_hash is empty, each event links to the prior one, and the
 // whole chain verifies.
 func TestT4HashChainGenesisLinkAndVerify(t *testing.T) {
@@ -138,6 +159,54 @@ func assertEvidenceCacheSeq(t *testing.T, st *store.Store, aid string, want int6
 	}
 	if got != want {
 		t.Fatalf("cache verified_seq=%d want %d", got, want)
+	}
+}
+
+// #37 key-version hardening: writers persist the active HMAC key version, and
+// verifiers select the row's version instead of silently using the current key.
+func TestT4HMACKeyVersionStoredAndVerifiedByRowVersion(t *testing.T) {
+	keys := map[int][]byte{
+		1: []byte("old-evidence-key"),
+		2: []byte("new-evidence-key"),
+	}
+	st := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{current: 2, keys: keys})
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_hmac_version_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	if err := st.InsertEvent(ctx, aid, 1, model.TypeBidAccepted, `{"seq":1,"userId":"u1","amountCents":"11000"}`); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT hmac_key_version FROM auction_events WHERE auction_id=? AND seq=1`, aid).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("hmac_key_version=%d want active version 2", version)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify with writer key source: ok=%v break=%d err=%v", ok, brk, err)
+	}
+
+	_, _ = st.DB().ExecContext(ctx, "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+	reader := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{current: 1, keys: keys})
+	if ok, brk, err := reader.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify with current v1 but row v2 available: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, reader, aid, 1)
+
+	missingHistoricalKey := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{
+		current: 1,
+		keys: map[int][]byte{
+			1: []byte("old-evidence-key"),
+		},
+	})
+	if ok, brk, err := missingHistoricalKey.VerifyEvidenceChain(ctx, aid); err == nil {
+		t.Fatalf("verify with cached row v2 but missing key: ok=%v break=%d err=nil, want missing-key error", ok, brk)
 	}
 }
 
