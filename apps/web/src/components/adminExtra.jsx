@@ -398,8 +398,9 @@ function Hint({ warn, children }) {
 }
 function CurrencyInput({ cents, onChange }) {
   // Display as ¥X,XXX.YY but store as string cents (§4 P1).
-  const [draft, setDraft] = React.useState(formatCentsCNY(cents).slice(1));
-  React.useEffect(() => setDraft(formatCentsCNY(cents).slice(1)), [cents]);
+  const toDraft = (v) => formatCentsCNY(v).slice(1).replace(/,/g, '');
+  const [draft, setDraft] = React.useState(toDraft(cents));
+  React.useEffect(() => setDraft(toDraft(cents)), [cents]);
   return (
     <div style={{ position: 'relative' }}>
       <span style={{
@@ -411,11 +412,14 @@ function CurrencyInput({ cents, onChange }) {
         value={draft}
         onChange={(e) => {
           const raw = e.target.value.replace(/[^\d.]/g, '');
-          setDraft(e.target.value);
-          if (!raw) return;
-          const [y, f = '00'] = raw.split('.');
-          const cents = (y.replace(/\D/g,'') + (f + '00').slice(0,2));
-          onChange(cents.replace(/^0+(?=\d)/, ''));
+          const firstDot = raw.indexOf('.');
+          const integerPart = (firstDot === -1 ? raw : raw.slice(0, firstDot)).replace(/\D/g, '') || '0';
+          const fractionPart = (firstDot === -1 ? '' : raw.slice(firstDot + 1)).replace(/\D/g, '');
+          const normalizedIntegerPart = integerPart.replace(/^0+(?=\d)/, '') || '0';
+          const nextDraft = firstDot === -1 ? normalizedIntegerPart : `${normalizedIntegerPart}.${fractionPart.slice(0, 2)}`;
+          setDraft(nextDraft);
+          const centsStr = (normalizedIntegerPart + (fractionPart + '00').slice(0, 2)).replace(/^0+(?=\d)/, '') || '0';
+          onChange(centsStr);
         }}
         style={{ ...inp, paddingLeft: 26, fontFamily: 'var(--font-mono)' }}
       />
@@ -510,7 +514,16 @@ function Pipeline({ current }) {
 // Admin · Cancel-with-confirmation modal (2-step)
 // Rendered on top of the Live Console as the "danger zone confirm"
 // ───────────────────────────────────────────────────────────────
-function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction, busy = false, error = null }) {
+function AdminCancelModal({
+  currentCents = '0',
+  onClose,
+  onCancelAuction,
+  busy = false,
+  error = null,
+  auctionId = '',
+  eventsCount = 0,
+  lastSeq = null,
+}) {
   const requiredText = formatCentsCNY(currentCents).replace('¥', '').replace(/,/g, '');
   const [typed, setTyped] = React.useState('');
   const match = typed.replace(/[¥,\s]/g, '') === requiredText;
@@ -566,15 +579,15 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction,
             </div>
             <ul style={{ margin: 0, padding: '0 0 0 18px', color: 'var(--douyin-ink-muted)' }}>
               <li>所有在线买家收到 <code className="mono" style={{ color: '#fff' }}>AUCTION_CANCELLED</code> 推送</li>
-              <li>当前 126 条出价记录冻结，禁止后续 BID</li>
+              <li>当前 <strong>{eventsCount}</strong> 条事件记录冻结，禁止后续 BID</li>
               <li>状态机迁移 <code className="mono" style={{ color: '#fff' }}>LIVE → CANCELLED</code>，不可恢复</li>
-              <li>事件以 <code className="mono" style={{ color: 'var(--solemn-gold)' }}>seq #14999</code> 写入证据哈希链</li>
+              <li>事件以 <code className="mono" style={{ color: 'var(--solemn-gold)' }}>seq #{lastSeq ?? '—'}</code> 写入证据哈希链</li>
             </ul>
           </div>
 
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: '#fff', marginBottom: 6 }}>
-              当前拍品 · LOT 2024-0142
+              当前拍品 · {auctionId ? `AID ${auctionId.slice(0, 16)}` : '拍品信息待拉取'}
             </div>
             <div style={{
               display: 'flex', justifyContent: 'space-between', padding: '10px 12px',
@@ -599,7 +612,7 @@ function AdminCancelModal({ currentCents = '12880000', onClose, onCancelAuction,
               autoFocus
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
-              placeholder="例如 12880000"
+              placeholder={`例如 ${requiredText}`}
               style={{
                 ...inp, marginTop: 6, fontFamily: 'var(--font-mono)',
                 borderColor: match ? 'var(--douyin-cyan)' : typed ? 'var(--state-rejected)' : 'rgba(255,255,255,.12)',
@@ -662,24 +675,198 @@ function auctionToRow(a) {
   };
 }
 
+const USE_MOCK_DATA = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 'true';
+
+const normalizeCents = (raw) => {
+  const s = String(raw == null ? '0' : raw).trim();
+  const sanitized = s.replace(/[^\d-]/g, '');
+  if (!sanitized) return '0';
+  try {
+    return BigInt(sanitized).toString();
+  } catch {
+    return '0';
+  }
+};
+const normalizeTimeText = (raw) => {
+  if (!raw) return '—';
+  try {
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) return String(raw);
+    return d.toLocaleString('zh-CN', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return String(raw);
+  }
+};
+const normalizeStatus = (raw) => {
+  if (typeof raw !== 'string') return 'UNKNOWN';
+  return raw.toUpperCase();
+};
+const normalizeSettlement = (status) => {
+  if (status === 'ORDER_CREATED') return '已结算';
+  if (status === 'SOLD') return '待结算';
+  return '—';
+};
+const mapBackendRows = (rows = []) => rows.map((it, i) => {
+  const status = normalizeStatus(it?.status);
+  const lot = String(it?.lot ?? it?.auctionId ?? it?.id ?? `auc-${i + 1}`).trim() || `auc-${i + 1}`;
+  return {
+    lot,
+    title: String(it?.title ?? it?.productName ?? it?.name ?? '—'),
+    status,
+    winner: String(it?.winner ?? it?.winnerId ?? it?.winnerName ?? '—'),
+    hammer: normalizeCents(it?.hammer ?? it?.currentPriceCents ?? it?.currentPrice ?? '0'),
+    settle: normalizeSettlement(status),
+    t: normalizeTimeText(it?.t ?? it?.updatedAt ?? it?.createdAt),
+  };
+});
+
 function AdminOrders() {
   const navigate = useNavigate();
   const [filter, setFilter] = React.useState('ALL');
-  // Real auctions from GET /api/auctions (newest first), replacing the old mock
-  // ORDER_ROWS. Created auctions appear here; the table reflects live status.
-  const [allRows, setAllRows] = React.useState([]);
-  const [loadErr, setLoadErr] = React.useState(null);
+  const [copyHint, setCopyHint] = React.useState(null);
+  const [rows, setRows] = React.useState(ORDER_ROWS);
+  const [isDemoData, setIsDemoData] = React.useState(true);
+  const [rowsError, setRowsError] = React.useState(null);
+  const [loadingRows, setLoadingRows] = React.useState(false);
+  const copyHintTimerRef = React.useRef(null);
 
-  React.useEffect(() => {
-    let live = true;
-    api.listAuctions({ limit: 100 })
-      .then(res => { if (live) setAllRows((res.auctions || []).map(auctionToRow)); })
-      .catch(e => { if (live) setLoadErr(e?.message || String(e)); });
-    return () => { live = false; };
+  const clearCopyHintTimer = () => {
+    if (copyHintTimerRef.current != null) {
+      window.clearTimeout(copyHintTimerRef.current);
+      copyHintTimerRef.current = null;
+    }
+  };
+
+  React.useEffect(() => () => {
+    clearCopyHintTimer();
   }, []);
 
-  // Item 7: modify a pre-start auction's rules (修改未开始竞拍的规则). Partial
-  // PATCH — sends only the edited fields; backend merges with current rules.
+  const setCopyHintWithAutoClear = (lot) => {
+    clearCopyHintTimer();
+    setCopyHint(lot);
+    copyHintTimerRef.current = window.setTimeout(() => {
+      setCopyHint((current) => (current === lot ? null : current));
+      copyHintTimerRef.current = null;
+    }, 900);
+  };
+
+  React.useEffect(() => {
+    if (USE_MOCK_DATA) {
+      setRows(ORDER_ROWS);
+      setIsDemoData(true);
+      setRowsError('环境变量 VITE_USE_MOCK_DATA=true，当前使用演示列表');
+      return;
+    }
+
+    let alive = true;
+    (async () => {
+      try {
+        setLoadingRows(true);
+        setRowsError(null);
+        await ensureSession('seller-demo');
+        const data = await api.listAuctions();
+        const rawRows = Array.isArray(data?.auctions)
+          ? data.auctions
+          : Array.isArray(data)
+            ? data
+            : [];
+        if (!alive) return;
+
+        if (!rawRows.length) {
+          setRows(ORDER_ROWS);
+          setIsDemoData(true);
+          setRowsError('后端暂未返回拍场列表数据，回退演示数据');
+          return;
+        }
+
+        const mapped = mapBackendRows(rawRows);
+        setRows(mapped);
+        setIsDemoData(false);
+      } catch (e) {
+        if (!alive) return;
+        setRows(ORDER_ROWS);
+        setIsDemoData(true);
+        setRowsError(e instanceof ApiError
+          ? `${e.status} ${e.code || e.message}`
+          : (e?.message || String(e)));
+      } finally {
+        if (alive) setLoadingRows(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const counts = {
+    ALL: rows.length,
+    LIVE: rows.filter(r => r.status === 'LIVE').length,
+    SCHEDULED: rows.filter(r => r.status === 'SCHEDULED').length,
+    SOLD: rows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED').length,
+    NO_BID: rows.filter(r => r.status === 'NO_BID').length,
+    CANCELLED: rows.filter(r => r.status === 'CANCELLED').length,
+  };
+  const filteredRows = filter === 'ALL'
+    ? rows
+    : filter === 'SOLD'
+      ? rows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED')
+      : rows.filter(r => r.status === filter);
+
+  const totalGmv = filteredRows.reduce((a, r) => a + BigInt(r.hammer || '0'), 0n).toString();
+  const sales = filteredRows.filter(r => BigInt(r.hammer || '0') > 0n).length;
+
+  const saveTextFile = (payload, filename) => {
+    const blob = new Blob([payload], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+  const handleExportCsv = () => {
+    const headers = ['LOT', 'Title', 'Status', 'Winner', 'HammerCents', 'Settle', 'Time'];
+    const csvRow = (vals) => vals.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',');
+    const lines = [
+      headers.map((h) => `"${h}"`).join(','),
+      ...filteredRows.map((r) => csvRow([
+        r.lot,
+        r.title,
+        r.status,
+        r.winner,
+        r.hammer || '0',
+        r.settle,
+        r.t,
+      ])),
+    ].join('\n');
+    const file = `auctions-${filter}-${new Date().toISOString().slice(0, 10)}.csv`;
+    saveTextFile(lines, file);
+  };
+  const handleCopyRow = (r) => {
+    const payload = `lot=${r.lot}\ntitle=${r.title}\nstatus=${r.status}\nwinner=${r.winner}\nhammer=${r.hammer || '0'}\nsettle=${r.settle}\nlast=${r.t}\n`;
+    const done = () => {
+      setCopyHintWithAutoClear(r.lot);
+    };
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(payload).then(done).catch(() => {});
+      return;
+    }
+    const ta = document.createElement('textarea');
+    ta.value = payload;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      if (document.execCommand('copy')) done();
+    } finally {
+      document.body.removeChild(ta);
+    }
+  };
   const handleEditRules = async (aid) => {
     const sp = window.prompt('修改起拍价(分 cents) — 仅 DRAFT/SCHEDULED 可改:');
     if (sp == null || !sp.trim()) return;
@@ -687,27 +874,18 @@ function AdminOrders() {
     if (inc == null || !inc.trim()) return;
     try {
       await api.updateRules(aid, { startPriceCents: sp.trim(), incrementCents: inc.trim() });
-      const res = await api.listAuctions({ limit: 100 });
-      setAllRows((res.auctions || []).map(auctionToRow));
+      const data = await api.listAuctions();
+      const rawRows = Array.isArray(data?.auctions)
+        ? data.auctions
+        : Array.isArray(data)
+          ? data
+          : [];
+      setRows(rawRows.length ? mapBackendRows(rawRows) : ORDER_ROWS);
+      setIsDemoData(!rawRows.length);
     } catch (e) {
       window.alert('更新失败: ' + (e?.message || e));
     }
   };
-
-  const counts = {
-    ALL: allRows.length,
-    LIVE: allRows.filter(r => r.status === 'LIVE').length,
-    SCHEDULED: allRows.filter(r => r.status === 'SCHEDULED').length,
-    SOLD: allRows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED').length,
-    NO_BID: allRows.filter(r => r.status === 'NO_BID').length,
-    CANCELLED: allRows.filter(r => r.status === 'CANCELLED').length,
-  };
-  const rows = filter === 'ALL' ? allRows
-            : filter === 'SOLD'  ? allRows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED')
-            : allRows.filter(r => r.status === filter);
-
-  const totalGmv = rows.reduce((a, r) => a + BigInt(r.hammer || '0'), 0n).toString();
-  const sales = rows.filter(r => BigInt(r.hammer || '0') > 0n).length;
 
   return (
     <div style={{
@@ -723,7 +901,7 @@ function AdminOrders() {
           <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>拍品 & 订单</span>
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={btnGhost2}>导出 CSV</button>
+        <button onClick={handleExportCsv} style={btnGhost2}>导出 CSV</button>
         <button
           onClick={() => navigate('/admin/auctions/new')}
           style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
@@ -739,7 +917,7 @@ function AdminOrders() {
           </span>}/>
         <SumCard label="成交场次" value={
           <span className="mono" style={{ fontSize: 26, fontWeight: 700 }}>
-            {sales} <span style={{ fontSize: 13, color: 'var(--douyin-ink-muted)', fontWeight: 400 }}>/ {rows.length}</span>
+            {sales} <span style={{ fontSize: 13, color: 'var(--douyin-ink-muted)', fontWeight: 400 }}>/ {filteredRows.length}</span>
           </span>}/>
         <SumCard label="正在 LIVE" value={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -754,6 +932,33 @@ function AdminOrders() {
 
       {/* Filter chips */}
       <div style={{ flexShrink: 0, padding: '8px 28px 14px', display: 'flex', gap: 8 }}>
+        {rowsError ? (
+          <span style={{
+            marginBottom: 6,
+            fontSize: 11,
+            color: isDemoData ? 'var(--state-extended)' : 'var(--douyin-cyan)',
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: isDemoData ? 'rgba(255,176,32,.08)' : 'rgba(37,244,238,.08)',
+            border: `1px solid ${isDemoData ? 'rgba(255,176,32,.24)' : 'rgba(37,244,238,.22)'}`,
+            alignSelf: 'center',
+            whiteSpace: 'nowrap',
+          }}>
+            {loadingRows ? '拍场列表加载中…' : rowsError}
+          </span>
+        ) : loadingRows ? (
+          <span style={{
+            marginBottom: 6,
+            fontSize: 11,
+            color: 'var(--douyin-ink-muted)',
+            padding: '6px 10px',
+            borderRadius: 6,
+            background: 'rgba(255,255,255,.03)',
+            border: '1px solid rgba(255,255,255,.09)',
+            alignSelf: 'center',
+            whiteSpace: 'nowrap',
+          }}>拍场列表加载中…</span>
+        ) : null}
         {['ALL', 'LIVE', 'SCHEDULED', 'SOLD', 'NO_BID', 'CANCELLED'].map(s => (
           <button key={s} onClick={() => setFilter(s)} style={{
             padding: '6px 12px', borderRadius: 999,
@@ -763,10 +968,22 @@ function AdminOrders() {
             border: '1px solid ' + (filter === s ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.06)'),
             cursor: 'pointer', fontFamily: 'inherit',
           }}>
-            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? 0}</span>
+            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? rows.filter(r => r.status === s).length}</span>
           </button>
         ))}
       </div>
+
+      {copyHint && (
+        <div style={{
+          margin: '0 28px 12px', padding: '8px 10px', borderRadius: 6,
+          fontSize: 11, color: 'var(--douyin-cyan)',
+          background: 'rgba(37,244,238,.08)',
+          border: '1px solid rgba(37,244,238,.26)',
+          width: 'fit-content',
+        }}>
+          已复制 LOT {copyHint}
+        </div>
+      )}
 
       {/* Table */}
       <div style={{ flex: 1, padding: '0 28px 24px', overflow: 'auto', minHeight: 0 }} className="no-scrollbar">
@@ -787,7 +1004,7 @@ function AdminOrders() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(r => (
+            {filteredRows.map(r => (
               <tr key={r.lot} style={{
                 fontSize: 12, borderBottom: '1px solid rgba(255,255,255,.04)',
                 transition: 'background .15s',
@@ -829,17 +1046,25 @@ function AdminOrders() {
                 </Td>
                 <Td><span className="mono" style={{ color: 'var(--douyin-ink-muted)', fontSize: 11 }}>{r.t}</span></Td>
                 <Td>
-                  {(r.status === 'DRAFT' || r.status === 'SCHEDULED')
-                    ? <button onClick={() => handleEditRules(r.lot)} style={{
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                    {(r.status === 'DRAFT' || r.status === 'SCHEDULED') ? (
+                      <button onClick={() => handleEditRules(r.lot)} style={{
                         border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
                         color: 'var(--douyin-ink-text)', cursor: 'pointer', fontSize: 11,
                         padding: '3px 10px', borderRadius: 6,
                       }}>编辑规则</button>
-                    : <button onClick={() => navigate(
+                    ) : (
+                      <button onClick={() => navigate(
                         (r.status === 'LIVE') ? `/room/${r.lot}` : `/evidence/${r.lot}`)} style={{
                         border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
                         cursor: 'pointer', fontSize: 14, padding: '4px 8px',
-                      }}>›</button>}
+                      }}>›</button>
+                    )}
+                    <button onClick={() => handleCopyRow(r)} aria-label={`复制 LOT ${r.lot} 明细`} style={{
+                      border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
+                      cursor: 'pointer', fontSize: 14, padding: '4px 8px',
+                    }} title="复制该行明细">⋯</button>
+                  </div>
                 </Td>
               </tr>
             ))}
