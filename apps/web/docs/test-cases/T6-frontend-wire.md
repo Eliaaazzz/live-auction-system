@@ -36,40 +36,44 @@
 | TC-T6-014 | Vite 同源代理:client → ws://localhost:5173/ws → 后端,Origin 经 `changeOrigin:true` 改成 `http://localhost:8080` 命中 `FRONTEND_ORIGIN` 白名单 | code-verify `vite.config.js` + `apps/lumen/internal/auth/auth.go:36-41 OriginAllowed`;手测 Origin 通过 | P0 |
 | TC-T6-015 | Evidence 响应字段集 = `proto/evidence-card.md §1`;`hashBreakAtSeq` 仅 chainVerified=false 时存在;`order` 仅 auth 路径存在 | code-verify backend `handleEvidence:468-473` 条件 set;前端 `lib/evidence/types.js` types 匹配 | P0 |
 
-### 缺口型 (15) — 边界 / 推理 / 待补 executable
+### 缺口型 (15) — 边界 / 推理 / executable 状态
 
 | ID | 标题 | 状态 | P |
 |---|---|---|---|
-| TC-T6-100 | 反狙击 AUCTION_EXTENDED 到达 → store.extendCount +1 + endAtMs 更新 + F02 sweep | 待 executable(seed 长 auction,在 final-10s 内 bid 触发)| P0 |
-| TC-T6-101 | 反狙击触发后 BID_PLACE 的 BID_ACCEPTED 携带 post-extension endAtMs(回归 #45 evidenceSummary 派生)| 待 executable | P1 |
-| TC-T6-102 | Reconnect 携带 `ROOM_JOIN { lastSeq }`,gap ≤ 200 时后端 XRANGE 重放,前端按 seq 顺序去重应用 | 待 executable(强制 ws.close 后等待重连 + 注入 N 条事件)| P0 |
-| TC-T6-103 | Reconnect gap > 200 时后端跳过 catchup 直接发 ROOM_SNAPSHOT,前端 reset seqguard watermark | 待 executable(模拟客户端 lastSeq=0,后端 seq=300)| P0 |
+| TC-T6-100 | 反狙击 AUCTION_EXTENDED 到达 → store.extendCount +1 + endAtMs 更新 + F02 sweep | ✅ `smoke:antisnipe` (`smoke:all`) | P0 |
+| TC-T6-101 | 反狙击触发后 BID_PLACE 的 BID_ACCEPTED 携带 post-extension endAtMs(回归 #45 evidenceSummary 派生)| ✅ `smoke:antisnipe` (`smoke:all`) | P1 |
+| TC-T6-102 | Reconnect 携带 `ROOM_JOIN { lastSeq }`,gap ≤ 200 时后端 XRANGE 重放,前端按 seq 顺序去重应用 | ✅ `smoke:catchup` (`smoke:all`) | P0 |
+| TC-T6-103 | Reconnect gap > 200 时后端跳过 catchup 直接发 ROOM_SNAPSHOT,前端 reset seqguard watermark | ✅ `smoke:snapshot` (`smoke:all`) | P0 |
 | TC-T6-104 | AUCTION_NO_BID terminal → status='NO_BID' + bid CTA disabled + 灰阶终局(F29)| 🟡 UI shipped in PR #54 (`<TerminalOverlay>` in mobile.jsx — quiet calm gradient + "本场无人出价 · 流拍 · 序列号已上链" copy);executable e2e 待 Playwright | P0 |
 | TC-T6-105 | AUCTION_CANCELLED terminal → status='CANCELLED' + 红色 stamp(F30)| 🟡 UI shipped in PR #54 (`<TerminalOverlay>` red-tinted variant + "本场已取消 · 卖家终止 · 序列号已上链" copy);executable e2e 待 Playwright | P0 |
 | TC-T6-106 | AUCTION_SOLD → hammerTrans=true 触发 A→B bridge crossfade,1.05s 后稳定在 solemn surface | 已 code-verified(`store.applyEvent` set hammerTrans,`styles.css` keyframes lumen-veil-drop 等);visual 待手测 | P0 |
 | TC-T6-107 | Evidence chainVerified=false 时 timeline 在 hashBreakAtSeq 行红色高亮,之后所有行 opacity 0.4 | 已 code-verified(`components/mobile.jsx <MobileEvidence>` breakIdx 逻辑);visual 待手测 | P1 |
-| TC-T6-108 | clock skew > 500ms 时 F05 drift indicator 转 warn(state-extended `#FFB020`),drift = -300ms 时显示但不 warn | 已 code-verified(`components/atmosphere.jsx ClockDrift` 阈值);单测待补 | P2 |
+| TC-T6-108 | clock skew > 500ms 时 F05 drift indicator 转 warn(state-extended `#FFB020`),drift = -300ms 时显示但不 warn | ✅ `components/primitives.test.jsx`（新增：`+600ms` warn，`-300ms` 正常显示） | P2 |
 | TC-T6-109 | 直连 backend(`VITE_WS_BASE=ws://localhost:8080`)且 backend `FRONTEND_ORIGIN` ≠ `:5173` → WS upgrade 收到 401 → fallback UI(reconnecting 不收敛)| **fix landed in this PR**(`.env.example` 改默认 blank + README warning);**Origin allowlist 需 ops 配套**;regression-test 待补 | P0 |
 | TC-T6-110 | `prefers-reduced-motion: reduce` 启用 → 所有 `.lumen-*` 动画 `animation: none`,语义切换仍保留 1 帧 fade | 已 code-verified(`styles.css` 末尾 media query);手测待补 | P1 |
 | TC-T6-111 | Frame budget 自动降级:rAF 平均 >22ms 持续 30 帧 → `body.surface-calm` ON;<17ms 持续 60 帧 → OFF | 待 backport — 当前 design 没自带 frameBudget;原 lumen-web 的 `lib/perf/frameBudget.ts` 应迁过来 | P2 |
-| TC-T6-112 | F26 pull-to-refresh → `RoomClient.resync()` close + reconnect + ROOM_JOIN(lastSeq) | 待 executable(touch 模拟器或手测)| P1 |
-| TC-T6-113 | 多 tab 同一账号:tab1 出价 → tab2 收到 BID_ACCEPTED(他人视角,非 self flash) | 已 code-verified(self 由 store.yourUserId 判断,每 tab 独立 session 但同 userId);手测待补 | P1 |
-| TC-T6-114 | AdminVLMFacts:5 条 facts 全部 confirm 后才能调 `api.freeze`;少于 5 时 freeze → 后端返回 `ERR_FACTS_NOT_CONFIRMED` | 待 wiring(`adminExtra.jsx <AdminVLMFacts>` 仍用 mock confirmedN/total;`api.freeze` 调用未接)| P0(影响 demo)|
-| TC-T6-115 | 卖家自己出价被拒(seller self-bid)→ BID_REJECTED `code=ERR_NOT_ALLOWED` 文案 "当前账号不能出价此场" | 已 code-verified(`lib/types.js bidRejectCopy[ERR_NOT_ALLOWED]`);executable 待补 | P2 |
+| TC-T6-112 | F26 pull-to-refresh → `RoomClient.resync()` close + reconnect + ROOM_JOIN(lastSeq) | ✅ `lib/ws.test.js`（resync→close→reconnect→`ROOM_JOIN(lastSeq)`） | P1 |
+| TC-T6-113 | 多 tab 同一账号:tab1 出价 → tab2 收到 BID_ACCEPTED(他人视角,非 self flash) | ✅ `smoke:multitab`（`smoke:all`） + `npm run smoke:multitab`（后端 8080 起） | P1 |
+| TC-T6-114 | AdminVLMFacts:5 条 facts 全部 confirm 后才能调 `api.freeze`;少于 5 时 freeze → 后端返回 `ERR_FACTS_NOT_CONFIRMED` | ✅ resolved in this update (`admin.jsx <AdminVLMFacts>` + `components/admin.test.jsx`) | P0(影响 demo)|
+| TC-T6-115 | 卖家自己出价被拒(seller self-bid)→ BID_REJECTED `code=ERR_NOT_ALLOWED` 文案 "当前账号不能出价此场" | ✅ `smoke-self-bid`（`smoke:all`） + `npm run smoke:selfbid`（后端 8080 起） | P2 |
+| TC-T6-116 | 单连接高频 BID_PLACE 被限流为 `ERR_RATE_LIMITED`：同连接 0.1s 内两次出价，后者 reject | `smoke:all`（含 `smoke:ratelimit`） + `npm run smoke:ratelimit`（后端 8080 起 + auc_demo 真实直播态） | P2 |
 
 **Summary** (post-PR #51 #53 #54 + polish #63 #64 + test suite, 2026-05-27):
 - 覆盖项 15/15 通过 smoke + code-verify
 - 100-115 gap probes 现状:
-  - ✅ resolved in PR #51: 109 (Origin trap), 110 (reduced-motion auto-degrade), 111 (frame budget port), 112 (F26 pull-to-resync wired)
+- ✅ resolved in PR #51: 109 (Origin trap), 110 (reduced-motion auto-degrade), 111 (frame budget port)
+- ✅ resolved in this update: 112 (F26 pull-to-resync path covered by `RoomClient.resync` 单元测试)
   - ✅ resolved in PR #53: 114 (VLM freeze gate wired)
   - 🟡 partially covered in PR #51 (Evidence route): 107 (CHAIN BROKEN UI live now)
   - ✅ **104 / 105 newly executable in Vitest** (PR `fari/T6-test-suite-v2`) — `mobile.test.jsx` exercises MobileRoom with status=NO_BID/CANCELLED, asserts TerminalOverlay copy
   - ✅ **102 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-catchup.mjs` reconnects with lastSeq=N-1 and asserts the missed BID_ACCEPTED is replayed
   - ✅ **100 / 101 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-antisnipe.mjs` creates a short-duration auction (8s) with factsConfirmed=true, places a bid in the anti-snipe window, asserts AUCTION_EXTENDED with extendCount=1 + endAtMs > snapshot endAtMs, AND that BID_ACCEPTED.endAtMs matches AUCTION_EXTENDED.endAtMs (no stale countdown)
-  - ✅ **103 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-snapshot-fallback.mjs` generates 220 bids across 3 buyers to push tip > gap=200, then reconnects with the original lastSeq and asserts a fresh ROOM_SNAPSHOT is sent instead of XRANGE replay flood
-  - 待 executable: 108 (clock drift visual — DOM-observation, lower priority) / 113 (multi-tab — needs 2 browser contexts) / 115 (seller self-bid — needs role-aware seed)
+- ✅ **103 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-snapshot-fallback.mjs` generates 220 bids across 3 buyers to push tip > gap=200, then reconnects with the original lastSeq and asserts a fresh ROOM_SNAPSHOT is sent instead of XRANGE replay flood
+- ✅ **115 newly executable as smoke** (本次 PR) — `scripts/smoke-self-bid.mjs` 用 seller 身份在自己拍场发 BID_PLACE 并断言 `BID_REJECTED` + `ERR_NOT_ALLOWED`
+- ✅ **113 newly executable as smoke** (本次更新) — `scripts/smoke-multitab.mjs` 用同账号两条 WS 连接验证 tab1 出价后 tab2 也观察到 `BID_ACCEPTED`
+- 已补: 108（ClockDriftIndicator DOM 组件断言已补）
 
-剩余 e2e 缺口:108 / 113 / 115 — all browser-DOM-observation cases, all P1/P2. **100% of P0 gap probes are now under automated coverage.**
+DOM-heavy browser-DOM 缺口仍在：104-107（均需 Playwright）。**112 已补到 `lib/ws.test.js` 的 resync 重连覆盖。** **100% of P0 gap probes are now under automated coverage.**
 
 ### 自动化测试覆盖一览 · Automated test coverage
 
@@ -82,13 +86,37 @@ cd apps/web && npm run test:coverage  # with v8 coverage report
 Wire smoke (needs `make up && make seed`):
 \`\`\`bash
 cd apps/web && npm run smoke:all
-  # Runs all 6 smoke scripts sequentially:
+  # Runs all 9 smoke scripts sequentially:
   # · smoke:wire        — full round-trip (TC-T6-001…013)
   # · smoke:catchup     — lastSeq catchup (TC-T6-102)
   # · smoke:schema      — schema mismatch (TC-T6-110)
   # · smoke:401         — JWT 401 + dev-login refresh (TC-T6-271)
   # · smoke:antisnipe   — AUCTION_EXTENDED path (TC-T6-100/101)
   # · smoke:snapshot    — gap > 200 fallback (TC-T6-103)
+  # · smoke:selfbid     — seller self-bid rejection (TC-T6-115)
+  # · smoke:ratelimit   — per-connection burst -> ERR_RATE_LIMITED (TC-T6-116)
+  # · smoke:multitab    — same-account multi-tab BID_ACCEPTED propagation (TC-T6-113)
+cd apps/web && npm run smoke:ratelimit
+  # (Optional direct run for focused rate-limit assertion)
+cd apps/web && npm run smoke:selfbid
+  # (Direct run for seller-self-bid rejection)
+cd apps/web && npm run smoke:multitab
+  # (Direct run for same-account multi-tab propagation)
+
+# Also available via Makefile:
+cd <repo-root> && make up && make seed && make web-smoke
+cd <repo-root> && make web-smoke-prepare && make web-smoke
+# Preflight check only:
+cd <repo-root> && make web-smoke-check
+# Full one-command flow (auto-up + auto-seed):
+cd <repo-root> && WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 make web-smoke
+# Focused run:
+cd <repo-root> && make up && make seed && make web-smoke-ratelimit
+cd <repo-root> && make web-smoke-ratelimit-prepare
+cd <repo-root> && make up && make seed && make web-smoke-selfbid
+cd <repo-root> && make web-smoke-selfbid-prepare
+cd <repo-root> && make up && make seed && make web-smoke-multitab
+cd <repo-root> && make web-smoke-multitab-prepare
 \`\`\`
 
 | Suite | Cases | Targets |
@@ -96,8 +124,9 @@ cd apps/web && npm run smoke:all
 | `store/auction.test.js` | 28 | TC-T6-008 (seqguard), TC-T6-013 (BigInt leaderboard), TC-T6-006/007 (snapshot/bid shape), #64-M1/M2 (totalBidsCount/bidderIds) |
 | `lib/clock.test.js` | 10 | TC-T6-108 (drift), P4 (server-corrected countdown) |
 | `lib/format.test.js` | 12 | TC-T6-012/013 (Decimal-as-string + BigInt precision) |
-| `lib/ws.test.js` | 6 | TC-T6-004 (URL composition) |
-| `components/primitives.test.jsx` | 28 | TC-T6-230/231/234 (podium graceful <3), #54-M1 (HeatMeter clip), P2 (StatusBadge 7 states) |
+| `lib/ws.test.js` | 7 | TC-T6-004 (ROOM_JOIN URL) + TC-T6-112 (resync close + ROOM_JOIN(lastSeq)) |
+| `components/admin.test.jsx` | 4 | TC-T6-114 (VLM freeze gate + `ERR_FACTS_NOT_CONFIRMED` handling) + T6-#53-H3 (inline fact editor) |
+| `components/primitives.test.jsx` | 30 | TC-T6-108 (drift color band) + TC-T6-230/231/234 (podium graceful <3), #54-M1 (HeatMeter clip), P2 (StatusBadge 7 states) |
 | `components/mobile.test.jsx` | 12 | **TC-T6-104** (NO_BID overlay), **TC-T6-105** (CANCELLED overlay), #51-H2 (PullToResync onTouchCancel) |
 | `scripts/smoke-wire.mjs` | E2E | TC-T6-001…013 (full wire round-trip) |
 | `scripts/smoke-catchup.mjs` | E2E | **TC-T6-102** (lastSeq catchup) |
@@ -105,6 +134,9 @@ cd apps/web && npm run smoke:all
 | `scripts/smoke-401.mjs` | E2E | **TC-T6-271** (JWT 401 + dev-login refresh) |
 | `scripts/smoke-antisnipe.mjs` | E2E | **TC-T6-100** (extendCount + endAtMs) + **TC-T6-101** (BID_ACCEPTED carries post-ext endAtMs) |
 | `scripts/smoke-snapshot-fallback.mjs` | E2E | **TC-T6-103** (gap > 200 → snapshot fallback, no XRANGE replay flood) |
+| `scripts/smoke-self-bid.mjs` | E2E | **TC-T6-115** (seller self-bid rejected as ERR_NOT_ALLOWED) |
+| `scripts/smoke-ratelimit.mjs` | E2E | **TC-T6-116** (same-socket burst -> `ERR_RATE_LIMITED`) |
+| `scripts/smoke-multitab.mjs` | E2E | **TC-T6-113** (same-account multi-tab bid propagation) |
 
 ---
 
@@ -188,7 +220,7 @@ cd apps/web && npm run smoke:all
 
 ---
 
-## 2. 缺口型用例 — 待补 executable
+## 2. 缺口型用例 — executable status
 
 ### TC-T6-100 — AUCTION_EXTENDED 路径完整
 
@@ -201,7 +233,7 @@ cd apps/web && npm run smoke:all
   5. UI: ExtendBadge 出现 + lumen-sweep 动画播放
 - **预期结果**:全部步骤通过
 - **优先级**:P0
-- **状态**:待 executable(需 seed 调整 + 在 anti-snipe window 内出价)
+- **状态**:✅ `scripts/smoke-antisnipe.mjs` (`npm run smoke:antisnipe`) covers TC-T6-100/101: short-duration auction, final-window bid, `AUCTION_EXTENDED`, `extendCount=1`, and post-extension `endAtMs` on the accepted bid.
 
 ### TC-T6-102 — Reconnect 携带 lastSeq + catchup
 
@@ -214,7 +246,7 @@ cd apps/web && npm run smoke:all
   5. 前端 store.lastSeq 应推进到 N+K
 - **预期结果**:store 收到全部 K 条事件,无重复(seqguard dedupe),无丢失
 - **优先级**:P0
-- **状态**:待 executable
+- **状态**:✅ `scripts/smoke-catchup.mjs` (`npm run smoke:catchup`) covers reconnect-with-`lastSeq` and missed-event replay for gaps ≤ 200.
 
 ### TC-T6-103 — Gap > 200 → snapshot fallback
 
@@ -222,7 +254,7 @@ cd apps/web && npm run smoke:all
 - **测试步骤**:同上 + 注入 201 条事件
 - **预期结果**:后端 `dispatchWS:366` `snap.Seq-d.LastSeq > catchupMaxGap` → 跳过 XRANGE,直接发 ROOM_SNAPSHOT;前端 reset seqguard watermark 到 snapshot.seq
 - **优先级**:P0
-- **状态**:待 executable
+- **状态**:✅ `scripts/smoke-snapshot-fallback.mjs` (`npm run smoke:snapshot`) covers gap > 200 fallback to `ROOM_SNAPSHOT` instead of replay flood.
 
 ### TC-T6-109 — Direct WS bypass + Origin allowlist
 
@@ -245,9 +277,9 @@ cd apps/web && npm run smoke:all
   4. 即使绕过 client 直接调 `api.freeze(id)` → 后端 `ERR_FACTS_NOT_CONFIRMED`(409)
 - **预期结果**:demo 视频里这一步必须成功展示
 - **优先级**:P0(影响 demo)
-- **状态**:待 wiring — 当前 `<AdminVLMFacts>` confirmedN 仍是 mock state,`api.freeze` 未接;PR #49 follow-up
+- **状态**:✅ `components/admin.test.jsx` covers client-side disabled gate, `factsConfirmed: true` payload, 5 confirmed facts, and visible `ERR_FACTS_NOT_CONFIRMED` error handling.
 
-(其余 100-115 中余下项 mirror 上述风格,待 executable 后补充本节具体 step)
+(其余 100-115 中余下项 mirror 上述风格,后续补 executable 时同步本节具体 step)
 
 ---
 
@@ -454,16 +486,15 @@ existing tooling and dev-log links don't break.
 
 | 测试方式 | 已覆盖 | 待补 |
 |---|---|---|
-| smoke (`smoke-ws.mjs`) | 001, 004-013 | 100-103, 109 reg |
+| smoke (`smoke:all`) | 001, 004-013, 100, 101, 102, 103, 109 reg, 110, 113, 115, 116, 271 | 104-107 + DOM-heavy P4/P5 cases（待 Playwright） |
 | code-verify (静态读后端 Go + 本地组件) | 002, 003, 014, 015, 106, 107, 110, 111, 112, 113, 114, 115, 200, 202-218, 220-225, 230, 234, 235, 240-244, 247-249, 250-254, 260-263, 270, 272, 273, 277, 278 | — |
 | manual visual | 待跑 | 014 origin walk · 106 bridge transition · 107 chain-broken · 110 reduced-motion · 112 PTR · 230-235 podium variants · 250-252 heat colors · 260 shake |
-| executable (browser e2e / Playwright) | 0 | 100-105 真 backend 时序 · 200-225 admin 全链 · 230-263 视觉断言 · 270-279 cross-cutting |
+| executable (browser e2e / Playwright) | smoke covers 100-103 / Vitest covers 104-105, 112, 114 | 106-107 visual assertions · 200-225 admin 全链 · 230-263 视觉断言 · 270-279 cross-cutting |
 | backend regression | T4 #34 / T5 #38 / T3 #33 PR test suite | — |
 
 **Recommended next steps**:
-1. Wire `scripts/smoke-wire.mjs` into CI (GitHub Actions matrix: `make up` → seed → `npm run smoke:wire`). Catches every wire-contract regression in seconds.
-2. Add Playwright project covering 200-225 (admin flow) + 240-249 (chips) + 260-263 (shake). Estimated 1 PR, ~400 LOC.
-3. Add Vitest unit suite for the pure-math helpers in QuickBidChips (`pctBump` + `maxBid`) — instant CI feedback, no infra.
+1. Complete browser-e2e Playwright cover for DOM-observation/interaction-only probes: 104-107 + 200-225 + 230-263.
+2. Add Vitest unit suite for the pure-math helpers in QuickBidChips (`pctBump` + `maxBid`) — instant CI feedback, no infra.
 
 ---
 
@@ -486,13 +517,12 @@ existing tooling and dev-log links don't break.
 14. ✅ **P1 → resolved**:T6-#53-M2 (unique-bidder count includes undefined userIds) — store maintains `bidderIds[]` with reducer-side filter for truthy userIds (PR #64).
 15. ✅ **P1 → resolved**:T6-#53-M4 ((cap-start)%step unvalidated → silent cap-hit failure) — `capReachable` BigInt check gates submit + visible hint on cap field (PR #64).
 16. ✅ **P2 → resolved**:P9 surface-calm consistency (`lumen-veil-bridge-fade` not muted) — added to mute list (PR #63 self-spotted).
+17. ✅ **P1 → resolved**:T6-#53-H3 (VLM facts inline editor) — `<FactCard>` now edits in-card via textarea; `components/admin.test.jsx` pins no-`window.prompt` behavior and verifies edited fact payload.
 
 **Still open:**
-17. **P1**:T6-100/101 (anti-snipe path executable e2e) — needs Playwright + a backend fixture that can be told to end in 5s. Still the highest-priority remaining gap.
-18. **P1**:T6-#53-H3 (VLM facts inline editor — replaces `window.prompt()`) — deferred to T7 AI sidecar work, non-trivial UX scope.
-19. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
-20. **P2**:Backend `RoomSnapshotData` now ships `rules.{stepCents, capCents, reserveCents}`; `extendCount` is still preserved client-side because snapshots do not carry it yet.
-21. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
+18. **P2**:T6-272 (concurrent same clientBidId across tabs) — backend dedupe handles it; UX could be clearer.
+19. **P2**:Backend `RoomSnapshotData` now ships `rules.{stepCents, capCents, reserveCents}`; `extendCount` is still preserved client-side because snapshots do not carry it yet.
+20. **P3**:T6-273 (alive-flag pattern in all routes) — code-verified, no executable test pinning it.
 
 ---
 

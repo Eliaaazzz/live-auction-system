@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS auction_rules (
   extend_window_sec BIGINT NOT NULL DEFAULT 0,
   extend_sec        BIGINT NOT NULL DEFAULT 0,
   max_extensions    BIGINT NOT NULL DEFAULT 0, -- 0 = unlimited anti-snipe extensions
+  live_play_url     VARCHAR(512) NOT NULL DEFAULT '', -- #121 火山直播 play URL (display-only)
+  live_stream_key   VARCHAR(128) NOT NULL DEFAULT '', -- #121 seller/admin-only SRS stream key
   frozen_at         DATETIME NULL,
   UNIQUE KEY uq_rules_auction (auction_id)
 );
@@ -105,10 +107,21 @@ CREATE TABLE IF NOT EXISTS auction_events (
   event_type   VARCHAR(64) NOT NULL,
   payload_json JSON NULL,
   created_at   DATETIME NOT NULL,
+  updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   event_hash   VARCHAR(128) NULL,
   prev_hash    VARCHAR(128) NULL,
   UNIQUE KEY uq_events_seq (auction_id, seq),
-  INDEX idx_events_auction (auction_id, seq)
+  INDEX idx_events_auction (auction_id, seq),
+  INDEX idx_events_auction_updated (auction_id, updated_at)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_chain_cache (
+  auction_id           VARCHAR(64) PRIMARY KEY,
+  verified_seq         BIGINT       NOT NULL,
+  events_count         BIGINT       NOT NULL,
+  chain_head           VARCHAR(128) NOT NULL,
+  max_event_updated_at DATETIME(6)  NOT NULL,
+  verified_at          DATETIME(6)  NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ai_usage_logs (

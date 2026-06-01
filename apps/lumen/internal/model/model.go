@@ -389,6 +389,14 @@ type Rules struct {
 	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
 	// accepted as a normal bid (no endAtMs bump, no AUCTION_EXTENDED).
 	MaxExtensions int64 `json:"maxExtensions"`
+	// LivePlayUrl is an optional live-stream play URL (HLS .m3u8 / HTTP-FLV) for
+	// the 直播间 (火山直播, #121). NON-authoritative display only — never gates
+	// bids/state; empty → the room falls back to the simulated feed.
+	LivePlayUrl string `json:"livePlayUrl,omitempty"`
+	// LiveStreamKey is operator material used to derive live push/play URLs.
+	// It is intentionally omitted from public REST/WS rule payloads; seller/admin
+	// surfaces fetch it through the owner-only stream endpoint.
+	LiveStreamKey string `json:"-"`
 }
 
 func (r Rules) RoomSnapshotRules() RoomSnapshotRules {

@@ -105,6 +105,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	mux.HandleFunc("GET /api/auctions/{id}/stream", s.handleGetAuctionStream)
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
@@ -151,6 +152,13 @@ func spaFileServer(webDir string) http.Handler {
 				return
 			}
 		}
+		// index.html must NOT be heuristically cached: it references the current
+		// hashed /assets/*.js bundle, which changes every build. A stale cached
+		// index.html points at an old hash that 404s after a redeploy → blank
+		// page. no-cache forces revalidation so the browser always gets the HTML
+		// that matches the deployed bundle. (The hashed assets themselves are
+		// safe to cache — their URL changes when content changes.)
+		w.Header().Set("Cache-Control", "no-cache")
 		http.ServeFile(w, r, index)
 	})
 }

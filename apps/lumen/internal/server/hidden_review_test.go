@@ -7,10 +7,10 @@ import "testing"
 // connection so it reconnects + re-snapshots, rather than losing the event.
 func TestHiddenHubClosesSlowClientOnCriticalEvent(t *testing.T) {
 	h := newHub()
-	c := &Conn{send: make(chan []byte, 1), done: make(chan struct{}), aid: "auc_x"}
+	c := &Conn{crit: make(chan outboundFrame, 1), done: make(chan struct{}), aid: "auc_x"}
 	h.join("auc_x", c)
 
-	c.send <- []byte("filler") // fill the 1-slot buffer
+	c.crit <- outboundFrame{raw: []byte("filler")} // fill the 1-slot critical lane
 	h.broadcast("auc_x", []byte(`{"type":"AUCTION_SOLD","seq":2}`))
 
 	select {

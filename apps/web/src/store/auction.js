@@ -75,6 +75,7 @@ const DEFAULT_STATE = {
   hammerAt:        null,
   lastRejectCode:  null,
   lastRejectAt:    null,
+  lastRejectSeq:   0,
 
   // T7-3: AI sidecar health for the offline badge + graceful degrade
   // contract (issue #70 §4.3). Default 'ok' optimistically — flips to
@@ -115,8 +116,14 @@ export const useAuctionStore = create((set, get) => ({
 
   // ── leaderboard reconcile (after REST GET /leaderboard) ──────
   setLeaders: (leaders) => set((s) => ({
+    // Normalize the REST /leaderboard shape ({ userId, amountCents }) to the
+    // render shape ({ displayName, cents }). The backend ZSET has no display
+    // name, so fall back to userId — rendering u.displayName[0] on an undefined
+    // name crashes the whole room (blank screen). cents<-amountCents likewise.
     leaders: leaders.map((l) => ({
       ...l,
+      displayName: l.displayName || l.userId,
+      cents: l.cents ?? l.amountCents ?? '0',
       isYou: l.userId === s.yourUserId,
     })),
   })),
@@ -125,16 +132,24 @@ export const useAuctionStore = create((set, get) => ({
   tickRemaining: (ms) => set({ remainingMs: ms }),
 
   // ── reject reducer (from RoomClient.onReject) ────────────────
-  applyReject: (env) => set((s) => ({
-    recentRejects: [
-      { code: env.data?.code, ts: Date.now(), requestId: env.requestId },
-      ...s.recentRejects,
-    ].slice(0, 10),
-    lastRejectCode: env.data?.code,
-    lastRejectAt:   Date.now(),
-  })),
+  applyReject: (env) => {
+    const now = Date.now();
+    return set((s) => {
+      const rejectSeq = (s.lastRejectSeq ?? 0) + 1;
+      scheduleRejectClear(rejectSeq);
+      return {
+        recentRejects: [
+          { code: env.data?.code, ts: now, requestId: env.requestId },
+          ...s.recentRejects,
+        ].slice(0, 10),
+        lastRejectCode: env.data?.code,
+        lastRejectAt: now,
+        lastRejectSeq: rejectSeq,
+      };
+    });
+  },
 
-  clearLastReject: () => set({ lastRejectCode: null }),
+  clearLastReject: () => set({ lastRejectCode: null, lastRejectAt: null, lastRejectSeq: 0 }),
 
   // ── AI sidecar health (T7-3 / issue #70 §4.3) ────────────────
   // Called by lib/api.js when draftFacts() throws a 502 ApiError or
@@ -237,6 +252,9 @@ export const useAuctionStore = create((set, get) => ({
               }
             } catch {/* ignore */}
           }
+          next.lastRejectCode = null;
+          next.lastRejectAt = null;
+          next.lastRejectSeq = 0;
           break;
         }
 
@@ -289,6 +307,15 @@ export const useAuctionStore = create((set, get) => ({
 
 function scheduleClear(key, ms) {
   setTimeout(() => useAuctionStore.setState({ [key]: false }), ms);
+}
+
+function scheduleRejectClear(seq, ms = 1800) {
+  setTimeout(() => {
+    const current = useAuctionStore.getState();
+    if (current.lastRejectSeq === seq) {
+      useAuctionStore.setState({ lastRejectCode: null, lastRejectAt: null, lastRejectSeq: 0 });
+    }
+  }, ms);
 }
 
 function hasOwn(obj, key) {

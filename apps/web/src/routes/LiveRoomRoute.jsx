@@ -13,7 +13,7 @@
 // (useful when the backend isn't running). The component shape is the same.
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { MobileRoom } from '../components/mobile.jsx';
 import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
@@ -30,12 +30,19 @@ const WS_BASE  = import.meta.env.VITE_WS_BASE || undefined;
 
 export function LiveRoomRoute() {
   const { auctionId } = useParams();
+  const navigate = useNavigate();
   const store  = useAuctionStore();
   const rafRef = useRef(null);
   const clientRef = useRef(null);
+  const leaderboardAtMsRef = useRef(0);
+  const pendingLeaderBumpRef = useRef(0);
+  const leaderboardFlightRef = useRef(false);
   // Item 3: the real product image, rendered as the "live" feed in the room
   // (V9: video is non-authoritative — purely the ambiance; never gates bids).
   const [productImage, setProductImage] = useState(null);
+  // #121: optional live-stream play URL (火山直播 HLS .m3u8) for the 直播画面.
+  // Non-authoritative — null → the room simulates the feed (CSS sheen).
+  const [livePlayUrl, setLivePlayUrl] = useState(null);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -55,6 +62,54 @@ export function LiveRoomRoute() {
       : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     client.placeBid({ clientBidId, amountCents });
   }, []);
+
+  const maybeRefreshLeaders = useCallback(async (opts) => {
+    if (!auctionId) return;
+    const now = Date.now();
+    const force = opts?.force === true;
+    if (leaderboardFlightRef.current) return;
+
+    const shouldThrottle = now - leaderboardAtMsRef.current < 2_500;
+    const shouldRefresh = force || (!shouldThrottle);
+    if (!shouldRefresh) return;
+
+    leaderboardFlightRef.current = true;
+    try {
+      const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+      useAuctionStore.getState().setLeaders(leaderboard);
+      leaderboardAtMsRef.current = now;
+    } catch (e) {
+      // Non-fatal: local mergeLeader already keeps the UI responsive.
+      console.warn('[LiveRoom] leaderboard reconcile failed', e);
+    } finally {
+      leaderboardFlightRef.current = false;
+    }
+  }, [auctionId]);
+
+  const handleEvent = useCallback((env) => {
+    const s = useAuctionStore.getState();
+    if (!s) return;
+    s.applyEvent(env);
+
+    if (env?.type === 'BID_ACCEPTED') {
+      pendingLeaderBumpRef.current += 1;
+      if (pendingLeaderBumpRef.current >= 3) {
+        pendingLeaderBumpRef.current = 0;
+        void maybeRefreshLeaders({ force: false });
+      }
+      return;
+    }
+
+    if (
+      env?.type === 'AUCTION_SOLD' ||
+      env?.type === 'AUCTION_NO_BID' ||
+      env?.type === 'AUCTION_CANCELLED' ||
+      env?.type === 'ROOM_SNAPSHOT'
+    ) {
+      pendingLeaderBumpRef.current = 0;
+      void maybeRefreshLeaders({ force: true });
+    }
+  }, [maybeRefreshLeaders]);
 
   // ── Bootstrap: session → snapshot → leaderboard → WS ──
   useEffect(() => {
@@ -106,6 +161,7 @@ export function LiveRoomRoute() {
           yourUserId:   useAuctionStore.getState().yourUserId,
         });
         if (snap.imageUrl) setProductImage(snap.imageUrl);
+        if (snap.livePlayUrl) setLivePlayUrl(snap.livePlayUrl);
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
       }
@@ -126,7 +182,7 @@ export function LiveRoomRoute() {
         auctionId,
         getLastSeq: () => useAuctionStore.getState().lastSeq,
         onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
-        onEvent:    (env) => useAuctionStore.getState().applyEvent(env),
+        onEvent:    handleEvent,
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
       clientRef.current = client;
@@ -182,6 +238,7 @@ export function LiveRoomRoute() {
     <PullToResync onResync={handleResync}>
     <MobileRoom
       productImage={productImage}
+      videoUrl={livePlayUrl}
       viewerCount={store.viewerCount}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
@@ -198,6 +255,8 @@ export function LiveRoomRoute() {
       bidsPerSecPeak={bidsPerSecPeak}
       serverClockOffsetMs={getDriftMs()}
       lastSeq={store.lastSeq}
+      winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
+      onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
       ticker={store.recentEvents
         .filter((e) => e.type === 'BID_ACCEPTED')
         .slice(0, 6)

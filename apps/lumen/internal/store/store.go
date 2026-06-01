@@ -22,18 +22,20 @@ import (
 )
 
 type Store struct {
-	rdb               *redis.Client
-	db                *sql.DB
-	shaPlaceBid       string
-	shaPlaceBidSealed string // sealed modes (issue #114)
-	shaPlaceBidHybrid string // hybrid-reveal mode (issue #114)
-	shaFreeze         string
-	shaStart          string
-	shaClose          string
-	shaCloseSealed    string // sealed reveal + hammer (issue #114)
-	shaCloseAllPay    string // ALL_PAY reveal + winner/runner-up coin settlement (issue #114)
-	shaCancel         string
-	evidenceKey       []byte // HMAC key for the auction_events hash chain (T4)
+	rdb                *redis.Client
+	db                 *sql.DB
+	shaPlaceBid        string
+	shaPlaceBidSealed  string // sealed modes (issue #114)
+	shaPlaceBidHybrid  string // hybrid-reveal mode (issue #114)
+	shaFreeze          string
+	shaStart           string
+	shaClose           string
+	shaCloseSealed     string // sealed reveal + hammer (issue #114)
+	shaCloseAllPay     string // ALL_PAY reveal + winner/runner-up coin settlement (issue #114)
+	shaCancel          string
+	evidenceKeySource  EvidenceKeySource
+	evidenceKeyVersion int
+	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -43,6 +45,20 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+}
+
+// NewWithEvidenceKeySource is the rotation-ready constructor: production still
+// passes an env-backed static source through New, while a future KMS/key-ring
+// source can implement EvidenceKeySource without changing Store callers again.
+func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	if evidenceKeys == nil {
+		return nil, errors.New("evidence key source is nil")
+	}
+	evidenceKeyVersion, evidenceKey, err := evidenceKeys.CurrentEvidenceKey()
+	if err != nil {
+		return nil, fmt.Errorf("evidence key source: %w", err)
+	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
@@ -54,7 +70,7 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
-	s := &Store{rdb: rdb, db: db, evidenceKey: []byte(evidenceKey)}
+	s := &Store{rdb: rdb, db: db, evidenceKeySource: evidenceKeys, evidenceKeyVersion: evidenceKeyVersion, evidenceKey: evidenceKey}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
@@ -85,7 +101,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	}
 	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
 	// CREATE TABLE IF NOT EXISTS is idempotent — safe on existing volumes.
-	_, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (
 		id          BIGINT AUTO_INCREMENT PRIMARY KEY,
 		auction_id  VARCHAR(64) NOT NULL,
 		user_id     VARCHAR(64) NOT NULL,
@@ -95,8 +111,34 @@ func (s *Store) migrate(ctx context.Context) error {
 		created_at  DATETIME NOT NULL,
 		UNIQUE KEY uq_coin (auction_id, user_id, seq),
 		KEY ix_coin_auction (auction_id)
-	)`)
-	return err
+	)`); err != nil {
+		return fmt.Errorf("create coin_ledger: %w", err)
+	}
+	if err := s.ensureColumn(ctx, "auction_events", "updated_at", "DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"); err != nil {
+		return err
+	}
+	if err := s.ensureIndex(ctx, "auction_events", "idx_events_auction_updated", "(auction_id, updated_at)"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS evidence_chain_cache (
+		auction_id           VARCHAR(64) PRIMARY KEY,
+		verified_seq         BIGINT       NOT NULL,
+		events_count         BIGINT       NOT NULL,
+		chain_head           VARCHAR(128) NOT NULL,
+		max_event_updated_at DATETIME(6)  NOT NULL,
+		verified_at          DATETIME(6)  NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create evidence_chain_cache: %w", err)
+	}
+	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
+	if err := s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// #121 SRS primary path: per-auction stream key for seller/admin push material.
+	if err := s.ensureColumn(ctx, "auction_rules", "live_stream_key", "VARCHAR(128) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -115,6 +157,25 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) err
 	}
 	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)); err != nil {
 		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// ensureIndex creates an index when it is absent. table, indexName, and columns are
+// trusted constants from migrate(), never user input.
+func (s *Store) ensureIndex(ctx context.Context, table, indexName, columns string) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+		table, indexName).Scan(&n); err != nil {
+		return fmt.Errorf("check index %s.%s: %w", table, indexName, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("CREATE INDEX %s ON %s %s", indexName, table, columns)); err != nil {
+		return fmt.Errorf("create index %s.%s: %w", table, indexName, err)
 	}
 	return nil
 }

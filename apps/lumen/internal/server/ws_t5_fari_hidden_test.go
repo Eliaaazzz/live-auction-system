@@ -29,7 +29,7 @@ import (
 func TestT5ConcurrentCloseVsSendFloodIsRaceClean(t *testing.T) {
 	const senders = 16
 	const perSender = 500
-	c := &Conn{send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16), done: make(chan struct{})}
+	c := &Conn{crit: make(chan outboundFrame, sendBufFrames), lossy: make(chan []byte, 16), done: make(chan struct{})}
 
 	// A draining reader stands in for writePump so senders that win the race
 	// before close() don't all wedge on a full buffer (we're probing the
@@ -38,7 +38,7 @@ func TestT5ConcurrentCloseVsSendFloodIsRaceClean(t *testing.T) {
 	go func() {
 		for {
 			select {
-			case <-c.send:
+			case <-c.crit:
 			case <-c.lossy:
 			case <-drainDone:
 				return
@@ -88,7 +88,7 @@ func TestT5CatchupHeadroomBoundary(t *testing.T) {
 	// At headroom: prefill exactly fills the gap, replay tops the buffer to cap,
 	// no push exceeds cap → no force-close.
 	t.Run("at_headroom_survives", func(t *testing.T) {
-		c := &Conn{send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
+		c := &Conn{crit: make(chan outboundFrame, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
 		for i := 0; i < headroom; i++ {
 			c.trySend([]byte("prefill"))
 		}
@@ -100,7 +100,7 @@ func TestT5CatchupHeadroomBoundary(t *testing.T) {
 			t.Fatalf("prefill=%d + catchup=%d == cap=%d must NOT force-close", headroom, catchupMaxGap, sendBufFrames)
 		default:
 		}
-		if got := len(c.send); got != sendBufFrames {
+		if got := len(c.crit); got != sendBufFrames {
 			t.Fatalf("buffered=%d want %d (buffer full, no drops)", got, sendBufFrames)
 		}
 	})
@@ -108,7 +108,7 @@ func TestT5CatchupHeadroomBoundary(t *testing.T) {
 	// At headroom+1: the replay's final push exceeds cap → force-close. Documents
 	// that catchup survival is NOT unconditional under concurrent fanout.
 	t.Run("over_headroom_force_closes", func(t *testing.T) {
-		c := &Conn{send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
+		c := &Conn{crit: make(chan outboundFrame, sendBufFrames), lossy: make(chan []byte, 4), done: make(chan struct{})}
 		for i := 0; i < headroom+1; i++ {
 			c.trySend([]byte("prefill"))
 		}

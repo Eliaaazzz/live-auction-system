@@ -21,6 +21,68 @@ const DEMO_LEADERS = [
   { userId: 'u5', displayName: 'Echo🌙',        cents: '12200000', avatarBg: 'linear-gradient(135deg,#10b981,#059669)' },
 ];
 
+// LiveVideo renders the 直播画面 (spec §4, #121 火山直播). For an HLS .m3u8 it uses
+// hls.js on browsers without native HLS (Chrome/Firefox/Edge); Safari/iOS play
+// HLS natively, and a plain mp4/webm loop just sets src. hls.js is loaded lazily
+// (dynamic import) so the no-video path never pays for it. Display-only — never
+// gates bidding; on any failure the parent falls back to the sim sheen.
+function LiveVideo({ url, poster, onPlayFailed }) {
+  const ref = React.useRef(null);
+  const reportedRef = React.useRef(false);
+  const onPlayFailedRef = React.useRef(onPlayFailed);
+  React.useEffect(() => {
+    onPlayFailedRef.current = onPlayFailed;
+  });
+
+  const reportFailure = React.useCallback(() => {
+    if (reportedRef.current) return;
+    reportedRef.current = true;
+    onPlayFailedRef.current?.();
+  }, []);
+
+  React.useEffect(() => {
+    reportedRef.current = false;
+  }, [url]);
+
+  React.useEffect(() => {
+    const video = ref.current;
+    if (!video || !url) return undefined;
+    const isHls = /\.m3u8(\?|$)/i.test(url);
+    const nativeHls = video.canPlayType('application/vnd.apple.mpegurl') !== '';
+    if (isHls && !nativeHls) {
+      let cancelled = false;
+      let hls;
+      import('hls.js')
+        .then(({ default: Hls }) => {
+          if (cancelled || !ref.current) return;
+          if (Hls.isSupported()) {
+            hls = new Hls({ liveDurationInfinity: true });
+            hls.on(Hls.Events.ERROR, (_event, data) => {
+              if (data?.fatal) reportFailure();
+            });
+            hls.loadSource(url);
+            hls.attachMedia(ref.current);
+          } else {
+            ref.current.src = url; // last resort
+          }
+        })
+        .catch(() => { if (ref.current) ref.current.src = url; });
+      return () => { cancelled = true; if (hls) hls.destroy(); };
+    }
+    video.src = url; // native HLS (Safari/iOS) or a plain loop
+    return () => {
+      video.removeAttribute('src');
+      try { video.load(); } catch (_) { /* detach best-effort */ }
+    };
+  }, [url]);
+  return (
+    <video ref={ref} poster={poster || undefined}
+      onError={reportFailure}
+      autoPlay muted loop playsInline
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+  );
+}
+
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   productImage = null,
@@ -63,12 +125,20 @@ function MobileRoom({
   onBid,                   // chip-driven bid callback; LiveRoomRoute passes placeBid
   serverClockOffsetMs = 0, // now - serverTimeMs skew (P4); drives the drift chip
   lastSeq = null,          // latest applied Stream seq; null → not yet joined
-  videoUrl = null,         // optional fixed loop for the 直播画面 (spec §4); when
-                           // absent we simulate the feed (CSS sheen over poster)
+  videoUrl = null,         // 直播画面 URL (spec §4): HLS .m3u8 (火山直播 #121) or a
+                           // fixed loop; absent → simulate the feed (CSS sheen)
+  winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
+  onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
   const [following, setFollowing] = React.useState(false);
+  const [videoBroken, setVideoBroken] = React.useState(false);
+  React.useEffect(() => {
+    setVideoBroken(false);
+  }, [videoUrl]);
+  const effectiveVideoUrl = videoBroken ? null : videoUrl;
+
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs <= 10000 && status === 'LIVE';
   const bg = warn && showColorRamp
@@ -203,17 +273,19 @@ function MobileRoom({
           {/* 直播画面 (spec §4). A real fixed loop plays when videoUrl is set;
               otherwise we keep the product image / SVG placeholder and simulate
               a feed with a slow sheen. Non-authoritative — never gates bidding. */}
-          {videoUrl ? (
-            <video src={videoUrl} poster={productImage || undefined}
-              autoPlay muted loop playsInline
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
+          {effectiveVideoUrl ? (
+            <LiveVideo
+              url={effectiveVideoUrl}
+              poster={productImage}
+              onPlayFailed={() => setVideoBroken(true)}
+            />
           ) : productImage ? (
             <img src={productImage} alt=""
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
               style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}/>
           ) : null}
           {/* simulated-feed sheen — only when there's no real video and we're live */}
-          {!videoUrl && status === 'LIVE' && (
+          {!effectiveVideoUrl && status === 'LIVE' && (
             <div className="lumen-livefeed" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}/>
           )}
         </div>
@@ -288,6 +360,7 @@ function MobileRoom({
 
         {/* Price + countdown row */}
         <div className={showOwnFlash ? 'lumen-gold-flash' : ''} style={{
+          flexShrink: 0,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
           padding: '6px 4px 0', borderRadius: 8,
         }}>
@@ -314,7 +387,7 @@ function MobileRoom({
         </div>
 
         {/* Anti-snipe badge row — F02 */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
+        <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
           <ExtendBadge count={extendCount} sweep={extendSweep}/>
           <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
             末 10s 出价自动延时
@@ -325,6 +398,13 @@ function MobileRoom({
           </span>
         </div>
 
+        {/* Scrollable middle — leaderboard + AI bubble squish/scroll here so the
+            bid bar below stays pinned and reachable even when the content is
+            taller than the panel (short viewports / the fixed MobileFrame). */}
+        <div className="no-scrollbar" style={{
+          flex: 1, minHeight: 0, overflowY: 'auto',
+          display: 'flex', flexDirection: 'column', gap: 10,
+        }}>
         {/* Leaderboard */}
         <div style={{ marginTop: 4 }}>
           <div style={{
@@ -349,11 +429,13 @@ function MobileRoom({
 
         {/* AI bubble */}
         <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
+        </div>{/* end scrollable middle */}
 
         {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
             onBid is called with the absolute cents string the chip computed;
-            LiveRoomRoute wires it to placeBid. */}
-        <div style={{ marginTop: 'auto' }}>
+            LiveRoomRoute wires it to placeBid. Pinned (flex-shrink:0) so it is
+            always visible at the bottom of the panel. */}
+        <div style={{ flexShrink: 0, marginTop: 8 }}>
           <QuickBidChips
             currentCents={currentCents}
             stepCents={stepCents}
@@ -373,12 +455,26 @@ function MobileRoom({
         </div>
       </div>
 
+      {/* SOLD result — the 落槌 celebration. The brief HammerTransition crossfade
+          (zIndex 80) plays on top, then clears (~2.2s) to reveal this (zIndex 70):
+          winner + 成交价 + a 查看证据卡 button → the evidence card. Previously SOLD
+          only got the crossfade and snapped back to the live layout — no result,
+          no path to evidence. */}
+      {status === 'SOLD' && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 70 }}>
+          <MobileHammer
+            amountCents={currentCents}
+            winnerName={winnerName}
+            onViewEvidence={onViewEvidence}
+            expressive={expressive}
+          />
+        </div>
+      )}
+
       {/* Terminal overlay — Elia round-2 H2 (#54). NO_BID and CANCELLED
           previously had no full-screen treatment, so a buyer who's still
           looking at the room when the timer fires saw only the StatusBadge
-          flip with no clear "this ended" signal. SOLD has its own
-          HammerTransition above; this fills the gap for the two quiet
-          terminal states. */}
+          flip with no clear "this ended" signal. */}
       <TerminalOverlay status={status}/>
     </div>
   );
@@ -441,7 +537,7 @@ function TerminalOverlay({ status }) {
 }
 
 // ─── Mobile · Hammer overlay (A→B accent flip) ─────────────────
-function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', expressive = true }) {
+function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', expressive = true, onViewEvidence }) {
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
@@ -531,7 +627,7 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           </div>
         </div>
 
-        <button style={{
+        <button onClick={onViewEvidence} style={{
           width: '100%', padding: '14px', borderRadius: 12,
           background: 'linear-gradient(135deg, var(--solemn-gold) 0%, var(--solemn-gold-soft) 100%)',
           color: 'var(--solemn-ink)', border: 'none',
@@ -601,6 +697,8 @@ const TYPE_META = {
 //    inside the render below — no external mapping required.
 function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null }) {
   const isWired = evidence != null;
+  const [actionHint, setActionHint] = React.useState('');
+  const actionHintTimerRef = React.useRef(null);
 
   // Map backend timeline → component event rows. Each row needs the same
   // fields the demo array provides: { type, seq, time, amount, prev, hash,
@@ -631,9 +729,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // partial degradation) — `!undefined === true`. We only want the red
   // alarm UI when the backend has actively reported a broken chain;
   // missing field stays neutral (no badge either way).
-  const effectiveBreak = isWired ? (evidence.chainVerified === false) : chainBreak;
-  const effectiveBreakAtSeq = isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq;
-  const breakIdx = effectiveBreak
+  const chainBroken = isWired ? (evidence.chainVerified === false) : chainBreak;
+  const effectiveBreakAtSeq = chainBroken ? (isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq) : null;
+  const breakIdx = chainBroken
     ? events.findIndex((e) => e.seq === effectiveBreakAtSeq)
     : -1;
 
@@ -646,6 +744,66 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+
+  const showHint = (msg) => {
+    if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
+    setActionHint(msg);
+    actionHintTimerRef.current = setTimeout(() => setActionHint(''), 1800);
+  };
+
+  const copyEvidenceJson = async () => {
+    if (!isWired || !evidence) return;
+    try {
+      const payload = {
+        auctionId: evidence.auctionId,
+        chainVerified: evidence.chainVerified,
+        eventsHash: evidence.eventsHash,
+        hashBreakAtSeq: evidence.hashBreakAtSeq ?? null,
+        timeline: evidence.timeline,
+      };
+      const text = JSON.stringify(payload, null, 2);
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        showHint('证据 JSON 已复制');
+      } else {
+        showHint('当前环境不支持剪贴板复制');
+      }
+    } catch {
+      showHint('复制失败，请手动长按选择内容');
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (actionHintTimerRef.current) {
+        clearTimeout(actionHintTimerRef.current);
+      }
+    };
+  }, []);
+
+  const shareEvidence = async () => {
+    if (!isWired) return;
+    const shareUrl = typeof location !== 'undefined' ? location.href : '';
+    const sharePayload = {
+      title: `拍卖证据卡 · ${lotTitle}`,
+      text: `拍卖 ${lotTitle} 的链式证据卡 · 最新链头 ${chainHead.slice(0, 18)}…`,
+      url: shareUrl,
+    };
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(sharePayload);
+        return;
+      } catch {
+        // user canceled or share unsupported -> fallback to copy URL
+      }
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareUrl);
+      showHint('证据链接已复制');
+      return;
+    }
+    showHint('当前环境不支持一键分享');
+  };
 
   // helper for mono time string from epoch-ms
   function formatHMS(ms) {
@@ -688,9 +846,8 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           </span>
         </div>
         <div style={{ flex: 1 }}/>
-        {/* Chain verified — or BREAK flag. Uses effectiveBreak so a WIRED card
-            reflects the real evidence.chainVerified, not just the demo prop. */}
-        {effectiveBreak ? (
+        {/* Chain verified — or BREAK flag */}
+        {chainBroken ? (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 10px', borderRadius: 999,
@@ -721,7 +878,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         )}
       </div>
 
-      {effectiveBreak && (
+      {chainBroken && (
         <div style={{
           margin: '0 16px 12px', padding: '10px 12px', borderRadius: 8,
           background: 'rgba(254,44,85,.08)', border: '1px solid rgba(254,44,85,.35)',
@@ -880,8 +1037,41 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           }}>
             {chainHead || '—'}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4 }}>
-            点击复制 · 长按导出 JSON
+          <div style={{
+            fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4,
+            display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+          }}>
+            <button
+              onClick={copyEvidenceJson}
+              disabled={!isWired}
+              style={{
+                border: '1px solid rgba(201,169,97,.35)',
+                background: 'transparent',
+                color: 'var(--solemn-cream)',
+                padding: '3px 8px',
+                borderRadius: 7,
+                fontSize: 10,
+              }}
+            >
+              复制证据 JSON
+            </button>
+            <button
+              onClick={shareEvidence}
+              disabled={!isWired}
+              style={{
+                border: '1px solid rgba(201,169,97,.35)',
+                background: 'transparent',
+                color: 'var(--solemn-cream)',
+                padding: '3px 8px',
+                borderRadius: 7,
+                fontSize: 10,
+              }}
+            >
+              分享证据链接
+            </button>
+            <span style={{ opacity: actionHint ? 1 : 0.75 }}>
+              {actionHint || '点击复制 · 长按导出 JSON'}
+            </span>
           </div>
         </div>
       </div>

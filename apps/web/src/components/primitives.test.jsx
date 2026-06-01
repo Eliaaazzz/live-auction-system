@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import {
+  bidRejectCopy,
   StatusBadge,
   ExtendBadge,
   ConnectionBar,
@@ -15,7 +16,15 @@ import {
   HeatMeter,
   PriceDisplay,
   Countdown,
+  ClockDriftIndicator,
 } from './primitives.jsx';
+import { bidRejectCopy as canonicalBidRejectCopy } from '../lib/types.js';
+
+describe('bidRejectCopy should stay canonical', () => {
+  it('re-exports the shared copy from lib/types.js', () => {
+    expect(bidRejectCopy).toBe(canonicalBidRejectCopy);
+  });
+});
 
 describe('StatusBadge · canonical 7 states (state-machine.md)', () => {
   // Lock the exact CN copy for each state. Changing copy = breaking
@@ -88,6 +97,20 @@ describe('ConnectionBar', () => {
   });
 });
 
+describe('ClockDriftIndicator', () => {
+  it('shows warn color when drift exceeds 500ms', () => {
+    const { container } = render(<ClockDriftIndicator offsetMs={600} />);
+    expect(container.textContent).toContain('Δ +600ms');
+    expect(container.firstChild.style.color).toBe('var(--state-extended)');
+  });
+
+  it('shows normal color when drift magnitude is <= 500ms (e.g. -300ms)', () => {
+    const { container } = render(<ClockDriftIndicator offsetMs={-300} />);
+    expect(container.textContent).toContain('Δ -300ms');
+    expect(container.firstChild.style.color).toBe('var(--douyin-ink-muted)');
+  });
+});
+
 describe('Leaderboard · podium mode (TC-T6-230/234)', () => {
   const FULL_LEADERS = [
     { userId: 'u1', displayName: '海风_2024', cents: '13000000', isYou: false },
@@ -119,6 +142,27 @@ describe('Leaderboard · podium mode (TC-T6-230/234)', () => {
   it('renders empty without crashing', () => {
     const { container } = render(<Leaderboard leaders={[]} mode="podium"/>);
     expect(container.firstChild).toBeTruthy();
+  });
+
+  it('falls back to userId for initial/name when displayName is missing', () => {
+    render(
+      <Leaderboard
+        leaders={[{ userId: 'user-001', cents: '11000000' }]}
+        mode="podium"
+      />,
+    );
+    expect(screen.getByText(/user-001/)).toBeInTheDocument();
+    expect(screen.getByText('user-001')).toBeInTheDocument();
+  });
+
+  it('falls back to ? when both displayName and userId are missing', () => {
+    const { container } = render(
+      <Leaderboard
+        leaders={[{ cents: '11000000' }]}
+        mode="podium"
+      />,
+    );
+    expect(container.textContent).toContain('?');
   });
 });
 

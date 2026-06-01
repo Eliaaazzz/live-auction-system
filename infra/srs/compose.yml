@@ -1,0 +1,19 @@
+# Self-hosted SRS live-video profile for issue #121.
+# Run from the repository root:
+#   docker compose -f infra/srs/compose.yml up -d
+
+name: lumen-srs
+
+services:
+  srs:
+    image: ossrs/srs:6
+    restart: unless-stopped
+    ports:
+      # RTMP ingest from OBS or FFmpeg. Restrict this at the cloud security
+      # group during demos; do not leave it globally open after rehearsal.
+      - "${SRS_RTMP_BIND:-0.0.0.0:1935}:1935"
+      # HLS / HTTP-FLV playback for the browser room.
+      - "${SRS_HLS_BIND:-0.0.0.0:8081}:8081"
+    volumes:
+      - ./srs.conf:/usr/local/srs/conf/lumen.conf:ro
+    command: ["./objs/srs", "-c", "conf/lumen.conf"]

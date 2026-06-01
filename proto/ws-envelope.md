@@ -43,6 +43,20 @@ type WsEnvelope<T = unknown> = {
 
 `GET /api/auctions/{id}/leaderboard?n=10` → `{ auctionId, leaderboard: [{ userId, amountCents }] }`, top-n by accepted max bid (Redis ZSET), money as string, `n` clamped to `[1,100]`. The live leaderboard ZSET is maintained inside `place_bid.lua`.
 
+**Mode-aware gating during `LIVE`** (mirrors the WS Stream broadcast redaction so REST cannot become a back-door for sealed amounts):
+
+| Mode | LIVE response | Terminal response |
+|---|---|---|
+| `ENGLISH` / `SUDDEN_DEATH` / `PREQUALIFY` | full top-n | full top-n |
+| `SEALED_FIRST` / `VICKREY` / `ALL_PAY` | **empty array** (sealed surface — no participant or amount exposure) | full top-n |
+| `HYBRID_REVEAL` | top-n **with the current leader filtered out** (runner-up + below remain visible, matching the WS Stream's redacted top-bid broadcast) | full top-n incl. winner |
+
+Gating is computed server-side off the live `auction:{aid}:state` hash (`status` / `mode` / `winnerId`) in a single `HMGET`, so clients cannot bypass it by raising `n`. Once the auction reaches a terminal state (`SOLD` / `NO_BID` / `CANCELLED` / `ORDER_CREATED`), the full leaderboard is returned for all modes — the redaction is a fairness-during-bidding rule, not a permanent secret.
+
+## Auction snapshot (REST first paint, additive)
+
+`GET /api/auctions/{id}` includes top-level `livePlayUrl?: string` (issue #121). It is an optional HLS `.m3u8` / mp4 / webm URL the room player renders as the 直播画面 on first paint. **Non-authoritative**: it is display-only, never gates bids, close, evidence, or any Redis/WS state transition. Empty/absent → the room falls back to the simulated feed (CSS sheen, #110).
+
 ## Semantics / known limitations (T2)
 
 - **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
