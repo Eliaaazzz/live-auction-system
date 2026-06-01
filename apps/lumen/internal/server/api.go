@@ -119,6 +119,16 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "productId required")
 		return
 	}
+	// Resolve the auction mode's strategy and apply its rule normalization (e.g.
+	// Sudden Death disables anti-snipe) before validation + persistence, so the
+	// stored rules already encode the mode's semantics. A valid-but-not-yet-
+	// enabled mode (e.g. ALL_PAY before its phase lands) is rejected here.
+	mode, ok := modeFor(body.Rules.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "auction mode not available yet: "+model.NormalizeMode(body.Rules.Mode))
+		return
+	}
+	body.Rules = mode.NormalizeRules(body.Rules)
 	if err := body.Rules.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -138,6 +148,102 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
+}
+
+// POST /api/auctions/{id}/spawn-formal {rules{}} -> {auctionId, seededStartPriceCents, parentAuctionId}
+// Issue #114 phase 6: a sealed (SEALED_FIRST/VICKREY) PREQUALIFY parent in a
+// terminal state seeds the formal auction's start price from its revealed
+// winning bid. The body's rules.startPriceCents is IGNORED and replaced; every
+// other field comes from the request. The new auction is created in DRAFT for
+// the seller to freeze + start like any other auction.
+func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	parentAID := r.PathValue("id")
+	parent, err := s.st.GetAuction(r.Context(), parentAID)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "parent auction not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if parent.SellerID != userID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
+		return
+	}
+	parentRules, err := s.st.GetRules(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load parent rules: "+err.Error())
+		return
+	}
+	if !model.UsesSealedEngine(parentRules.Mode) || model.NormalizeMode(parentRules.Mode) == model.ModeAllPay {
+		// Pre-qualify expects a sealed REVEAL-style parent (SEALED_FIRST or
+		// VICKREY) whose winning bid is meaningful as a price floor. ALL_PAY's
+		// settlement is in virtual coins and would not seed a real-money floor.
+		writeErr(w, http.StatusBadRequest, "parent must be SEALED_FIRST or VICKREY (got "+model.NormalizeMode(parentRules.Mode)+")")
+		return
+	}
+	// The reveal at close wrote the parent's final price + terminal status to
+	// its Redis state Hash. Read from there — MySQL auctions.status lags the
+	// Lua mutation (the persistence worker projects it asynchronously), so
+	// using GetAuction's status here would race a freshly-hammered parent.
+	snap, err := s.st.Snapshot(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read parent snapshot: "+err.Error())
+		return
+	}
+	if snap.Status != model.StateSold && snap.Status != model.StateOrderCreated {
+		writeErr(w, http.StatusBadRequest, "parent auction is not terminal SOLD (status="+snap.Status+")")
+		return
+	}
+	if snap.CurrentPriceCents == "" || snap.CurrentPriceCents == "0" {
+		writeErr(w, http.StatusBadRequest, "parent has no revealed winning bid to seed from")
+		return
+	}
+	seededStart, perr := strconv.ParseInt(snap.CurrentPriceCents, 10, 64)
+	if perr != nil {
+		writeErr(w, http.StatusInternalServerError, "parse parent price: "+perr.Error())
+		return
+	}
+
+	var body struct {
+		Rules model.Rules `json:"rules"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	// Override the start price with the parent's winning bid.
+	body.Rules.StartPriceCents = model.Cents(seededStart)
+	mode, ok := modeFor(body.Rules.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "auction mode not available yet: "+model.NormalizeMode(body.Rules.Mode))
+		return
+	}
+	body.Rules = mode.NormalizeRules(body.Rules)
+	if err := body.Rules.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	newID := "auc_" + newID()
+	s.prepareLiveStreamRules(newID, &body.Rules)
+	if err := s.st.CreateAuction(r.Context(), newID, parent.ProductID, userID, body.Rules, true, ""); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.st.SetParentAuction(r.Context(), newID, parentAID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "link parent: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auctionId":             newID,
+		"parentAuctionId":       parentAID,
+		"seededStartPriceCents": strconv.FormatInt(seededStart, 10),
+	})
 }
 
 // GET /api/auctions/{id}/stream -> seller/admin-only live push material.

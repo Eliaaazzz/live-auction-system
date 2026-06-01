@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS auctions (
 CREATE TABLE IF NOT EXISTS auction_rules (
   id                BIGINT AUTO_INCREMENT PRIMARY KEY,
   auction_id        VARCHAR(64) NOT NULL,
+  mode              VARCHAR(32) NOT NULL DEFAULT 'ENGLISH', -- auction format/strategy (issue #114)
   start_price_cents BIGINT NOT NULL,
   increment_cents   BIGINT NOT NULL,
   cap_price_cents   BIGINT NOT NULL,
@@ -83,6 +84,22 @@ CREATE TABLE IF NOT EXISTS orders (
 
 -- event_hash / prev_hash are nullable in T1; the hash chain is computed by the
 -- Persistence Worker (MySQL-only integrity check) at T4.
+-- coin_ledger (issue #114 ALL_PAY): every credit/debit settled in VIRTUAL
+-- coins for an all-pay auction. NEVER touches real fiat — the persistence
+-- worker is hard-gated to skip the orders path for ALL_PAY mode auctions.
+-- Idempotent projection via UNIQUE (auction_id, user_id, seq).
+CREATE TABLE IF NOT EXISTS coin_ledger (
+  id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+  auction_id  VARCHAR(64) NOT NULL,
+  user_id     VARCHAR(64) NOT NULL,
+  delta_coins BIGINT NOT NULL,                -- negative = forfeit/charge
+  reason      VARCHAR(32) NOT NULL,           -- 'WIN' | 'RUNNER_UP_FORFEIT'
+  seq         BIGINT NOT NULL,
+  created_at  DATETIME NOT NULL,
+  UNIQUE KEY uq_coin (auction_id, user_id, seq),
+  KEY ix_coin_auction (auction_id)
+);
+
 CREATE TABLE IF NOT EXISTS auction_events (
   id           BIGINT AUTO_INCREMENT PRIMARY KEY,
   auction_id   VARCHAR(64) NOT NULL,

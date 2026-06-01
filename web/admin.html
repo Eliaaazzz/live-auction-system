@@ -15,6 +15,15 @@
 <body>
   <h1>Admin — seller flow (T1)</h1>
   <p>Runs: dev-login → product → AI facts (mock) → auction → freeze → start. Then open the room link in two tabs.</p>
+  <p>
+    Auction mode (issue #114):
+    <select id="mode">
+      <option value="ENGLISH">English — ascending + anti-snipe (default)</option>
+      <option value="SUDDEN_DEATH">Sudden Death — no extension (Whatnot-style)</option>
+      <option value="SEALED_FIRST">Sealed-bid 暗拍 — winner pays own bid</option>
+      <option value="VICKREY">Vickrey — winner pays the 2nd-highest bid</option>
+    </select>
+  </p>
   <button id="run">Run full seller flow</button>
   <button id="cancel" disabled>Cancel current auction</button>
   <p id="roomlink"></p>
@@ -50,14 +59,15 @@
         const facts = await api('/api/facts/draft', s.token, { productId: p.productId, imageUrls: ['https://example.com/w.jpg'] });
         log('AI facts (mock): ' + facts.highRiskFieldsDisclaimer, 'ok');
         log('seller confirms facts ✓', 'ok');
+        const mode = document.getElementById('mode').value;
         const a = await api('/api/auctions', s.token, {
           productId: p.productId,
           // money fields are strings at the JS boundary (money-as-string invariant)
-          rules: { startPriceCents: '10000', incrementCents: '1000', capPriceCents: '1000000', durationSec: 60, extendWindowSec: 10, extendSec: 10, maxExtensions: 5 },
+          rules: { mode, startPriceCents: '10000', incrementCents: '1000', capPriceCents: '1000000', durationSec: 60, extendWindowSec: 10, extendSec: 10, maxExtensions: 5 },
           factsConfirmed: true,
           confirmedFacts: facts,
         });
-        log('auction: ' + a.auctionId, 'ok');
+        log('auction: ' + a.auctionId + ' (mode=' + mode + ')', 'ok');
         const f = await api('/api/auctions/' + a.auctionId + '/freeze', s.token);
         log('freeze: ' + f.code, 'ok');
         const st = await api('/api/auctions/' + a.auctionId + '/start', s.token, { durationMs: 60000 });
