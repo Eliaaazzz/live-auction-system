@@ -693,6 +693,9 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if timeline == nil {
+		timeline = []store.EvidenceEvent{}
+	}
 	verified, breakAtSeq, err := s.st.VerifyEvidenceChain(r.Context(), aid)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
