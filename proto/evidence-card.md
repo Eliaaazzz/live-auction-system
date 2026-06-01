@@ -61,7 +61,7 @@ canonical  = prev_hash || "\n" || dec(seq) || "\n" || event_type || "\n" || payl
 - **payload** — the **MySQL-normalized `payload_json` text**, i.e. the value returned by `SELECT payload_json` — **not** the original cjson bytes. MySQL JSON columns normalize key order/whitespace on storage, so a verifier MUST read `payload_json` from MySQL (or apply identical normalization) before hashing, or it will compute a different digest. The writer (Persistence Worker) hashes the same read-back form, so the two always agree on one deployment.
   - This assumes MySQL JSON normalization is stable for the deployed version. Re-verify after a MySQL upgrade; if normalization changes, pre-upgrade hashes may need an intentional re-chain.
 
-A verifier recomputes the chain and reports the **first** offending seq as `hash_break_at_seq` when either: a `prev_hash` does not link to the running head, or an `event_hash` that doesn't match a recompute over the stored payload (a post-hoc edit of payload or hash). An empty chain verifies.
+A verifier recomputes the chain and reports the **first** offending seq as `hash_break_at_seq` when either: a `prev_hash` does not link to the running head, or an `event_hash` does not match a recompute over the stored payload (a post-hoc edit of payload or hash). An empty chain verifies.
 
 Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits non-zero on a break (`hash_break_at_seq=<n>`). T6's `make verify` will fold this into the three-way diff.
 
@@ -96,7 +96,7 @@ hash_break_at_seq=N (events=N, auction=X)
 ```
 
 | Line | Exit | Meaning |
-|---|---|
+|---|---|---|
 | `consistent` | 0 | Stream length = MySQL projection count; per-seq event_type agrees row-by-row; snapshot tip seq (if non-zero) matches Stream tip seq; hash chain recomputes byte-identical |
 | `mismatch_at_seq=N` | 1 | First seq where the three surfaces disagree — see `<reason>` for which pair |
 | `hash_break_at_seq=N` | 1 | Counts agree but HMAC recompute failed per §2 failure modes |
