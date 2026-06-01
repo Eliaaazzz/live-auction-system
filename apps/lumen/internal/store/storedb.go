@@ -426,37 +426,187 @@ func (s *Store) fillEventHash(ctx context.Context, aid string, seq int64, eventT
 // verifies (an empty chain verifies). This backs the T4 `make verify-evidence` gate
 // (hash_break_at_seq).
 func (s *Store) VerifyEvidenceChain(ctx context.Context, aid string) (ok bool, breakAtSeq int64, err error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT seq, event_type, payload_json, event_hash, prev_hash FROM auction_events WHERE auction_id = ? ORDER BY seq ASC`, aid)
+	stats, err := s.evidenceChainStats(ctx, aid)
 	if err != nil {
 		return false, 0, err
 	}
+	if c, ok, err := s.loadEvidenceChainCache(ctx, aid); err != nil {
+		return false, 0, err
+	} else if ok {
+		if c.verifiedSeq == stats.maxSeq && c.eventsCount == stats.count && c.chainHead == stats.tipHash && stats.maxUpdatedAt.Before(c.verifiedAt) {
+			return true, 0, nil
+		}
+		if c.verifiedSeq > 0 && c.verifiedSeq < stats.maxSeq {
+			verifyStartedAt, err := s.dbNow(ctx)
+			if err != nil {
+				return false, 0, err
+			}
+			prefixOK, err := s.evidencePrefixUnchanged(ctx, aid, c)
+			if err != nil {
+				return false, 0, err
+			}
+			if prefixOK {
+				ok, brk, lastSeq, head, err := s.verifyEvidenceChainRows(ctx, aid, c.verifiedSeq+1, c.verifiedSeq+1, c.chainHead)
+				if err != nil || !ok {
+					return ok, brk, err
+				}
+				if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head, verifyStartedAt); err != nil {
+					return false, 0, err
+				}
+				return true, 0, nil
+			}
+		}
+	}
+	verifyStartedAt, err := s.dbNow(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	ok, brk, lastSeq, head, err := s.verifyEvidenceChainRows(ctx, aid, 1, 1, "")
+	if err != nil || !ok {
+		return ok, brk, err
+	}
+	if err := s.storeEvidenceChainCache(ctx, aid, lastSeq, head, verifyStartedAt); err != nil {
+		return false, 0, err
+	}
+	return true, 0, nil
+}
+
+type evidenceChainCache struct {
+	verifiedSeq       int64
+	eventsCount       int
+	chainHead         string
+	maxEventUpdatedAt time.Time
+	verifiedAt        time.Time
+}
+
+type evidenceChainStats struct {
+	count        int
+	maxSeq       int64
+	tipHash      string
+	maxUpdatedAt time.Time
+}
+
+func (s *Store) verifyEvidenceChainRows(ctx context.Context, aid string, minSeq, expectedSeq int64, prev string) (ok bool, breakAtSeq int64, lastSeq int64, head string, err error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT seq, event_type, payload_json, event_hash, prev_hash
+		 FROM auction_events WHERE auction_id = ? AND seq >= ? ORDER BY seq ASC`, aid, minSeq)
+	if err != nil {
+		return false, 0, 0, "", err
+	}
 	defer rows.Close()
-	prev := ""
-	var expectedSeq int64 = 1
+	lastSeq = expectedSeq - 1
+	head = prev
 	for rows.Next() {
 		var seq int64
 		var eventType string
 		var payload, eventHash, prevHash sql.NullString
 		if err := rows.Scan(&seq, &eventType, &payload, &eventHash, &prevHash); err != nil {
-			return false, 0, err
+			return false, 0, 0, "", err
 		}
 		if seq != expectedSeq {
-			return false, seq, nil // non-contiguous seq: a projection gap/skip (missing event) — defense-in-depth over fillEventHash's contiguity guard (TC-T4-112)
+			return false, seq, 0, "", nil // non-contiguous seq: a projection gap/skip (missing event) — defense-in-depth over fillEventHash's contiguity guard (TC-T4-112)
 		}
 		expectedSeq = seq + 1
 		if prevHash.String != prev {
-			return false, seq, nil // chain link broken (prev_hash doesn't match the running head)
+			return false, seq, 0, "", nil // chain link broken (prev_hash doesn't match the running head)
 		}
 		if !eventHash.Valid || s.evidenceHash(prev, seq, eventType, payload.String) != eventHash.String {
-			return false, seq, nil // missing or tampered event_hash
+			return false, seq, 0, "", nil // missing or tampered event_hash
 		}
 		prev = eventHash.String
+		lastSeq, head = seq, prev
 	}
 	if err := rows.Err(); err != nil {
-		return false, 0, err
+		return false, 0, 0, "", err
 	}
-	return true, 0, nil
+	return true, 0, lastSeq, head, nil
+}
+
+func (s *Store) evidenceChainStats(ctx context.Context, aid string) (evidenceChainStats, error) {
+	var st evidenceChainStats
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(seq), 0),
+		        COALESCE(MAX(updated_at), CAST('1970-01-01 00:00:00.000000' AS DATETIME(6)))
+		   FROM auction_events WHERE auction_id = ?`, aid).
+		Scan(&st.count, &st.maxSeq, &st.maxUpdatedAt); err != nil {
+		return st, err
+	}
+	if st.maxSeq == 0 {
+		return st, nil
+	}
+	var tip sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq = ?`, aid, st.maxSeq).Scan(&tip); err != nil {
+		return st, err
+	}
+	st.tipHash = tip.String
+	return st, nil
+}
+
+func (s *Store) loadEvidenceChainCache(ctx context.Context, aid string) (evidenceChainCache, bool, error) {
+	var c evidenceChainCache
+	err := s.db.QueryRowContext(ctx,
+		`SELECT verified_seq, events_count, chain_head, max_event_updated_at, verified_at
+		   FROM evidence_chain_cache WHERE auction_id = ?`, aid).
+		Scan(&c.verifiedSeq, &c.eventsCount, &c.chainHead, &c.maxEventUpdatedAt, &c.verifiedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, false, nil
+	}
+	return c, err == nil, err
+}
+
+func (s *Store) evidencePrefixUnchanged(ctx context.Context, aid string, c evidenceChainCache) (bool, error) {
+	var prefixCount, changedSinceVerify int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END), 0)
+		   FROM auction_events WHERE auction_id = ? AND seq <= ?`,
+		c.verifiedAt, aid, c.verifiedSeq).Scan(&prefixCount, &changedSinceVerify); err != nil {
+		return false, err
+	}
+	if prefixCount != int(c.verifiedSeq) || changedSinceVerify != 0 {
+		return false, nil
+	}
+	var head sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq = ?`, aid, c.verifiedSeq).Scan(&head); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return head.Valid && head.String == c.chainHead, nil
+}
+
+func (s *Store) dbNow(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("db now: %w", err)
+	}
+	return now, nil
+}
+
+func (s *Store) storeEvidenceChainCache(ctx context.Context, aid string, verifiedSeq int64, chainHead string, verifiedAt time.Time) error {
+	stats, err := s.evidenceChainStats(ctx, aid)
+	if err != nil {
+		return err
+	}
+	if stats.maxSeq != verifiedSeq || stats.tipHash != chainHead {
+		return nil // concurrent append/delete changed the chain after verification; avoid writing a stale cache.
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO evidence_chain_cache
+		    (auction_id, verified_seq, events_count, chain_head, max_event_updated_at, verified_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		    verified_seq = VALUES(verified_seq),
+		    events_count = VALUES(events_count),
+		    chain_head = VALUES(chain_head),
+		    max_event_updated_at = VALUES(max_event_updated_at),
+		    verified_at = VALUES(verified_at)`,
+		aid, verifiedSeq, stats.count, chainHead, stats.maxUpdatedAt, verifiedAt); err != nil {
+		return fmt.Errorf("store evidence chain cache: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) CountEvents(ctx context.Context, aid string) (int, error) {

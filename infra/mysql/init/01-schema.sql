@@ -90,10 +90,21 @@ CREATE TABLE IF NOT EXISTS auction_events (
   event_type   VARCHAR(64) NOT NULL,
   payload_json JSON NULL,
   created_at   DATETIME NOT NULL,
+  updated_at   DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
   event_hash   VARCHAR(128) NULL,
   prev_hash    VARCHAR(128) NULL,
   UNIQUE KEY uq_events_seq (auction_id, seq),
-  INDEX idx_events_auction (auction_id, seq)
+  INDEX idx_events_auction (auction_id, seq),
+  INDEX idx_events_auction_updated (auction_id, updated_at)
+);
+
+CREATE TABLE IF NOT EXISTS evidence_chain_cache (
+  auction_id           VARCHAR(64) PRIMARY KEY,
+  verified_seq         BIGINT       NOT NULL,
+  events_count         BIGINT       NOT NULL,
+  chain_head           VARCHAR(128) NOT NULL,
+  max_event_updated_at DATETIME(6)  NOT NULL,
+  verified_at          DATETIME(6)  NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ai_usage_logs (
