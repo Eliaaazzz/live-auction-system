@@ -1,0 +1,81 @@
+# 火山云 (Volcengine) production stack — lumen + ai-sidecar + Caddy (auto-TLS).
+#
+# MySQL + Redis are MANAGED cloud services (云数据库MySQL版 + 缓存Redis版), NOT
+# containers — so this is a standalone compose (run it ALONE, not layered on the
+# base infra/docker-compose.yml which ships local mysql/redis).
+#
+#   # from the repo root, with secrets exported (see infra/.env.prod.example):
+#   docker compose -f infra/docker-compose.prod.yml up -d --build --wait
+#
+# Secrets come from the shell env / infra/.env.prod — NEVER commit them
+# (docs/secrets-workflow.md). The `${VAR:?msg}` form fails fast if a required
+# secret is missing.
+services:
+  ai-sidecar:
+    build:
+      context: ..
+      dockerfile: apps/ai-sidecar/Dockerfile
+    restart: unless-stopped
+    environment:
+      SIDECAR_ADDR: ":8090"
+    expose: ["8090"]
+
+  lumen:
+    build:
+      context: ..
+      dockerfile: apps/lumen/Dockerfile
+    command: ["serve", "--mode=all"]
+    restart: unless-stopped
+    environment:
+      HTTP_ADDR: ":8080"
+      APP_ENV: prod
+      ENABLE_DEV_LOGIN: "false" # §8 baseline: dev-login OFF in prod (config.go enforces)
+      # ---- managed cloud endpoints (intranet addresses from the console) ----
+      MYSQL_DSN: "${MYSQL_DSN:?set to the 云数据库MySQL版 intranet DSN}"
+      REDIS_ADDR: "${REDIS_ADDR:?set to the 缓存Redis版 intranet host:port}"
+      # ---- secrets (shell env / infra/.env.prod; never commit) ----
+      JWT_SECRET: "${JWT_SECRET:?set a strong non-default JWT secret}"
+      EVIDENCE_HMAC_KEY: "${EVIDENCE_HMAC_KEY:?set a strong non-default evidence key}"
+      FRONTEND_ORIGIN: "${FRONTEND_ORIGIN:?set to https://<your-domain>}"
+      AI_SIDECAR_URL: http://ai-sidecar:8090
+      # ---- V10k Tier A: GC tuning under sustained 10k-conn allocation ----
+      GOGC: "200"
+      GOMEMLIMIT: "2GiB"
+      # ---- 火山直播 (optional; unset → the room falls back to the sim sheen) ----
+      VOLCENGINE_LIVE_PUSH_DOMAIN: "${VOLCENGINE_LIVE_PUSH_DOMAIN:-}"
+      VOLCENGINE_LIVE_PLAY_DOMAIN: "${VOLCENGINE_LIVE_PLAY_DOMAIN:-}"
+      VOLCENGINE_LIVE_SIGN_KEY: "${VOLCENGINE_LIVE_SIGN_KEY:-}"
+    depends_on:
+      ai-sidecar: {condition: service_started}
+    expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    # V10k Tier A — OS tuning to unblock 10k+ concurrent WS (mirrors the base).
+    ulimits:
+      nofile: {soft: 65536, hard: 65536}
+    sysctls:
+      net.core.somaxconn: 4096
+      net.ipv4.tcp_max_syn_backlog: 8192
+      net.ipv4.ip_local_port_range: "10000 65535"
+
+  # TLS terminator + reverse proxy. Caddy auto-provisions + renews a Let's
+  # Encrypt cert for $LUMEN_DOMAIN and transparently upgrades WebSocket (wss).
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      lumen: {condition: service_healthy}
+    ports: ["80:80", "443:443"]
+    environment:
+      LUMEN_DOMAIN: "${LUMEN_DOMAIN:?set to your registered domain, e.g. auction.example.com}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,100 @@
+{
+  "mode": "RUNNER_UP_PAYS",
+  "modeVersion": "rup-v1",
+  "schemaVersion": 1,
+  "liabilityCapCents": "12000",
+  "settlementType": "VIRTUAL_COINS_ONLY",
+  "normalFiatOrdersAllowed": false,
+  "rules": {
+    "liabilityFormula": "min(runnerUpBidCents, liabilityCapCents)",
+    "leaderboardRankPolicy": "one_rank_per_bidder_highest_accepted_bid",
+    "winnerRunnerUpDistinct": true
+  },
+  "cases": [
+    {
+      "name": "no_bid",
+      "acceptedBids": [],
+      "expected": {
+        "terminalEvent": "AUCTION_NO_BID",
+        "winnerId": null,
+        "runnerUpId": null,
+        "winnerBidCents": "0",
+        "runnerUpBidCents": "0",
+        "runnerUpLiabilityCents": "0",
+        "emitRunnerUpSettled": false,
+        "normalFiatOrders": 0
+      }
+    },
+    {
+      "name": "one_bidder",
+      "acceptedBids": [
+        {"seq": 1, "userId": "A", "amountCents": "10000"},
+        {"seq": 2, "userId": "A", "amountCents": "11000"}
+      ],
+      "expected": {
+        "terminalEvent": "AUCTION_SOLD",
+        "winnerId": "A",
+        "runnerUpId": null,
+        "winnerBidCents": "11000",
+        "runnerUpBidCents": "0",
+        "runnerUpLiabilityCents": "0",
+        "emitRunnerUpSettled": false,
+        "normalFiatOrders": 0
+      }
+    },
+    {
+      "name": "normal_top_two",
+      "acceptedBids": [
+        {"seq": 1, "userId": "A", "amountCents": "10000"},
+        {"seq": 2, "userId": "B", "amountCents": "13000"},
+        {"seq": 3, "userId": "C", "amountCents": "14000"}
+      ],
+      "expected": {
+        "terminalEvent": "AUCTION_SOLD",
+        "winnerId": "C",
+        "runnerUpId": "B",
+        "winnerBidCents": "14000",
+        "runnerUpBidCents": "13000",
+        "runnerUpLiabilityCents": "12000",
+        "emitRunnerUpSettled": true,
+        "normalFiatOrders": 0
+      }
+    },
+    {
+      "name": "same_user_rebid",
+      "acceptedBids": [
+        {"seq": 1, "userId": "A", "amountCents": "10000"},
+        {"seq": 2, "userId": "B", "amountCents": "11000"},
+        {"seq": 3, "userId": "A", "amountCents": "15000"}
+      ],
+      "expected": {
+        "terminalEvent": "AUCTION_SOLD",
+        "winnerId": "A",
+        "runnerUpId": "B",
+        "winnerBidCents": "15000",
+        "runnerUpBidCents": "11000",
+        "runnerUpLiabilityCents": "11000",
+        "emitRunnerUpSettled": true,
+        "normalFiatOrders": 0
+      }
+    },
+    {
+      "name": "cap_below_runner_up",
+      "acceptedBids": [
+        {"seq": 1, "userId": "A", "amountCents": "9000"},
+        {"seq": 2, "userId": "B", "amountCents": "20000"},
+        {"seq": 3, "userId": "C", "amountCents": "30000"}
+      ],
+      "expected": {
+        "terminalEvent": "AUCTION_SOLD",
+        "winnerId": "C",
+        "runnerUpId": "B",
+        "winnerBidCents": "30000",
+        "runnerUpBidCents": "20000",
+        "runnerUpLiabilityCents": "12000",
+        "emitRunnerUpSettled": true,
+        "normalFiatOrders": 0
+      }
+    }
+  ]
+}

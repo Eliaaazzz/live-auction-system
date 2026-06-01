@@ -1,4 +1,5 @@
 import React from 'react';
+import { bidRejectCopy } from '../lib/types.js';
 
 // lumen-primitives.jsx
 // §7.1 components. Money is string-cents, time is server-corrected.
@@ -21,17 +22,8 @@ function addCentsStr(a, b) {
   return (an + bn).toString();
 }
 
-// ─── bidRejectCopy — CN copy per backend error code (§4.3 wire) ───
-// Source: proto/error-codes.md (mirrored from blueprint §4.3 + §5.2).
-const bidRejectCopy = {
-  ERR_TOO_LOW:        '出价低于最低加价',
-  ERR_NOT_LIVE:       '本场不在 LIVE 状态，无法出价',
-  ERR_AFTER_END:      '本场已结束，无法继续出价',
-  ERR_AUCTION_PAUSED: '拍卖已暂停 · 请稍候',
-  ERR_NOT_ALLOWED:    '当前账号不能出价此场',
-  ERR_BAD_INPUT:      '出价参数有误',
-  ERR_INTERNAL:       '服务器繁忙 · 请重试',
-};
+// Canonical CN copy for `BidErrorCode` is defined in lib/types.js and
+// mirrored to the UI through this re-exported identifier.
 
 // ─── PriceDisplay — F09 odometer flip ───
 function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnderline = false }) {
@@ -296,7 +288,7 @@ function Leaderboard({ leaders, mode = 'list' }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 5,
             }}>
-              {u.displayName}
+              {u.displayName || u.userId}
               {u.combo && u.combo >= 2 && <ComboFlame count={u.combo}/>}
               {u.isYou && (
                 <span style={{
