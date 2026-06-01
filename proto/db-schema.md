@@ -14,7 +14,7 @@ auctions(id, product_id, seller_id, status, current_price_cents, winner_id, seq,
 bids(id, auction_id, user_id, amount_cents, seq, client_bid_id, source, accepted_at)
 orders(id, auction_id, product_id, buyer_id, amount_cents, status, created_at, paid_at)
 auction_events(id, auction_id, seq, event_type, payload_json, created_at, updated_at,
-               event_hash, prev_hash)        -- hash columns nullable in T1; filled in T4
+               event_hash, prev_hash, hmac_key_version) -- hash columns nullable in T1; filled in T4
 evidence_chain_cache(auction_id, verified_seq, events_count, chain_head,
                      max_event_updated_at, verified_at)
 ai_usage_logs(id, scenario, model_name, input_summary, output_summary, human_reviewed, created_at)
@@ -33,6 +33,9 @@ orders:         UNIQUE(auction_id)
 auction_events: UNIQUE(auction_id, seq)
 evidence_chain_cache: PRIMARY KEY(auction_id)
 ```
+
+`hmac_key_version` records the evidence-key version used for each `auction_events`
+row; existing rows default to version 1.
 
 `event_hash` / `prev_hash` are present from T1 (nullable) so the schema is stable, but the **hash chain is computed by the Persistence Worker at T4** (integrity check on the MySQL projection — per fariZzzz #14 challenge #3), not in T1 and not in Lua.
 

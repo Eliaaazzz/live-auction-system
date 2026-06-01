@@ -117,6 +117,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "auction_events", "updated_at", "DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"); err != nil {
 		return err
 	}
+	if err := s.ensureColumn(ctx, "auction_events", "hmac_key_version", "SMALLINT NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
 	if err := s.ensureIndex(ctx, "auction_events", "idx_events_auction_updated", "(auction_id, updated_at)"); err != nil {
 		return err
 	}
