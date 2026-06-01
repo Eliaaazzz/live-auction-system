@@ -67,7 +67,7 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 
 ## 3. HMAC key custody + threat model (§6 — honest scope)
 
-- Key from `EVIDENCE_HMAC_KEY` (env / GitHub Secret / KMS). **Outside `APP_ENV=dev` a non-default value is required** (enforced in `config.Load`).
+- Key from `EVIDENCE_HMAC_KEY` through the store `EvidenceKeySource` seam (env/static today; KMS/key-ring ready). **Outside `APP_ENV=dev` a non-default value is required** (enforced in `config.Load`). Existing rows are version 1 until the future `hmac_key_version` migration lands.
 - **What this defends:** post-hoc single-point tampering of stored history — edit any `payload_json` or `event_hash` and the chain breaks at that seq, detectable by anyone holding the key.
 - **What this is NOT:** external notarization / blockchain anchoring. And per §6, **if the HMAC key is readable by the same process/DB that writes the events, the guarantee collapses to a plain integrity/consistency check** (a writer who also has the key can re-chain a forgery). For the demo the key lives in process env, so we describe this as an **integrity/consistency check**, not tamper-proof evidence. Hardening (key in KMS, separate signer, rotation) is post-MVP.
 - **Rotation:** changing the key invalidates recompute of pre-rotation rows; a rotation scheme (versioned key id per row) is deferred — out of scope for v0, noted here so the field set can grow compatibly.

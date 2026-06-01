@@ -454,3 +454,109 @@ func TestT4EvidenceRequiresAuth(t *testing.T) {
 		t.Fatalf("authenticated evidence: %v", err)
 	}
 }
+
+func TestT4EvidenceEndpointSchemaMatchesProto(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence Schema Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId":      productID,
+		"rules":          persistRules(),
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]any
+	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &raw); err != nil {
+		t.Fatalf("evidence schema response: %v", err)
+	}
+
+	wantKeys := map[string]bool{
+		"auctionId":         true,
+		"status":            true,
+		"currentPriceCents": true,
+		"winnerId":          true,
+		"seq":               true,
+		"eventsCount":       true,
+		"factsConfirmed":    true,
+		"timeline":          true,
+		"eventsHash":        true,
+		"chainVerified":     true,
+		"note":              true,
+	}
+	for k := range wantKeys {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("evidence schema missing key %q", k)
+		}
+	}
+	for k := range raw {
+		if !wantKeys[k] {
+			t.Fatalf("evidence schema unexpected key %q", k)
+		}
+	}
+
+	assertString := func(k string) {
+		if _, ok := raw[k].(string); !ok {
+			t.Fatalf("evidence schema key %q type=%T want string", k, raw[k])
+		}
+	}
+	assertNumber := func(k string) {
+		if _, ok := raw[k].(float64); !ok {
+			t.Fatalf("evidence schema key %q type=%T want number", k, raw[k])
+		}
+	}
+	assertBool := func(k string) {
+		if _, ok := raw[k].(bool); !ok {
+			t.Fatalf("evidence schema key %q type=%T want bool", k, raw[k])
+		}
+	}
+	assertArray := func(k string) []any {
+		v, ok := raw[k].([]any)
+		if !ok {
+			t.Fatalf("evidence schema key %q type=%T want array", k, raw[k])
+		}
+		return v
+	}
+
+	assertString("auctionId")
+	assertString("status")
+	assertString("currentPriceCents")
+	assertString("winnerId")
+	assertNumber("seq")
+	assertNumber("eventsCount")
+	assertBool("factsConfirmed")
+	timeline := assertArray("timeline")
+	assertString("eventsHash")
+	assertBool("chainVerified")
+	assertString("note")
+
+	if raw["auctionId"] != created.AuctionID {
+		t.Fatalf("auctionId=%v want %s", raw["auctionId"], created.AuctionID)
+	}
+	if raw["factsConfirmed"] != true {
+		t.Fatalf("factsConfirmed=%v want true", raw["factsConfirmed"])
+	}
+	if raw["eventsCount"] != float64(0) {
+		t.Fatalf("eventsCount=%v want 0 for empty chain", raw["eventsCount"])
+	}
+	if len(timeline) != 0 {
+		t.Fatalf("timeline len=%d want 0 for empty chain", len(timeline))
+	}
+	if raw["eventsHash"] != "" {
+		t.Fatalf("eventsHash=%v want empty string for empty chain", raw["eventsHash"])
+	}
+	if raw["chainVerified"] != true {
+		t.Fatalf("chainVerified=%v want true for empty chain", raw["chainVerified"])
+	}
+}

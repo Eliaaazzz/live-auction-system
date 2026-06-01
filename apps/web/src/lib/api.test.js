@@ -141,6 +141,41 @@ describe('Non-401 errors do NOT clear the session', () => {
     }
     expect(localStorage.getItem(STORAGE_KEY)).not.toBeNull();
   });
+
+  it('freeze forwards fact-confirmation payload in request body', async () => {
+    const payload = { factsConfirmed: true, confirmedFacts: { foo: 'bar' } };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ code: 'OK_FROZEN' }),
+    });
+
+    await api.freeze('auc_demo', payload);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_demo/freeze',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    );
+  });
+
+  it('freeze without payload sends no request body', async () => {
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ code: 'OK_FROZEN' }),
+    });
+
+    await api.freeze('auc_demo');
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_demo/freeze',
+      expect.objectContaining({
+        method: 'POST',
+        body: undefined,
+      }),
+    );
+  });
 });
 
 describe('204 No Content returns null', () => {

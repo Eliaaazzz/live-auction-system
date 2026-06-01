@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,6 +52,8 @@ import (
 //	LOAD_SCRIPT_P99_MS     =   5    (hot-path Lua exec budget, V9 §4.2 footnote)
 //	LOAD_HANDLER_P99_MS    =   5    (P8: BID_PLACE Go-side handler work, excl. Redis RTT)
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
+//	LOAD_AUCTION_ID        = ""     (optional: reuse an existing LIVE auction for sharded runs)
+//	LOAD_START_CENTS       = 100000 (first attempted bid amount base; shard planners may raise it)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
 // and on seq gap > 0. The error message lists every breach so CI fails LOUD.
@@ -58,13 +61,19 @@ func RunLoad(target string) error {
 	cfg := loadConfigFromEnv()
 	hc := &http.Client{Timeout: 10 * time.Second}
 
-	aid, err := loadSetupAuction(hc, target, cfg)
-	if err != nil {
-		return fmt.Errorf("load setup: %w", err)
+	aid := cfg.AuctionID
+	if aid == "" {
+		var err error
+		aid, err = loadSetupAuction(hc, target, cfg)
+		if err != nil {
+			return fmt.Errorf("load setup: %w", err)
+		}
+	} else {
+		fmt.Printf("load setup: reusing existing auction %s (LOAD_AUCTION_ID)\n", aid)
 	}
 	fmt.Printf("LOAD_AUCTION_ID=%s\n", aid) // captured by `make load` for the downstream verifier
-	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v\n",
-		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval)
+	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v startCents=%d\n",
+		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval, cfg.StartAmountCents)
 
 	// Reset the /metrics percentiles for this run by reading the pre-run snapshot
 	// — the percentiles continue to accumulate, but we'll diff counters and
@@ -106,7 +115,7 @@ func RunLoad(target string) error {
 	// bidders sharing a single 30k-field hash). Login is cheap (HTTP + JWT) and
 	// happens once per bidder before the load window starts.
 	var amountCounter atomic.Int64 // bid amount = loadStartCents + amountCounter++
-	amountCounter.Store(loadStartCents)
+	amountCounter.Store(cfg.StartAmountCents)
 	bidderTokens := make([]string, cfg.Bidders)
 	for i := 0; i < cfg.Bidders; i++ {
 		s, err := devLogin(hc, target, fmt.Sprintf("Load Bidder %d", i), "user")
@@ -174,6 +183,8 @@ type loadConfig struct {
 	HandlerP99Budget   time.Duration
 	AuctionDuration    time.Duration
 	ObserverStaggerMs  int
+	AuctionID          string
+	StartAmountCents   int64
 }
 
 func loadConfigFromEnv() loadConfig {
@@ -190,6 +201,8 @@ func loadConfigFromEnv() loadConfig {
 		HandlerP99Budget:   time.Duration(envInt("LOAD_HANDLER_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
 		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
+		AuctionID:          strings.TrimSpace(os.Getenv("LOAD_AUCTION_ID")),
+		StartAmountCents:   int64(envInt("LOAD_START_CENTS", loadStartCents)),
 	}
 }
 

@@ -14,6 +14,8 @@ type Config struct {
 	AISidecarURL    string
 	JWTSecret       string
 	FrontendOrigin  string
+	LivePushURLBase string
+	LivePlayURLBase string
 	AppEnv          string
 	EnableDevLogin  bool
 	EvidenceHMACKey string
@@ -37,6 +39,8 @@ func Load() (Config, error) {
 		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
 		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
 		FrontendOrigin:  env("FRONTEND_ORIGIN", "http://localhost:8080"),
+		LivePushURLBase: env("LIVE_PUSH_URL_BASE", ""),
+		LivePlayURLBase: env("LIVE_PLAY_URL_BASE", ""),
 		AppEnv:          env("APP_ENV", "dev"),
 		EnableDevLogin:  env("ENABLE_DEV_LOGIN", "true") == "true",
 		EvidenceHMACKey: env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
