@@ -697,6 +697,8 @@ const TYPE_META = {
 //    inside the render below — no external mapping required.
 function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null }) {
   const isWired = evidence != null;
+  const [actionHint, setActionHint] = React.useState('');
+  const actionHintTimerRef = React.useRef(null);
 
   // Map backend timeline → component event rows. Each row needs the same
   // fields the demo array provides: { type, seq, time, amount, prev, hash,
@@ -727,9 +729,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // partial degradation) — `!undefined === true`. We only want the red
   // alarm UI when the backend has actively reported a broken chain;
   // missing field stays neutral (no badge either way).
-  const effectiveBreak = isWired ? (evidence.chainVerified === false) : chainBreak;
-  const effectiveBreakAtSeq = isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq;
-  const breakIdx = effectiveBreak
+  const chainBroken = isWired ? (evidence.chainVerified === false) : chainBreak;
+  const effectiveBreakAtSeq = chainBroken ? (isWired ? (evidence.hashBreakAtSeq ?? null) : breakAtSeq) : null;
+  const breakIdx = chainBroken
     ? events.findIndex((e) => e.seq === effectiveBreakAtSeq)
     : -1;
 
@@ -742,6 +744,66 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+
+  const showHint = (msg) => {
+    if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
+    setActionHint(msg);
+    actionHintTimerRef.current = setTimeout(() => setActionHint(''), 1800);
+  };
+
+  const copyEvidenceJson = async () => {
+    if (!isWired || !evidence) return;
+    try {
+      const payload = {
+        auctionId: evidence.auctionId,
+        chainVerified: evidence.chainVerified,
+        eventsHash: evidence.eventsHash,
+        hashBreakAtSeq: evidence.hashBreakAtSeq ?? null,
+        timeline: evidence.timeline,
+      };
+      const text = JSON.stringify(payload, null, 2);
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        showHint('证据 JSON 已复制');
+      } else {
+        showHint('当前环境不支持剪贴板复制');
+      }
+    } catch {
+      showHint('复制失败，请手动长按选择内容');
+    }
+  };
+
+  React.useEffect(() => {
+    return () => {
+      if (actionHintTimerRef.current) {
+        clearTimeout(actionHintTimerRef.current);
+      }
+    };
+  }, []);
+
+  const shareEvidence = async () => {
+    if (!isWired) return;
+    const shareUrl = typeof location !== 'undefined' ? location.href : '';
+    const sharePayload = {
+      title: `拍卖证据卡 · ${lotTitle}`,
+      text: `拍卖 ${lotTitle} 的链式证据卡 · 最新链头 ${chainHead.slice(0, 18)}…`,
+      url: shareUrl,
+    };
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share(sharePayload);
+        return;
+      } catch {
+        // user canceled or share unsupported -> fallback to copy URL
+      }
+    }
+    if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareUrl);
+      showHint('证据链接已复制');
+      return;
+    }
+    showHint('当前环境不支持一键分享');
+  };
 
   // helper for mono time string from epoch-ms
   function formatHMS(ms) {
@@ -784,9 +846,8 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           </span>
         </div>
         <div style={{ flex: 1 }}/>
-        {/* Chain verified — or BREAK flag. Uses effectiveBreak so a WIRED card
-            reflects the real evidence.chainVerified, not just the demo prop. */}
-        {effectiveBreak ? (
+        {/* Chain verified — or BREAK flag */}
+        {chainBroken ? (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 6,
             padding: '4px 10px', borderRadius: 999,
@@ -817,7 +878,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         )}
       </div>
 
-      {effectiveBreak && (
+      {chainBroken && (
         <div style={{
           margin: '0 16px 12px', padding: '10px 12px', borderRadius: 8,
           background: 'rgba(254,44,85,.08)', border: '1px solid rgba(254,44,85,.35)',
@@ -976,8 +1037,41 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           }}>
             {chainHead || '—'}
           </div>
-          <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4 }}>
-            点击复制 · 长按导出 JSON
+          <div style={{
+            fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4,
+            display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap',
+          }}>
+            <button
+              onClick={copyEvidenceJson}
+              disabled={!isWired}
+              style={{
+                border: '1px solid rgba(201,169,97,.35)',
+                background: 'transparent',
+                color: 'var(--solemn-cream)',
+                padding: '3px 8px',
+                borderRadius: 7,
+                fontSize: 10,
+              }}
+            >
+              复制证据 JSON
+            </button>
+            <button
+              onClick={shareEvidence}
+              disabled={!isWired}
+              style={{
+                border: '1px solid rgba(201,169,97,.35)',
+                background: 'transparent',
+                color: 'var(--solemn-cream)',
+                padding: '3px 8px',
+                borderRadius: 7,
+                fontSize: 10,
+              }}
+            >
+              分享证据链接
+            </button>
+            <span style={{ opacity: actionHint ? 1 : 0.75 }}>
+              {actionHint || '点击复制 · 长按导出 JSON'}
+            </span>
           </div>
         </div>
       </div>
