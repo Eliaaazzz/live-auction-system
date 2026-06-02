@@ -524,6 +524,42 @@ func TestT4EvidenceRequiresAuth(t *testing.T) {
 	}
 }
 
+func TestT4EvidenceAllPayIncludesVirtualCoinSettlement(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence AllPay Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	rules := persistRules()
+	rules.Mode = model.ModeAllPay
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId":      productID,
+		"rules":          rules,
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]any
+	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &raw); err != nil {
+		t.Fatalf("evidence allpay response: %v", err)
+	}
+	if raw["settlement"] != model.SettlementVirtualCoinsOnly {
+		t.Fatalf("settlement=%v want %s", raw["settlement"], model.SettlementVirtualCoinsOnly)
+	}
+	if _, ok := raw["order"]; ok {
+		t.Fatal("ALL_PAY draft evidence unexpectedly included a normal order")
+	}
+}
+
 func TestT4EvidenceEndpointSchemaMatchesProto(t *testing.T) {
 	target, _ := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}

@@ -27,11 +27,16 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
   "chainVerified":    true,               // server recompute of the whole chain
   "hashBreakAtSeq":   3,                  // present ONLY when chainVerified=false
   "order":            Order,              // present ONLY when an order exists (auction sold)
+  "settlement":        "VIRTUAL_COINS_ONLY", // present ONLY for ALL_PAY
   "note":             "…"
 }
 ```
 
 **Non-sale terminals** (`NO_BID`, `CANCELLED`) carry **no `winnerId` and empty `currentPriceCents`** — they are not sales (T3 TC-T3-013), so a cancelled/passed card can't be misread as a win. Only `SOLD` / `ORDER_CREATED` cards carry a winner + price.
+
+`settlement: "VIRTUAL_COINS_ONLY"` is present only for `ALL_PAY` auctions. It is
+the evidence-card audit anchor that this mode is virtual-coin settlement, not a
+normal payment/order flow.
 
 `EvidenceEvent`:
 
