@@ -824,6 +824,7 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if n := len(timeline); n > 0 {
 		chainHead = timeline[n-1].EventHash
 	}
+	rules, rulesErr := s.st.GetRules(r.Context(), aid)
 	order, orderErr := s.st.GetOrder(r.Context(), aid)
 	summary := evidenceSummary(a.Status, timeline, order, orderErr == nil)
 	resp := map[string]any{
@@ -841,6 +842,9 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	if !verified {
 		resp["hashBreakAtSeq"] = breakAtSeq
+	}
+	if rulesErr == nil && model.NormalizeMode(rules.Mode) == model.ModeAllPay {
+		resp["settlement"] = model.SettlementVirtualCoinsOnly
 	}
 	if orderErr == nil {
 		resp["order"] = order

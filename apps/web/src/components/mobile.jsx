@@ -739,6 +739,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
     ? (evidence.currentPriceCents ?? '0')
     : '12880000';
   const chainHead = isWired ? (evidence.eventsHash || '') : '0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18';
+  const settlement = isWired ? (evidence.settlement || null) : null;
   // Top-level winner display is currently not shown in the evidence card;
   // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
   // Keeping the prop computed so future variants can use it.
@@ -759,6 +760,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         chainVerified: evidence.chainVerified,
         eventsHash: evidence.eventsHash,
         hashBreakAtSeq: evidence.hashBreakAtSeq ?? null,
+        settlement: evidence.settlement ?? null,
         timeline: evidence.timeline,
       };
       const text = JSON.stringify(payload, null, 2);
@@ -927,6 +929,36 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             </div>
           </div>
         </div>
+        {settlement === 'VIRTUAL_COINS_ONLY' && (
+          <div style={{
+            marginTop: 12,
+            padding: '8px 10px',
+            borderRadius: 8,
+            background: 'rgba(37,244,238,.08)',
+            border: '1px solid rgba(37,244,238,.28)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}>
+            <span style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: 'var(--douyin-cyan)',
+              letterSpacing: 0,
+              lineHeight: 1.35,
+            }}>
+              虚拟币 · 非真实支付 · 非赌博
+            </span>
+            <span style={{
+              fontSize: 10,
+              color: 'var(--solemn-cream-dim)',
+              lineHeight: 1.35,
+              overflowWrap: 'anywhere',
+            }}>
+              VIRTUAL COINS · NON-PAYMENT · NON-GAMBLING
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Timeline / ledger */}

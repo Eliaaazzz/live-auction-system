@@ -47,6 +47,8 @@ const (
 	ModePrequalify   = "PREQUALIFY"    // sealed round whose result seeds a formal auction
 )
 
+const SettlementVirtualCoinsOnly = "VIRTUAL_COINS_ONLY"
+
 // NormalizeMode maps the empty default to ENGLISH.
 func NormalizeMode(m string) string {
 	if m == "" {
