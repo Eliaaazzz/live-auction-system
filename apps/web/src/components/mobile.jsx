@@ -937,20 +937,25 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             background: 'rgba(37,244,238,.08)',
             border: '1px solid rgba(37,244,238,.28)',
             display: 'flex',
-            justifyContent: 'space-between',
-            gap: 10,
-            alignItems: 'center',
+            flexDirection: 'column',
+            gap: 4,
           }}>
             <span style={{
               fontSize: 10,
               fontWeight: 700,
               color: 'var(--douyin-cyan)',
-              letterSpacing: '.05em',
+              letterSpacing: 0,
+              lineHeight: 1.35,
             }}>
-              VIRTUAL COINS ONLY
+              虚拟币 · 非真实支付 · 非赌博
             </span>
-            <span style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', textAlign: 'right' }}>
-              NON-PAYMENT / NON-GAMBLING
+            <span style={{
+              fontSize: 10,
+              color: 'var(--solemn-cream-dim)',
+              lineHeight: 1.35,
+              overflowWrap: 'anywhere',
+            }}>
+              VIRTUAL COINS · NON-PAYMENT · NON-GAMBLING
             </span>
           </div>
         )}
