@@ -130,7 +130,7 @@ Pre-record so rung 3 is complete (each is independently playable):
 ## 6. Pre-demo checklist · 演示前检查
 
 - [ ] `make demo` green on the presenter laptop (full path) — **2026-06-09**
-- [ ] `make demo-smoke` green in CI (orchestration wiring intact)
+- [ ] CI green for the demo atoms (`e2e-ai-offline`, `chaos-smoke`, `load-smoke`, frontend smokes); run `make demo-smoke` locally if wrapper-order confidence is needed
 - [ ] Public deploy health-green + seeded + one manual bid (T-10 min)
 - [ ] Backup recording + 5 chaos clips on local disk (not only cloud)
 - [ ] Grafana panel bookmarked + datasource live (`infra/grafana`, `infra/prometheus`)
