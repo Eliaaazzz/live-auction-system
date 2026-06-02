@@ -40,7 +40,7 @@
 - **网络/白名单**: 同 A2 (同 VPC+子网，白名单加 ECS 内网 IP)。
 - **持久化**: 开 **AOF everysec** (V8/V9 冻结决策)。
 - **节点规格**: 4G ≈ ¥0.66/hr，按目标选 (节点规格对费用影响最大)。
-- 记下 **内网地址:端口** → `REDIS_ADDR=<redis_intranet_host>:6379` (+ 若有密码，DSN 形式按代码 config 支持)。
+- 记下 **内网地址:端口** → `REDIS_ADDR=<redis_intranet_host>:6379`；若开启密码，另设 `REDIS_PASSWORD=<redis_pwd>`（不要把密码塞进 `REDIS_ADDR`）。
 
 ## A4 — ECS 装环境
 ```bash
@@ -55,7 +55,15 @@ git clone https://github.com/Eliaaazzz/live-auction-system.git && cd live-auctio
 ```bash
 cat > infra/.env.prod <<'EOF'
 MYSQL_DSN=lumen:<pwd>@tcp(<rds_intranet>:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4
+# Alternative to MYSQL_DSN for managed MySQL consoles that expose split fields:
+# MYSQL_HOST=<rds_intranet>
+# MYSQL_PORT=3306
+# MYSQL_USER=lumen
+# MYSQL_PASSWORD=<mysql_pwd>
+# MYSQL_DATABASE=lumen
+# MYSQL_TLS=skip-verify
 REDIS_ADDR=<redis_intranet>:6379
+REDIS_PASSWORD=<redis_pwd_if_enabled>
 JWT_SECRET=<openssl rand -hex 32>
 EVIDENCE_HMAC_KEY=<openssl rand -hex 32>
 FRONTEND_ORIGIN=https://<your-domain>
