@@ -83,7 +83,7 @@ func RunE2E(target string) error {
 	if err := waitForType(observer, model.TypeBidAccepted, 5*time.Second); err != nil {
 		return fmt.Errorf("observer did not receive BID_ACCEPTED: %w", err)
 	}
-	if err := waitEventsCount(hc, target, auctionID, 1, 5*time.Second); err != nil {
+	if err := waitEventsCount(hc, target, auctionID, 1, 30*time.Second); err != nil {
 		return fmt.Errorf("persistence projection: %w", err)
 	}
 

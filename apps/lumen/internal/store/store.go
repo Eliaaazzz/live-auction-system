@@ -38,6 +38,8 @@ type Store struct {
 	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
+const redisUnavailableTimeout = time.Second
+
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
 // retried (up to ~30s) so startup is robust against datastores still booting
 // (e.g. MySQL finishing first-run init after its healthcheck flips healthy).
@@ -67,7 +69,16 @@ func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, re
 	if err != nil {
 		return nil, fmt.Errorf("evidence key source: %w", err)
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr, Password: redisPassword})
+	rdb := redis.NewClient(&redis.Options{
+		Addr:                  redisAddr,
+		Password:              redisPassword,
+		MaxRetries:            -1,
+		DialTimeout:           redisUnavailableTimeout,
+		ReadTimeout:           redisUnavailableTimeout,
+		WriteTimeout:          redisUnavailableTimeout,
+		PoolTimeout:           redisUnavailableTimeout,
+		ContextTimeoutEnabled: true,
+	})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
 	}
