@@ -31,8 +31,11 @@ services:
       APP_ENV: prod
       ENABLE_DEV_LOGIN: "false" # §8 baseline: dev-login OFF in prod (config.go enforces)
       # ---- managed cloud endpoints (intranet addresses from the console) ----
-      MYSQL_DSN: "${MYSQL_DSN:?set to the 云数据库MySQL版 intranet DSN}"
+      # MySQL may be supplied as MYSQL_DSN or as MYSQL_HOST + component fields.
+      # config.Load fails fast in APP_ENV=prod when neither path is set.
+      MYSQL_DSN: "${MYSQL_DSN:-}"
       REDIS_ADDR: "${REDIS_ADDR:?set to the 缓存Redis版 intranet host:port}"
+      REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       # ---- secrets (shell env / infra/.env.prod; never commit) ----
       JWT_SECRET: "${JWT_SECRET:?set a strong non-default JWT secret}"
       EVIDENCE_HMAC_KEY: "${EVIDENCE_HMAC_KEY:?set a strong non-default evidence key}"
@@ -41,6 +44,12 @@ services:
       # ---- V10k Tier A: GC tuning under sustained 10k-conn allocation ----
       GOGC: "200"
       GOMEMLIMIT: "2GiB"
+      MYSQL_HOST: "${MYSQL_HOST:-}"
+      MYSQL_PORT: "${MYSQL_PORT:-3306}"
+      MYSQL_USER: "${MYSQL_USER:-lumen}"
+      MYSQL_PASSWORD: "${MYSQL_PASSWORD:-}"
+      MYSQL_DATABASE: "${MYSQL_DATABASE:-lumen}"
+      MYSQL_TLS: "${MYSQL_TLS:-}"
       # ---- 火山直播 (optional; unset → the room falls back to the sim sheen) ----
       VOLCENGINE_LIVE_PUSH_DOMAIN: "${VOLCENGINE_LIVE_PUSH_DOMAIN:-}"
       VOLCENGINE_LIVE_PLAY_DOMAIN: "${VOLCENGINE_LIVE_PLAY_DOMAIN:-}"

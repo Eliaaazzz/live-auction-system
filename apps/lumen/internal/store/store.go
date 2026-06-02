@@ -45,13 +45,21 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
-	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+	return NewWithRedisPassword(ctx, redisAddr, "", mysqlDSN, evidenceKey)
+}
+
+func NewWithRedisPassword(ctx context.Context, redisAddr, redisPassword, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithRedisPasswordAndEvidenceKeySource(ctx, redisAddr, redisPassword, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
 }
 
 // NewWithEvidenceKeySource is the rotation-ready constructor: production still
 // passes an env-backed static source through New, while a future KMS/key-ring
 // source can implement EvidenceKeySource without changing Store callers again.
 func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	return NewWithRedisPasswordAndEvidenceKeySource(ctx, redisAddr, "", mysqlDSN, evidenceKeys)
+}
+
+func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, redisPassword, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
 	if evidenceKeys == nil {
 		return nil, errors.New("evidence key source is nil")
 	}
@@ -59,7 +67,7 @@ func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, e
 	if err != nil {
 		return nil, fmt.Errorf("evidence key source: %w", err)
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr, Password: redisPassword})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
 	}

@@ -14,7 +14,7 @@ import (
 // freeze + start through the store) so /room.html?auction=auc_demo is bid-able
 // immediately without any admin steps.
 func Seed(ctx context.Context, cfg config.Config) error {
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	st, err := store.NewWithRedisPassword(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.MySQLDSN, cfg.EvidenceHMACKey)
 	if err != nil {
 		return err
 	}
