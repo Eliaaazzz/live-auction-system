@@ -163,6 +163,14 @@ BASE_URL="https://your-domain" \
   PERF_GATE_OUT_DIR=./rehearsal-perf
 ```
 
+For manual remote-load scenarios that dump metrics after peak load, set:
+
+```sh
+DEPLOY_REHEARSAL_METRICS=/path/to/peak-metrics.json
+```
+
+If omitted, `deploy-perf-rehearsal` uses preflight `metrics/body.txt`.
+
 For a non-P0 100k-tier remote lane, use the super-stretch wrapper:
 
 ```sh

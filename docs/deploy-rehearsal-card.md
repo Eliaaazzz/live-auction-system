@@ -77,6 +77,7 @@ larger concurrency tier.
      DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
      DEPLOY_REHEARSAL_100K_REPORT_ONLY=0 \
+     DEPLOY_REHEARSAL_METRICS="./peak-metrics.json" \
      PERF_GATE_CLIENT_SUMMARY="./client-summary.json" \
      PERF_GATE_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)/perf-gate" \
      make deploy-perf-rehearsal-100k
@@ -88,6 +89,10 @@ larger concurrency tier.
    Capture the server metrics JSON at or near peak load. If a client runner such
    as k6 is used, keep its summary JSON, but do not use client RTT as the backend
    SLO source.
+
+   If you already captured a peak-moment metrics snapshot, pass it via
+   `DEPLOY_REHEARSAL_METRICS=/path/to/metrics.json`; otherwise the target will
+   default to preflight `metrics/body.txt`.
 
 5. Run the remote perf gate.
 

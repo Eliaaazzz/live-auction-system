@@ -16,6 +16,7 @@ DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS ?= 3000
 DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER ?= 1
 DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP ?= 1
 DEPLOY_REHEARSAL_100K_REPORT_ONLY ?= 0
+DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
 .PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-100k load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
@@ -288,7 +289,8 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 	if [ -z "$$out_dir" ]; then out_dir=".deploy-rehearsal-$$(date +%Y%m%dT%H%M%S)"; fi; \
 	echo "deployment rehearsal out_dir=$$out_dir"; \
 	BASE_URL="$(BASE_URL)" AID="$(DEPLOY_REHEARSAL_AID)" OUT_DIR="$$out_dir" scripts/deploy-preflight.sh; \
-	server_metrics="$$out_dir/metrics/body.txt"; \
+	server_metrics="$(DEPLOY_REHEARSAL_METRICS)"; \
+	if [ -z "$$server_metrics" ]; then server_metrics="$$out_dir/metrics/body.txt"; fi; \
 	if [ ! -s "$$server_metrics" ]; then \
 		echo "missing server metrics artifact: $$server_metrics"; \
 		exit 1; \
