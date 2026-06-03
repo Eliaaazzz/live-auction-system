@@ -124,8 +124,6 @@ async function runScenario({ title, bids, expectedWinnerNick, expectedAmountCent
   const sockets = [];
   let soldData = null;
   let snapshotCount = 0;
-  const allEvents = [];
-
   const done = new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error(`[${title}] timeout waiting for AUCTION_SOLD`));
@@ -142,8 +140,6 @@ async function runScenario({ title, bids, expectedWinnerNick, expectedAmountCent
 
       ws.on('message', (raw) => {
         const env = JSON.parse(raw.toString());
-        allEvents.push({ nick: bidder.nick, type: env.type, seq: env.seq, data: env.data });
-
         if (env.type === 'ROOM_SNAPSHOT') {
           snapshotCount += 1;
           if (!bidPlaced) {
