@@ -220,7 +220,9 @@ export const useAuctionStore = create((set, get) => ({
           // #53-M1 / #53-M2: cumulative counters. totalBidsCount climbs
           // monotonically. bidderIds appends only if the userId is new
           // AND non-null — defensive .filter(Boolean) equivalent inline.
-          next.totalBidsCount = s.totalBidsCount + 1;
+          next.totalBidsCount = Number.isFinite(data.bidCount)
+            ? Math.max(s.totalBidsCount + 1, data.bidCount)
+            : s.totalBidsCount + 1;
           if (data.userId && !s.bidderIds.includes(data.userId)) {
             next.bidderIds = [...s.bidderIds, data.userId];
           }

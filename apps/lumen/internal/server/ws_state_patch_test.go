@@ -152,6 +152,38 @@ func TestRoomStatePatchUsesAuthoritativeBidCount(t *testing.T) {
 	}
 }
 
+func TestRoomStatePatchClearsBidTotalOnTerminalEvent(t *testing.T) {
+	h := newHub()
+	const aid = "auc_patch_terminal"
+	c := &Conn{aid: aid, done: make(chan struct{}), crit: make(chan outboundFrame, 4)}
+	h.join(aid, c)
+	patches := newRoomStatePatchCoalescer(roomStatePatchConfig{interval: 50 * time.Millisecond, minViewers: 1})
+
+	if !patches.offer(h, aid, bidAcceptedEventWithCount(1, 10, "u1", "A", "101")) {
+		t.Fatal("bid was not coalesced")
+	}
+	if patches.offer(h, aid, auctionSoldEvent(2, "u1", "101")) {
+		t.Fatal("terminal AUCTION_SOLD must not be coalesced")
+	}
+	if _, ok := patches.bidTotals[aid]; ok {
+		t.Fatal("bid total was not cleared on terminal event")
+	}
+	patches.flushAll(h, nil)
+
+	select {
+	case f := <-c.crit:
+		var env model.Envelope
+		if err := json.Unmarshal(f.raw, &env); err != nil {
+			t.Fatalf("patch envelope: %v", err)
+		}
+		if env.Type != model.TypeRoomStatePatch || env.Seq != 1 {
+			t.Fatalf("env=(%s,%d), want pending ROOM_STATE_PATCH seq=1", env.Type, env.Seq)
+		}
+	default:
+		t.Fatal("pending patch was dropped by terminal cleanup")
+	}
+}
+
 func bidAcceptedEvent(seq int64, userID, displayName, amount string) store.StreamEvent {
 	return bidAcceptedEventWithCount(seq, seq, userID, displayName, amount)
 }
@@ -188,4 +220,16 @@ func auctionExtendedEvent(seq, endAtMs, extendCount int64) store.StreamEvent {
 	}
 	b, _ := json.Marshal(data)
 	return store.StreamEvent{Seq: seq, Type: model.TypeAuctionExtended, Payload: string(b)}
+}
+
+func auctionSoldEvent(seq int64, winnerID, amount string) store.StreamEvent {
+	data := model.AuctionSoldData{
+		Seq:          seq,
+		WinnerID:     winnerID,
+		AmountCents:  amount,
+		Status:       model.StateSold,
+		ServerTimeMs: time.Now().UnixMilli(),
+	}
+	b, _ := json.Marshal(data)
+	return store.StreamEvent{Seq: seq, Type: model.TypeAuctionSold, Payload: string(b)}
 }

@@ -226,16 +226,27 @@ func TestT8HammerLatencyObservation(t *testing.T) {
 	ctx := context.Background()
 	aid := newAID("test_t8_hammer")
 
-	// Bring the auction live with a 100ms duration so endAtMs is in the
-	// near-past by the time the next 100ms scan tick fires close_auction.lua.
+	// Keep the auction out of the global active index so another harness timer
+	// cannot close it and record the latency in a different metrics registry.
 	if code, err := st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
 		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
 		DurationSec: 1, ExtendWindowSec: 0, ExtendSec: 0,
 	}); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze: code=%s err=%v", code, err)
 	}
-	if code, _, err := st.StartAuction(ctx, aid, 100); err != nil || code != model.CodeOKLive {
+	if code, _, err := st.StartAuction(ctx, aid, 60_000); err != nil || code != model.CodeOKLive {
 		t.Fatalf("start: code=%s err=%v", code, err)
+	}
+	if err := st.UntrackActive(ctx, aid); err != nil {
+		t.Fatalf("untrack active: %v", err)
+	}
+	redisNow, err := st.RedisNowMs(ctx)
+	if err != nil {
+		t.Fatalf("redis now: %v", err)
+	}
+	dueAtMs := redisNow - 1
+	if err := st.Redis().HSet(ctx, fmt.Sprintf("auction:{%s}:state", aid), "endAtMs", dueAtMs).Err(); err != nil {
+		t.Fatalf("set due endAtMs: %v", err)
 	}
 	t.Cleanup(func() {
 		if keys, _ := st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
@@ -475,6 +486,45 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	}
 	if post.BidsAccepted == 0 {
 		t.Fatal("smoke: bidsAccepted counter never advanced")
+	}
+}
+
+func TestT8LoadSmokeExercisesRoomStatePatch(t *testing.T) {
+	t.Setenv("ROOM_STATE_PATCH_MIN_VIEWERS", "1")
+	t.Setenv("ROOM_STATE_PATCH_INTERVAL_MS", "25")
+	target, _ := startTestServer(t)
+
+	t.Setenv("LOAD_OBSERVERS", "3")
+	t.Setenv("LOAD_BIDDERS", "2")
+	t.Setenv("LOAD_DURATION_SEC", "2")
+	t.Setenv("LOAD_BID_INTERVAL_MS", "100")
+	t.Setenv("LOAD_ACK_P95_MS", "500")
+	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
+	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
+	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
+	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
+	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
+
+	if err := RunLoad(target); err != nil {
+		t.Fatalf("coalesced load smoke failed: %v", err)
+	}
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	post := scrapeOrFatal(t, hc, target)
+	if post.RoomStatePatches == 0 {
+		t.Fatal("coalesced smoke: roomStatePatches never advanced")
+	}
+	if post.RoomStatePatchBids == 0 {
+		t.Fatal("coalesced smoke: roomStatePatchBids never advanced")
+	}
+	if post.RoomStatePatch.Count == 0 {
+		t.Fatal("coalesced smoke: patch latency histogram empty")
+	}
+	if post.BackpressureDrop != 0 {
+		t.Fatalf("coalesced smoke: backpressureForceClose=%d (must be 0)", post.BackpressureDrop)
+	}
+	if post.SeqGap != 0 {
+		t.Fatalf("coalesced smoke: seqGap=%d (must be 0)", post.SeqGap)
 	}
 }
 

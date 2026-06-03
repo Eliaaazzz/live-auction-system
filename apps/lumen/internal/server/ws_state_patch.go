@@ -69,6 +69,10 @@ func (p *roomStatePatchCoalescer) offer(h *Hub, aid string, e store.StreamEvent)
 	if !p.enabled() {
 		return false
 	}
+	if isTerminalRoomEvent(e.Type) {
+		delete(p.bidTotals, aid)
+		return false
+	}
 	switch e.Type {
 	case model.TypeBidAccepted:
 		return p.offerBidAccepted(h, aid, e)
@@ -88,6 +92,7 @@ func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.S
 		return false
 	}
 	if bid.Status == model.StateSold {
+		delete(p.bidTotals, aid)
 		return false
 	}
 	if bid.BidCount > 0 {
@@ -124,6 +129,15 @@ func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.S
 		firstServerTimeMs: bid.ServerTimeMs,
 	}
 	return true
+}
+
+func isTerminalRoomEvent(typ string) bool {
+	switch typ {
+	case model.TypeAuctionSold, model.TypeAuctionNoBid, model.TypeAuctionCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *roomStatePatchCoalescer) offerAuctionExtended(aid string, e store.StreamEvent) bool {

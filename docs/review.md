@@ -39,6 +39,7 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 - Metrics: added dedicated room-state patch latency/counter metrics and load-report budget checks.
 - Anti-snipe fanout: folds `AUCTION_EXTENDED` into pending patches for large rooms.
 - Test gaps: `TestT4EvidenceAfterHammer` and `TestT8HammerLatencyObservation` now pass; T4 test projection is isolated from shared local persistence workers before replaying its Stream.
+- Round 3 closure: direct `BID_ACCEPTED` reducer now honors Lua `bidCount`; `TestT8HammerLatencyObservation` untracks its auction before forcing it due so another harness timer cannot steal the close; coalesced load smoke forces the threshold down and asserts `roomStatePatches`, `roomStatePatchBids`, patch latency samples, `seqGap=0`, and `backpressureForceClose=0`; terminal events clear coalescer `bidTotals`.
 
 ## Files Changed
 
@@ -67,8 +68,10 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 
 ## Verification Run
 
-- `go test ./apps/lumen/internal/model ./apps/lumen/internal/metrics ./apps/lumen/internal/server -run "Test(RoomStatePatch|HiddenEnvelope|NewEnvelope|T8MetricsEndpointShape|T8LoadReportBreaches|BroadcastFanout|T8LoadSmokeRunsAndPasses|T4EvidenceAfterHammer|T8HammerLatencyObservation)$" -count=1`
+- `go test ./apps/lumen/internal/model ./apps/lumen/internal/metrics ./apps/lumen/internal/server -run "Test(RoomStatePatch|HiddenEnvelope|NewEnvelope|T8MetricsEndpointShape|T8LoadReportBreaches|BroadcastFanout|T8LoadSmokeRunsAndPasses|T8LoadSmokeExercisesRoomStatePatch|T4EvidenceAfterHammer|T8HammerLatencyObservation)$" -count=1`
 - `go test ./apps/lumen/internal/server -run "TestT4EvidenceAfterHammer|TestT8HammerLatencyObservation" -count=1 -v`
+- `go test ./apps/lumen/internal/server -run "TestT8HammerLatencyObservation" -count=5`
+- `go test ./apps/lumen/internal/... -count=1`
 - `go test ./apps/lumen/internal/server -count=1`
 - `npm test -- --run src/store/auction.test.js src/lib/ws.test.js`
 - `npm run build`

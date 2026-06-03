@@ -22,7 +22,7 @@ const RESET = () => useAuctionStore.getState().init({
 });
 
 const env = (over) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   type: EventType.BID_ACCEPTED,
   serverTimeMs: Date.now(),
   seq: 1,
@@ -86,6 +86,14 @@ describe('applyEvent · BID_ACCEPTED', () => {
     expect(useAuctionStore.getState().leadingToast).toBe(true);
     expect(useAuctionStore.getState().yourCents).toBe('11000000');
     expect(useAuctionStore.getState().leaders[0].isYou).toBe(true);
+  });
+
+  it('uses Lua bidCount on direct BID_ACCEPTED without undercounting', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 9,
+      data: { status: 'LIVE', amountCents: '14000000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000, bidCount: 42 },
+    }));
+    expect(useAuctionStore.getState().totalBidsCount).toBe(42);
   });
 
   it('fires overtakeBanner when self was leading and got overtaken', () => {
