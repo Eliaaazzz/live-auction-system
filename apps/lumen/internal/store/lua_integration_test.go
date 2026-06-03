@@ -395,6 +395,48 @@ func TestPlaceBidSecondPriceCapHitPaysRunnerUp(t *testing.T) {
 	}
 }
 
+func TestPlaceBidSecondPriceCapHitUsesReserveWhenRunnerUpBelowReserve(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.CapPriceCents = 50000
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+	if err := s.rdb.HSet(ctx, stateKey(aid), "reserveCents", "15000").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u1: code=%s err=%v", code, err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u2: code=%s err=%v", code, err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u3", "cb3", "50000", "U3"); err != nil || code != model.CodeOKSold {
+		t.Fatalf("bid cap-hit: code=%s err=%v", code, err)
+	}
+
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 ||
+		events[3].Type != model.TypeAuctionSold ||
+		events[3].ID != "4-0" {
+		t.Fatalf("stream=%+v", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[3].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.WinnerID != "u3" {
+		t.Fatalf("winner=%s want u3", sold.WinnerID)
+	}
+	if sold.AmountCents != "15000" {
+		t.Fatalf("auction sold amount=%s want 15000 (runner-up below reserve)", sold.AmountCents)
+	}
+}
+
 func TestPlaceBidSecondPriceCapHitFallsBackToReserveWhenNoRunnerUp(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -506,6 +548,50 @@ func TestCloseAuctionSecondPriceUsesRunnerUpPrice(t *testing.T) {
 	}
 	if sold.AmountCents != "12000" {
 		t.Fatalf("sold amount=%s want 12000 (runner-up)", sold.AmountCents)
+	}
+}
+
+func TestCloseAuctionSecondPriceUsesReserveWhenRunnerUpBelowReserve(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.CapPriceCents = 0
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+	if err := s.rdb.HSet(ctx, stateKey(aid), "reserveCents", "15000").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u1: code=%s err=%v", code, err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u2: code=%s err=%v", code, err)
+	}
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := s.CloseAuction(ctx, aid)
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("close auction: code=%s err=%v", code, err)
+	}
+
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 || events[2].Type != model.TypeAuctionSold || events[2].ID != "3-0" {
+		t.Fatalf("events=%+v", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[2].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.WinnerID != "u2" {
+		t.Fatalf("winner=%s want u2", sold.WinnerID)
+	}
+	if sold.AmountCents != "15000" {
+		t.Fatalf("auction sold amount=%s want 15000 (runner-up below reserve)", sold.AmountCents)
 	}
 }
 
