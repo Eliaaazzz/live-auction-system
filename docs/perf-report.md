@@ -119,6 +119,11 @@ Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 make load-100k
 ```
 
+执行提示：
+
+- 建议在独立压测机执行（非本机开发环境）
+- 准备足够的 `ulimit -n`（文件描述符）与公开网卡并发连接能力
+
 记录字段（仅建议、非硬门槛）：
 
 - `load` 退出码 / `load: PASS|FAIL`

@@ -110,6 +110,8 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
 
 load-100k:       ## Large-scale rehearsal: 100k connected, 2k active (non-gate, external environment only).
+	@echo "CAUTION: 100k rehearsal is non-gate and resource-heavy; run on external staging capacity only."
+	@echo "Tip: ensure file-descriptor limits and ulimits are tuned before start."
 	@$(MAKE) load \
 		LOAD_OBSERVERS=100000 \
 		LOAD_BIDDERS=2000 \
