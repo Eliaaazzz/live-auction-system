@@ -161,8 +161,9 @@ jobs:
         # contract surface the browser uses. Wired here because the stack is
         # up; per the team rule "no skipped CI tests" these run on every push.
         # Sequential execution preserves deterministic shared-state behavior
-        # with existing fixtures: most smokes create their own auction, while
-        # `smoke-ratelimit` reuses seeded `auc_demo`.
+        # with existing fixtures: most smokes create or use their configured
+        # `VERIFY_AID`/`AUCTION_ID`; keep this explicit to avoid hidden
+        # fallback to legacy `auc_demo` during real runs.
         # Wall time is the sum but each script is short enough that the total
         # is bounded.
         timeout-minutes: 5
