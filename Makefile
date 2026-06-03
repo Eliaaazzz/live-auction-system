@@ -137,7 +137,7 @@ web-smoke-multitab-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-113
 
 web-smoke-vickrey: ## T6: run only Vickrey/AuctionMode second-price closure smoke
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
-	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:vickrey
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) WEB_SMOKE_USE_PRESET_AUCTION="$(WEB_SMOKE_USE_PRESET_AUCTION)" npm run -s smoke:vickrey
 
 web-smoke-vickrey-prepare: ## T6: auto-prepare (up+seed) then run second-price smoke
 	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"

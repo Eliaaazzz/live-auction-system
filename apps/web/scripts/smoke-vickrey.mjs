@@ -142,6 +142,13 @@ async function runScenario({
       reserveCents: expectedReserveCents,
       bidStepCents: '1000',
     });
+
+  console.log(
+    `[scenario] ${title}: ` +
+    (presetAuctionId
+      ? `using preset auction ${auctionId} (index=${presetAuctionIndex})`
+      : `created new auction ${auctionId} (reserve=${reserveCents})`),
+  );
   if (!auctionId) {
     must(false, `failed to resolve auction for scenario="${title}"`);
     return;
