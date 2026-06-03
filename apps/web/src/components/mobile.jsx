@@ -617,10 +617,13 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
     : '12880000';
   const chainHead = isWired ? (evidence.eventsHash || '') : '0x9c4f8a1027bd5b189c4f8a1027bd5b189c4f8a1027bd5b18';
   // Top-level winner display is currently not shown in the evidence card;
-  // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
+  // per-row winner comes from AUCTION_SOLD payload (displayName prioritized).
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+  const topWinner = isWired
+    ? (evidence.winnerId ?? events.find((ev) => ev.winner)?.winner ?? '—')
+    : (events.find((ev) => ev.winner)?.winner ?? '—');
 
   const showHint = (msg) => {
     if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
@@ -790,6 +793,10 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             </div>
             <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)' }}>
               {lotId}
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
+              {isWired ? `拍卖状态: ${evidence.status || '—'}` : '拍卖状态: SOLD'}
+              {topWinner !== '—' ? ` · 成交方: ${topWinner}` : ''}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>
