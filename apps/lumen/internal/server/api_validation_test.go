@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
@@ -222,6 +223,51 @@ func TestT2SecondPriceAuctionsExposeAuctionModeInSnapshot(t *testing.T) {
 			ExtendSec:       10,
 			AuctionMode:     model.AuctionModeSecondPrice,
 		},
+		"factsConfirmed": true,
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+
+	var snap model.RoomSnapshotData
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID, &snap); err != nil {
+		t.Fatalf("get auction snapshot: %v", err)
+	}
+	if snap.Rules == nil {
+		t.Fatal("snapshot rules missing")
+	}
+	if got, want := snap.Rules.AuctionMode, model.AuctionModeSecondPrice; got != want {
+		t.Fatalf("auctionMode=%q want=%q", got, want)
+	}
+}
+
+func TestT2SecondPriceAuctionsAllowWhitespaceModeInRawPayload(t *testing.T) {
+	target := os.Getenv("TARGET")
+	if target == "" {
+		target, _ = startTestServer(t)
+	}
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Whitespace Mode Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId": productID,
+		"rules": json.RawMessage(`{
+			"startPriceCents":"10000",
+			"incrementCents":"1000",
+			"durationSec":60,
+			"auctionMode":" second_price "
+		}`),
 		"factsConfirmed": true,
 	}
 	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
