@@ -16,6 +16,7 @@ REPEAT_LOAD_SMOKE_ARGS ?=
 WEB_SMOKE_AUTO_UP ?= 0
 WEB_SMOKE_AUTO_SEED ?= 0
 WEB_SMOKE_AUTO_SEED_FORCE ?= 0
+WEB_SMOKE_AID ?= $(or $(VERIFY_AID),$(AUCTION_ID),auc_demo)
 REVIEW_REQUIRED_SCRIPTS := \
   scripts/review-pr-dependency.sh \
   scripts/review-project-status.sh \
@@ -78,44 +79,44 @@ web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
 	@if [ "$(WEB_SMOKE_AUTO_SEED_FORCE)" = "1" ]; then \
 		echo "INFO: WEB_SMOKE_AUTO_SEED_FORCE=1, refreshing demo auction..."; \
 		$(MAKE) seed-fresh; \
-	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "http://localhost:8080/api/auctions/auc_demo" >/dev/null 2>&1; then \
+	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "http://localhost:8080/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
 		echo "INFO: WEB_SMOKE_AUTO_SEED=1, seeding demo auction..."; \
 		$(MAKE) seed; \
 	fi
-	@if ! curl -sf "http://localhost:8080/api/auctions/auc_demo" >/dev/null 2>&1; then \
-		echo "WARN: auc_demo missing or /api/auctions/auc_demo unavailable; run make seed."; \
+	@if ! curl -sf "http://localhost:8080/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
+		echo "WARN: $(WEB_SMOKE_AID) missing or /api/auctions/$(WEB_SMOKE_AID) unavailable; run make seed."; \
 		echo "Hint: make web-smoke-prepare"; \
 		exit 1; \
 	fi
-	@echo "auc_demo seeded."
+	@echo "$(WEB_SMOKE_AID) seeded."
 
 web-smoke:        ## T6: run web-side smoke scripts (requires stack up + seed, e.g. make up && make seed)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
-	cd apps/web && npm run -s smoke:all
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
+	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID)" AUCTION_ID="$(WEB_SMOKE_AID)" npm run -s smoke:all
 
 web-smoke-prepare: ## T6: prepare smoke prerequisites only (make up + make seed)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
 
 web-smoke-ratelimit: ## T6: run only TC-T6-116 (single-socket burst -> ERR_RATE_LIMITED)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
-	cd apps/web && npm run -s smoke:ratelimit
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
+	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID)" AUCTION_ID="$(WEB_SMOKE_AID)" npm run -s smoke:ratelimit
 
 web-smoke-ratelimit-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-116
-	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
 
 web-smoke-selfbid: ## T6: run only TC-T6-115 (seller self-bid rejected)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
-	cd apps/web && npm run -s smoke:selfbid
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
+	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID)" AUCTION_ID="$(WEB_SMOKE_AID)" npm run -s smoke:selfbid
 
 web-smoke-selfbid-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-115
-	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
 
 web-smoke-multitab: ## T6: run only TC-T6-113 (same-account bid on tab1 should be visible on tab2)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
-	cd apps/web && npm run -s smoke:multitab
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
+	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID)" AUCTION_ID="$(WEB_SMOKE_AID)" npm run -s smoke:multitab
 
 web-smoke-multitab-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-113
-	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID)"
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \
@@ -214,14 +215,30 @@ load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSO
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
 
 load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks before very large-scale run).
+	@if [ "$${LOAD_100K_CONFIRM:-0}" != "1" ] && [ "$${LOAD_100K_CONFIRM:-}" != "true" ]; then \
+		echo "load-100k is an enterprise-scale rehearsal, not a P0 gate. Set LOAD_100K_CONFIRM=1 (or true) to run this target."; \
+		exit 1; \
+	fi
 	@echo "Super-stretch rehearsal preflight (non-P0)."
 	@echo "- file-descriptor hard limit (ulimit -n): $$(ulimit -n)"
+	@ulimit_n=$$(ulimit -n 2>/dev/null || echo 0); \
+	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$${LOAD_100K_ALLOW_LOW_ULIMIT:-}" != "1" ] && [ "$${LOAD_100K_ALLOW_LOW_ULIMIT:-}" != "true" ]; then \
+		echo "FAIL: ulimit -n=$$ulimit_n is below 131072 (super-stretch threshold). Set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true) to proceed anyway."; \
+		exit 1; \
+	fi
 	@echo "- backlog/port window:" \
 	&& if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then \
-		echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
-	else \
-		echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
-	fi
+			echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
+			port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
+			port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
+			port_count=$$((port_high - port_low + 1)); \
+			if [ "$$port_count" -lt 50000 ]; then \
+				echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal."; \
+				exit 1; \
+			fi; \
+		else \
+			echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
+		fi
 
 load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders + 4 shards.
 	@echo "Super-stretch rehearsal for 100k concurrency requires dedicated load sender + high-limits host."
