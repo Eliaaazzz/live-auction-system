@@ -19,6 +19,8 @@ Environment thresholds:
   CATCHUP_P95_MAX_MS=${CATCHUP_P95_MAX_MS:-1000}
   REQUIRE_HAMMER=${REQUIRE_HAMMER:-1}
   REQUIRE_CATCHUP=${REQUIRE_CATCHUP:-1}
+  # When set to 1, checks are still evaluated and reported but non-zero exit is
+  # suppressed so this becomes an evidence-only dry run.
   REPORT_ONLY=${REPORT_ONLY:-0}
 USAGE
   exit "$code"
@@ -187,7 +189,7 @@ add_check "server_ack_p95_ms" "1" "$ACK_P95" "<=" "$ACK_P95_MAX_MS"
 add_check "server_broadcast_p95_ms" "1" "$BROADCAST_P95" "<=" "$BROADCAST_P95_MAX_MS"
 add_check "server_hammer_p95_ms" "$REQUIRE_HAMMER" "$HAMMER_P95" "<=" "$HAMMER_P95_MAX_MS"
 add_check "server_catchup_p95_ms" "$REQUIRE_CATCHUP" "$CATCHUP_P95" "<=" "$CATCHUP_P95_MAX_MS"
-add_check "server_seq_gap_count" "0" "$SEQ_GAPS" "==" "0"
+add_check "server_seq_gap_count" "1" "$SEQ_GAPS" "==" "0"
 add_check "server_backpressure_force_close" "0" "$BACKPRESSURE_CLOSES" "==" "0"
 
 if [ -n "$CLIENT_SUMMARY" ]; then
@@ -203,7 +205,9 @@ if [ -n "$CLIENT_SUMMARY" ]; then
   add_client_observed "client_connect_or_session_p95_ms" "$CLIENT_CONN_P95" "observed_only_not_server_slo"
 fi
 
-if [ "$FAILS" -eq 0 ]; then
+if [ "$REPORT_ONLY" = "1" ] && [ "$FAILS" -ne 0 ]; then
+  RESULT="FAIL-REPORTED"
+elif [ "$FAILS" -eq 0 ]; then
   RESULT="PASS"
 else
   RESULT="FAIL"
@@ -258,6 +262,7 @@ echo "evidence_dir=$OUT_DIR"
 echo "summary=$SUMMARY_MD"
 echo "gate=$GATE_TSV"
 
-if [ "$RESULT" = "FAIL" ] && [ "$REPORT_ONLY" != "1" ]; then
-  exit 1
+if [ "$RESULT" = "PASS" ] || [ "$RESULT" = "FAIL-REPORTED" ]; then
+  exit 0
 fi
+exit 1
