@@ -9,10 +9,10 @@
 //   cd apps/web && node scripts/smoke-multitab.mjs
 
 import { WebSocket } from 'ws';
+import { SCHEMA_VERSION } from './smoke-shared.mjs';
 
-const SCHEMA = 1;
-const HOST_HTTP = process.env.HOST_HTTP || 'http://localhost:8080';
-const HOST_WS = process.env.HOST_WS || 'ws://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
 const errors = [];
 
@@ -52,7 +52,7 @@ async function api(token, path, opts = {}) {
 const send = (ws, type, data, auctionId) => {
   ws.send(
     JSON.stringify({
-      schemaVersion: SCHEMA,
+      schemaVersion: SCHEMA_VERSION,
       type,
       auctionId,
       serverTimeMs: Date.now(),
