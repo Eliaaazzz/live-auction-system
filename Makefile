@@ -140,7 +140,7 @@ web-smoke-vickrey: ## T6: run only Vickrey/AuctionMode second-price closure smok
 	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) WEB_SMOKE_USE_PRESET_AUCTION="$(WEB_SMOKE_USE_PRESET_AUCTION)" npm run -s smoke:vickrey
 
 web-smoke-vickrey-prepare: ## T6: auto-prepare (up+seed) then run second-price smoke
-	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_USE_PRESET_AUCTION="$(WEB_SMOKE_USE_PRESET_AUCTION)" WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \
