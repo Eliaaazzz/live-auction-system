@@ -13,7 +13,7 @@
 
 import { WebSocket } from 'ws';
 
-const SCHEMA = 1;
+const SCHEMA = 2;
 const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 const TYPES = {
   ROOM_JOIN: 'ROOM_JOIN', BID_PLACE: 'BID_PLACE', PING: 'PING',
@@ -37,7 +37,8 @@ console.log('login →', { userId, nickname, tokenLen: token.length });
 
 const ws = new WebSocket(`ws://localhost:8080/ws?token=${encodeURIComponent(token)}`);
 const received = [];
-let bidSeqSeen = null;
+let snapshotSeq = null;
+let ownAccepted = null;
 
 const send = (type, data) => {
   const env = { schemaVersion: SCHEMA, type, auctionId: AUCTION_ID, serverTimeMs: Date.now(), data };
@@ -60,12 +61,15 @@ await new Promise((resolve, reject) => {
       env.type === TYPES.AUCTION_EXTENDED ? `extendCount=${env.data.extendCount} endAtMs=${env.data.endAtMs}` :
       '');
     if (env.type === TYPES.ROOM_SNAPSHOT) {
+      snapshotSeq = env.seq;
       // place a bid just above current price (snapshot showed currentPriceCents='10000')
       const amount = (BigInt(env.data.currentPriceCents) + 5000n).toString();
       send(TYPES.BID_PLACE, { clientBidId: 'cbid-smoke-' + Date.now(), amountCents: amount });
     }
     if (env.type === TYPES.BID_ACCEPTED) {
-      bidSeqSeen = env.seq;
+      if (ownAccepted === null && env.data?.userId === userId && (snapshotSeq === null || env.seq > snapshotSeq)) {
+        ownAccepted = env;
+      }
       setTimeout(() => {
         send(TYPES.PING, {});
         setTimeout(() => {
@@ -106,13 +110,19 @@ received.forEach((env) => {
   if (env.type === TYPES.BID_ACCEPTED) {
     must(typeof env.data.amountCents === 'string', `BID_ACCEPTED.amountCents not string`);
     must(typeof env.data.endAtMs === 'number', `BID_ACCEPTED.endAtMs not number`);
-    must(env.data.userId === userId, `BID_ACCEPTED.userId=${env.data.userId} expected ${userId}`);
-    must(env.data.status === 'LIVE', `BID_ACCEPTED.status=${env.data.status} expected LIVE`);
+    must(typeof env.seq === 'number', `BID_ACCEPTED.seq missing`);
   }
   if (env.type === TYPES.BID_REJECTED) {
     must(env.data.code === 'ERR_TOO_LOW', `BID_REJECTED.code=${env.data.code} expected ERR_TOO_LOW`);
   }
 });
+
+must(ownAccepted !== null, `missing own BID_ACCEPTED from userId=${userId}`);
+if (ownAccepted) {
+  must(ownAccepted.data.userId === userId, `own BID_ACCEPTED.userId=${ownAccepted.data.userId} expected ${userId}`);
+  must(ownAccepted.data.status === 'LIVE', `own BID_ACCEPTED.status=${ownAccepted.data.status} expected LIVE`);
+  must(ownAccepted.seq > (snapshotSeq ?? -1), `own BID_ACCEPTED.seq=${ownAccepted.seq} should be > snapshotSeq=${snapshotSeq}`);
+}
 
 console.log('\n=== results ===');
 console.log('events received (' + received.length + '):', seenTypes.join(' · '));

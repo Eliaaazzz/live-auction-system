@@ -18,6 +18,7 @@ import { WebSocket } from 'ws';
 
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
+const SCHEMA = 2;
 const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 
 async function devLogin() {
@@ -45,7 +46,7 @@ await new Promise((resolve) => {
   ws.on('open', () => {
     console.log('ws open · sending bad-schema ROOM_JOIN');
     ws.send(JSON.stringify({
-      schemaVersion: 999,
+      schemaVersion: SCHEMA + 1,
       type: 'ROOM_JOIN',
       auctionId: AUCTION_ID,
       serverTimeMs: Date.now(),
