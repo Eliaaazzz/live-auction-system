@@ -153,12 +153,23 @@ jobs:
         # T6 smoke scripts that drive the running backend through the same
         # contract surface the browser uses. Wired here because the stack is
         # up; per the team rule "no skipped CI tests" these run on every push.
-        # Sequential execution preserves deterministic shared-state behavior
-        # with existing fixtures (each smoke creates its own auction; wall
-        # time is the sum but each is short enough that the total is bounded).
+        # Sequential execution preserves deterministic shared-state behavior.
         timeout-minutes: 5
         working-directory: apps/web
-        run: npm run -s smoke:all
+        run: |
+          aimid="${AUCTION_ID:-}"
+          if [ -z "$aimid" ]; then
+            for f in ../../.load-auction-id ../../.e2e-auction-id; do
+              if [ -s "$f" ]; then aimid="$(cat "$f")"; break; fi
+            done
+          fi
+          if [ -z "$aimid" ]; then aimid="${VERIFY_AID:-}"; fi
+          if [ -n "$aimid" ]; then
+            echo "frontend smoke auction id: $aimid"
+            VERIFY_AID="$aimid" AUCTION_ID="$aimid" npm run -s smoke:all
+          else
+            npm run -s smoke:all
+          fi
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs
