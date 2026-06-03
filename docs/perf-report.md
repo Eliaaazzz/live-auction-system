@@ -136,6 +136,13 @@ If you perform a public remote rehearsal for a distributed run, execute the
 end-to-end sequence in [docs/deploy-rehearsal-card.md](deploy-rehearsal-card.md)
 to keep server-side and client-side evidence boundaries explicit.
 
+For repeated local load-smoke checks with one summary artifact:
+
+```sh
+REPEAT_LOAD_SMOKE_ARGS="--attempts 3 --interval 5 --json --strict" \
+  make load-smoke-repeat
+```
+
 For a single-shot operator flow, use:
 
 ```sh
@@ -154,6 +161,10 @@ BASE_URL="https://your-domain" \
 ```bash
 # full P0 gate
 make load            # 500/50/60s + post-load verify (~90 s including build)
+
+# repeated load smoke run + aggregate summary (recommended for trend checks)
+REPEAT_LOAD_SMOKE_ARGS="--attempts 5 --interval 2 --json" \
+  make load-smoke-repeat
 
 # CI-cheap regression smoke (same code, smaller N)
 make load-smoke      # 25/5/10s + post-load verify (~25 s)
