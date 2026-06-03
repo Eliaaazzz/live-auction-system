@@ -19,11 +19,22 @@ Environment thresholds:
   CATCHUP_P95_MAX_MS=${CATCHUP_P95_MAX_MS:-1000}
   REQUIRE_HAMMER=${REQUIRE_HAMMER:-1}
   REQUIRE_CATCHUP=${REQUIRE_CATCHUP:-1}
-  # When set to 1, checks are still evaluated and reported but non-zero exit is
+  # When set to 1/true/yes/on, checks are still evaluated and reported but non-zero exit is
   # suppressed so this becomes an evidence-only dry run.
   REPORT_ONLY=${REPORT_ONLY:-0}
 USAGE
   exit "$code"
+}
+
+is_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 die() {
@@ -205,7 +216,7 @@ if [ -n "$CLIENT_SUMMARY" ]; then
   add_client_observed "client_connect_or_session_p95_ms" "$CLIENT_CONN_P95" "observed_only_not_server_slo"
 fi
 
-if [ "$REPORT_ONLY" = "1" ] && [ "$FAILS" -ne 0 ]; then
+if is_true "$REPORT_ONLY" && [ "$FAILS" -ne 0 ]; then
   RESULT="FAIL-REPORTED"
 elif [ "$FAILS" -eq 0 ]; then
   RESULT="PASS"
