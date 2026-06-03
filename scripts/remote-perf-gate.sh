@@ -160,6 +160,11 @@ if [ -n "$CLIENT_SUMMARY" ]; then
   cp "$CLIENT_SUMMARY" "$OUT_DIR/client-summary.json"
 fi
 
+if ! jq -e 'type == "object"' "$SERVER_COPY" >/dev/null 2>&1; then
+  echo "error: ${SERVER_COPY} is not a valid JSON object (expected lumen /metrics snapshot)"
+  exit 1
+fi
+
 printf 'check\tstatus\tobserved\top\tthreshold\treason\n' > "$GATE_TSV"
 printf 'metric\tobserved_ms\tnote\n' > "$CLIENT_TSV"
 FAILS=0
