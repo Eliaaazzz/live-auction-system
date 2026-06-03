@@ -36,6 +36,8 @@ esac
     echo "git_head=$(git rev-parse --short=12 HEAD 2>/dev/null || true)"
     echo "git_branch=$(git branch --show-current 2>/dev/null || true)"
   fi
+  echo "require_ws_upgrade=${REQUIRE_WS_UPGRADE:-0}"
+  echo "ws_precheck_token_set=$([ -n "${WS_PRECHECK_TOKEN:-}" ] && echo true || echo false)"
   echo
   echo "This preflight reads public endpoints and does not inspect secrets."
 } > "$MANIFEST_FILE"
