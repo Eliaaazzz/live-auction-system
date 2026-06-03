@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -108,7 +109,7 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		ProductID      string          `json:"productId"`
-		Rules          model.Rules     `json:"rules"`
+		Rules          json.RawMessage `json:"rules"`
 		FactsConfirmed bool            `json:"factsConfirmed"`
 		ConfirmedFacts json.RawMessage `json:"confirmedFacts"`
 	}
@@ -119,12 +120,22 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "productId required")
 		return
 	}
-	if err := body.Rules.Validate(); err != nil {
+	var rules model.Rules
+	if err := json.Unmarshal(body.Rules, &rules); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid rules payload")
+		return
+	}
+	rules, err := normalizeCreateAuctionRules(body.Rules, rules)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := rules.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id := "auc_" + newID()
-	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
+	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
 		if err == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "product not found")
 			return
@@ -137,6 +148,154 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
+}
+
+func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (model.Rules, error) {
+	if strings.TrimSpace(string(rawRules)) == "" || strings.TrimSpace(string(rawRules)) == "null" {
+		return rules, nil
+	}
+	raw := make(map[string]json.RawMessage)
+	if err := json.Unmarshal(rawRules, &raw); err != nil {
+		return rules, errors.New("invalid rules payload")
+	}
+
+	hasStartPrice := false
+	if _, ok := raw["startPriceCents"]; ok {
+		hasStartPrice = true
+	}
+	hasStep := false
+	if _, ok := raw["incrementCents"]; ok {
+		hasStep = true
+	}
+	hasCapPrice := false
+	if _, ok := raw["capPriceCents"]; ok {
+		hasCapPrice = true
+	}
+	hasDurationSec := false
+	if _, ok := raw["durationSec"]; ok {
+		hasDurationSec = true
+	}
+	hasExtendWindow := false
+	if _, ok := raw["extendWindowSec"]; ok {
+		hasExtendWindow = true
+	}
+	hasExtend := false
+	if _, ok := raw["extendSec"]; ok {
+		hasExtend = true
+	}
+
+	if !hasStartPrice {
+		if cents, ok := raw["startCents"]; ok {
+			parsed, err := parseJSONCents(cents)
+			if err != nil {
+				return rules, errors.New("invalid startCents")
+			}
+			rules.StartPriceCents = parsed
+		} else if cents, ok := raw["reserveCents"]; ok {
+			parsed, err := parseJSONCents(cents)
+			if err != nil {
+				return rules, errors.New("invalid reserveCents")
+			}
+			rules.StartPriceCents = parsed
+		}
+	}
+	if !hasStep {
+		if cents, ok := raw["stepCents"]; ok {
+			parsed, err := parseJSONCents(cents)
+			if err != nil {
+				return rules, errors.New("invalid stepCents")
+			}
+			rules.IncrementCents = parsed
+		}
+	}
+	if !hasCapPrice {
+		if cents, ok := raw["capCents"]; ok {
+			parsed, err := parseJSONCents(cents)
+			if err != nil {
+				return rules, errors.New("invalid capCents")
+			}
+			rules.CapPriceCents = parsed
+		}
+	}
+
+	if !hasDurationSec {
+		if ms, ok := raw["durationMs"]; ok {
+			parsed, err := parseJSONInt64(ms)
+			if err != nil {
+				return rules, errors.New("invalid durationMs")
+			}
+			if parsed%1000 != 0 {
+				return rules, errors.New("invalid durationMs")
+			}
+			rules.DurationSec = parsed / 1000
+		}
+	}
+
+	if rawValue, ok := raw["extendWindowSec"]; ok {
+		parsed, err := parseJSONInt64(rawValue)
+		if err != nil {
+			return rules, errors.New("invalid extendWindowSec")
+		}
+		rules.ExtendWindowSec = parsed
+		hasExtendWindow = true
+	}
+	if rawValue, ok := raw["extendSec"]; ok {
+		parsed, err := parseJSONInt64(rawValue)
+		if err != nil {
+			return rules, errors.New("invalid extendSec")
+		}
+		rules.ExtendSec = parsed
+		hasExtend = true
+	}
+	if rawValue, ok := raw["maxExtensions"]; ok {
+		parsed, err := parseJSONInt64(rawValue)
+		if err != nil {
+			return rules, errors.New("invalid maxExtensions")
+		}
+		rules.MaxExtensions = parsed
+	}
+	if ms, ok := raw["antiSnipeWindowMs"]; ok && !hasExtendWindow {
+		parsed, err := parseJSONInt64(ms)
+		if err != nil {
+			return rules, errors.New("invalid antiSnipeWindowMs")
+		}
+		if parsed%1000 != 0 {
+			return rules, errors.New("invalid antiSnipeWindowMs")
+		}
+		rules.ExtendWindowSec = parsed / 1000
+		if !hasExtend && rules.ExtendWindowSec > 0 {
+			rules.ExtendSec = 30
+		}
+	}
+	return rules, nil
+}
+
+func parseJSONInt64(v json.RawMessage) (int64, error) {
+	trimmed := strings.TrimSpace(string(v))
+	if trimmed == "" || trimmed == "null" {
+		return 0, nil
+	}
+	var n int64
+	if err := json.Unmarshal(v, &n); err == nil {
+		return n, nil
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err == nil {
+		if strings.TrimSpace(s) == "" {
+			return 0, nil
+		}
+		out, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+		if err != nil {
+			return 0, err
+		}
+		return out, nil
+	}
+	return 0, errors.New("integer expected")
+}
+
+func parseJSONCents(v json.RawMessage) (model.Cents, error) {
+	parsed, err := parseJSONInt64(v)
+	return model.Cents(parsed), err
 }
 
 // GET /api/auctions/{id} -> room snapshot from Redis (404 if unknown).
@@ -175,6 +334,37 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, snap)
 }
 
+// GET /api/auctions?status=... -> auction list for seller.
+// Returns JSON array for lightweight admin list pages. Query `status` is
+// optional and filters by exact state match.
+func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	status := strings.TrimSpace(strings.ToUpper(r.URL.Query().Get("status")))
+	items, err := s.st.ListAuctions(r.Context(), userID, status)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	out := make([]any, len(items))
+	for i, it := range items {
+		out[i] = map[string]any{
+			"id":                it.ID,
+			"title":             it.ProductName,
+			"status":            it.Status,
+			"currentPriceCents": strconv.FormatInt(it.CurrentPriceCents, 10),
+			"winnerId":          it.WinnerID,
+			"winnerName":        it.WinnerName,
+			"createdAt":         it.CreatedAt,
+			"updatedAt":         it.UpdatedAt,
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // POST /api/auctions/{id}/freeze -> freeze_rules.lua (DRAFT -> SCHEDULED).
 func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
@@ -187,8 +377,30 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// §spec: seller must confirm AI facts before the auction can be frozen/started.
-	if !a.FactsConfirmed {
+	// freeze is idempotent for already-SCHEDULED auctions (frontend treats this
+	// as "already frozen"). The request may optionally carry the confirmed facts
+	// snapshot from VLM confirmation so the backend persists the seller's final
+	// edit results at the exact freeze transition.
+	var freezePayload struct {
+		FactsConfirmed *bool           `json:"factsConfirmed"`
+		ConfirmedFacts json.RawMessage `json:"confirmedFacts"`
+	}
+	if err := readJSONOptional(r, &freezePayload); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
+	// We preserve old callers that send an empty body (no payload). In that case
+	// `FactsConfirmed` stays nil and only the stored value is used.
+	wantsFactPersist := freezePayload.FactsConfirmed != nil && *freezePayload.FactsConfirmed
+	if wantsFactPersist {
+		if err := validateConfirmedFactsPayload(freezePayload.ConfirmedFacts); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if !a.FactsConfirmed && !wantsFactPersist {
+		// Keep early fast-fail for unchanged caller patterns that never provided
+		// facts confirmation with the freeze request.
 		writeJSON(w, http.StatusConflict, map[string]string{"code": model.CodeErrFacts})
 		return
 	}
@@ -215,6 +427,12 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 			code = model.CodeErrBadState
 			return nil
 		}
+		if wantsFactPersist {
+			if err := s.st.ConfirmAuctionFacts(r.Context(), aid, cur.SellerID, true, string(freezePayload.ConfirmedFacts)); err != nil {
+				return err
+			}
+			cur.FactsConfirmed = true
+		}
 		if !cur.FactsConfirmed {
 			code = model.CodeErrFacts
 			return nil
@@ -234,6 +452,56 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
+}
+
+var errInvalidConfirmedFactsPayload = errors.New("invalid confirmedFacts payload")
+
+func validateConfirmedFactsPayload(raw json.RawMessage) error {
+	rawJSON := strings.TrimSpace(string(raw))
+	if rawJSON == "" || rawJSON == "null" {
+		return errInvalidConfirmedFactsPayload
+	}
+	var payload struct {
+		Facts []map[string]any `json:"facts"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return errInvalidConfirmedFactsPayload
+	}
+	if len(payload.Facts) == 0 {
+		return errInvalidConfirmedFactsPayload
+	}
+	for _, fact := range payload.Facts {
+		field, ok := fact["field"].(string)
+		if !ok || strings.TrimSpace(field) == "" {
+			return errInvalidConfirmedFactsPayload
+		}
+		label, ok := fact["label"].(string)
+		if !ok || strings.TrimSpace(label) == "" {
+			return errInvalidConfirmedFactsPayload
+		}
+		status, ok := fact["status"].(string)
+		if !ok || (status != "confirmed" && status != "edited") {
+			return errInvalidConfirmedFactsPayload
+		}
+		value, ok := fact["value"]
+		if !ok || value == nil {
+			return errInvalidConfirmedFactsPayload
+		}
+		if _, ok := value.(string); !ok {
+			return errInvalidConfirmedFactsPayload
+		}
+		if highRisk, ok := fact["highRisk"]; ok {
+			if _, ok := highRisk.(bool); !ok {
+				return errInvalidConfirmedFactsPayload
+			}
+		}
+		if confidence, ok := fact["confidence"]; ok {
+			if _, ok := confidence.(float64); !ok {
+				return errInvalidConfirmedFactsPayload
+			}
+		}
+	}
+	return nil
 }
 
 // POST /api/auctions/{id}/start {durationMs?} -> start_auction.lua (SCHEDULED -> LIVE).
