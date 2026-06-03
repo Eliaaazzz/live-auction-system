@@ -261,6 +261,23 @@ cd <repo-root> && make web-smoke-vickrey-prepare
 - **优先级**:P0
 - **状态**:✅ `scripts/smoke-snapshot-fallback.mjs` (`npm run smoke:snapshot`) covers gap > 200 fallback to `ROOM_SNAPSHOT` instead of replay flood.
 
+### TC-T6-117 — 二价（Vickrey）闭环结算：赢者付次高价
+
+- **前置条件**:backend up, `make seed` 已执行，且 `scripts/smoke-vickrey.mjs` 可连接 `localhost:8080`
+- **测试步骤**:
+  1. `cd apps/web && npm run smoke:vickrey`
+  2. 场景A：3 个买家在同一拍场依次用 `11000/12000/25000` 报价（`increment=1000`, `reserve=10000`）
+  3. 观察 `AUCTION_SOLD`，校验 winner=25000 出价方且 `amountCents="12000"`
+  4. 场景B：仅 1 个买家用 `30000` 报价
+  5. 观察 `AUCTION_SOLD`，校验 winner=该买家且 `amountCents="10000"`（无次高价回退保留价）
+- **预期结果**:
+  - 两个场景均有 `AUCTION_SOLD`
+  - 场景A 中 winner 支付金额等于次高价（runner-up）
+  - 场景B 中 winner 支付金额等于 reserve/start（保留价回退）
+  - 运行过程无 `BID_REJECTED`，无超时
+- **优先级**:P0
+- **状态**:✅ `scripts/smoke-vickrey.mjs` 已覆盖二价闭环逻辑
+
 ### TC-T6-109 — Direct WS bypass + Origin allowlist
 
 - **前置条件**:`.env.local` 设 `VITE_WS_BASE=ws://localhost:8080`;backend `FRONTEND_ORIGIN=http://localhost:8080`(默认)
