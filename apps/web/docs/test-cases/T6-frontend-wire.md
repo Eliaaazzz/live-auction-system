@@ -36,7 +36,7 @@
 | TC-T6-014 | Vite 同源代理:client → ws://localhost:5173/ws → 后端,Origin 经 `changeOrigin:true` 改成 `http://localhost:8080` 命中 `FRONTEND_ORIGIN` 白名单 | code-verify `vite.config.js` + `apps/lumen/internal/auth/auth.go:36-41 OriginAllowed`;手测 Origin 通过 | P0 |
 | TC-T6-015 | Evidence 响应字段集 = `proto/evidence-card.md §1`;`hashBreakAtSeq` 仅 chainVerified=false 时存在;`order` 仅 auth 路径存在 | code-verify backend `handleEvidence:468-473` 条件 set;前端 `lib/evidence/types.js` types 匹配 | P0 |
 
-### 缺口型 (15) — 边界 / 推理 / executable 状态
+### 缺口型 (16) — 边界 / 推理 / executable 状态
 
 | ID | 标题 | 状态 | P |
 |---|---|---|---|
