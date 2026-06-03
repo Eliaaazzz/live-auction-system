@@ -9,8 +9,9 @@
 //   cd apps/web && node scripts/smoke-vickrey.mjs
 //
 // Advanced:
-//   WEB_SMOKE_USE_PRESET_AUCTION=1 WEB_SMOKE_AID=<id> (or VERIFY_AID/AUCTION_ID)
-//     → reuse an existing auction instead of creating one.
+//   WEB_SMOKE_USE_PRESET_AUCTION=1 and WEB_SMOKE_AID=<id>[,<id2>...]
+//   (or VERIFY_AID/AUCTION_ID)
+//     → reuse preset auction(s) by index per scenario.
 //
 // Exits 0 on PASS, 1 on any assertion failure.
 
@@ -22,9 +23,12 @@ const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:80
 const USE_PRESET_AUCTION =
   process.env.WEB_SMOKE_USE_PRESET_AUCTION === '1'
   || process.env.WEB_SMOKE_USE_PRESET_AUCTION === 'true';
-const PRESET_AUCTION_ID = USE_PRESET_AUCTION
+const PRESET_AUCTION_IDS = USE_PRESET_AUCTION
   ? resolveAuctionId({ scriptName: 'smoke-vickrey' })
-  : '';
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean)
+  : [];
 
 const errors = [];
 const must = (cond, msg) => {
@@ -108,19 +112,29 @@ async function runScenario({
   expectedWinnerNick,
   expectedAmountCents,
   expectedReserveCents = '10000',
+  presetAuctionIndex = 0,
 }) {
   console.log(`\n[scenario] ${title}`);
 
   const slug = title.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
   const seller = await devLogin(`vickrey-${slug}-seller`);
-  const { auctionId, reserveCents } = USE_PRESET_AUCTION
-    ? { auctionId: PRESET_AUCTION_ID, reserveCents: expectedReserveCents }
+  const presetAuctionId =
+    USE_PRESET_AUCTION && PRESET_AUCTION_IDS.length > presetAuctionIndex
+      ? PRESET_AUCTION_IDS[presetAuctionIndex]
+      : '';
+
+  const { auctionId, reserveCents } = presetAuctionId
+    ? { auctionId: presetAuctionId, reserveCents: expectedReserveCents }
     : await createSecondPriceAuction(seller.token, {
       durationSec: 9,
       capCents: '30000',
       reserveCents: expectedReserveCents,
       bidStepCents: '1000',
     });
+  if (!auctionId) {
+    must(false, `failed to resolve auction for scenario="${title}"`);
+    return;
+  }
 
   const bidders = await Promise.all(
     bids.map(async (bid) => ({
@@ -232,6 +246,7 @@ await runScenario({
   ],
   expectedWinnerNick: 'winner',
   expectedAmountCents: '12000',
+  presetAuctionIndex: 0,
 });
 
 await runScenario({
@@ -241,6 +256,7 @@ await runScenario({
   ],
   expectedWinnerNick: 'solo',
   expectedAmountCents: '10000',
+  presetAuctionIndex: 1,
 });
 
 if (errors.length === 0) {
