@@ -57,6 +57,7 @@
 | TC-T6-114 | AdminVLMFacts:5 条 facts 全部 confirm 后才能调 `api.freeze`;少于 5 时 freeze → 后端返回 `ERR_FACTS_NOT_CONFIRMED` | ✅ resolved in this update (`admin.jsx <AdminVLMFacts>` + `components/admin.test.jsx`) | P0(影响 demo)|
 | TC-T6-115 | 卖家自己出价被拒(seller self-bid)→ BID_REJECTED `code=ERR_NOT_ALLOWED` 文案 "当前账号不能出价此场" | ✅ `smoke-self-bid`（`smoke:all`） + `npm run smoke:selfbid`（后端 8080 起） | P2 |
 | TC-T6-116 | 单连接高频 BID_PLACE 被限流为 `ERR_RATE_LIMITED`：同连接 0.1s 内两次出价，后者 reject | `smoke:all`（含 `smoke:ratelimit`） + `npm run smoke:ratelimit`（后端 8080 起 + auc_demo 真实直播态） | P2 |
+| TC-T6-117 | 二价拍卖（Vickrey）闭环：赢者付次高价，单人场景回退保留价 | ✅ `smoke:vickrey`（`smoke:all`） + `npm run smoke:vickrey` | P0 |
 
 **Summary** (post-PR #51 #53 #54 + polish #63 #64 + test suite, 2026-05-27):
 - 覆盖项 15/15 通过 smoke + code-verify
