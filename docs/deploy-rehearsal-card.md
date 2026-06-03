@@ -67,6 +67,24 @@ larger concurrency tier.
    BASE_URL="$BASE_URL" make deploy-perf-rehearsal-100k
    ```
 
+   Copy-paste operator form (recommended):
+
+   ```sh
+   BASE_URL="https://auction.example.com" \
+     DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
+     DEPLOY_REHEARSAL_100K_TARGET=100000 \
+     DEPLOY_REHEARSAL_100K_AID=auc_demo \
+     DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
+     DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
+     DEPLOY_REHEARSAL_100K_REPORT_ONLY=0 \
+     PERF_GATE_CLIENT_SUMMARY="./client-summary.json" \
+     PERF_GATE_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)/perf-gate" \
+     make deploy-perf-rehearsal-100k
+   ```
+
+   Result artifacts are collected in `DEPLOY_REHEARSAL_OUT_DIR` and in `PERF_GATE_OUT_DIR`.
+   Keep both paths in the issue/meeting note so evidence is recoverable later.
+
    Capture the server metrics JSON at or near peak load. If a client runner such
    as k6 is used, keep its summary JSON, but do not use client RTT as the backend
    SLO source.
