@@ -200,7 +200,7 @@ func loadConfigFromEnv() loadConfig {
 		HammerP95Budget:    time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
 		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
-		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
+		ObserverStaggerMs:  envIntOrZero("LOAD_OBSERVER_STAGGER_MS", 10),
 		ResetMetricsForRun: envBool("LOAD_RESET_METRICS", true),
 	}
 }
@@ -208,6 +208,15 @@ func loadConfigFromEnv() loadConfig {
 func envBool(key string, def bool) bool {
 	if v := os.Getenv(key); v != "" {
 		return v == "1" || strings.EqualFold(v, "true")
+	}
+	return def
+}
+
+func envIntOrZero(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
 	}
 	return def
 }
