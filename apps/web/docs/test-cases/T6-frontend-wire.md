@@ -71,6 +71,7 @@
 - ✅ **103 newly executable as smoke** (PR `fari/T6-test-suite-v2`) — `scripts/smoke-snapshot-fallback.mjs` generates 220 bids across 3 buyers to push tip > gap=200, then reconnects with the original lastSeq and asserts a fresh ROOM_SNAPSHOT is sent instead of XRANGE replay flood
 - ✅ **115 newly executable as smoke** (本次 PR) — `scripts/smoke-self-bid.mjs` 用 seller 身份在自己拍场发 BID_PLACE 并断言 `BID_REJECTED` + `ERR_NOT_ALLOWED`
 - ✅ **113 newly executable as smoke** (本次更新) — `scripts/smoke-multitab.mjs` 用同账号两条 WS 连接验证 tab1 出价后 tab2 也观察到 `BID_ACCEPTED`
+- ✅ **117 newly executable as smoke** (本次补充) — `scripts/smoke-vickrey.mjs` 验证二价结算：winner 支付次高价；无 runner-up 时回退保留价
 - 已补: 108（ClockDriftIndicator DOM 组件断言已补）
 
 DOM-heavy browser-DOM 缺口仍在：104-107（均需 Playwright）。**112 已补到 `lib/ws.test.js` 的 resync 重连覆盖。** **100% of P0 gap probes are now under automated coverage.**
@@ -86,7 +87,7 @@ cd apps/web && npm run test:coverage  # with v8 coverage report
 Wire smoke (needs `make up && make seed`):
 \`\`\`bash
 cd apps/web && npm run smoke:all
-  # Runs all 9 smoke scripts sequentially:
+  # Runs all 10 smoke scripts sequentially:
   # · smoke:wire        — full round-trip (TC-T6-001…013)
   # · smoke:catchup     — lastSeq catchup (TC-T6-102)
   # · smoke:schema      — schema mismatch (TC-T6-110)
@@ -96,6 +97,7 @@ cd apps/web && npm run smoke:all
   # · smoke:selfbid     — seller self-bid rejection (TC-T6-115)
   # · smoke:ratelimit   — per-connection burst -> ERR_RATE_LIMITED (TC-T6-116)
   # · smoke:multitab    — same-account multi-tab BID_ACCEPTED propagation (TC-T6-113)
+  # · smoke:vickrey     — second-price settlement (runner-up pricing + reserve fallback)
 cd apps/web && npm run smoke:ratelimit
   # (Optional direct run for focused rate-limit assertion)
 cd apps/web && npm run smoke:selfbid
@@ -117,6 +119,8 @@ cd <repo-root> && make up && make seed && make web-smoke-selfbid
 cd <repo-root> && make web-smoke-selfbid-prepare
 cd <repo-root> && make up && make seed && make web-smoke-multitab
 cd <repo-root> && make web-smoke-multitab-prepare
+cd <repo-root> && make up && make seed && make web-smoke-vickrey
+cd <repo-root> && make web-smoke-vickrey-prepare
 \`\`\`
 
 | Suite | Cases | Targets |
@@ -137,6 +141,7 @@ cd <repo-root> && make web-smoke-multitab-prepare
 | `scripts/smoke-self-bid.mjs` | E2E | **TC-T6-115** (seller self-bid rejected as ERR_NOT_ALLOWED) |
 | `scripts/smoke-ratelimit.mjs` | E2E | **TC-T6-116** (same-socket burst -> `ERR_RATE_LIMITED`) |
 | `scripts/smoke-multitab.mjs` | E2E | **TC-T6-113** (same-account multi-tab bid propagation) |
+| `scripts/smoke-vickrey.mjs` | E2E | **TC-T6-117** (second-price closure: winner pays runner-up, no-runner-up fallback reserve) |
 
 ---
 
@@ -488,7 +493,7 @@ existing tooling and dev-log links don't break.
 
 | 测试方式 | 已覆盖 | 待补 |
 |---|---|---|
-| smoke (`smoke:all`) | 001, 004-013, 100, 101, 102, 103, 109 reg, 110, 113, 115, 116, 271 | 104-107 + DOM-heavy P4/P5 cases（待 Playwright） |
+| smoke (`smoke:all`) | 001, 004-013, 100, 101, 102, 103, 109 reg, 110, 113, 115, 116, 117, 271 | 104-107 + DOM-heavy P4/P5 cases（待 Playwright） |
 | code-verify (静态读后端 Go + 本地组件) | 002, 003, 014, 015, 106, 107, 110, 111, 112, 113, 114, 115, 200, 202-218, 220-225, 230, 234, 235, 240-244, 247-249, 250-254, 260-263, 270, 272, 273, 277, 278 | — |
 | manual visual | 待跑 | 014 origin walk · 106 bridge transition · 107 chain-broken · 110 reduced-motion · 112 PTR · 230-235 podium variants · 250-252 heat colors · 260 shake |
 | executable (browser e2e / Playwright) | smoke covers 100-103 / Vitest covers 104-105, 112, 114 | 106-107 visual assertions · 200-225 admin 全链 · 230-263 视觉断言 · 270-279 cross-cutting |
