@@ -269,10 +269,13 @@ cd <repo-root> && make web-smoke-vickrey-prepare
 - **前置条件**:backend up, `make seed` 已执行，且 `scripts/smoke-vickrey.mjs` 可连接 `localhost:8080`
 - **测试步骤**:
   1. `cd apps/web && npm run smoke:vickrey`
-  2. 场景A：3 个买家在同一拍场依次用 `11000/12000/25000` 报价（`increment=1000`, `reserve=10000`）
-  3. 观察 `AUCTION_SOLD`，校验 winner=25000 出价方且 `amountCents="12000"`
-  4. 场景B：仅 1 个买家用 `30000` 报价
-  5. 观察 `AUCTION_SOLD`，校验 winner=该买家且 `amountCents="10000"`（无次高价回退保留价）
+  2. （可选）使用既有拍卖复现：
+     `WEB_SMOKE_USE_PRESET_AUCTION=1 WEB_SMOKE_AID=<id1>[,<id2>] npm run smoke:vickrey`
+     （`id1/id2` 分别对应场景A/B）
+  3. 场景A：3 个买家在同一拍场依次用 `11000/12000/25000` 报价（`increment=1000`, `reserve=10000`）
+  4. 观察 `AUCTION_SOLD`，校验 winner=25000 出价方且 `amountCents="12000"`
+  5. 场景B：仅 1 个买家用 `30000` 报价
+  6. 观察 `AUCTION_SOLD`，校验 winner=该买家且 `amountCents="10000"`（无次高价回退保留价）
 - **预期结果**:
   - 两个场景均有 `AUCTION_SOLD`
   - 场景A 中 winner 支付金额等于次高价（runner-up）
