@@ -103,35 +103,35 @@ web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
 
 web-smoke:        ## T6: run web-side smoke scripts (requires stack up + seed, e.g. make up && make seed)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:all
+	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:all
 
 web-smoke-prepare: ## T6: prepare smoke prerequisites only (make up + make seed)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
 
 web-smoke-ratelimit: ## T6: run only TC-T6-116 (single-socket burst -> ERR_RATE_LIMITED)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:ratelimit
+	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:ratelimit
 
 web-smoke-ratelimit-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-116
 	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
 
 web-smoke-selfbid: ## T6: run only TC-T6-115 (seller self-bid rejected)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:selfbid
+	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:selfbid
 
 web-smoke-selfbid-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-115
 	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
 
 web-smoke-multitab: ## T6: run only TC-T6-113 (same-account bid on tab1 should be visible on tab2)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:multitab
+	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:multitab
 
 web-smoke-multitab-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-113
 	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
 
 web-smoke-vickrey: ## T6: run only Vickrey/AuctionMode second-price closure smoke
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:vickrey
+	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:vickrey
 
 web-smoke-vickrey-prepare: ## T6: auto-prepare (up+seed) then run second-price smoke
 	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
