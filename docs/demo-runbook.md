@@ -37,10 +37,12 @@ that proves it**, and the assertable signal to point at.
 | 1 | 卖家上传商品图，VLM 抽取事实 | "AI 抽取品牌/成色/瑕疵，高风险字段标注『卖家声明·AI 未验证』" | `make e2e-dummy-bid` (step: facts draft + factsConfirmed gate) | `highRiskFieldsDisclaimer` present; create-auction **forbidden** until confirmed |
 | 2 | 卖家 confirm/edit facts + 配规则 | "起拍价 / 加价步长 / 时长 / 反狙击窗口，卖家最终背书" | same e2e (freeze → `CodeOKFrozen`) | freeze returns `OK_FROZEN`; rules locked |
 | 3 | 开拍，多观众实时出价，AI 冒泡 | "开拍/跳涨/冷场30s/落锤四触发，AI 是旁路、非裁决" | same e2e (start → `OK_LIVE` → multi-WS bid → broadcast) | bidder **and** observer both get `BID_ACCEPTED` |
+| 3.5 | 结算规则（可选） | "可切二价模式：赢者支付第二高价（Vickrey）" | `admin` 端新建拍品规则栏 `rules.auctionMode`（`first_price` / `second_price`） | 秒表现场强调：终态成交价由 `close_auction` 写入与 `auctionMode` 决定 |
 | 4 | 末 N 秒反狙击，倒计时延长 | "最后时刻出价自动延时，反阻击" | UI (live) + `AUCTION_EXTENDED` event | `extendCount` badge increments — *see §3 note* |
 | 5 | 落锤 → 证据卡 | "成交即生成证据卡：图/价/timeline + `events_hash`" | `make verify-evidence` | exit 0; no `hash_break` — chain recomputes clean |
 | 6 | Replay Verifier consistent | "Stream / Redis / MySQL 三方一致 + hash 链校验" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
 | 7 | 监控面板 500/50 | "500 在线 + 50 活跃出价，ack/broadcast p95 达标，**seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
+| 7.5 | 规模演练（非 P0，可选） | "企业级并发边界盘查：10万级压测用于瓶颈归档，不作为演示硬闸" | `make load-100k`（演练机） | `seqGapCount` 与回放一致性为重点，失败需归档为容量边界证据 |
 | 8 | 故障演练 30s ×5 | "MySQL/WS/Timer/AI/Redis 各挂一段，证明降级 + 自愈" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; AI 挂时出价继续 (V9 P3) |
 
 > `make demo` runs nodes 1–3 (`e2e-dummy-bid`), 5 (`verify-evidence`), 6 (`verify`),
@@ -52,6 +54,10 @@ that proves it**, and the assertable signal to point at.
 ## 2. Three-minute script · 三分钟脚本
 
 Pre-flight (before the clock): `make up && make seed` so the stack is warm.
+If you're rehearsing frontend wire smoke specifically, you can use `make web-smoke-prepare` for
+the same up+seed bootstrap.
+If you want to validate the multi-tab visibility path (TC-T6-113), use
+`make web-smoke-multitab-prepare`.
 Open two tabs: `admin.html` (seller) and `room.html?auction=auc_demo` (buyer).
 
 | 时间 | 画面 | 旁白要点 |
@@ -82,9 +88,10 @@ drive an `AUCTION_EXTENDED`. Show node 4 one of two ways:
   are unit-tested in the server package.
 
 > **Open item (see T10 issue):** if we want node 4 to be a *first-class make
-> assertion* (`make demo-auction`: short auction → late bid → assert
-> `AUCTION_EXTENDED` → hammer → evidence), that's a small Go driver (`RunDemo`
-> extending `RunE2E`). Flagged for PDGGK/Elia — not blocking, the live UI covers it.
+> assertion*, add a dedicated demo-run target that executes a short-interval
+> live+late-bid sequence and asserts `AUCTION_EXTENDED` → hammer → evidence.
+> This is non-blocking right now because the live UI already covers the
+> anti-snipe behavior.
 
 ---
 
@@ -96,7 +103,7 @@ Rehearse **all three** on 2026-06-09. Never debug live — drop one rung.
    endpoint green, seed run, one manual bid 10 min before.
 2. **Local Docker** (rung 2) — `make demo` on the presenter's laptop. This is
    why the path is `make`-driven: the exact same assertions run offline. Have the
-   stack pre-warmed (`make up && make seed`) so cold-build time isn't on camera.
+   stack pre-warmed (`make up && make seed`, or `make web-smoke-prepare` before T6 smoke rehearsals) so cold-build time isn't on camera.
 3. **Backup recording** (rung 3) — pre-recorded full run + the 5 chaos clips (see
    §5). Play if both network and laptop fail.
 
@@ -124,5 +131,6 @@ Pre-record so rung 3 is complete (each is independently playable):
 - [ ] Public deploy health-green + seeded + one manual bid (T-10 min)
 - [ ] Backup recording + 5 chaos clips on local disk (not only cloud)
 - [ ] Grafana panel bookmarked + datasource live (`infra/grafana`, `infra/prometheus`)
+- [ ] **选做（演练）**  `make load-100k`（外部压测机）并归档《super-stretch》结果（非 P0）
 - [ ] Two browser tabs pre-opened (admin + room), sound on for AI/auctioneer audio
 - [ ] `AI uses Doubao, demo runs mock` line ready (the key was deprovisioned; mock path is honest + reproducible)
