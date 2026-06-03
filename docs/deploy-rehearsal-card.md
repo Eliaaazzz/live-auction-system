@@ -48,8 +48,9 @@ larger concurrency tier.
    ```
 
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
-   `metrics-summary.json`. The helper reads only public HTTP endpoints:
-   `/healthz`, `/metrics`, `/admin.html`, and `/room.html?auction=$AID`.
+   `metrics-summary.json`. The helper reads public endpoints:
+   `/healthz`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
+   and `/ws` (expects websocket upgrade `101`).
 
 3. Decide whether SRS is in scope.
 
@@ -138,6 +139,7 @@ larger concurrency tier.
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1` is intentionally documented |
+| WebSocket reachability | `/ws` returns successful websocket upgrade (`101`) with no preflight error | `/ws` fails or downgrades to non-websocket response during rehearsal path |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier | Any required server SLO row fails or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |
