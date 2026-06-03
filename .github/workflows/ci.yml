@@ -156,7 +156,7 @@ jobs:
         # `npm install` (not ci) for the same reason as the web job (vitest 4 /
         # vite 5 esbuild minor split: lockfile captures the top-level only).
         run: npm install --no-audit --no-fund
-      - name: frontend smoke scripts (TC-T6 wire/catchup/schema/401/antisnipe/snapshot/ratelimit)
+      - name: frontend smoke scripts (TC-T6 wire/catchup/schema/401/antisnipe/snapshot/ratelimit/multitab/vickrey)
         # T6 smoke scripts that drive the running backend through the same
         # contract surface the browser uses. Wired here because the stack is
         # up; per the team rule "no skipped CI tests" these run on every push.
