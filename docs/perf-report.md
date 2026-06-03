@@ -176,7 +176,7 @@ BASE_URL="https://your-domain" \
 For evidence-only remote checks, append:
 
 ```sh
-REPORT_ONLY=1 \
+DEPLOY_REHEARSAL_REPORT_ONLY=1 \
 ```
 
 for `deploy-perf-rehearsal`, or
