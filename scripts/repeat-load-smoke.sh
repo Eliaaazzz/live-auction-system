@@ -14,9 +14,13 @@ usage() {
 Usage:
   scripts/repeat-load-smoke.sh [options]
 
+Environment:
+  BASE_URL               Base URL for backend health checks (default: http://localhost:8080)
+
 Options:
   --attempts N       number of runs (default: 3)
   --interval SEC     sleep between attempts (default: 2)
+  --base-url URL     override BASE_URL for health check
   --strict           exit non-zero if any attempt fails
   --json             emit JSON summary at the end
   --up               run `make up` before first attempt (if stack not healthy)
@@ -33,6 +37,8 @@ OUTPUT_JSON=0
 ENSURE_UP=0
 CLEAN_LOGS=1
 CLEANUP_STACK=0
+BASE_URL="${BASE_URL:-http://localhost:8080}"
+BASE_URL="${BASE_URL%/}"
 
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
@@ -60,6 +66,11 @@ while [[ $# -gt 0 ]]; do
     --down)
       CLEANUP_STACK=1
       shift
+      ;;
+    --base-url)
+      BASE_URL="$2"
+      BASE_URL="${BASE_URL%/}"
+      shift 2
       ;;
     --no-clean-logs)
       CLEAN_LOGS=0
@@ -148,12 +159,12 @@ extract_auction_ids() {
 log_dir=".load-smoke-repeat"
 mkdir -p "$log_dir"
 
-if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
+if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf "${BASE_URL}/healthz" >/dev/null 2>&1; then
   echo ">>> bringing stack up before smoke loop"
   make up
 fi
 
-if ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
+if ! curl -sf "${BASE_URL}/healthz" >/dev/null 2>&1; then
   echo "healthz is not reachable; use --up or start stack first"
   exit 1
 fi

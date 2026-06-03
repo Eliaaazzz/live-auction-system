@@ -4,6 +4,9 @@ E2E_AID_FILE := .e2e-auction-id
 LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
+WEB_SMOKE_BASE_URL ?= http://localhost:8080
+WEB_SMOKE_BASE_URL := $(strip $(WEB_SMOKE_BASE_URL))
+WEB_SMOKE_BASE_URL := $(patsubst %/,%,${WEB_SMOKE_BASE_URL})
 LOAD_100K_REHEARSAL_ARGS ?= --confirm
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
@@ -62,8 +65,8 @@ review-scripts-check:
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
 	$(COMPOSE) up -d --build --wait --wait-timeout 300
-	@echo "admin:  http://localhost:8080/admin.html"
-	@echo "mobile: http://localhost:8080/room.html?auction=auc_demo"
+	@echo "admin:  $(WEB_SMOKE_BASE_URL)/admin.html"
+	@echo "mobile: $(WEB_SMOKE_BASE_URL)/room.html?auction=auc_demo"
 
 down:             ## stop stack + wipe volumes
 	$(COMPOSE) down -v
@@ -81,23 +84,23 @@ api-smoke-pr103: review-scripts-check ## T10 API smoke: auth/product/auction/evi
 	@./scripts/smoke-pr103-api.sh --base-url "$(or $(API_SMOKE_BASE_URL),http://localhost:8080)" $(if $(API_SMOKE_UP),--up,) $(if $(API_SMOKE_DOWN),--down,)
 
 web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
-	@if [ "$(WEB_SMOKE_AUTO_UP)" = "1" ] && ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then \
+	@if [ "$(WEB_SMOKE_AUTO_UP)" = "1" ] && ! curl -sf "$(WEB_SMOKE_BASE_URL)/healthz" >/dev/null 2>&1; then \
 		echo "INFO: WEB_SMOKE_AUTO_UP=1, starting stack (make up)..."; \
 		$(MAKE) up; \
 	fi
-	@if ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then \
-		echo "FAIL: backend not healthy at http://localhost:8080/healthz"; \
+	@if ! curl -sf "$(WEB_SMOKE_BASE_URL)/healthz" >/dev/null 2>&1; then \
+		echo "FAIL: backend not healthy at $(WEB_SMOKE_BASE_URL)/healthz"; \
 		echo "Fix: make up"; echo "Hint: make web-smoke-prepare"; exit 1; \
 	fi
 	@echo "Backend healthy."
 	@if [ "$(WEB_SMOKE_AUTO_SEED_FORCE)" = "1" ]; then \
 		echo "INFO: WEB_SMOKE_AUTO_SEED_FORCE=1, refreshing demo auction..."; \
 		$(MAKE) seed-fresh; \
-	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "http://localhost:8080/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
+	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
 		echo "INFO: WEB_SMOKE_AUTO_SEED=1, seeding demo auction..."; \
 		$(MAKE) seed; \
 	fi
-	@if ! curl -sf "http://localhost:8080/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
+	@if ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
 		echo "WARN: $(WEB_SMOKE_AID) missing or /api/auctions/$(WEB_SMOKE_AID) unavailable; run make seed."; \
 		echo "Hint: make web-smoke-prepare"; \
 		exit 1; \
@@ -600,8 +603,8 @@ demo: ## T10: full §12 demo path as ONE assertable run (needs Docker; leaves st
 	$(MAKE) chaos
 	@echo "+==============================================================+"
 	@echo "|  DEMO PATH GREEN -- every section 12 node asserted via make  |"
-	@echo "|  UI: http://localhost:8080/admin.html                        |"
-	@echo "|      http://localhost:8080/room.html?auction=auc_demo        |"
+	@echo "|  UI: $(WEB_SMOKE_BASE_URL)/admin.html                           |"
+	@echo "|      $(WEB_SMOKE_BASE_URL)/room.html?auction=auc_demo           |"
 	@echo "+==============================================================+"
 
 demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestration regression net

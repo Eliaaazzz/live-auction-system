@@ -14,6 +14,9 @@ usage() {
 Usage:
   scripts/rehearse-load-100k.sh [options]
 
+Environment:
+  BASE_URL               Base URL for backend health/metrics endpoints (default: http://localhost:8080)
+
 Options:
   --confirm            required; explicit opt-in for non-P0 rehearsal
   --allow-low-ulimit   forward LOAD_100K_ALLOW_LOW_ULIMIT=1 to preflight
@@ -21,6 +24,7 @@ Options:
   --attempts N         number of load runs (default: 1)
   --interval SEC       sleep between attempts (default: 0)
   --label STR          label suffix for output directory (default: timestamp)
+  --base-url URL       override BASE_URL for health/metrics checks
   --pack-dir DIR       base output dir (default: .load-100k-rehearsals)
   --up                 run `make up` before first attempt if health check fails
   --down               stop stack after all attempts finish
@@ -54,6 +58,8 @@ CONFIRM=0
 OUTPUT_JSON=0
 PACK_DIR_BASE=".load-100k-rehearsals"
 PACK_LABEL=""
+BASE_URL="${BASE_URL:-${TARGET_URL:-http://localhost:8080}}"
+BASE_URL="${BASE_URL%/}"
 ENSURE_UP=0
 CLEANUP_STACK=0
 LOAD_100K_ALLOW_LOW_ULIMIT=
@@ -114,6 +120,11 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pack-dir)
       PACK_DIR_BASE="$2"
+      shift 2
+      ;;
+    --base-url)
+      BASE_URL="$2"
+      BASE_URL="${BASE_URL%/}"
       shift 2
       ;;
     --up)
@@ -258,6 +269,9 @@ manifest_file="$PACK_DIR/manifest.json"
 
 echo "#run	status	rc	auction_id	auction_ids	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present" > "$summary_file"
 
+HEALTHZ_URL="${BASE_URL}/healthz"
+METRICS_URL="${BASE_URL}/metrics"
+
 echo "super-stretch rehearsal pack: $PACK_DIR"
 echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms"
 
@@ -265,12 +279,12 @@ LOAD_100K_CONFIRM=1 \
 LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}" \
 make load-100k-preflight
 
-if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
+if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf "$HEALTHZ_URL" >/dev/null 2>&1; then
   echo ">>> bringing stack up before rehearsal"
   make up
 fi
 
-if ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
+if ! curl -sf "$HEALTHZ_URL" >/dev/null 2>&1; then
   echo "healthz is not reachable; use --up or start stack first"
   exit 1
 fi
@@ -285,7 +299,7 @@ cleanup_tmp() {
   rm -f "$json_payload"
 }
 trap cleanup_tmp EXIT
-curl -sS http://localhost:8080/healthz > "$health_start_file" || true
+curl -sS "$HEALTHZ_URL" > "$health_start_file" || true
 
 extract_metric() {
   local line="$1"
@@ -372,7 +386,7 @@ while (( run_idx < ATTEMPTS )); do
     auction_id=""
   fi
 
-  curl -sS http://localhost:8080/metrics > "$metrics_file" || true
+  curl -sS "$METRICS_URL" > "$metrics_file" || true
 
   if [ "$rc" != "0" ]; then
     run_status="FAIL"
@@ -462,7 +476,7 @@ while (( run_idx < ATTEMPTS )); do
 done
 
 printf ']\n' >> "$json_payload"
-curl -sS http://localhost:8080/healthz > "$health_end_file" || true
+curl -sS "$HEALTHZ_URL" > "$health_end_file" || true
 
 pass_rate=0
 if (( ATTEMPTS > 0 )); then
@@ -487,6 +501,7 @@ jq -cn \
   --arg pack_dir_base "$PACK_DIR_BASE" \
   --arg ensure_up "$ENSURE_UP" \
   --arg cleanup_stack "$CLEANUP_STACK" \
+  --arg base_url "$BASE_URL" \
   --arg pass "$pass" \
   --arg failed "$failed" \
   --arg pass_rate "$pass_rate" \
@@ -517,7 +532,7 @@ jq -cn \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\")), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\")), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"
