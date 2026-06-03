@@ -4,13 +4,18 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"strings"
 )
 
 type Config struct {
 	HTTPAddr        string
 	MySQLDSN        string
 	RedisAddr       string
+	RedisUseTLS     bool
+	RedisPassword   string
 	AISidecarURL    string
 	JWTSecret       string
 	FrontendOrigin  string
@@ -33,15 +38,19 @@ const defaultEvidenceKey = "change-me-evidence-local-only"
 func Load() (Config, error) {
 	c := Config{
 		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		RedisAddr:       env("REDIS_ADDR", "localhost:6379"),
 		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
 		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
 		FrontendOrigin:  env("FRONTEND_ORIGIN", "http://localhost:8080"),
 		AppEnv:          env("APP_ENV", "dev"),
 		EnableDevLogin:  env("ENABLE_DEV_LOGIN", "true") == "true",
 		EvidenceHMACKey: env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
+		RedisPassword:   env("REDIS_PASSWORD", ""),
 	}
 	var err error
+	c.RedisAddr, c.RedisUseTLS, err = resolveRedisAddr()
+	if err != nil {
+		return c, err
+	}
 	c.MySQLDSN, err = resolveMySQLDSN(c.AppEnv)
 	if err != nil {
 		return c, err
@@ -65,8 +74,12 @@ func Load() (Config, error) {
 }
 
 func resolveMySQLDSN(appEnv string) (string, error) {
-	if dsn := env("MYSQL_DSN", ""); dsn != "" {
-		return dsn, nil
+	if dsn := strings.TrimSpace(env("MYSQL_DSN", "")); dsn != "" {
+		return normalizeMySQLDSN(dsn)
+	}
+
+	if dsn := strings.TrimSpace(env("MYSQL_URL", "")); dsn != "" {
+		return normalizeMySQLDSN(dsn)
 	}
 
 	host := env("MYSQL_HOST", "")
@@ -95,6 +108,85 @@ func resolveMySQLDSN(appEnv string) (string, error) {
 		dsn += "&tls=" + tls
 	}
 	return dsn, nil
+}
+
+func resolveRedisAddr() (string, bool, error) {
+	addr := strings.TrimSpace(env("REDIS_ADDR", ""))
+	if addr != "" {
+		if strings.Contains(addr, "://") {
+			return normalizeRedisAddr(addr)
+		}
+		return addr, false, nil
+	}
+	if raw := strings.TrimSpace(env("REDIS_URL", "")); raw != "" {
+		return normalizeRedisAddr(raw)
+	}
+	return "localhost:6379", false, nil
+}
+
+func normalizeRedisAddr(raw string) (string, bool, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL parse failed: %w", err)
+	}
+	if u.Scheme != "redis" && u.Scheme != "rediss" {
+		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL must use redis:// or rediss://, got %q", u.Scheme)
+	}
+	host := u.Hostname()
+	if host == "" {
+		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL must include host")
+	}
+	port := u.Port()
+	if port == "" {
+		port = "6379"
+	}
+	return net.JoinHostPort(host, port), u.Scheme == "rediss", nil
+}
+
+func normalizeMySQLDSN(raw string) (string, error) {
+	if !strings.Contains(raw, "://") {
+		return raw, nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("MYSQL_DSN/MYSQL_URL parse failed: %w", err)
+	}
+	if u.Scheme != "mysql" {
+		return "", fmt.Errorf("MYSQL_DSN/MYSQL_URL has unsupported scheme %q", u.Scheme)
+	}
+	user := u.User.Username()
+	password, _ := u.User.Password()
+	host := u.Hostname()
+	port := u.Port()
+	db := strings.TrimPrefix(u.Path, "/")
+	if user == "" {
+		return "", fmt.Errorf("MYSQL_DSN/MYSQL_URL must include user info")
+	}
+	if host == "" {
+		return "", fmt.Errorf("MYSQL_DSN/MYSQL_URL must include host")
+	}
+	if db == "" {
+		return "", fmt.Errorf("MYSQL_DSN/MYSQL_URL must include database path")
+	}
+	if port == "" {
+		port = "3306"
+	}
+	q := u.Query()
+	if _, ok := q["parseTime"]; !ok {
+		q.Set("parseTime", "true")
+	}
+	if _, ok := q["loc"]; !ok {
+		q.Set("loc", "UTC")
+	}
+	if _, ok := q["charset"]; !ok {
+		q.Set("charset", "utf8mb4")
+	}
+	encoded := q.Encode()
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, password, net.JoinHostPort(host, port), db)
+	if encoded == "" {
+		return dsn, nil
+	}
+	return dsn + "?" + encoded, nil
 }
 
 func env(key, def string) string {

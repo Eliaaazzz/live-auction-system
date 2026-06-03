@@ -32,7 +32,7 @@ type Server struct {
 // Serve connects datastores, starts the selected mode's background workers, and
 // serves HTTP (REST + WS + static web) until ctx is cancelled.
 func Serve(ctx context.Context, cfg config.Config, mode string) error {
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.RedisPassword, cfg.EvidenceHMACKey, cfg.RedisUseTLS)
 	if err != nil {
 		return err
 	}

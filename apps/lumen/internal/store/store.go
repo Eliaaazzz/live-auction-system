@@ -4,6 +4,7 @@
 package store
 
 import (
+	"crypto/tls"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -38,8 +39,15 @@ type Store struct {
 // evidenceKey is the HMAC key for the auction_events hash chain (T4); the writer
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
-func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+func New(ctx context.Context, redisAddr, mysqlDSN, redisPassword, evidenceKey string, redisUseTLS bool) (*Store, error) {
+	redisOpts := &redis.Options{
+		Addr:     redisAddr,
+		Password: redisPassword,
+	}
+	if redisUseTLS {
+		redisOpts.TLSConfig = &tls.Config{}
+	}
+	rdb := redis.NewClient(redisOpts)
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
 	}

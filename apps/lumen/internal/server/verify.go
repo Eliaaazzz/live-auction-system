@@ -43,7 +43,7 @@ func RunVerify(ctx context.Context, cfg config.Config, aid string) error {
 	if aid == "" {
 		aid = "auc_demo"
 	}
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.RedisPassword, cfg.EvidenceHMACKey, cfg.RedisUseTLS)
 	if err != nil {
 		return err
 	}
@@ -68,7 +68,7 @@ func RunVerifyEvidence(ctx context.Context, cfg config.Config, aid string) error
 	if aid == "" {
 		aid = "auc_demo"
 	}
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.RedisPassword, cfg.EvidenceHMACKey, cfg.RedisUseTLS)
 	if err != nil {
 		return err
 	}
