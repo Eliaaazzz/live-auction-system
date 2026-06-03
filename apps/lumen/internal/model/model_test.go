@@ -184,6 +184,29 @@ func TestRulesValidate(t *testing.T) {
 	}
 }
 
+func TestAuctionModeDefaultsAndValidation(t *testing.T) {
+	var r Rules
+	if got := r.AuctionModeOrDefault(); got != AuctionModeFirstPrice {
+		t.Fatalf("empty auctionMode -> %q want %q", got, AuctionModeFirstPrice)
+	}
+	if got := (Rules{AuctionMode: " "}).AuctionModeOrDefault(); got != AuctionModeFirstPrice {
+		t.Fatalf("blank auctionMode -> %q want %q", got, AuctionModeFirstPrice)
+	}
+
+	if err := (Rules{StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, AuctionMode: AuctionModeSecondPrice}).Validate(); err != nil {
+		t.Fatalf("second_price rules should be valid: %v", err)
+	}
+	if got := (Rules{AuctionMode: " vickrey "}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
+		t.Fatalf("auctionMode vickrey should normalize to second_price, got %q", got)
+	}
+	if got := (Rules{AuctionMode: "second-price"}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
+		t.Fatalf("auctionMode second-price should normalize to second_price, got %q", got)
+	}
+	if err := (Rules{StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, AuctionMode: "INVALID_MODE"}).Validate(); err == nil {
+		t.Fatal("invalid auctionMode should fail Validate")
+	}
+}
+
 // HT-090 (review doc): Cents.Scan must reject invalid SQL bytes, not silently 0.
 func TestHiddenCentsScanInvalidBytes(t *testing.T) {
 	var c Cents

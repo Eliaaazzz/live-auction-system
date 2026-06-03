@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"strconv"
 	"time"
 )
@@ -71,6 +72,12 @@ const (
 	CodeErrInternal        = "ERR_INTERNAL"            // dispatcher/store transport error (wire-only)
 	CodeErrFacts           = "ERR_FACTS_NOT_CONFIRMED" // freeze before seller confirmed AI facts
 	CodeErrBadInput        = "ERR_BAD_INPUT"           // malformed client message (missing/invalid fields)
+	CodeErrRateLimited     = "ERR_RATE_LIMITED"
+)
+
+const (
+	AuctionModeFirstPrice  = "first_price"
+	AuctionModeSecondPrice = "second_price"
 )
 
 // SchemaVersion is the WS wire-protocol schema version, stamped onto every
@@ -199,6 +206,7 @@ type RoomSnapshotRules struct {
 	CapCents  *string `json:"capCents"`
 	// ReserveCents mirrors StartPriceCents until a separate reserve rule lands.
 	ReserveCents      string `json:"reserveCents"`
+	AuctionMode       string `json:"auctionMode"`
 	MaxExtensions     int64  `json:"maxExtensions"`
 	AntiSnipeWindowMs int64  `json:"antiSnipeWindowMs"`
 }
@@ -264,6 +272,10 @@ type Rules struct {
 	IncrementCents  Cents `json:"incrementCents"`
 	CapPriceCents   Cents `json:"capPriceCents"`
 	DurationSec     int64 `json:"durationSec"`
+	// AuctionMode changes terminal payment logic only. Empty means first-price.
+	// first_price: winner pays their bid; second_price: winner pays runner-up
+	// (or reserve/start price if no runner-up).
+	AuctionMode    string `json:"auctionMode,omitempty"`
 	ExtendWindowSec int64 `json:"extendWindowSec"`
 	ExtendSec       int64 `json:"extendSec"`
 	// MaxExtensions caps anti-snipe extensions to bound an auction's lifetime
@@ -283,8 +295,29 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 		StepCents:         strconv.FormatInt(int64(r.IncrementCents), 10),
 		CapCents:          capCents,
 		ReserveCents:      strconv.FormatInt(int64(r.StartPriceCents), 10),
+		AuctionMode:       r.AuctionModeOrDefault(),
 		MaxExtensions:     r.MaxExtensions,
 		AntiSnipeWindowMs: r.ExtendWindowSec * 1000,
+	}
+}
+
+func (r Rules) AuctionModeOrDefault() string {
+	return CanonicalAuctionMode(r.AuctionMode)
+}
+
+func CanonicalAuctionMode(mode string) string {
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "" {
+		return AuctionModeFirstPrice
+	}
+	mode = strings.ReplaceAll(mode, "-", "_")
+	switch mode {
+	case AuctionModeFirstPrice, "first", "firstprice":
+		return AuctionModeFirstPrice
+	case AuctionModeSecondPrice, "vickrey", "second", "secondprice":
+		return AuctionModeSecondPrice
+	default:
+		return mode
 	}
 }
 
@@ -292,6 +325,11 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 // misconfigured auction is rejected at creation rather than producing a live but
 // unwinnable room. `capPriceCents == 0` means "no buy-now ceiling".
 func (r Rules) Validate() error {
+	switch r.AuctionModeOrDefault() {
+	case AuctionModeFirstPrice, AuctionModeSecondPrice:
+	default:
+		return fmt.Errorf("auctionMode must be one of: %s, %s", AuctionModeFirstPrice, AuctionModeSecondPrice)
+	}
 	switch {
 	case r.StartPriceCents < 0:
 		return fmt.Errorf("startPriceCents must be >= 0")

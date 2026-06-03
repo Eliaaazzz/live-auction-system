@@ -65,7 +65,10 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "auction_rules", "auction_mode", "VARCHAR(32) NOT NULL DEFAULT 'first_price'")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -193,6 +196,36 @@ func aidFromStateKey(k string) string {
 	return k[len(prefix) : len(k)-len(suffix)]
 }
 
+// ResetAuctionRedisState clears ephemeral hot-path Redis state for one auction so it
+// can be rebuilt deterministically (eg. local smoke reruns). This intentionally
+// removes stream, leaderboard, and dedupe keys and untracks any timer index
+// membership. It does NOT alter durable MySQL rows.
+func (s *Store) ResetAuctionRedisState(ctx context.Context, aid string) error {
+	if err := s.UntrackActive(ctx, aid); err != nil {
+		return err
+	}
+	if _, err := s.rdb.Del(ctx, stateKey(aid), lbKey(aid), streamKey(aid)).Result(); err != nil {
+		return err
+	}
+	pattern := fmt.Sprintf("auction:{%s}:dedupe:*", aid)
+	var cursor uint64
+	for {
+		keys, next, err := s.rdb.Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if _, err := s.rdb.Del(ctx, keys...).Result(); err != nil {
+				return err
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+	}
+}
+
 // ScanStateAIDs returns every auction id that has a state Hash (frozen/live/terminal)
 // by SCANning the keyspace. The Timer Worker uses this to reconcile the active index —
 // re-tracking any LIVE auction missing from auction:active (e.g. a TrackActive that
@@ -308,7 +341,7 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 // ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
 // (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
-	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid), lbKey(aid)}, PubChannel(aid))
 	if err != nil {
 		return "", 0, err
 	}
@@ -400,6 +433,10 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 	if m["startPriceCents"] == "" && m["incrementCents"] == "" && m["capPriceCents"] == "" {
 		return nil
 	}
+	mode := model.CanonicalAuctionMode(m["auctionMode"])
+	if mode != model.AuctionModeFirstPrice && mode != model.AuctionModeSecondPrice {
+		mode = model.AuctionModeFirstPrice
+	}
 	var capCents *string
 	if cap := moneyOrZero(m["capPriceCents"]); cap != "0" {
 		capCents = &cap
@@ -408,6 +445,7 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 		StepCents:         moneyOrZero(m["incrementCents"]),
 		CapCents:          capCents,
 		ReserveCents:      moneyOrZero(m["startPriceCents"]),
+		AuctionMode:       mode,
 		MaxExtensions:     parseInt(m["maxExtensions"]),
 		AntiSnipeWindowMs: parseInt(m["extendWindowSec"]) * 1000,
 	}
