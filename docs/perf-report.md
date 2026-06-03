@@ -173,6 +173,7 @@ make load            # 500/50/60s + post-load verify (~90 s including build)
 # repeated load smoke run + aggregate summary (recommended for trend checks)
 REPEAT_LOAD_SMOKE_ARGS="--attempts 5 --interval 2 --json" \
   make load-smoke-repeat
+# (JSON output includes seqGapCount and backpressureForceClose totals in `totals`)
 
 # CI-cheap regression smoke (same code, smaller N)
 make load-smoke      # 25/5/10s + post-load verify (~25 s)
