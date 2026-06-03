@@ -54,6 +54,9 @@ import (
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
 //	LOAD_AUCTION_ID        = ""     (optional: reuse an existing LIVE auction for sharded runs)
 //	LOAD_START_CENTS       = 100000 (first attempted bid amount base; shard planners may raise it)
+//	LOAD_BIDS_PER_BIDDER   = 0      (0 = unlimited until duration; 1 = each bidder bids once)
+//	LOAD_RETRY_TOO_LOW     = false  (retry ERR_TOO_LOW with a new higher amount until accepted)
+//	LOAD_BID_MAX_ATTEMPTS  = 25     (per logical bid when LOAD_RETRY_TOO_LOW=true)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
 // and on seq gap > 0. The error message lists every breach so CI fails LOUD.
@@ -72,8 +75,8 @@ func RunLoad(target string) error {
 		fmt.Printf("load setup: reusing existing auction %s (LOAD_AUCTION_ID)\n", aid)
 	}
 	fmt.Printf("LOAD_AUCTION_ID=%s\n", aid) // captured by `make load` for the downstream verifier
-	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v startCents=%d\n",
-		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval, cfg.StartAmountCents)
+	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v startCents=%d retryTooLow=%t maxAttempts=%d\n",
+		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval, cfg.StartAmountCents, cfg.RetryTooLow, cfg.BidMaxAttempts)
 
 	// Reset the /metrics percentiles for this run by reading the pre-run snapshot
 	// — the percentiles continue to accumulate, but we'll diff counters and
@@ -185,11 +188,14 @@ type loadConfig struct {
 	ObserverStaggerMs  int
 	AuctionID          string
 	StartAmountCents   int64
+	BidsPerBidder      int
+	RetryTooLow        bool
+	BidMaxAttempts     int
 }
 
 func loadConfigFromEnv() loadConfig {
 	return loadConfig{
-		Observers:          envInt("LOAD_OBSERVERS", 500),
+		Observers:          envIntAllowZero("LOAD_OBSERVERS", 500),
 		Bidders:            envInt("LOAD_BIDDERS", 50),
 		Duration:           time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
 		BidInterval:        time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
@@ -203,6 +209,9 @@ func loadConfigFromEnv() loadConfig {
 		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
 		AuctionID:          strings.TrimSpace(os.Getenv("LOAD_AUCTION_ID")),
 		StartAmountCents:   int64(envInt("LOAD_START_CENTS", loadStartCents)),
+		BidsPerBidder:      envInt("LOAD_BIDS_PER_BIDDER", 0),
+		RetryTooLow:        envBool("LOAD_RETRY_TOO_LOW", false),
+		BidMaxAttempts:     envInt("LOAD_BID_MAX_ATTEMPTS", 25),
 	}
 }
 
@@ -342,10 +351,15 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 }
 
 // runBidder opens one WS connection and sends BID_PLACE on a paced ticker, one
-// in flight at a time. Each amount is loadStartCents + ++amountCounter, so 50
-// concurrent bidders never collide on amount; each clientBidId encodes the
-// bidder index + a monotonic local counter so retries (none here, but defensive)
-// would be properly idempotent.
+// in flight at a time. Each amount is loadStartCents + ++amountCounter, so
+// concurrent bidders never intentionally collide on amount; each clientBidId
+// encodes the bidder index + a monotonic local counter so retries remain unique.
+//
+// With many simultaneous one-shot bidders, network scheduling can deliver a
+// higher amount first, advancing currentPrice and making lower in-flight amounts
+// legitimately ERR_TOO_LOW. LOAD_RETRY_TOO_LOW keeps the auction rule intact and
+// makes the harness model "each connected user eventually places one accepted
+// bid" by retrying with the next global higher amount.
 //
 // Resilience: a write-error tears the conn down and exits (the socket is
 // unusable); an ack timeout is logged via bidErrors but the loop continues so
@@ -364,44 +378,96 @@ func runBidder(ctx context.Context, target, token, aid string, idx int, cfg load
 
 	ticker := time.NewTicker(cfg.BidInterval)
 	defer ticker.Stop()
-	bidLocal := 0
+	attemptLocal := 0
+	acceptedLocal := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			amt := amountCounter.Add(1) // 100001, 100002, ...
-			bidLocal++
-			env, _ := model.NewEnvelope(model.TypeBidPlace, aid, 0, model.BidPlaceData{
-				ClientBidID: fmt.Sprintf("load_%d_%d", idx, bidLocal),
-				AmountCents: strconv.FormatInt(amt, 10),
-			})
-			_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
-			if err := c.WriteJSON(env); err != nil {
-				// A write failure means the socket is gone (TCP RST, server
-				// force-close, etc.); the conn is unusable so exit cleanly.
-				stats.bidErrors.Add(1)
+			if cfg.BidsPerBidder > 0 && acceptedLocal >= cfg.BidsPerBidder {
 				return
 			}
-			stats.bidsSent.Add(1)
-			// Clear the prior iteration's read deadline before waitForBidAccepted
-			// sets its own. Without this an earlier 2s deadline that already
-			// expired (but the read returned before we noticed) could shrink the
-			// effective wait window of the next call — biasing the bidErrors rate
-			// upward. waitForBidAccepted always sets its own fresh deadline on entry,
-			// so this is belt-and-suspenders for any future caller that doesn't.
-			_ = c.SetReadDeadline(time.Time{})
-			// Wait for the ack envelope for *this* bid: matching BID_ACCEPTED by
-			// amountCents (the originating socket also receives broadcast copies of
-			// other bidders' bids — skip those). One in-flight is enough at 50 × 10/s.
-			// On timeout we keep the bidder alive: a single slow ack must not
-			// silently shrink the active population (which would skew p95 low). The
-			// next tick's bid will land normally as long as the socket is healthy.
-			if err := waitForBidAccepted(c, strconv.FormatInt(amt, 10), 2*time.Second); err != nil {
-				stats.bidErrors.Add(1)
-				continue
+			accepted, keepAlive := placeLoadBid(c, aid, idx, cfg, stats, amountCounter, &attemptLocal)
+			if !keepAlive {
+				return
 			}
+			if accepted {
+				acceptedLocal++
+			}
+			if cfg.BidsPerBidder > 0 && acceptedLocal >= cfg.BidsPerBidder {
+				return
+			}
+		}
+	}
+}
+
+type bidOutcome struct {
+	Accepted bool
+	Code     string
+	Err      error
+}
+
+func placeLoadBid(c *websocket.Conn, aid string, idx int, cfg loadConfig, stats *loadStats,
+	amountCounter *atomic.Int64, attemptLocal *int) (accepted bool, keepAlive bool) {
+	maxAttempts := 1
+	if cfg.RetryTooLow {
+		maxAttempts = cfg.BidMaxAttempts
+	}
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		amt := amountCounter.Add(1)
+		*attemptLocal++
+		amount := strconv.FormatInt(amt, 10)
+		env, _ := model.NewEnvelope(model.TypeBidPlace, aid, 0, model.BidPlaceData{
+			ClientBidID: fmt.Sprintf("load_%d_%d", idx, *attemptLocal),
+			AmountCents: amount,
+		})
+		_ = c.SetWriteDeadline(time.Now().Add(2 * time.Second))
+		if err := c.WriteJSON(env); err != nil {
+			stats.bidErrors.Add(1)
+			return false, false
+		}
+		stats.bidsSent.Add(1)
+		_ = c.SetReadDeadline(time.Time{})
+
+		out := waitForBidOutcome(c, amount, 2*time.Second)
+		if out.Err != nil {
+			stats.bidErrors.Add(1)
+			return false, true
+		}
+		if out.Accepted {
 			stats.bidsAcked.Add(1)
+			return true, true
+		}
+		stats.bidsRejected.Add(1)
+		if !cfg.RetryTooLow || out.Code != model.CodeErrTooLow {
+			stats.bidErrors.Add(1)
+			return false, true
+		}
+	}
+	stats.bidErrors.Add(1)
+	return false, true
+}
+
+// waitForBidOutcome reads until the direct outcome for the one in-flight bid
+// arrives. BID_ACCEPTED is matched by amount because the socket also receives
+// room broadcasts for other bidders; BID_REJECTED is direct-only from ws.go.
+func waitForBidOutcome(c *websocket.Conn, amount string, d time.Duration) bidOutcome {
+	_ = c.SetReadDeadline(time.Now().Add(d))
+	for {
+		var env model.Envelope
+		if err := c.ReadJSON(&env); err != nil {
+			return bidOutcome{Err: err}
+		}
+		switch env.Type {
+		case model.TypeBidAccepted:
+			if bidAmount(env) == amount {
+				return bidOutcome{Accepted: true}
+			}
+		case model.TypeBidRejected:
+			var data model.BidRejectedData
+			_ = json.Unmarshal(env.Data, &data)
+			return bidOutcome{Code: data.Code}
 		}
 	}
 }
@@ -442,6 +508,12 @@ func (r loadReport) print() {
 	fmt.Printf("auction=%s elapsed=%v\n", r.AID, r.Elapsed)
 	fmt.Printf("topology(harness): observers=%d bidders=%d bidInterval=%v auctionDur=%v\n",
 		r.Config.Observers, r.Config.Bidders, r.Config.BidInterval, r.Config.AuctionDuration)
+	if r.Config.BidsPerBidder > 0 {
+		fmt.Printf("bid limit: bidsPerBidder=%d\n", r.Config.BidsPerBidder)
+	}
+	if r.Config.RetryTooLow {
+		fmt.Printf("retry: retryTooLow=true maxAttempts=%d\n", r.Config.BidMaxAttempts)
+	}
 	fmt.Printf("bidder: sent=%d acked=%d rejected=%d errors=%d\n",
 		r.BidderStats.Sent, r.BidderStats.Acked, r.BidderStats.Rejected, r.BidderStats.Errors)
 	fmt.Printf("observer: frames=%d readErrors=%d dialErrors=%d\n",
@@ -514,6 +586,12 @@ func (r loadReport) breaches() []string {
 	}
 	if r.BidderStats.Sent > 0 && r.BidderStats.Acked == 0 {
 		out = append(out, "no bids acked (path likely broken — verify before reading p95)")
+	}
+	if r.Config.BidsPerBidder > 0 {
+		want := int64(r.Config.Bidders * r.Config.BidsPerBidder)
+		if r.BidderStats.Acked < want {
+			out = append(out, fmt.Sprintf("accepted logical bids=%d < expected %d", r.BidderStats.Acked, want))
+		}
 	}
 	return out
 }

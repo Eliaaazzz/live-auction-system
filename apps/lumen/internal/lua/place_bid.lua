@@ -96,8 +96,9 @@ if lastEntry[1] then
 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard (ZADD GT keeps
--- each member's accepted max). Money is written as the canonical STRING so values
+-- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard. Keep each
+-- member's accepted max without ZADD GT so older Redis versions remain compatible.
+-- Money is written as the canonical STRING so values
 -- up to MAX_MONEY stay exact (a Lua number arg would format via %.14g and lose
 -- precision past 14 digits). cap==0 means "no buy-now ceiling".
 local capHit = capPriceCents > 0 and amount >= capPriceCents
@@ -110,7 +111,10 @@ local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 redis.call('HMSET', state_key, 'currentPriceCents', amountStr, 'winnerId', userId)
-redis.call('ZADD', lb_key, 'GT', amountStr, userId)
+local priorScore = redis.call('ZSCORE', lb_key, userId)
+if not priorScore or tonumber(priorScore) < amount then
+  redis.call('ZADD', lb_key, amountStr, userId)
+end
 
 local newEndAtMs = endAtMs
 local extendCount = 0

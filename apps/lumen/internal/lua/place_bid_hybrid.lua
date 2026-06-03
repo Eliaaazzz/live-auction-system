@@ -97,7 +97,7 @@ local lastStreamSeq = 0
 if lastEntry[1] then lastStreamSeq = tonumber(string.match(lastEntry[1][1], '^(%d+)')) or 0 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. ACCEPT (same as English): seq + state HMSET + leaderboard ZADD GT.
+-- 6. ACCEPT (same as English): seq + state HMSET + max leaderboard score.
 local capHit = capPriceCents > 0 and amount >= capPriceCents
 local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
   and (endAtMs - now) <= extendWindowSec * 1000
@@ -108,7 +108,10 @@ redis.call('HMSET', state_key,
   'currentPriceCents', amountStr,
   'winnerId', userId,
   'winnerDisplayName', displayName)
-redis.call('ZADD', lb_key, 'GT', amountStr, userId)
+local priorScore = redis.call('ZSCORE', lb_key, userId)
+if not priorScore or tonumber(priorScore) < amount then
+  redis.call('ZADD', lb_key, amountStr, userId)
+end
 
 local newEndAtMs = endAtMs
 local extendCount = 0

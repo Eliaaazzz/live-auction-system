@@ -81,10 +81,14 @@ local lastStreamSeq = 0
 if lastEntry[1] then lastStreamSeq = tonumber(string.match(lastEntry[1][1], '^(%d+)')) or 0 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. RECORD PRIVATELY. ZADD GT keeps each user's max sealed bid; the names hash
--- maps userId -> displayName for the reveal. The public leaderboard ZSET and the
--- state Hash currentPriceCents/winnerId are deliberately NOT touched (no leak).
-redis.call('ZADD', sz_key, 'GT', amountStr, userId)
+-- 6. RECORD PRIVATELY. Keep each user's max sealed bid without ZADD GT so older
+-- Redis versions remain compatible; the names hash maps userId -> displayName
+-- for the reveal. The public leaderboard ZSET and the state Hash
+-- currentPriceCents/winnerId are deliberately NOT touched (no leak).
+local priorScore = redis.call('ZSCORE', sz_key, userId)
+if not priorScore or tonumber(priorScore) < amount then
+  redis.call('ZADD', sz_key, amountStr, userId)
+end
 redis.call('HSET', sn_key, userId, displayName)
 local count = redis.call('ZCARD', sz_key)
 

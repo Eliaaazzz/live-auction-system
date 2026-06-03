@@ -19,6 +19,33 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// POST /api/login {nickname} -> {userId, token, nickname}. Public buyer login.
+// This keeps production dev-login disabled while still allowing browser users
+// to obtain a user-scoped bidding token. Seller/admin roles are not minted here.
+func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Nickname string `json:"nickname"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	nickname := strings.TrimSpace(body.Nickname)
+	if nickname == "" {
+		writeErr(w, http.StatusBadRequest, "nickname required")
+		return
+	}
+	userID := "user_" + slug(nickname)
+	if err := s.st.UpsertUser(r.Context(), userID, nickname, "user"); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{
+		"userId":   userID,
+		"token":    auth.Token(s.cfg.JWTSecret, userID),
+		"nickname": nickname,
+	})
+}
+
 // POST /api/dev-login {nickname, role?} -> {userId, token, nickname}. Dev only.
 func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.EnableDevLogin {

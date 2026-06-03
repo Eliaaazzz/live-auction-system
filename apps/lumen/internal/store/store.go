@@ -86,6 +86,9 @@ func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, re
 	if err != nil {
 		return nil, fmt.Errorf("mysql open: %w", err)
 	}
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
+	db.SetConnMaxLifetime(2 * time.Minute)
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
@@ -787,10 +790,8 @@ func (s *Store) StreamLen(ctx context.Context, aid string) (int64, error) {
 // ReadEventsAfter returns Stream events after lastID (exclusive). lastID==""
 // reads from the beginning.
 func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]StreamEvent, string, error) {
-	start := "-"
-	if lastID != "" {
-		start = "(" + lastID
-	}
+	start := streamRangeStart(lastID)
+	lastSeq := streamIDSeq(lastID)
 	msgs, err := s.rdb.XRange(ctx, streamKey(aid), start, "+").Result()
 	if err != nil {
 		return nil, lastID, err
@@ -798,15 +799,38 @@ func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]Stre
 	out := make([]StreamEvent, 0, len(msgs))
 	newLast := lastID
 	for _, m := range msgs {
+		seq := parseInt(valStr(m.Values, "seq"))
+		if lastSeq > 0 && seq <= lastSeq {
+			continue
+		}
 		out = append(out, StreamEvent{
 			ID:      m.ID,
-			Seq:     parseInt(valStr(m.Values, "seq")),
+			Seq:     seq,
 			Type:    valStr(m.Values, "type"),
 			Payload: valStr(m.Values, "payload"),
 		})
 		newLast = m.ID
 	}
 	return out, newLast, nil
+}
+
+func streamRangeStart(lastID string) string {
+	if lastID == "" {
+		return "-"
+	}
+	lastID = strings.TrimPrefix(lastID, "(")
+	if !strings.Contains(lastID, "-") {
+		lastID += "-0"
+	}
+	return lastID
+}
+
+func streamIDSeq(id string) int64 {
+	id = strings.TrimPrefix(id, "(")
+	if i := strings.IndexByte(id, '-'); i >= 0 {
+		id = id[:i]
+	}
+	return parseInt(id)
 }
 
 // --- small typed accessors for Lua/redis results ---

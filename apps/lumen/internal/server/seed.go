@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/config"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -60,5 +62,59 @@ func Seed(ctx context.Context, cfg config.Config) error {
 	_ = st.UpdateAuctionStatus(ctx, "auc_demo", model.StateLive)
 
 	log.Println("seed: created seller_demo, buyer_demo, prod_demo, auc_demo (LIVE)")
+	return nil
+}
+
+// SeedLoad creates a fresh LIVE auction tuned for high-concurrency load tests:
+// increment=1, no cap, no anti-snipe extension, and a long duration. It avoids
+// dev-login entirely so production mode can stay locked down while the harness
+// reuses the printed LOAD_AUCTION_ID.
+func SeedLoad(ctx context.Context, cfg config.Config, durationSec int64) error {
+	st, err := store.NewWithRedisPassword(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if durationSec <= 0 {
+		durationSec = 3600
+	}
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	sellerID := "seller_load_" + suffix
+	productID := "prod_load_" + suffix
+	aid := "auc_load_" + suffix
+
+	if err := st.UpsertUser(ctx, sellerID, "Load Seller", "seller"); err != nil {
+		return err
+	}
+	if err := st.CreateProduct(ctx, productID, sellerID, "Load Test Item", "https://example.com/load.jpg", "Load test auction"); err != nil {
+		return err
+	}
+	rules := model.Rules{
+		StartPriceCents: 100000,
+		IncrementCents:  1,
+		CapPriceCents:   0,
+		DurationSec:     durationSec,
+		ExtendWindowSec: 0,
+		ExtendSec:       0,
+		MaxExtensions:   0,
+	}
+	if err := st.CreateAuction(ctx, aid, productID, sellerID, rules, true, `{"facts":[]}`); err != nil {
+		return err
+	}
+	if code, err := st.FreezeRules(ctx, aid, sellerID, rules); err != nil {
+		return err
+	} else if code != model.CodeOKFrozen {
+		return fmt.Errorf("freeze %s returned %s", aid, code)
+	}
+	_ = st.UpdateAuctionStatus(ctx, aid, model.StateScheduled)
+	if code, _, err := st.StartAuction(ctx, aid, durationSec*1000); err != nil {
+		return err
+	} else if code != model.CodeOKLive {
+		return fmt.Errorf("start %s returned %s", aid, code)
+	}
+	_ = st.UpdateAuctionStatus(ctx, aid, model.StateLive)
+
+	fmt.Printf("LOAD_AUCTION_ID=%s\n", aid)
 	return nil
 }
