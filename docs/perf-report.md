@@ -122,7 +122,13 @@ LOAD_ACK_P95_MS=1000 LOAD_BROADCAST_P95_MS=1500 LOAD_SCRIPT_P99_MS=30 make load
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
   make load-100k-rehearse
 ```
-脚本会落库存为 `manifest.json / summary.tsv / per-run logs + metrics`，便于后续并发证明归档。
+脚本会落库存为：
+- `manifest.json`
+- `summary.tsv`
+- `health-start.json` / `health-end.json`
+- 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
+
+便于后续并发证明归档。
 
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
