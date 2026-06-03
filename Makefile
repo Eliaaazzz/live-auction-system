@@ -5,7 +5,7 @@ LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k verify verify-evidence build vet test fmt guard \
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-preflight verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke demo-auction \
         k6 k6-setup k6-run
@@ -109,7 +109,7 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
 
-load-100k:       ## Large-scale rehearsal: 100k connected, 2k active (non-gate, external environment only).
+load-100k: load-preflight ## Large-scale rehearsal: 100k connected, 2k active (non-gate, external environment only).
 	@echo "CAUTION: 100k rehearsal is non-gate and resource-heavy; run on external staging capacity only."
 	@echo "Tip: ensure file-descriptor limits and ulimits are tuned before start."
 	@$(MAKE) load \
@@ -126,6 +126,25 @@ load-100k:       ## Large-scale rehearsal: 100k connected, 2k active (non-gate, 
 		LOAD_AUCTION_DUR_SEC=1200 \
 		LOAD_OBSERVER_STAGGER_MS=20 \
 		LOAD_RESET_METRICS=1
+
+load-preflight:    ## Sanity checks before super-stretch runs.
+	@echo "[load-preflight] quick environment checks for super-stretch";
+	@ulimit_n=$$(ulimit -n 2>/dev/null || echo 0); \
+	if [ "$$ulimit_n" != "unlimited" ] && [ "$${ulimit_n:-0}" -lt 131072 ]; then \
+		echo "WARN: open file descriptors is $$ulimit_n (recommended >= 131072)"; \
+	fi; \
+	if command -v sysctl >/dev/null 2>&1; then \
+		local_port_range=$$(sysctl -n net.ipv4.ip_local_port_range 2>/dev/null || true); \
+		if [ -n "$$local_port_range" ]; then \
+			low=$$(echo "$$local_port_range" | awk '{print $$1}'); \
+			high=$$(echo "$$local_port_range" | awk '{print $$2}'); \
+			echo "INFO: kernel ip_local_port_range=$$local_port_range"; \
+			echo "INFO: ephemeral ports available for super-stretch: $$low..$$high"; \
+		else \
+			echo "INFO: kernel ip_local_port_range not exposed in this host."; \
+		fi; \
+	fi; \
+	echo "[load-preflight] done"
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
