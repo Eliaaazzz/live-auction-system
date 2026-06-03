@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/json"
+	"net/http"
+	"os"
 	"testing"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -171,5 +173,53 @@ func TestNormalizeCreateAuctionRulesRejectsMsFieldsWithoutSecondGranularity(t *t
 	_, err := normalizeCreateAuctionRules(json.RawMessage(`{"durationMs":1200000}`), model.Rules{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestT2SecondPriceAuctionsExposeAuctionModeInSnapshot(t *testing.T) {
+	target := os.Getenv("TARGET")
+	if target == "" {
+		target, _ = startTestServer(t)
+	}
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Second Price Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000,
+			IncrementCents:  1000,
+			CapPriceCents:   1000000,
+			DurationSec:     60,
+			ExtendWindowSec: 10,
+			ExtendSec:       10,
+			AuctionMode:     model.AuctionModeSecondPrice,
+		},
+		"factsConfirmed": true,
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+
+	var snap model.RoomSnapshotData
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID, &snap); err != nil {
+		t.Fatalf("get auction snapshot: %v", err)
+	}
+	if snap.Rules == nil {
+		t.Fatal("snapshot rules missing")
+	}
+	if got, want := snap.Rules.AuctionMode, model.AuctionModeSecondPrice; got != want {
+		t.Fatalf("auctionMode=%q want=%q", got, want)
 	}
 }
