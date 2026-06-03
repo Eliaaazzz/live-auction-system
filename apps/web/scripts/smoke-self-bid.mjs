@@ -17,7 +17,7 @@
 
 import { WebSocket } from 'ws';
 
-const SCHEMA = 1;
+const SCHEMA = 2;
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
 
