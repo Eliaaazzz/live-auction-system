@@ -6,7 +6,7 @@ Draft for PDGGK and Eliaaazzz review.
 
 Local development uses `.env` copied from `.env.example`. The real `DOUBAO_API_KEY` is filled only on a developer machine. The repository should ignore `.env` before anyone stores local credentials; if the root `.gitignore` is absent, PDGGK should decide when to create it and include `.env`.
 
-CI and deployment must read credentials from GitHub Secrets, not from committed files. Expected secret names are `DOUBAO_API_KEY`, `DOUBAO_ENDPOINT_ID`, `MYSQL_DSN` (legacy alias `MYSQL_URL`), `REDIS_ADDR`/`REDIS_URL`/`REDIS_PASSWORD`, and `JWT_SECRET`, with environment-specific values configured outside the repository.
+CI and deployment must read credentials from GitHub Secrets, not from committed files. Expected secret names are `DOUBAO_API_KEY`, `DOUBAO_ENDPOINT_ID`, `MYSQL_DSN` (legacy alias `MYSQL_URL`), `REDIS_ADDR`/`REDIS_URL`/`REDIS_PASSWORD`, and `JWT_SECRET`, with environment-specific values configured outside the repository. `REDIS_URL` may carry TLS and optional credentials when used.
 
 The shared Doubao API key is distributed privately between teammates only. It must not appear in GitHub issues, pull requests, commits, terminal logs, application logs, screenshots, recordings, or provider-console captures.
 
