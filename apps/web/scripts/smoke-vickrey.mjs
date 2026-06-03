@@ -8,13 +8,23 @@
 //   make up && make seed
 //   cd apps/web && node scripts/smoke-vickrey.mjs
 //
+// Advanced:
+//   WEB_SMOKE_USE_PRESET_AUCTION=1 WEB_SMOKE_AID=<id> (or VERIFY_AID/AUCTION_ID)
+//     → reuse an existing auction instead of creating one.
+//
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
+import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
-const SCHEMA = 1;
-const HOST_HTTP = process.env.HOST_HTTP || 'http://localhost:8080';
-const HOST_WS = process.env.HOST_WS || 'ws://localhost:8080';
+const USE_PRESET_AUCTION =
+  process.env.WEB_SMOKE_USE_PRESET_AUCTION === '1'
+  || process.env.WEB_SMOKE_USE_PRESET_AUCTION === 'true';
+const PRESET_AUCTION_ID = USE_PRESET_AUCTION
+  ? resolveAuctionId({ scriptName: 'smoke-vickrey' })
+  : '';
 
 const errors = [];
 const must = (cond, msg) => {
@@ -50,7 +60,7 @@ async function api(token, path, opts = {}) {
 function send(ws, type, auctionId, data) {
   ws.send(
     JSON.stringify({
-      schemaVersion: SCHEMA,
+      schemaVersion: SCHEMA_VERSION,
       type,
       auctionId,
       serverTimeMs: Date.now(),
@@ -92,17 +102,25 @@ async function createSecondPriceAuction(sellerToken, { durationSec = 8, capCents
   return { auctionId, reserveCents };
 }
 
-async function runScenario({ title, bids, expectedWinnerNick, expectedAmountCents }) {
+async function runScenario({
+  title,
+  bids,
+  expectedWinnerNick,
+  expectedAmountCents,
+  expectedReserveCents = '10000',
+}) {
   console.log(`\n[scenario] ${title}`);
 
   const slug = title.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
   const seller = await devLogin(`vickrey-${slug}-seller`);
-  const { auctionId, reserveCents } = await createSecondPriceAuction(seller.token, {
-    durationSec: 9,
-    capCents: '30000',
-    reserveCents: '10000',
-    bidStepCents: '1000',
-  });
+  const { auctionId, reserveCents } = USE_PRESET_AUCTION
+    ? { auctionId: PRESET_AUCTION_ID, reserveCents: expectedReserveCents }
+    : await createSecondPriceAuction(seller.token, {
+      durationSec: 9,
+      capCents: '30000',
+      reserveCents: expectedReserveCents,
+      bidStepCents: '1000',
+    });
 
   const bidders = await Promise.all(
     bids.map(async (bid) => ({
