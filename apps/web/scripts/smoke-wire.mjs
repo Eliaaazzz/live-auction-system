@@ -13,7 +13,7 @@
 
 import { WebSocket } from 'ws';
 
-const SCHEMA = 1;
+const SCHEMA = 2;
 const TYPES = {
   ROOM_JOIN: 'ROOM_JOIN', BID_PLACE: 'BID_PLACE', PING: 'PING',
   ROOM_SNAPSHOT: 'ROOM_SNAPSHOT', BID_ACCEPTED: 'BID_ACCEPTED', BID_REJECTED: 'BID_REJECTED',
