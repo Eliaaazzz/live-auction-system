@@ -37,6 +37,20 @@ is_true() {
   esac
 }
 
+normalize_bool() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      echo 1
+      ;;
+    0|false|no|off)
+      echo 0
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
+
 die() {
   echo "error: $*" >&2
   exit 2
@@ -76,7 +90,7 @@ add_check() {
   reason="ok"
 
   if [ -z "$observed" ]; then
-    if [ "$required" = "1" ]; then
+    if is_true "$required"; then
       status="FAIL"
       reason="missing_required_metric"
       FAILS=$((FAILS + 1))
@@ -116,6 +130,8 @@ CATCHUP_P95_MAX_MS="${CATCHUP_P95_MAX_MS:-1000}"
 REQUIRE_HAMMER="${REQUIRE_HAMMER:-1}"
 REQUIRE_CATCHUP="${REQUIRE_CATCHUP:-1}"
 REPORT_ONLY="${REPORT_ONLY:-0}"
+REQUIRE_HAMMER="$(normalize_bool "$REQUIRE_HAMMER")"
+REQUIRE_CATCHUP="$(normalize_bool "$REQUIRE_CATCHUP")"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
