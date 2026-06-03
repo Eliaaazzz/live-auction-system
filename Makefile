@@ -5,9 +5,40 @@ LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-100k-preflight verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke
+        demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json
+
+WEB_SMOKE_AUTO_UP ?= 0
+WEB_SMOKE_AUTO_SEED ?= 0
+WEB_SMOKE_AUTO_SEED_FORCE ?= 0
+REVIEW_REQUIRED_SCRIPTS := \
+  scripts/review-pr-dependency.sh \
+  scripts/review-project-status.sh \
+  scripts/review-open-prs.sh \
+  scripts/review-open-issues.sh \
+  scripts/review-blocker-digest.sh \
+  scripts/review-issue-ref-audit.sh \
+  scripts/review-root-cause.sh \
+  scripts/review-blocker-priority.sh \
+  scripts/review-issue-candidates.sh \
+  scripts/review-rest-audit.sh \
+  scripts/review-ops-summary.sh \
+  scripts/review-queue.sh \
+  scripts/review-smoke.sh \
+  scripts/smoke-pr103-api.sh
+
+## --- sanity ---
+review-scripts-check:
+	@missing=0; \
+	for script in $(REVIEW_REQUIRED_SCRIPTS); do \
+		if [ ! -f "$$script" ]; then \
+			echo "FAIL: required script missing: $$script"; missing=1; \
+		elif [ ! -x "$$script" ]; then \
+			echo "FAIL: required script not executable: $$script"; missing=1; \
+		fi; \
+	done; \
+	if [ "$$missing" != "0" ]; then exit 1; fi
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -23,6 +54,64 @@ logs:
 
 seed:             ## idempotent dev seed (user + product + LIVE auction)
 	$(COMPOSE) exec -T lumen /lumen seed
+
+seed-fresh:       ## forced seed for deterministic smoke (rebuild demo redis state)
+	$(COMPOSE) exec -T lumen /lumen seed --force
+
+api-smoke-pr103: review-scripts-check ## T10 API smoke: auth/product/auction/evidence/leaderboard/freeze paths and auth-guard checks
+	@./scripts/smoke-pr103-api.sh --base-url "$(or $(API_SMOKE_BASE_URL),http://localhost:8080)" $(if $(API_SMOKE_UP),--up,) $(if $(API_SMOKE_DOWN),--down,)
+
+web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
+	@if [ "$(WEB_SMOKE_AUTO_UP)" = "1" ] && ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then \
+		echo "INFO: WEB_SMOKE_AUTO_UP=1, starting stack (make up)..."; \
+		$(MAKE) up; \
+	fi
+	@if ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then \
+		echo "FAIL: backend not healthy at http://localhost:8080/healthz"; \
+		echo "Fix: make up"; echo "Hint: make web-smoke-prepare"; exit 1; \
+	fi
+	@echo "Backend healthy."
+	@if [ "$(WEB_SMOKE_AUTO_SEED_FORCE)" = "1" ]; then \
+		echo "INFO: WEB_SMOKE_AUTO_SEED_FORCE=1, refreshing demo auction..."; \
+		$(MAKE) seed-fresh; \
+	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "http://localhost:8080/api/auctions/auc_demo" >/dev/null 2>&1; then \
+		echo "INFO: WEB_SMOKE_AUTO_SEED=1, seeding demo auction..."; \
+		$(MAKE) seed; \
+	fi
+	@if ! curl -sf "http://localhost:8080/api/auctions/auc_demo" >/dev/null 2>&1; then \
+		echo "WARN: auc_demo missing or /api/auctions/auc_demo unavailable; run make seed."; \
+		echo "Hint: make web-smoke-prepare"; \
+		exit 1; \
+	fi
+	@echo "auc_demo seeded."
+
+web-smoke:        ## T6: run web-side smoke scripts (requires stack up + seed, e.g. make up && make seed)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
+	cd apps/web && npm run -s smoke:all
+
+web-smoke-prepare: ## T6: prepare smoke prerequisites only (make up + make seed)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+
+web-smoke-ratelimit: ## T6: run only TC-T6-116 (single-socket burst -> ERR_RATE_LIMITED)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
+	cd apps/web && npm run -s smoke:ratelimit
+
+web-smoke-ratelimit-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-116
+	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+
+web-smoke-selfbid: ## T6: run only TC-T6-115 (seller self-bid rejected)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
+	cd apps/web && npm run -s smoke:selfbid
+
+web-smoke-selfbid-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-115
+	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
+
+web-smoke-multitab: ## T6: run only TC-T6-113 (same-account bid on tab1 should be visible on tab2)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1
+	cd apps/web && npm run -s smoke:multitab
+
+web-smoke-multitab-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-113
+	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \
@@ -83,7 +172,7 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@# on failure so an operator can `make verify VERIFY_AID=<id>` manually.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+	set +e; set -o pipefail; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; fi; \
 	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
@@ -96,17 +185,45 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-smoke-$$(date +%Y%m%dT%H%M%S).log"; \
-	set +e; $(COMPOSE) --profile tools run --rm --build \
+	set +e; set -o pipefail; $(COMPOSE) --profile tools run --rm --build \
 		-e LOAD_OBSERVERS=25 -e LOAD_BIDDERS=5 -e LOAD_DURATION_SEC=10 \
 		-e LOAD_BID_INTERVAL_MS=100 \
 		-e LOAD_ACK_P95_MS=400 -e LOAD_BROADCAST_P95_MS=800 \
 		-e LOAD_HAMMER_P95_MS=2000 -e LOAD_SCRIPT_P99_MS=20 \
 		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
-		load 2>&1 | tee "$$logfile"; rc=$$?; set -e; \
+		load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
+load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks before very large-scale run).
+	@echo "Super-stretch rehearsal preflight (non-P0)."
+	@echo "- file-descriptor hard limit (ulimit -n): $$(ulimit -n)"
+	@echo "- backlog/port window:" \
+	&& if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then \
+		echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
+	else \
+		echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
+	fi
+
+load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders + 4 shards.
+	@echo "Super-stretch rehearsal for 100k concurrency requires dedicated load sender + high-limits host."
+	@$(MAKE) load-100k-preflight
+	@LOAD_OBSERVERS=100000 \
+		LOAD_BIDDERS=2000 \
+		LOAD_SHARDS=4 \
+		LOAD_DURATION_SEC=60 \
+		LOAD_BID_INTERVAL_MS=100 \
+		LOAD_ACK_P95_MS=800 \
+		LOAD_BROADCAST_P95_MS=1000 \
+		LOAD_HAMMER_P95_MS=2000 \
+		LOAD_SCRIPT_P99_MS=20 \
+		LOAD_CATCHUP_P95_MS=3000 \
+		LOAD_AUCTION_DUR_SEC=3600 \
+		LOAD_OBSERVER_STAGGER_MS=0 \
+		LOAD_RESET_METRICS=1 \
+		$(MAKE) load
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
@@ -127,7 +244,13 @@ vet:
 	go vet ./...
 
 test:
-	go test ./...
+	@all_packages=$$(go list ./...); \
+	packages=$$(printf '%s\n' "$$all_packages" | grep -v 'handoff/runs/.*/hidden-tests' || true); \
+	if [ -z "$$packages" ]; then \
+		echo "FAIL: no go test packages resolved"; \
+		exit 1; \
+	fi; \
+	printf '%s\n' "$$packages" | xargs go test
 
 fmt:
 	gofmt -l -w .
@@ -361,3 +484,49 @@ demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestrat
 	@echo ">>> demo-smoke [6/6] V9 P3 AI offline -> core bidding continues"
 	$(MAKE) e2e-ai-offline
 	@echo "demo-smoke GREEN -- demo path wiring intact"
+
+## --- review helpers (for Codex/maintainer triage) ---
+review-pr-dependency: review-scripts-check ## PR dependency readiness report (human readable, default: open PRs)
+	@./scripts/review-pr-dependency.sh
+
+review-pr-dependency-json: review-scripts-check ## PR dependency readiness report (machine JSON)
+	@./scripts/review-pr-dependency.sh --json-only
+
+review-queue-all: review-scripts-check ## full review queue in one pass (projects dashboard + issue ref audit + root-cause)
+	@./scripts/review-queue.sh --json-only github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-queue-all-strict: review-scripts-check ## review queue with strict blocker gate (non-zero on any blocker)
+	@./scripts/review-queue.sh --strict --json-only github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-smoke: review-scripts-check ## review script smoke check (JSON contracts + blocker math invariants)
+	@./scripts/review-smoke.sh github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-issue-candidates: review-scripts-check ## unassigned no-open-PR issues whose referenced items are closed/merged
+	@./scripts/review-issue-candidates.sh github.com/Eliaaazzz/live-auction-system 80 3
+
+review-ops-summary: review-scripts-check ## one-shot markdown review ops summary (snapshot + candidate issues)
+	@./scripts/review-ops-summary.sh github.com/Eliaaazzz/live-auction-system 80 3
+
+review-ops-summary-json: review-scripts-check ## review ops summary in machine JSON
+	@./scripts/review-ops-summary.sh --json github.com/Eliaaazzz/live-auction-system 80 3
+
+review-issue-ref-audit: review-scripts-check ## audit references for open issues (open refs vs closed refs)
+	@./scripts/review-issue-ref-audit.sh github.com/Eliaaazzz/live-auction-system 80 3
+
+review-rest-audit: review-scripts-check ## REST-only issue audit for API rate-limit fallback
+	@./scripts/review-rest-audit.sh github.com/Eliaaazzz/live-auction-system 80 3
+
+review-rest-audit-json: review-scripts-check ## REST-only issue audit in machine JSON
+	@./scripts/review-rest-audit.sh --json-only github.com/Eliaaazzz/live-auction-system 80 3
+
+review-root-cause: review-scripts-check ## consolidated review root-cause snapshot (blockers + candidates)
+	@./scripts/review-root-cause.sh github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-root-cause-json: review-scripts-check ## consolidated review root-cause snapshot in JSON
+	@./scripts/review-root-cause.sh --json-only github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-blocker-priority: review-scripts-check ## prioritized blocker list from root-cause (dependency-first)
+	@./scripts/review-blocker-priority.sh github.com/Eliaaazzz/live-auction-system 20 80 3
+
+review-blocker-priority-json: review-scripts-check ## prioritized blocker list in JSON
+	@./scripts/review-blocker-priority.sh --json-only github.com/Eliaaazzz/live-auction-system 20 80 3

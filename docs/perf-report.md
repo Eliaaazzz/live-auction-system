@@ -95,7 +95,7 @@ If `mismatch_at_seq=...` or `hash_break_at_seq=...` appears: the load was post-l
 
 ---
 
-## 6. Stretch (1k / 100; non-gate)
+## 6. Stretch / Super-stretch (非 P0 rehearsal)
 
 | Metric | Stretch budget | Result |
 |---|---|---|
@@ -106,6 +106,17 @@ Run via:
 ```bash
 LOAD_OBSERVERS=1000 LOAD_BIDDERS=100 LOAD_DURATION_SEC=60 make load
 ```
+
+Super-stretch（100k / 2k / 4-shards）目标：
+```bash
+make load-100k
+```
+（如需固定预算覆写，直接传入 LOAD_* 环境变量）
+```bash
+LOAD_OBSERVERS=100000 LOAD_BIDDERS=2000 LOAD_SHARDS=4 \
+LOAD_ACK_P95_MS=1000 LOAD_BROADCAST_P95_MS=1500 LOAD_SCRIPT_P99_MS=30 make load
+```
+
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
 ---
