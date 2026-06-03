@@ -379,13 +379,31 @@ describe('applyEvent · terminal states', () => {
   });
 
   it('AUCTION_NO_BID sets status without touching price', () => {
-    useAuctionStore.getState().applyEvent(env({ seq: 1, type: EventType.AUCTION_NO_BID, data: {} }));
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      type: EventType.BID_ACCEPTED,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'legacy_other', displayName: 'Legacy', endAtMs: Date.now() + 28_000 },
+    }));
+
+    useAuctionStore.getState().applyEvent(env({ seq: 2, type: EventType.AUCTION_NO_BID, data: {} }));
+    const s = useAuctionStore.getState();
     expect(useAuctionStore.getState().status).toBe('NO_BID');
+    expect(s.currentCents).toBe('11000000');
+    expect(s.winnerId).toBe('legacy_other');
   });
 
   it('AUCTION_CANCELLED sets status without touching price', () => {
-    useAuctionStore.getState().applyEvent(env({ seq: 1, type: EventType.AUCTION_CANCELLED, data: {} }));
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      type: EventType.BID_ACCEPTED,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'legacy_other', displayName: 'Legacy', endAtMs: Date.now() + 28_000 },
+    }));
+
+    useAuctionStore.getState().applyEvent(env({ seq: 2, type: EventType.AUCTION_CANCELLED, data: {} }));
+    const s = useAuctionStore.getState();
     expect(useAuctionStore.getState().status).toBe('CANCELLED');
+    expect(s.currentCents).toBe('11000000');
+    expect(s.winnerId).toBe('legacy_other');
   });
 });
 
