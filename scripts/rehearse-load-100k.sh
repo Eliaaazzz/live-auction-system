@@ -320,6 +320,7 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   echo ">>> run #${run_idx}/${ATTEMPTS}: $run_tag"
+  auction_id=""
   set +e
   LOAD_OBSERVERS="$LOAD_OBSERVERS" \
   LOAD_BIDDERS="$LOAD_BIDDERS" \
@@ -341,6 +342,7 @@ while (( run_idx < ATTEMPTS )); do
   rc="${PIPESTATUS[0]}"
   set -e
 
+  auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
   curl -sS http://localhost:8080/metrics > "$metrics_file" || true
 
   if [ "$rc" != "0" ]; then
@@ -371,7 +373,6 @@ while (( run_idx < ATTEMPTS )); do
   counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
   seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
   backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
-  auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
 
   total_read_errors=$((total_read_errors + observer_read_errors))
   total_dial_errors=$((total_dial_errors + observer_dial_errors))
@@ -488,6 +489,6 @@ if [[ "$CLEANUP_STACK" == "1" ]]; then
   make down
 fi
 
-  if (( failed > 0 )); then
+if (( failed > 0 )); then
   exit 1
 fi
