@@ -296,8 +296,22 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 	perf_out="$$out_dir/perf-gate"; \
 	if [ -n "$(PERF_GATE_OUT_DIR)" ]; then perf_out="$(PERF_GATE_OUT_DIR)"; fi; \
 	if [ -n "$(PERF_GATE_CLIENT_SUMMARY)" ]; then \
+		ACK_P95_MAX_MS="$(ACK_P95_MAX_MS)" \
+		BROADCAST_P95_MAX_MS="$(BROADCAST_P95_MAX_MS)" \
+		HAMMER_P95_MAX_MS="$(HAMMER_P95_MAX_MS)" \
+		CATCHUP_P95_MAX_MS="$(CATCHUP_P95_MAX_MS)" \
+		REQUIRE_HAMMER="$(REQUIRE_HAMMER)" \
+		REQUIRE_CATCHUP="$(REQUIRE_CATCHUP)" \
+		REPORT_ONLY="$(REPORT_ONLY)" \
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --client-summary "$(PERF_GATE_CLIENT_SUMMARY)" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	else \
+		ACK_P95_MAX_MS="$(ACK_P95_MAX_MS)" \
+		BROADCAST_P95_MAX_MS="$(BROADCAST_P95_MAX_MS)" \
+		HAMMER_P95_MAX_MS="$(HAMMER_P95_MAX_MS)" \
+		CATCHUP_P95_MAX_MS="$(CATCHUP_P95_MAX_MS)" \
+		REQUIRE_HAMMER="$(REQUIRE_HAMMER)" \
+		REQUIRE_CATCHUP="$(REQUIRE_CATCHUP)" \
+		REPORT_ONLY="$(REPORT_ONLY)" \
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	fi; \
 	echo "rehearsal artifacts: preflight=$$out_dir manifest/status, perf= $$perf_out"

@@ -60,6 +60,13 @@ larger concurrency tier.
 
 4. Run the load or remote performance scenario.
 
+   For the local 500/50 benchmark lane, run `make deploy-perf-rehearsal`.
+   For the optional super-stretch remote lane, run:
+
+   ```sh
+   BASE_URL="$BASE_URL" make deploy-perf-rehearsal-100k
+   ```
+
    Capture the server metrics JSON at or near peak load. If a client runner such
    as k6 is used, keep its summary JSON, but do not use client RTT as the backend
    SLO source.
