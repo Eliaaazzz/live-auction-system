@@ -133,7 +133,7 @@ clock offset (P4).
 | `GET /api/auctions/:id` | Snapshot fallback | Pre-LIVE preview |
 | `GET /api/auctions/:id/leaderboard?n=10` | top-N by max accepted bid | Leaderboard component |
 | `GET /api/auctions/:id/evidence` | hash-chain timeline + chain head + optional order | Evidence screen |
-| `POST /api/auctions` | `{ auctionId }` | Admin: publish |
+| `POST /api/auctions` | `{ auctionId }` | Admin: publish（`rules` includes `auctionMode`，取值 `first_price` / `second_price`，省略时默认一价） |
 | `POST /api/auctions/:id/freeze` | facts-confirmed gate | Admin: enter SCHEDULED |
 | `POST /api/auctions/:id/start` | `{ endAtMs }` | Admin: go LIVE |
 | `POST /api/auctions/:id/cancel` | terminal | Admin: cancel (with 2-step confirm UI) |

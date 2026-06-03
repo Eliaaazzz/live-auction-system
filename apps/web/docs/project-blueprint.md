@@ -349,7 +349,7 @@ All endpoints served by `apps/lumen` on `:8080`. Vite proxy at `/api/*` routes t
 | `POST /api/dev-login` | no | `{ nickname }` | `{ userId, token, nickname }` | Session bootstrap |
 | `POST /api/products` | seller | `{ title, description, imageUrls[] }` | `{ productId }` | Admin: create |
 | `POST /api/facts/draft` | seller | `{ productId, imageUrls, title, description }` | VLM facts object (§4.5) | Admin: VLM page (proxied to ai-sidecar in T7) |
-| `POST /api/auctions` | seller | `{ productId, rules{} }` | `{ auctionId }` | Admin: publish |
+| `POST /api/auctions` | seller | `{ productId, rules{} }` (`auctionMode` 可选：`first_price` / `second_price`, 默认 `first_price`) | `{ auctionId }` | Admin: publish |
 | `GET /api/auctions/:id` | any | — | `RoomSnapshot` | Pre-LIVE preview, snapshot fallback |
 | `POST /api/auctions/:id/freeze` | owner | — | `{ code }` (`OK_FROZEN` / `ERR_FACTS_NOT_CONFIRMED` / `ERR_BAD_STATE`) | Admin: DRAFT → SCHEDULED |
 | `POST /api/auctions/:id/start` | owner | `{ durationMs? }` | `{ code, endAtMs }` | Admin: SCHEDULED → LIVE |
@@ -379,7 +379,7 @@ type WsEnvelope<T = unknown> = {
 
 | Type | Fields in `data` | Trigger | FE response |
 |---|---|---|---|
-| `ROOM_SNAPSHOT` | `status, currentPriceCents, winnerId, endAtMs, seq, rules?` | Sent after `ROOM_JOIN` or on gap > 200 reset | Reset seqguard watermark; initialize room state and seller-configured bid rules |
+| `ROOM_SNAPSHOT` | `status, currentPriceCents, winnerId, endAtMs, seq, rules?` | Sent after `ROOM_JOIN` or on gap > 200 reset | Reset seqguard watermark; initialize room state and seller-configured bid rules（`rules` 建议包含 `stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs, auctionMode`） |
 | `BID_ACCEPTED` | `seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs` | After `place_bid.lua` returns `OK_ACCEPTED`/`OK_EXTENDED`/`OK_SOLD` | Animate price flip; update countdown end; if self → F06 flash; if was-self → F07 banner |
 | `BID_REJECTED` | `code` (one of: `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_NOT_ALLOWED`, `ERR_BAD_INPUT`, `ERR_INTERNAL`, `ERR_RATE_LIMITED`) | `place_bid.lua` rejects | F08 shake + toast with `bidRejectCopy[code]` |
 | `AUCTION_EXTENDED` | `seq, endAtMs, extendCount` | `place_bid.lua` triggered anti-snipe | F02 light-sweep on countdown; ExtendBadge increment |
