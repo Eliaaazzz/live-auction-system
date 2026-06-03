@@ -4,8 +4,9 @@ E2E_AID_FILE := .e2e-auction-id
 LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
+LOAD_100K_REHEARSAL_ARGS ?= --confirm
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-100k-preflight verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json
 
@@ -224,6 +225,9 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 		LOAD_OBSERVER_STAGGER_MS=0 \
 		LOAD_RESET_METRICS=1 \
 		$(MAKE) load
+
+load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
+	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
