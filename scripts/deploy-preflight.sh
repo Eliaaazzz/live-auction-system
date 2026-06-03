@@ -89,6 +89,8 @@ record_ws() {
   local token="${WS_PRECHECK_TOKEN:-}"
   local expected_code_1xx="401"
   local expected_code_2xx="403"
+  local expected_upgrade="0"
+  local allow_ws_upgrade="0"
   local rc
   local http_code
 
@@ -97,12 +99,17 @@ record_ws() {
   if [ "$mode" = "1" ]; then
     expected_code_1xx="101"
     expected_code_2xx=""
+    expected_upgrade="1"
+    allow_ws_upgrade="1"
     if [ -z "$token" ]; then
       echo "==> WS_PRECHECK_TOKEN is empty; fallback to auth-gate check (401)"
       expected_code_1xx="401"
       expected_code_2xx="403"
+      expected_upgrade="0"
       mode="0"
     fi
+  elif [ -n "$token" ]; then
+    allow_ws_upgrade="1"
   fi
 
   if [ -n "$token" ]; then
@@ -140,13 +147,24 @@ record_ws() {
     return
   fi
 
-  if [[ "$http_code" != "$expected_code_1xx" && ( -z "$expected_code_2xx" || "$http_code" != "$expected_code_2xx" ) ]]; then
-    if [ "$rc" -eq 28 ] && [ "${expected_code_1xx}" = "101" ] && grep -q '^HTTP/.* 101 ' "$dir/headers.txt" 2>/dev/null; then
+  local is_expected=0
+  if [ "$http_code" = "$expected_code_1xx" ]; then
+    is_expected=1
+  elif [ -n "$expected_code_2xx" ] && [ "$http_code" = "$expected_code_2xx" ]; then
+    is_expected=1
+  elif [ "$allow_ws_upgrade" = "1" ] && [ "$http_code" = "101" ]; then
+    is_expected=1
+  fi
+
+  if [ "$is_expected" -ne 1 ]; then
+    if [ "$rc" -eq 28 ] && [ "$expected_upgrade" = "1" ] && grep -q '^HTTP/.* 101 ' "$dir/headers.txt" 2>/dev/null; then
       return
     fi
     failures=$((failures + 1))
     if [ "$expected_code_1xx" = "101" ]; then
-      echo "==> $name expected HTTP 101 websocket upgrade, got ${http_code}"
+      echo "==> $name expected websocket upgrade 101, got ${http_code}"
+    elif [ "$allow_ws_upgrade" = "1" ]; then
+      echo "==> $name expected HTTP ${expected_code_1xx}/${expected_code_2xx}/101, got ${http_code}"
     else
       echo "==> $name expected HTTP ${expected_code_1xx}/${expected_code_2xx}, got ${http_code}"
     fi
