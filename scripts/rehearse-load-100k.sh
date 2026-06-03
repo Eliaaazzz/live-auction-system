@@ -55,17 +55,17 @@ EOF
 
 ATTEMPTS=1
 INTERVAL=0
-CONFIRM=0
-OUTPUT_JSON=0
-RUN_CATCHUP_SMOKE=0
+CONFIRM="${CONFIRM:-0}"
+OUTPUT_JSON="${OUTPUT_JSON:-0}"
+RUN_CATCHUP_SMOKE="${RUN_CATCHUP_SMOKE:-0}"
 PACK_DIR_BASE=".load-100k-rehearsals"
 PACK_LABEL=""
 BASE_URL="${BASE_URL:-${TARGET_URL:-http://localhost:8080}}"
 BASE_URL="${BASE_URL%/}"
-ENSURE_UP=0
-CLEANUP_STACK=0
-LOAD_100K_ALLOW_LOW_ULIMIT=
-LOAD_100K_ALLOW_LOW_EPHEMERAL=
+ENSURE_UP="${ENSURE_UP:-0}"
+CLEANUP_STACK="${CLEANUP_STACK:-0}"
+LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}"
+LOAD_100K_ALLOW_LOW_EPHEMERAL="${LOAD_100K_ALLOW_LOW_EPHEMERAL:-}"
 LOAD_OBSERVERS=100000
 LOAD_BIDDERS=2000
 LOAD_SHARDS=4
@@ -99,6 +99,14 @@ is_true() {
       return 1
       ;;
   esac
+}
+
+as_bool01() {
+  if is_true "$1"; then
+    echo 1
+  else
+    echo 0
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -221,6 +229,14 @@ if [[ "${#POSITIONAL[@]}" -gt 0 ]]; then
   usage
   exit 2
 fi
+
+CONFIRM="$(as_bool01 "$CONFIRM")"
+OUTPUT_JSON="$(as_bool01 "$OUTPUT_JSON")"
+RUN_CATCHUP_SMOKE="$(as_bool01 "$RUN_CATCHUP_SMOKE")"
+ENSURE_UP="$(as_bool01 "$ENSURE_UP")"
+CLEANUP_STACK="$(as_bool01 "$CLEANUP_STACK")"
+LOAD_100K_ALLOW_LOW_ULIMIT="$(as_bool01 "${LOAD_100K_ALLOW_LOW_ULIMIT:-0}")"
+LOAD_100K_ALLOW_LOW_EPHEMERAL="$(as_bool01 "${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}")"
 
 if ! is_true "$CONFIRM"; then
   echo "Refuse to run super-stretch without --confirm."
