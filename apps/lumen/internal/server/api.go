@@ -756,6 +756,7 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		"status":            summary.Status,
 		"currentPriceCents": summary.CurrentPriceCents,
 		"winnerId":          summary.WinnerID,
+		"winnerDisplayName": summary.WinnerDisplayName,
 		"seq":               summary.Seq,
 		"eventsCount":       len(timeline),
 		"factsConfirmed":    a.FactsConfirmed,
@@ -777,11 +778,13 @@ type evidenceSummaryData struct {
 	Status            string
 	CurrentPriceCents string
 	WinnerID          string
+	WinnerDisplayName string
 	Seq               int64
 }
 
 func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order store.Order, hasOrder bool) evidenceSummaryData {
 	out := evidenceSummaryData{Status: mysqlStatus}
+	winnerNames := make(map[string]string)
 	for _, e := range timeline {
 		if e.Seq > out.Seq {
 			out.Seq = e.Seq
@@ -792,7 +795,9 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 			if json.Unmarshal(e.Payload, &p) == nil {
 				out.CurrentPriceCents = p.AmountCents
 				if p.UserID != "" {
+					winnerNames[p.UserID] = p.DisplayName
 					out.WinnerID = p.UserID
+					out.WinnerDisplayName = p.DisplayName
 				}
 			}
 		case model.TypeAuctionSold:
@@ -801,6 +806,7 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 				out.Status = p.Status
 				out.CurrentPriceCents = p.AmountCents
 				out.WinnerID = p.WinnerID
+				out.WinnerDisplayName = winnerNames[p.WinnerID]
 			}
 		case model.TypeAuctionNoBid:
 			out.Status = model.StateNoBid
@@ -811,6 +817,7 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 			// (Addresses @fariZzzz #45 TC-T4-111 finding.)
 			out.Status = model.StateCancelled
 			out.WinnerID = ""
+			out.WinnerDisplayName = ""
 			out.CurrentPriceCents = ""
 		}
 	}
@@ -818,6 +825,7 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 		out.Status = model.StateOrderCreated
 		out.CurrentPriceCents = strconv.FormatInt(int64(order.AmountCents), 10)
 		out.WinnerID = order.BuyerID
+		out.WinnerDisplayName = order.BuyerName
 	}
 	return out
 }

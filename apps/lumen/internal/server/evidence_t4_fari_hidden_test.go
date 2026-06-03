@@ -29,27 +29,28 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 	}
 
 	tests := []struct {
-		name        string
-		mysqlStatus string
-		timeline    []store.EvidenceEvent
-		order       store.Order
-		hasOrder    bool
-		wantStatus  string
-		wantPrice   string
-		wantWinner  string
-		wantSeq     int64
+		name                  string
+		mysqlStatus           string
+		timeline              []store.EvidenceEvent
+		order                 store.Order
+		hasOrder              bool
+		wantStatus            string
+		wantPrice             string
+		wantWinner            string
+		wantWinnerDisplayName string
+		wantSeq               int64
 	}{
 		{
 			name:        "live with bids — status from mysql, price/winner from last BID_ACCEPTED",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), bid(2, "u2", "12000")},
-			wantStatus:  model.StateLive, wantPrice: "12000", wantWinner: "u2", wantSeq: 2,
+			wantStatus:  model.StateLive, wantPrice: "12000", wantWinner: "u2", wantWinnerDisplayName: "", wantSeq: 2,
 		},
 		{
 			name:        "no_bid terminal",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{ev(1, model.TypeAuctionNoBid, model.AuctionNoBidData{Seq: 1})},
-			wantStatus:  model.StateNoBid, wantPrice: "", wantWinner: "", wantSeq: 1,
+			wantStatus:  model.StateNoBid, wantPrice: "", wantWinner: "", wantWinnerDisplayName: "", wantSeq: 1,
 		},
 		{
 			// TC-T4-111: a cancelled auction is not a sale — winner+price are cleared
@@ -57,21 +58,27 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			name:        "cancelled terminal — even with a prior bid, no winner/price carried",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionCancelled, map[string]any{"seq": 2})},
-			wantStatus:  model.StateCancelled, wantPrice: "", wantWinner: "", wantSeq: 2,
+			wantStatus:  model.StateCancelled, wantPrice: "", wantWinner: "", wantWinnerDisplayName: "", wantSeq: 2,
 		},
 		{
 			name:        "sold terminal, no order yet — from AUCTION_SOLD payload",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "u1", AmountCents: "11000", Status: model.StateSold})},
-			wantStatus:  model.StateSold, wantPrice: "11000", wantWinner: "u1", wantSeq: 2,
+			wantStatus:  model.StateSold, wantPrice: "11000", wantWinner: "u1", wantWinnerDisplayName: "", wantSeq: 2,
+		},
+		{
+			name:        "sold terminal can derive winnerDisplayName from BID_ACCEPTED displayName",
+			mysqlStatus: model.StateLive,
+			timeline:    []store.EvidenceEvent{ev(1, model.TypeBidAccepted, model.BidAcceptedData{Seq: 1, UserID: "seller", DisplayName: "出价王", AmountCents: "9000", Status: model.StateLive}), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "seller", AmountCents: "9000", Status: model.StateSold})},
+			wantStatus:  model.StateSold, wantPrice: "9000", wantWinner: "seller", wantWinnerDisplayName: "出价王", wantSeq: 2,
 		},
 		{
 			name:        "sold + order — order override promotes to ORDER_CREATED",
 			mysqlStatus: model.StateSold,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "u1", AmountCents: "11000", Status: model.StateSold})},
-			order:       store.Order{BuyerID: "u1", AmountCents: model.Cents(11000), Status: "created"},
+			order:       store.Order{BuyerID: "u1", BuyerName: "买家A", AmountCents: model.Cents(11000), Status: "created"},
 			hasOrder:    true,
-			wantStatus:  model.StateOrderCreated, wantPrice: "11000", wantWinner: "u1", wantSeq: 2,
+			wantStatus:  model.StateOrderCreated, wantPrice: "11000", wantWinner: "u1", wantWinnerDisplayName: "买家A", wantSeq: 2,
 		},
 	}
 
@@ -86,6 +93,9 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			}
 			if got.WinnerID != tc.wantWinner {
 				t.Errorf("winner=%q want %q", got.WinnerID, tc.wantWinner)
+			}
+			if got.WinnerDisplayName != tc.wantWinnerDisplayName {
+				t.Errorf("winnerDisplayName=%q want %q", got.WinnerDisplayName, tc.wantWinnerDisplayName)
 			}
 			if got.Seq != tc.wantSeq {
 				t.Errorf("seq=%d want %d", got.Seq, tc.wantSeq)

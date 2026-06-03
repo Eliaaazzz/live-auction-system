@@ -81,9 +81,9 @@ func (s *Store) CreateAuction(ctx context.Context, id, productID, sellerID strin
 		return err
 	}
 	if _, err = tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions); err != nil {
+		`INSERT INTO auction_rules (auction_id, start_price_cents, increment_cents, cap_price_cents, duration_sec, auction_mode, extend_window_sec, extend_sec, max_extensions)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.AuctionModeOrDefault(), r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -98,6 +98,17 @@ type Auction struct {
 	FactsConfirmed bool
 }
 
+type AuctionListItem struct {
+	ID                string    `json:"id"`
+	ProductName       string    `json:"title"`
+	Status            string    `json:"status"`
+	CurrentPriceCents int64     `json:"currentPriceCents"`
+	WinnerID          string    `json:"winnerId"`
+	WinnerName        string    `json:"winnerName"`
+	CreatedAt         time.Time `json:"createdAt"`
+	UpdatedAt         time.Time `json:"updatedAt"`
+}
+
 func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 	var a Auction
 	err := s.db.QueryRowContext(ctx,
@@ -109,16 +120,75 @@ func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 	return a, err
 }
 
+// ConfirmAuctionFacts persists seller-side VLM confirmation before freeze.
+// confirmedFacts is stored as JSON (TEXT/JSON column depending on environment).
+// Keep the field null when omitted to avoid writing an empty JSON object.
+func (s *Store) ConfirmAuctionFacts(ctx context.Context, id, sellerID string, factsConfirmed bool, confirmedFacts string) error {
+	var facts any
+	if confirmedFacts != "" {
+		facts = confirmedFacts
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET facts_confirmed = ?, confirmed_facts_json = ?, updated_at = ? WHERE id = ? AND seller_id = ?`,
+		factsConfirmed, facts, time.Now().UTC(), id, sellerID)
+	return err
+}
+
 func (s *Store) GetRules(ctx context.Context, aid string) (model.Rules, error) {
 	var r model.Rules
 	err := s.db.QueryRowContext(ctx,
-		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions
+		`SELECT start_price_cents, increment_cents, cap_price_cents, duration_sec, auction_mode, extend_window_sec, extend_sec, max_extensions
 		 FROM auction_rules WHERE auction_id = ?`, aid).
-		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions)
+		Scan(&r.StartPriceCents, &r.IncrementCents, &r.CapPriceCents, &r.DurationSec, &r.AuctionMode, &r.ExtendWindowSec, &r.ExtendSec, &r.MaxExtensions)
 	if errors.Is(err, sql.ErrNoRows) {
 		return r, ErrNotFound
 	}
 	return r, err
+}
+
+func (s *Store) ListAuctions(ctx context.Context, sellerID string, status string) ([]AuctionListItem, error) {
+	query := `
+		SELECT a.id, p.name, a.status, a.current_price_cents, a.winner_id, u.nickname, a.created_at, a.updated_at
+		FROM auctions a
+		LEFT JOIN products p ON p.id = a.product_id
+		LEFT JOIN users u ON u.id = a.winner_id
+		WHERE a.seller_id = ?
+	`
+	args := []interface{}{sellerID}
+	if status != "" {
+		query += " AND a.status = ?"
+		args = append(args, status)
+	}
+	query += " ORDER BY a.updated_at DESC, a.created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]AuctionListItem, 0)
+	for rows.Next() {
+		var item AuctionListItem
+		var productName, winnerID, winnerName sql.NullString
+		if err := rows.Scan(&item.ID, &productName, &item.Status, &item.CurrentPriceCents, &winnerID, &winnerName, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if productName.Valid {
+			item.ProductName = productName.String
+		}
+		if winnerID.Valid {
+			item.WinnerID = winnerID.String
+		}
+		if winnerName.Valid {
+			item.WinnerName = winnerName.String
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) error {
@@ -350,6 +420,7 @@ type Order struct {
 	AuctionID   string      `json:"auctionId"`
 	ProductID   string      `json:"productId"`
 	BuyerID     string      `json:"buyerId"`
+	BuyerName   string      `json:"buyerDisplayName"`
 	AmountCents model.Cents `json:"amountCents"` // money-as-string on the JSON boundary
 	Status      string      `json:"status"`
 	CreatedAt   time.Time   `json:"createdAt"`
@@ -404,9 +475,9 @@ func (s *Store) CreateOrderFromSold(ctx context.Context, aid, payload string) er
 func (s *Store) GetOrder(ctx context.Context, aid string) (Order, error) {
 	var o Order
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, auction_id, product_id, buyer_id, amount_cents, status, created_at
-		 FROM orders WHERE auction_id = ?`, aid).
-		Scan(&o.ID, &o.AuctionID, &o.ProductID, &o.BuyerID, &o.AmountCents, &o.Status, &o.CreatedAt)
+		`SELECT o.id, o.auction_id, o.product_id, o.buyer_id, o.amount_cents, o.status, o.created_at, u.nickname
+		 FROM orders o LEFT JOIN users u ON u.id = o.buyer_id WHERE o.auction_id = ?`, aid).
+		Scan(&o.ID, &o.AuctionID, &o.ProductID, &o.BuyerID, &o.AmountCents, &o.Status, &o.CreatedAt, &o.BuyerName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return o, ErrNotFound
 	}

@@ -167,4 +167,23 @@ describe('MobileEvidence · summary winner visibility', () => {
     const noBidRender = render(<MobileEvidence evidence={noBidEvidence} />);
     expect(noBidRender.container.textContent).not.toContain('成交方:');
   });
+
+  it('prefers winnerDisplayName when provided by evidence summary', () => {
+    const evidence = {
+      auctionId: 'a2',
+      status: 'ORDER_CREATED',
+      currentPriceCents: '15000',
+      winnerId: 'winner-user',
+      winnerDisplayName: '优先展示名字',
+      timeline: [
+        { seq: 1, eventType: 'BID_ACCEPTED', payload: '{"userId":"bid-user","displayName":"Bidder","amountCents":"11000"}', eventHash: 'aaa', prevHash: '000' },
+        { seq: 2, eventType: 'AUCTION_SOLD', payload: '{"winnerId":"winner-user","amountCents":"15000"}', eventHash: 'bbb', prevHash: 'aaa' },
+      ],
+      chainVerified: true,
+      eventsHash: 'ccc',
+    };
+
+    const renderResult = render(<MobileEvidence evidence={evidence} />);
+    expect(renderResult.container.textContent).toContain('拍卖状态: ORDER_CREATED · 成交方: 优先展示名字');
+  });
 });

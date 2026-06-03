@@ -340,12 +340,14 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		var ev struct {
-			ChainVerified bool   `json:"chainVerified"`
-			EventsHash    string `json:"eventsHash"`
-			Status        string `json:"status"`
-			Order         *struct {
-				BuyerID     string `json:"buyerId"`
-				AmountCents string `json:"amountCents"`
+			ChainVerified     bool   `json:"chainVerified"`
+			EventsHash        string `json:"eventsHash"`
+			Status            string `json:"status"`
+			WinnerDisplayName string `json:"winnerDisplayName"`
+			Order             *struct {
+				BuyerID          string `json:"buyerId"`
+				BuyerDisplayName string `json:"buyerDisplayName"`
+				AmountCents      string `json:"amountCents"`
 			} `json:"order"`
 		}
 		if err := getJSONAuth(hc, target+"/api/auctions/"+aid+"/evidence", buyer.Token, &ev); err == nil {
@@ -355,6 +357,9 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 				}
 				if ev.Order.BuyerID != buyer.UserID || ev.Order.AmountCents != "11000" {
 					t.Fatalf("order=%+v want buyer=%s amount=11000", ev.Order, buyer.UserID)
+				}
+				if ev.WinnerDisplayName != "T4 E2E Buyer" || ev.Order.BuyerDisplayName != "T4 E2E Buyer" {
+					t.Fatalf("winnerDisplayName/order.buyerDisplayName=%+v/%+v want T4 E2E Buyer", ev.WinnerDisplayName, ev.Order.BuyerDisplayName)
 				}
 				return // verified chain + correct order
 			}

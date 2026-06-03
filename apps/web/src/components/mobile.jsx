@@ -632,7 +632,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
   const soldEventWinner = events.slice().reverse().find((ev) => ev.type === 'AUCTION_SOLD' && ev.winner)?.winner;
   const topWinner = isWired
-    ? (evidence.winnerId ?? soldEventWinner ?? '—')
+    ? (evidence.winnerDisplayName ?? soldEventWinner ?? evidence.winnerId ?? '—')
     : (events.find((ev) => ev.winner)?.winner ?? '—');
 
   const showHint = (msg) => {

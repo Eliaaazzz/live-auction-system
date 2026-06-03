@@ -19,6 +19,7 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
   "status":           "ORDER_CREATED",   // MySQL projection / order-derived summary
   "currentPriceCents":"11000",           // money-as-string
   "winnerId":         "user_…",          // from verified timeline/order; "" if none
+  "winnerDisplayName":"昵称",            // from verified timeline/order; fallback to bid displayName, else ""
   "seq":              2,                  // last seq
   "eventsCount":      2,
   "factsConfirmed":   true,
@@ -43,7 +44,7 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
 
 ```jsonc
 { "id":"ord_auc_…", "auctionId":"auc_…", "productId":"prod_…", "buyerId":"user_…",
-  "amountCents":"11000", "status":"created", "createdAt":"2026-05-25T…Z" }
+  "buyerDisplayName":"昵称", "amountCents":"11000", "status":"created", "createdAt":"2026-05-25T…Z" }
 ```
 
 ## 2. Hash chain (the `[全员 approve]` core)
