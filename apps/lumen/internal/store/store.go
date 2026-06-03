@@ -441,10 +441,14 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 	if cap := moneyOrZero(m["capPriceCents"]); cap != "0" {
 		capCents = &cap
 	}
+	reserve := moneyOrZero(m["reserveCents"])
+	if reserve == "0" {
+		reserve = moneyOrZero(m["startPriceCents"])
+	}
 	return &model.RoomSnapshotRules{
 		StepCents:         moneyOrZero(m["incrementCents"]),
 		CapCents:          capCents,
-		ReserveCents:      moneyOrZero(m["startPriceCents"]),
+		ReserveCents:      reserve,
 		AuctionMode:       mode,
 		MaxExtensions:     parseInt(m["maxExtensions"]),
 		AntiSnipeWindowMs: parseInt(m["extendWindowSec"]) * 1000,

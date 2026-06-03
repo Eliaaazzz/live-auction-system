@@ -428,6 +428,42 @@ func TestPlaceBidSecondPriceCapHitFallsBackToReserveWhenNoRunnerUp(t *testing.T)
 	}
 }
 
+func TestPlaceBidSecondPriceCapHitFallsBackToReserveFieldWhenNoRunnerUp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.CapPriceCents = 50000
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+	if err := s.rdb.HSet(ctx, stateKey(aid), "reserveCents", "8000").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "50000", "U1"); err != nil || code != model.CodeOKSold {
+		t.Fatalf("bid cap-hit: code=%s err=%v", code, err)
+	}
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 ||
+		events[1].Type != model.TypeAuctionSold ||
+		events[1].ID != "2-0" ||
+		events[1].Seq != 2 {
+		t.Fatalf("stream=%+v", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.WinnerID != "u1" {
+		t.Fatalf("winner=%s want u1", sold.WinnerID)
+	}
+	if sold.AmountCents != "8000" {
+		t.Fatalf("auction sold amount=%s want 8000 (reserve field override)", sold.AmountCents)
+	}
+}
+
 func TestCloseAuctionSecondPriceUsesRunnerUpPrice(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -510,6 +546,49 @@ func TestCloseAuctionSecondPriceFallsBackToReserveWhenNoRunnerUp(t *testing.T) {
 	}
 	if sold.AmountCents != "10000" {
 		t.Fatalf("sold amount=%s want 10000 (reserve)", sold.AmountCents)
+	}
+}
+
+func TestCloseAuctionSecondPriceFallsBackToReserveFieldWhenNoRunnerUp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.CapPriceCents = 0
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+	if err := s.rdb.HSet(ctx, stateKey(aid), "reserveCents", "8000").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("single bidder bid: code=%s err=%v", code, err)
+	}
+
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := s.CloseAuction(ctx, aid)
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("close auction: code=%s err=%v", code, err)
+	}
+
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[1].Type != model.TypeAuctionSold || events[1].ID != "2-0" {
+		t.Fatalf("events=%+v", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.WinnerID != "u1" {
+		t.Fatalf("winner=%s want u1", sold.WinnerID)
+	}
+	if sold.AmountCents != "8000" {
+		t.Fatalf("sold amount=%s want 8000 (reserve field override)", sold.AmountCents)
 	}
 }
 

@@ -14,6 +14,22 @@ local state_key, lb_key, stream_key, dedupe_key = KEYS[1], KEYS[2], KEYS[3], KEY
 local userId, clientBidId, displayName, pub = ARGV[1], ARGV[2], ARGV[4], ARGV[5]
 local amountStr = ARGV[3]
 local amount = tonumber(amountStr)
+
+local function canonicalAuctionMode(mode)
+  if mode == nil then return 'first_price' end
+  mode = string.lower(mode)
+  mode = string.gsub(mode, '^%s*(.-)%s*$', '%1')
+  mode = string.gsub(mode, '%s', '_')
+  mode = string.gsub(mode, '-', '_')
+  if mode == 'first' or mode == 'first_price' or mode == 'firstprice' then
+    return 'first_price'
+  end
+  if mode == 'second' or mode == 'second_price' or mode == 'secondprice' or mode == 'vickrey' then
+    return 'second_price'
+  end
+  return mode
+end
+
 -- 2^53-1: above this a float64 (Lua number / Redis ZSET score) loses integer
 -- precision. Money is stored/compared as a string-exact int below this ceiling.
 local MAX_MONEY = 9007199254740991
@@ -48,7 +64,7 @@ end
 local s = redis.call('HMGET', state_key,
   'status', 'endAtMs', 'paused', 'currentPriceCents', 'incrementCents',
   'capPriceCents', 'extendWindowSec', 'extendSec', 'extendCount', 'maxExtensions',
-  'sellerId', 'seq')
+  'sellerId', 'seq', 'auctionMode', 'startPriceCents', 'reserveCents')
 local status            = s[1]
 local endAtMs           = tonumber(s[2]) or 0
 local paused            = s[3]
@@ -61,8 +77,15 @@ local curExtendCount    = tonumber(s[9]) or 0
 local maxExtensions     = tonumber(s[10]) or 0
 local sellerId          = s[11]
 local stateSeq          = tonumber(s[12]) or 0
+local auctionMode       = s[13]
+local startPriceCents   = tonumber(s[14]) or 0
+local reserveCents      = tonumber(s[15]) or 0
 if paused == 'true' then return {'ERR_AUCTION_PAUSED'} end
 if status ~= 'LIVE' then return {'ERR_NOT_LIVE', status or 'UNKNOWN'} end
+auctionMode = canonicalAuctionMode(auctionMode)
+if auctionMode ~= 'first_price' and auctionMode ~= 'second_price' then
+  auctionMode = 'first_price'
+end
 -- seller may not bid on their own auction (anti shill-bidding; §8 authz).
 if sellerId and sellerId ~= '' and userId == sellerId then
   return {'ERR_NOT_ALLOWED', 'seller_self_bid'}
@@ -101,6 +124,26 @@ if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'}
 -- up to MAX_MONEY stay exact (a Lua number arg would format via %.14g and lose
 -- precision past 14 digits). cap==0 means "no buy-now ceiling".
 local capHit = capPriceCents > 0 and amount >= capPriceCents
+local function soldAmountForMode()
+  if auctionMode ~= 'second_price' then
+    return amountStr
+  end
+  local reserveCentsForMode = reserveCents
+  if reserveCentsForMode <= 0 then
+    reserveCentsForMode = startPriceCents
+  end
+  -- For cap-hit in second-price mode, include the current bid before resolving
+  -- runner-up. That gives the true runner-up after this bid is accepted.
+  local top2 = redis.call('ZREVRANGE', lb_key, 1, 1, 'WITHSCORES')
+  if top2[2] == nil then
+    return tostring(reserveCentsForMode)
+  end
+  local second = tonumber(top2[2]) or 0
+  if second > reserveCentsForMode then
+    return string.format('%.0f', second)
+  end
+  return tostring(reserveCentsForMode)
+end
 -- anti-snipe fires only inside the window AND while under the extension cap
 -- (maxExtensions == 0 means unlimited). Past the cap the bid is accepted as a
 -- normal bid: no endAtMs bump, no AUCTION_EXTENDED — bounds the auction lifetime.
@@ -148,7 +191,7 @@ if extend then
 end
 if capHit then
   local seq2 = redis.call('HINCRBY', state_key, 'seq', 1)
-  local sold = {seq = seq2, winnerId = userId, amountCents = amountStr, status = 'SOLD', serverTimeMs = now}
+  local sold = {seq = seq2, winnerId = userId, amountCents = soldAmountForMode(), status = 'SOLD', serverTimeMs = now}
   local soldJson = cjson.encode(sold)
   redis.call('XADD', stream_key, seq2 .. '-0', 'type', 'AUCTION_SOLD', 'seq', seq2, 'payload', soldJson)
   redis.call('PUBLISH', pub, cjson.encode({type = 'AUCTION_SOLD', seq = seq2, data = sold}))
