@@ -112,10 +112,11 @@ LOAD_OBSERVERS=1000 LOAD_BIDDERS=100 LOAD_DURATION_SEC=60 make load
 
 Super-stretch（100k / 2k / 4-shards）目标：
 ```bash
-LOAD_100K_CONFIRM=1 make load-100k
+LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 ```
 说明：100k 演练默认会做非 P0 自检门槛；仅在明确确认时执行（见 `LOAD_100K_CONFIRM`）。
-如需在低资源上临时放行前置检查，可设置 `LOAD_100K_ALLOW_LOW_ULIMIT=1`（仅限明确知道风险时）或 `LOAD_100K_ALLOW_LOW_EPHEMERAL=1`。
+如需在低资源上临时放行前置检查，可设置 `LOAD_100K_ALLOW_LOW_ULIMIT=1` / `true` / `yes` / `on`（仅限明确知道风险时）
+或 `LOAD_100K_ALLOW_LOW_EPHEMERAL=1` / `true` / `yes` / `on`。
 （如需固定预算覆写，直接传入 LOAD_* 环境变量；当前 `make load-100k` 默认会写入：
 `LOAD_ACK_P95_MS=800`、`LOAD_BROADCAST_P95_MS=1000`、`LOAD_HAMMER_P95_MS=2000`、`LOAD_CATCHUP_P95_MS=3000`、`LOAD_SCRIPT_P99_MS=20`）
 ```bash

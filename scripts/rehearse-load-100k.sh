@@ -19,8 +19,8 @@ Environment:
 
 Options:
   --confirm            required; explicit opt-in for non-P0 rehearsal
-  --allow-low-ulimit   forward LOAD_100K_ALLOW_LOW_ULIMIT=1 to preflight
-  --allow-low-ephemeral forward LOAD_100K_ALLOW_LOW_EPHEMERAL=1 to preflight
+  --allow-low-ulimit   set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true/yes/on)
+  --allow-low-ephemeral set LOAD_100K_ALLOW_LOW_EPHEMERAL=1 (or true/yes/on)
   --attempts N         number of load runs (default: 1)
   --interval SEC       sleep between attempts (default: 0)
   --label STR          label suffix for output directory (default: timestamp)
