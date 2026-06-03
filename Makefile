@@ -7,10 +7,11 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 LOAD_100K_REHEARSAL_ARGS ?= --confirm
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
+REPEAT_LOAD_SMOKE_ARGS ?=
 
 .PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json
+        demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
 WEB_SMOKE_AUTO_UP ?= 0
 WEB_SMOKE_AUTO_SEED ?= 0
@@ -208,6 +209,9 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
+load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSON output support
+	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
 
 load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks before very large-scale run).
 	@echo "Super-stretch rehearsal preflight (non-P0)."
