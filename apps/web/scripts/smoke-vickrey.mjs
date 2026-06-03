@@ -118,9 +118,18 @@ async function runScenario({
 
   const slug = title.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
   const presetAuctionId =
-    USE_PRESET_AUCTION && PRESET_AUCTION_IDS.length > presetAuctionIndex
-      ? PRESET_AUCTION_IDS[presetAuctionIndex]
+    USE_PRESET_AUCTION
+      ? PRESET_AUCTION_IDS[presetAuctionIndex] || ''
       : '';
+
+  if (USE_PRESET_AUCTION && !presetAuctionId) {
+    must(
+      false,
+      `preset auction index ${presetAuctionIndex} not provided in WEB_SMOKE_AID (got ${PRESET_AUCTION_IDS.length} id(s): ${PRESET_AUCTION_IDS.join(',') || '<empty>'})`,
+    );
+    return;
+  }
+
   const sellerToken = presetAuctionId
     ? null
     : (await devLogin(`vickrey-${slug}-seller`)).token;
