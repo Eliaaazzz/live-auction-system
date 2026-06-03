@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,23 +26,25 @@ import (
 //	500 connected + 50 active, 60 seconds, ack p95 < 80 ms, broadcast p95 < 150 ms.
 //
 // The harness drives TARGET (a fully-deployed lumen + redis + mysql + ai-sidecar
-// stack), creates one fresh auction tuned to never reject (increment=1, no cap,
-// no anti-snipe window, long duration), then opens N observer connections and
-// K active bidders to it. Observers join+listen for broadcasts; bidders run a
-// loose-pipelined bid loop with one inflight bid each, each amount strictly
-// increasing so every bid is accepted (we are measuring latency, not adjudication).
+// stack), creates one or more fresh auctions tuned to never reject (increment=1,
+// no cap, no anti-snipe window, long duration), then opens N observer
+// connections and K active bidders distributed across shards. Observers join and
+// listen for broadcasts; bidders run a loose-pipelined bid loop with one
+// inflight bid each, each amount strictly increasing so every bid is accepted
+// (we are measuring latency, not adjudication).
 // The harness scrapes the /metrics snapshot at the end and asserts the SLO
 // against the §4.2 P0-gate budgets (configurable via env so a small CI run can
 // exercise the same code path with lower thresholds).
 //
-// The auction id is printed to stdout as `LOAD_AUCTION_ID=...` so a downstream
-// `make verify VERIFY_AID=$(...)` step can do the §4.1 "Verifier consistent on
-// post-load auction" gate (V9 §9 says this is required, not just demo-friendly).
+// The auction ids are printed to stdout as `LOAD_AUCTION_IDS=...` so a downstream
+// observer can map shard-to-room behavior. `LOAD_AUCTION_ID=<first>` is still
+// emitted for existing automation that expects one id.
 //
 // Tunables (defaults track V9 §4.2 P0 gate):
 //
 //	LOAD_OBSERVERS         = 500    (connected, lossy)
 //	LOAD_BIDDERS           =  50    (active)
+//	LOAD_SHARDS            =   1    (auction rooms, each gets shard_i connections)
 //	LOAD_DURATION_SEC      =  60
 //	LOAD_BID_INTERVAL_MS   = 100    (per bidder; 50 × 10/s = 500 bid/s aggregate)
 //	LOAD_ACK_P95_MS        =  80
@@ -49,6 +53,7 @@ import (
 //	LOAD_CATCHUP_P95_MS    = 1000   (only asserted if catchup stream replay was observed)
 //	LOAD_SCRIPT_P99_MS     =   5    (hot-path Lua exec budget, V9 §4.2 footnote)
 //	LOAD_AUCTION_DUR_SEC   = 3600   (the auction stays LIVE past the load window; no hammer)
+//	LOAD_RESET_METRICS     = 1      (POST /metrics/reset before run to isolate this run)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
 // and on seq gap > 0. The error message lists every breach so CI fails LOUD.
@@ -56,19 +61,22 @@ func RunLoad(target string) error {
 	cfg := loadConfigFromEnv()
 	hc := &http.Client{Timeout: 10 * time.Second}
 
-	aid, err := loadSetupAuction(hc, target, cfg)
+	auctionIDs, err := loadSetupAuction(hc, target, cfg)
 	if err != nil {
 		return fmt.Errorf("load setup: %w", err)
 	}
-	fmt.Printf("LOAD_AUCTION_ID=%s\n", aid) // captured by `make load` for the downstream verifier
-	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v\n",
-		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval)
+	fmt.Printf("LOAD_AUCTION_IDS=%s\n", strings.Join(auctionIDs, ","))
+	fmt.Printf("LOAD_AUCTION_ID=%s\n", auctionIDs[0]) // captured by `make load` for the downstream verifier
+	fmt.Printf("load config: observers=%d bidders=%d shards=%d duration=%v bidInterval=%v\n",
+		cfg.Observers, cfg.Bidders, cfg.Shards, cfg.Duration, cfg.BidInterval)
 
-	// Reset the /metrics percentiles for this run by reading the pre-run snapshot
-	// — the percentiles continue to accumulate, but we'll diff counters and
-	// re-Snapshot at end. (Reservoir sampling makes the histograms statistically
-	// dominated by the load run as long as the cap << observation count, which
-	// is the design point. Snapshot at end is the source of truth for SLO.)
+	// Reset metrics counters/histograms for this load run where supported, then
+	// take a pre-run snapshot for diagnostics and delta calculations.
+	if cfg.ResetMetricsForRun {
+		if err := resetMetricsSnapshot(hc, target); err != nil {
+			return fmt.Errorf("reset /metrics: %w", err)
+		}
+	}
 	prerun, err := scrapeMetrics(hc, target)
 	if err != nil {
 		return fmt.Errorf("scrape pre-run /metrics: %w", err)
@@ -95,7 +103,7 @@ func RunLoad(target string) error {
 	observerWG := sync.WaitGroup{}
 	observerWG.Add(cfg.Observers)
 	for i := 0; i < cfg.Observers; i++ {
-		go runObserver(ctx, target, observerBuyer.Token, aid, stats, &observerWG)
+		go runObserver(ctx, target, observerBuyer.Token, auctionIDs[i%len(auctionIDs)], stats, &observerWG)
 		time.Sleep(time.Duration(cfg.ObserverStaggerMs) * time.Millisecond)
 	}
 	// Bidders: each gets its OWN dev-login so the leaderboard ZADD has N
@@ -117,7 +125,7 @@ func RunLoad(target string) error {
 	bidderWG.Add(cfg.Bidders)
 	loadStart := time.Now()
 	for i := 0; i < cfg.Bidders; i++ {
-		go runBidder(ctx, target, bidderTokens[i], aid, i, cfg, stats, &amountCounter, &bidderWG)
+		go runBidder(ctx, target, bidderTokens[i], auctionIDs[i%len(auctionIDs)], i, cfg, stats, &amountCounter, &bidderWG)
 	}
 
 	// Hold the load for the configured duration; observers and bidders both
@@ -140,7 +148,7 @@ func RunLoad(target string) error {
 
 	// Report — paste-friendly for docs/perf-report.md and for CI log scraping.
 	rep := loadReport{
-		AID:           aid,
+		AIDs:          auctionIDs,
 		Config:        cfg,
 		Elapsed:       elapsed,
 		Pre:           prerun,
@@ -162,6 +170,7 @@ const loadStartCents = 100_000 // start price; per-bid amount is loadStartCents 
 type loadConfig struct {
 	Observers          int
 	Bidders            int
+	Shards             int
 	Duration           time.Duration
 	BidInterval        time.Duration
 	AckP95Budget       time.Duration
@@ -171,12 +180,18 @@ type loadConfig struct {
 	ScriptP99Budget    time.Duration
 	AuctionDuration    time.Duration
 	ObserverStaggerMs  int
+	ResetMetricsForRun bool
 }
 
 func loadConfigFromEnv() loadConfig {
+	shards := envInt("LOAD_SHARDS", 1)
+	if shards <= 0 {
+		shards = 1
+	}
 	return loadConfig{
 		Observers:          envInt("LOAD_OBSERVERS", 500),
 		Bidders:            envInt("LOAD_BIDDERS", 50),
+		Shards:             shards,
 		Duration:           time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
 		BidInterval:        time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
 		AckP95Budget:       time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
@@ -186,7 +201,15 @@ func loadConfigFromEnv() loadConfig {
 		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
 		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
 		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
+		ResetMetricsForRun: envBool("LOAD_RESET_METRICS", true),
 	}
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return v == "1" || strings.EqualFold(v, "true")
+	}
+	return def
 }
 
 // loadSetupAuction creates a fresh auction tuned so every well-formed bid is
@@ -195,43 +218,51 @@ func loadConfigFromEnv() loadConfig {
 // past the load window). Mirrors perfSetupAuction but with parameterised
 // duration so the harness can also do a "short-duration → hammer mid-load" run
 // for hammer p95 measurement.
-func loadSetupAuction(hc *http.Client, target string, cfg loadConfig) (string, error) {
+func loadSetupAuction(hc *http.Client, target string, cfg loadConfig) ([]string, error) {
 	seller, err := devLogin(hc, target, "Load Seller", "seller")
 	if err != nil {
-		return "", fmt.Errorf("seller dev-login: %w", err)
+		return nil, fmt.Errorf("seller dev-login: %w", err)
 	}
 	productID, err := createProduct(hc, target, seller.Token)
 	if err != nil {
-		return "", fmt.Errorf("create product: %w", err)
+		return nil, fmt.Errorf("create product: %w", err)
 	}
-	var out struct {
-		AuctionID string `json:"auctionId"`
+
+	auctionIDs := make([]string, 0, cfg.Shards)
+	for i := 0; i < cfg.Shards; i++ {
+		var out struct {
+			AuctionID string `json:"auctionId"`
+		}
+		body := map[string]any{
+			"productId": productID,
+			"rules": model.Rules{
+				StartPriceCents: loadStartCents,
+				IncrementCents:  1,
+				CapPriceCents:   0,
+				DurationSec:     int64(cfg.AuctionDuration / time.Second),
+				ExtendWindowSec: 0,
+				ExtendSec:       0,
+			},
+			"factsConfirmed": true,
+		}
+		if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &out); err != nil {
+			return nil, fmt.Errorf("create auction shard=%d: %w", i+1, err)
+		}
+		aid := out.AuctionID
+		if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+			return nil, fmt.Errorf("freeze auction %s: %w", aid, err)
+		}
+		if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/start", seller.Token,
+			map[string]int64{"durationMs": int64(cfg.AuctionDuration / time.Millisecond)},
+			model.CodeOKLive); err != nil {
+			return nil, fmt.Errorf("start auction %s: %w", aid, err)
+		}
+		auctionIDs = append(auctionIDs, aid)
 	}
-	body := map[string]any{
-		"productId": productID,
-		"rules": model.Rules{
-			StartPriceCents: loadStartCents,
-			IncrementCents:  1,
-			CapPriceCents:   0,
-			DurationSec:     int64(cfg.AuctionDuration / time.Second),
-			ExtendWindowSec: 0,
-			ExtendSec:       0,
-		},
-		"factsConfirmed": true,
+	if len(auctionIDs) == 0 {
+		return nil, fmt.Errorf("load setup: no auctions created")
 	}
-	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &out); err != nil {
-		return "", fmt.Errorf("create auction: %w", err)
-	}
-	aid := out.AuctionID
-	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
-		return "", fmt.Errorf("freeze: %w", err)
-	}
-	if err := postExpectCode(hc, target+"/api/auctions/"+aid+"/start", seller.Token,
-		map[string]int64{"durationMs": int64(cfg.AuctionDuration / time.Millisecond)},
-		model.CodeOKLive); err != nil {
-		return "", fmt.Errorf("start: %w", err)
-	}
-	return aid, nil
+	return auctionIDs, nil
 }
 
 // loadStats holds per-run counters. Lock-free; observer/bidder workers update
@@ -279,11 +310,15 @@ func (s *loadStats) bidderSnapshot() bidderSnapshot {
 func runObserver(ctx context.Context, target, token, aid string, stats *loadStats, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer func() {
-		if recover() != nil {
+		if r := recover(); r != nil {
+			if isRecoverableObserverPanic(r) {
+				return
+			}
 			stats.observerErr.Add(1)
 		}
 	}()
-	c, err := dialAndJoin(target, token, aid)
+	debug := os.Getenv("LOAD_OBSERVER_DEBUG") != ""
+	c, err := dialAndJoinForLoad(target, token, aid)
 	if err != nil {
 		stats.dialErr.Add(1)
 		return
@@ -295,11 +330,18 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 		_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
 		_, _, err := c.ReadMessage()
 		if err != nil {
+			if isTimeout(err) {
+				if ctx.Err() != nil {
+					return
+				}
+				continue
+			}
+			if debug {
+				fmt.Printf("observer[%s] err-type: %T\n", aid, err)
+				fmt.Printf("observer[%s] err-msg: %v\n", aid, err)
+			}
 			if ctx.Err() != nil {
 				return
-			}
-			if isTimeout(err) {
-				continue
 			}
 			stats.observerErr.Add(1)
 			return
@@ -325,7 +367,7 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 func runBidder(ctx context.Context, target, token, aid string, idx int, cfg loadConfig,
 	stats *loadStats, amountCounter *atomic.Int64, wg *sync.WaitGroup) {
 	defer wg.Done()
-	c, err := dialAndJoin(target, token, aid)
+	c, err := dialAndJoinForLoad(target, token, aid)
 	if err != nil {
 		stats.dialErr.Add(1)
 		return
@@ -395,10 +437,27 @@ func scrapeMetrics(hc *http.Client, target string) (metrics.Snapshot, error) {
 	return snap, nil
 }
 
+func resetMetricsSnapshot(hc *http.Client, target string) error {
+	req, err := http.NewRequest(http.MethodPost, target+"/metrics/reset", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 300 {
+		return fmt.Errorf("/metrics/reset -> %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	return nil
+}
+
 // loadReport is the structured T8 run output. Marshallable so CI / docs can
 // consume the same numbers the human-readable print shows.
 type loadReport struct {
-	AID           string
+	AIDs          []string
 	Config        loadConfig
 	Elapsed       time.Duration
 	Pre           metrics.Snapshot
@@ -409,9 +468,9 @@ type loadReport struct {
 
 func (r loadReport) print() {
 	fmt.Println("---- T8 load report ----")
-	fmt.Printf("auction=%s elapsed=%v\n", r.AID, r.Elapsed)
-	fmt.Printf("topology(harness): observers=%d bidders=%d bidInterval=%v auctionDur=%v\n",
-		r.Config.Observers, r.Config.Bidders, r.Config.BidInterval, r.Config.AuctionDuration)
+	fmt.Printf("auctions=%s elapsed=%v\n", strings.Join(r.AIDs, ","), r.Elapsed)
+	fmt.Printf("topology(harness): observers=%d bidders=%d shards=%d bidInterval=%v auctionDur=%v\n",
+		r.Config.Observers, r.Config.Bidders, r.Config.Shards, r.Config.BidInterval, r.Config.AuctionDuration)
 	fmt.Printf("bidder: sent=%d acked=%d rejected=%d errors=%d\n",
 		r.BidderStats.Sent, r.BidderStats.Acked, r.BidderStats.Rejected, r.BidderStats.Errors)
 	fmt.Printf("observer: frames=%d readErrors=%d dialErrors=%d\n",
@@ -482,6 +541,9 @@ func (r loadReport) breaches() []string {
 func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 
 func isTimeout(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
 	var ne interface{ Timeout() bool }
 	if errors.As(err, &ne) {
 		return ne.Timeout()
@@ -489,7 +551,25 @@ func isTimeout(err error) bool {
 	// Gorilla wraps net.Error inside CloseError sometimes; also catch the
 	// read-deadline string for portability.
 	if ce, ok := err.(*websocket.CloseError); ok {
-		return ce.Code == websocket.CloseNoStatusReceived || ce.Code == websocket.CloseAbnormalClosure
+		switch ce.Code {
+		case websocket.CloseNoStatusReceived,
+			websocket.CloseAbnormalClosure,
+			websocket.CloseNormalClosure,
+			websocket.CloseGoingAway:
+			return true
+		}
+	}
+	if strings.Contains(err.Error(), "use of closed network connection") {
+		return true
 	}
 	return strings.Contains(err.Error(), "i/o timeout")
+}
+
+func isRecoverableObserverPanic(v any) bool {
+	errMsg := fmt.Sprint(v)
+	if e, ok := v.(error); ok {
+		errMsg = e.Error()
+	}
+	return strings.Contains(errMsg, "repeated read on failed websocket connection") ||
+		strings.Contains(errMsg, "use of closed network connection")
 }

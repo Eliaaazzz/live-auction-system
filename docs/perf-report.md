@@ -24,6 +24,7 @@
 Harness defaults (§4.2 P0 gate):
 - `LOAD_OBSERVERS=500`
 - `LOAD_BIDDERS=50`
+- `LOAD_SHARDS=1`
 - `LOAD_DURATION_SEC=60`
 - `LOAD_BID_INTERVAL_MS=100` (50 bidders × 10/s ≈ 500 bid/s aggregate)
 - `LOAD_AUCTION_DUR_SEC=3600` (auction stays LIVE past the window → no hammer in the budget; record `hammerLatencyMs` only when a short-duration follow-up run hammers mid-window)
@@ -55,12 +56,13 @@ Harness defaults (§4.2 P0 gate):
 ## 3. Run output (paste-from-stdout)
 
 ```text
+LOAD_AUCTION_IDS=auc_<...>,auc_<...>
 LOAD_AUCTION_ID=auc_<...>
 load config: observers=500 bidders=50 duration=60s bidInterval=100ms
 
 ---- T8 load report ----
-auction=auc_<...> elapsed=<...>
-topology(harness): observers=500 bidders=50 bidInterval=100ms auctionDur=1h
+auctions=auc_<...>,auc_<...> elapsed=<...>
+topology(harness): observers=500 bidders=50 shards=1 bidInterval=100ms auctionDur=1h
 bidder: sent=<N> acked=<N> rejected=<N> errors=<N>
 observer: frames=<N> readErrors=<N> dialErrors=<N>
 ack       p50=<ms> p95=<ms> p99=<ms> max=<ms> (count=<N>, budget p95<80ms)
