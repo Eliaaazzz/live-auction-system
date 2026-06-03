@@ -22,14 +22,14 @@
 
 import { resolveAuctionId } from './smoke-shared.mjs';
 
-const HOST = 'http://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-401' });
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
 
 // ─── 1. Bogus token → expect 401 ───────────────────────────
-const bogusResp = await fetch(`${HOST}/api/auctions`, {
+const bogusResp = await fetch(`${HOST_HTTP}/api/auctions`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', authorization: 'Bearer not-a-real-token' },
   body: JSON.stringify({ productId: 'prod-1', rules: {} }),
@@ -48,7 +48,7 @@ if (body?.code) {
 }
 
 // ─── 2. Refresh session ────────────────────────────────────
-const login = await fetch(`${HOST}/api/dev-login`, {
+const login = await fetch(`${HOST_HTTP}/api/dev-login`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ nickname: 'fari-401-smoke' }),
@@ -58,7 +58,7 @@ const { token } = await login.json();
 must(token, 'dev-login returned no token');
 
 // ─── 3. Retry with new token → no longer 401 ───────────────
-const retry = await fetch(`${HOST}/api/auctions/${AUCTION_ID}`, {
+const retry = await fetch(`${HOST_HTTP}/api/auctions/${AUCTION_ID}`, {
   method: 'GET',
   headers: { authorization: `Bearer ${token}` },
 });
@@ -66,7 +66,7 @@ console.log('valid token retry → status', retry.status);
 must(retry.status !== 401, `valid token still got 401 (status=${retry.status})`);
 
 // ─── 4. Missing token entirely → also 401 ──────────────────
-const noToken = await fetch(`${HOST}/api/auctions`, {
+const noToken = await fetch(`${HOST_HTTP}/api/auctions`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ productId: 'prod-1', rules: {} }),

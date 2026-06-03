@@ -15,11 +15,10 @@
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
-import { resolveAuctionId } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
 
-const SCHEMA = 1;
-const HOST_HTTP = 'http://localhost:8080';
-const HOST_WS = 'ws://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-catchup' });
 
 async function devLogin(nick) {
@@ -38,7 +37,7 @@ function openRoom(token, auctionId, lastSeq, onEvent) {
     const ws = new WebSocket(url);
     ws.on('open', () => {
       const join = {
-        schemaVersion: SCHEMA,
+        schemaVersion: SCHEMA_VERSION,
         type: 'ROOM_JOIN',
         auctionId,
         serverTimeMs: Date.now(),
@@ -54,7 +53,7 @@ function openRoom(token, auctionId, lastSeq, onEvent) {
 }
 
 const send = (ws, type, data, auctionId = AUCTION_ID) => {
-  ws.send(JSON.stringify({ schemaVersion: SCHEMA, type, auctionId, serverTimeMs: Date.now(), data }));
+  ws.send(JSON.stringify({ schemaVersion: SCHEMA_VERSION, type, auctionId, serverTimeMs: Date.now(), data }));
 };
 
 const errors = [];

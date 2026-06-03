@@ -31,10 +31,10 @@
 //   cd apps/web && node scripts/smoke-snapshot-fallback.mjs
 
 import { WebSocket } from 'ws';
+import { SCHEMA_VERSION } from './smoke-shared.mjs';
 
-const SCHEMA = 1;
-const HOST_HTTP = 'http://localhost:8080';
-const HOST_WS = 'ws://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 const TARGET_GAP = 220; // > 200 boundary
 
 const errors = [];
@@ -107,7 +107,7 @@ const observer = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(buyers[
 await new Promise((resolve, reject) => {
   observer.on('open', () => {
     observer.send(JSON.stringify({
-      schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
+      schemaVersion: SCHEMA_VERSION, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId },
     }));
   });
@@ -133,7 +133,7 @@ const flooders = await Promise.all(buyers.map((b) => new Promise((resolve, rejec
   ws.on('open', () => {
     clearTimeout(timeout);
     ws.send(JSON.stringify({
-      schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
+      schemaVersion: SCHEMA_VERSION, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId },
     }));
     resolve({ ws, getCurrent: () => currentCents });
@@ -156,7 +156,7 @@ while (placed < TARGET_GAP && Date.now() - startTime < 25000) {
   const flooder = flooders[placed % flooders.length];
   const next = (BigInt(flooder.getCurrent()) + 500n).toString();
   flooder.ws.send(JSON.stringify({
-    schemaVersion: SCHEMA, type: 'BID_PLACE', auctionId, serverTimeMs: Date.now(),
+    schemaVersion: SCHEMA_VERSION, type: 'BID_PLACE', auctionId, serverTimeMs: Date.now(),
     data: { clientBidId: 'cbid-flood-' + placed + '-' + Date.now(), amountCents: next },
   }));
   placed++;
@@ -180,7 +180,7 @@ const ws3 = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(buyers[0].to
 await new Promise((resolve, reject) => {
   ws3.on('open', () => {
     ws3.send(JSON.stringify({
-      schemaVersion: SCHEMA, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
+      schemaVersion: SCHEMA_VERSION, type: 'ROOM_JOIN', auctionId, serverTimeMs: Date.now(),
       data: { auctionId, lastSeq: startingSeq },
     }));
   });

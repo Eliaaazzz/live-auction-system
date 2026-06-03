@@ -7,7 +7,7 @@
 //
 // Scenario:
 //   1. Login + open WS
-//   2. Send ROOM_JOIN with schemaVersion: 999
+//   2. Send ROOM_JOIN with SCHEMA_VERSION + 1
 //   3. Assert: connection closes with code 4001 (NOT a normal close)
 //
 // Usage:
@@ -15,10 +15,10 @@
 //   cd apps/web && node scripts/smoke-schema.mjs
 
 import { WebSocket } from 'ws';
-import { resolveAuctionId } from './smoke-shared.mjs';
+import { resolveAuctionId, SCHEMA_VERSION } from './smoke-shared.mjs';
 
-const HOST_HTTP = 'http://localhost:8080';
-const HOST_WS = 'ws://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-schema' });
 
 async function devLogin() {
@@ -46,7 +46,7 @@ await new Promise((resolve) => {
   ws.on('open', () => {
     console.log('ws open · sending bad-schema ROOM_JOIN');
     ws.send(JSON.stringify({
-      schemaVersion: 999,
+      schemaVersion: SCHEMA_VERSION + 1,
       type: 'ROOM_JOIN',
       auctionId: AUCTION_ID,
       serverTimeMs: Date.now(),

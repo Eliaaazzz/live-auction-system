@@ -16,10 +16,10 @@
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
+import { SCHEMA_VERSION } from './smoke-shared.mjs';
 
-const SCHEMA = 1;
-const HOST_HTTP = 'http://localhost:8080';
-const HOST_WS = 'ws://localhost:8080';
+const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
+const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
@@ -97,7 +97,7 @@ await new Promise((resolve, reject) => {
 
   ws.on('open', () => {
     ws.send(JSON.stringify({
-      schemaVersion: SCHEMA,
+      schemaVersion: SCHEMA_VERSION,
       type: 'ROOM_JOIN',
       auctionId,
       serverTimeMs: Date.now(),
@@ -111,7 +111,7 @@ await new Promise((resolve, reject) => {
       seenSnapshot = true;
       const next = (BigInt(env.data.currentPriceCents) + 500n).toString();
       ws.send(JSON.stringify({
-        schemaVersion: SCHEMA,
+        schemaVersion: SCHEMA_VERSION,
         type: 'BID_PLACE',
         auctionId,
         serverTimeMs: Date.now(),
