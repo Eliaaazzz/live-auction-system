@@ -517,7 +517,7 @@ existing tooling and dev-log links don't break.
 12. ✅ **P1 → resolved**:T6-#53-H2 (AdminConsole bare `useAuctionStore()` re-render storm) — selector-per-slice refactor (PR #64 `fari/T6-admin-polish`).
 13. ✅ **P1 → resolved**:T6-#53-M1 (total-bids clipped at 50 by recentEvents cap) — store now maintains cumulative `totalBidsCount` field (PR #64).
 14. ✅ **P1 → resolved**:T6-#53-M2 (unique-bidder count includes undefined userIds) — store maintains `bidderIds[]` with reducer-side filter for truthy userIds (PR #64).
-15. ✅ **P1 → resolved**:T6-#53-M4 ((cap-start)%step unvalidated → silent cap-hit failure) — `capReachable` BigInt check gates submit + visible hint on cap field (PR #64).
+15. ✅ **P1 → resolved**:T6-#53-M4 (old `cap-start)%step` hard-gate removed) — 前端仅保留 `cap > start` 校验（与后端 `Rules.Validate` 对齐；拍中买断价规则不要求与 step 整数倍对齐）.
 16. ✅ **P2 → resolved**:P9 surface-calm consistency (`lumen-veil-bridge-fade` not muted) — added to mute list (PR #63 self-spotted).
 17. ✅ **P1 → resolved**:T6-#53-H3 (VLM facts inline editor) — `<FactCard>` now edits in-card via textarea; `components/admin.test.jsx` pins no-`window.prompt` behavior and verifies edited fact payload.
 
