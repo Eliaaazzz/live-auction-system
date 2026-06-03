@@ -6,13 +6,17 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
+	"github.com/gorilla/websocket"
 )
 
 func TestT2HiddenFactsGateFreezeRequiresConfirmedFacts(t *testing.T) {
@@ -68,5 +72,253 @@ func TestT2HiddenFactsGateFreezeRequiresConfirmedFacts(t *testing.T) {
 	}
 	if snap.Status != model.StateDraft {
 		t.Fatalf("after failed freeze status=%s want DRAFT", snap.Status)
+	}
+}
+
+func TestT2HiddenFactsGateFreezeWithConfirmationPersistsSnapshot(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Hidden Facts Confirmed Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
+			DurationSec: 60, ExtendWindowSec: 10, ExtendSec: 10,
+		},
+		"factsConfirmed": false,
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
+		t.Fatalf("create auction with unconfirmed facts: %v", err)
+	}
+
+	payload := map[string]any{
+		"version":                  1,
+		"highRiskFieldsDisclaimer": "测试快照，仅用于演示",
+		"facts": []map[string]any{
+			{
+				"field":      "brand",
+				"label":      "品牌",
+				"value":      "Patek Philippe",
+				"status":     "confirmed",
+				"confidence": 0.99,
+				"highRisk":   false,
+			},
+		},
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/freeze", seller.Token, map[string]any{
+		"factsConfirmed": true,
+		"confirmedFacts": payload,
+	}, model.CodeOKFrozen); err != nil {
+		t.Fatalf("freeze with confirmation: %v", err)
+	}
+
+	var snap model.RoomSnapshotData
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID, &snap); err != nil {
+		t.Fatalf("get auction: %v", err)
+	}
+	if snap.Status != model.StateScheduled {
+		t.Fatalf("after confirmed freeze status=%s want SCHEDULED", snap.Status)
+	}
+
+	var rawFacts sql.NullString
+	var factsConfirmed bool
+	row := srv.st.DB().QueryRowContext(context.Background(), `
+		SELECT facts_confirmed, confirmed_facts_json
+		FROM auctions WHERE id = ?`, created.AuctionID)
+	if err := row.Scan(&factsConfirmed, &rawFacts); err != nil {
+		t.Fatalf("query confirmed facts: %v", err)
+	}
+	if !factsConfirmed {
+		t.Fatalf("factsConfirmed=%v want true", factsConfirmed)
+	}
+	if !rawFacts.Valid || strings.TrimSpace(rawFacts.String) == "" {
+		t.Fatalf("confirmed_facts_json is empty")
+	}
+
+	var persisted map[string]any
+	if err := json.Unmarshal([]byte(rawFacts.String), &persisted); err != nil {
+		t.Fatalf("decode confirmed_facts_json=%q: %v", rawFacts.String, err)
+	}
+	if _, ok := persisted["facts"]; !ok {
+		t.Fatalf("persisted facts snapshot missing \"facts\": %v", persisted)
+	}
+}
+
+func TestT2HiddenFactsGateFreezeRejectsInvalidConfirmationSnapshot(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Hidden Facts Invalid Snapshot Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
+			DurationSec: 60, ExtendWindowSec: 10, ExtendSec: 10,
+		},
+		"factsConfirmed": false,
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
+		t.Fatalf("create auction with unconfirmed facts: %v", err)
+	}
+
+	resp, data, err := postJSONRaw(hc, target+"/api/auctions/"+created.AuctionID+"/freeze", seller.Token, map[string]any{
+		"factsConfirmed": true,
+		"confirmedFacts": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("freeze status=%d body=%s want 400", resp.StatusCode, string(data))
+	}
+
+	var snap model.RoomSnapshotData
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID, &snap); err != nil {
+		t.Fatalf("get auction: %v", err)
+	}
+	if snap.Status != model.StateDraft {
+		t.Fatalf("after rejected freeze status=%s want DRAFT", snap.Status)
+	}
+
+	var factsConfirmed bool
+	var rawFacts sql.NullString
+	row := srv.st.DB().QueryRowContext(context.Background(), `
+		SELECT facts_confirmed, confirmed_facts_json
+		FROM auctions WHERE id = ?`, created.AuctionID)
+	if err := row.Scan(&factsConfirmed, &rawFacts); err != nil {
+		t.Fatalf("query confirmed facts: %v", err)
+	}
+	if factsConfirmed {
+		t.Fatalf("factsConfirmed=%v want false", factsConfirmed)
+	}
+	if rawFacts.Valid && strings.TrimSpace(rawFacts.String) != "" {
+		t.Fatalf("confirmed_facts_json should remain empty")
+	}
+}
+
+func TestT2HiddenSecondPriceWinnerPaysRunnerUp(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Second-Price Seller", "seller")
+	if err != nil {
+		t.Fatalf("seller dev-login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
+			DurationSec:     60,
+			ExtendWindowSec: 0,
+			ExtendSec:       0,
+			AuctionMode:     model.AuctionModeSecondPrice,
+		},
+		"factsConfirmed": true,
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, body, &created); err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	// Keep a short duration so hammering is deterministic and fast in tests.
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/start", seller.Token, map[string]int64{"durationMs": 1500}, model.CodeOKLive); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	buyerOne, err := devLogin(hc, target, "Runner-up", "user")
+	if err != nil {
+		t.Fatalf("buyerOne dev-login: %v", err)
+	}
+	buyerTwo, err := devLogin(hc, target, "Winner", "user")
+	if err != nil {
+		t.Fatalf("buyerTwo dev-login: %v", err)
+	}
+	ca, err := dialAndJoin(target, buyerOne.Token, created.AuctionID)
+	if err != nil {
+		t.Fatalf("buyerOne join: %v", err)
+	}
+	defer ca.Close()
+	cb, err := dialAndJoin(target, buyerTwo.Token, created.AuctionID)
+	if err != nil {
+		t.Fatalf("buyerTwo join: %v", err)
+	}
+	defer cb.Close()
+
+	sendBid := func(conn *websocket.Conn, clientBidID, amount string) {
+		env, err := model.NewEnvelope(model.TypeBidPlace, created.AuctionID, 0, model.BidPlaceData{
+			ClientBidID: clientBidID,
+			AmountCents: amount,
+		})
+		if err != nil {
+			t.Fatalf("build bid envelope: %v", err)
+		}
+		if err := conn.WriteJSON(env); err != nil {
+			t.Fatalf("send bid: %v", err)
+		}
+	}
+	sendBid(ca, "ca-runner-up", "11000")
+	if err := waitForType(ca, model.TypeBidAccepted, 5*time.Second); err != nil {
+		t.Fatalf("runner-up bid ack: %v", err)
+	}
+	sendBid(cb, "cb-winner", "12000")
+	if err := waitForType(cb, model.TypeBidAccepted, 5*time.Second); err != nil {
+		t.Fatalf("winner bid ack: %v", err)
+	}
+
+	var sold model.AuctionSoldData
+	if err := waitForTypeAndDecode(cb, model.TypeAuctionSold, 8*time.Second, &sold); err != nil {
+		t.Fatalf("auction sold: %v", err)
+	}
+	if sold.WinnerID != buyerTwo.UserID {
+		t.Fatalf("winner=%s want=%s", sold.WinnerID, buyerTwo.UserID)
+	}
+	if sold.AmountCents != "11000" {
+		t.Fatalf("sold amount=%s want=11000 (runner-up)", sold.AmountCents)
+	}
+}
+
+func waitForTypeAndDecode(conn *websocket.Conn, typ string, timeout time.Duration, out any) error {
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	for {
+		var env model.Envelope
+		if err := conn.ReadJSON(&env); err != nil {
+			return err
+		}
+		if env.Type != typ {
+			continue
+		}
+		if err := json.Unmarshal(env.Data, out); err != nil {
+			return err
+		}
+		return nil
 	}
 }
