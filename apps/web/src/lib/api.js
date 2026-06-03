@@ -94,7 +94,8 @@ export const api = {
   /**
    * Seller: publish auction.
    *   payload = { productId, rules: { startCents, stepCents, durationMs,
-   *               maxExtensions, antiSnipeWindowMs, capCents?, reserveCents? } }
+   *               maxExtensions, antiSnipeWindowMs, capCents?, reserveCents?,
+   *               auctionMode? } // first_price | second_price
    */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),
 
