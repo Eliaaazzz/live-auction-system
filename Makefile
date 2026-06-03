@@ -266,27 +266,30 @@ load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSO
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
 
 load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks before very large-scale run).
-	@if [ "$${LOAD_100K_CONFIRM:-0}" != "1" ] && [ "$${LOAD_100K_CONFIRM:-}" != "true" ]; then \
-		echo "load-100k is an enterprise-scale rehearsal, not a P0 gate. Set LOAD_100K_CONFIRM=1 (or true) to run this target."; \
+	@confirm="$(printf '%s' "$${LOAD_100K_CONFIRM:-0}" | tr '[:upper:]' '[:lower:]')"; \
+	if [ "$$confirm" != "1" ] && [ "$$confirm" != "true" ] && [ "$$confirm" != "yes" ] && [ "$$confirm" != "on" ]; then \
+		echo "load-100k is an enterprise-scale rehearsal, not a P0 gate. Set LOAD_100K_CONFIRM=1 (or true/yes/on) to run this target."; \
 		exit 1; \
 	fi
 	@echo "Super-stretch rehearsal preflight (non-P0)."
 	@echo "- file-descriptor hard limit (ulimit -n): $$(ulimit -n)"
 	@ulimit_n=$$(ulimit -n 2>/dev/null || echo 0); \
-	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$${LOAD_100K_ALLOW_LOW_ULIMIT:-}" != "1" ] && [ "$${LOAD_100K_ALLOW_LOW_ULIMIT:-}" != "true" ]; then \
+	allow_low_ulimit="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_ULIMIT:-0}" | tr '[:upper:]' '[:lower:]')"; \
+	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$$allow_low_ulimit" != "1" ] && [ "$$allow_low_ulimit" != "true" ] && [ "$$allow_low_ulimit" != "yes" ] && [ "$$allow_low_ulimit" != "on" ]; then \
 		echo "FAIL: ulimit -n=$$ulimit_n is below 131072 (super-stretch threshold). Set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true) to proceed anyway."; \
 		exit 1; \
 	fi
 	@echo "- backlog/port window:" \
 	&& if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then \
-			echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
-			port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
-			port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
-			port_count=$$((port_high - port_low + 1)); \
-			if [ "$$port_count" -lt 50000 ] && [ "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-}" != "1" ] && [ "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-}" != "true" ]; then \
-				echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal."; \
-				exit 1; \
-			fi; \
+				echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
+				port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
+				port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
+				port_count=$$((port_high - port_low + 1)); \
+				allow_low_ephemeral="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}" | tr '[:upper:]' '[:lower:]')"; \
+				if [ "$$port_count" -lt 50000 ] && [ "$$allow_low_ephemeral" != "1" ] && [ "$$allow_low_ephemeral" != "true" ] && [ "$$allow_low_ephemeral" != "yes" ] && [ "$$allow_low_ephemeral" != "on" ]; then \
+					echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal."; \
+					exit 1; \
+				fi; \
 		else \
 			echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
 		fi
