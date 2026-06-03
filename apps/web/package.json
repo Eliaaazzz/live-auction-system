@@ -19,6 +19,7 @@
     "smoke:schema": "node scripts/smoke-schema.mjs",
     "smoke:401": "node scripts/smoke-401.mjs",
     "smoke:antisnipe": "node scripts/smoke-antisnipe.mjs",
+    "smoke:vickrey": "node scripts/smoke-vickrey.mjs",
     "smoke:snapshot": "node scripts/smoke-snapshot-fallback.mjs",
     "smoke:all": "node scripts/smoke-wire.mjs && node scripts/smoke-catchup.mjs && node scripts/smoke-schema.mjs && node scripts/smoke-401.mjs && node scripts/smoke-antisnipe.mjs && node scripts/smoke-snapshot-fallback.mjs && node scripts/smoke-self-bid.mjs && node scripts/smoke-ratelimit.mjs && node scripts/smoke-multitab.mjs",
     "smoke:ratelimit": "node scripts/smoke-ratelimit.mjs",
