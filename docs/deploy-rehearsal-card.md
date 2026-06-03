@@ -89,6 +89,11 @@ larger concurrency tier.
    Result artifacts are collected in `DEPLOY_REHEARSAL_OUT_DIR` and in `PERF_GATE_OUT_DIR`.
    Keep both paths in the issue/meeting note so evidence is recoverable later.
 
+   `*_REPORT_ONLY` controls whether remote perf gate failures should stop this
+   operator target. For evidence-only runs, set to `1` and record `result:
+   FAIL-REPORTED` from `remote-perf-gate.sh` as non-blocking. For strict pass/fail
+   gating, keep at `0`.
+
    Capture the server metrics JSON at or near peak load. If a client runner such
    as k6 is used, keep its summary JSON, but do not use client RTT as the backend
    SLO source.
@@ -117,6 +122,10 @@ larger concurrency tier.
    hammer and catchup p95 metrics, or the run must explicitly document why those
    checks were not required.
 
+   In operator runs with `DEPLOY_REHEARSAL_..._REPORT_ONLY=1`, this command is
+   expected to produce `result: FAIL-REPORTED` when required thresholds fail but still
+   should continue with manual triage.
+
 6. Archive the evidence pack.
 
    Keep these artifacts together:
@@ -143,7 +152,7 @@ larger concurrency tier.
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1` is intentionally documented |
 | WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
-| Remote perf gate | `summary.md` reports `result: PASS` for the target tier | Any required server SLO row fails or is missing |
+| Remote perf gate | `summary.md` reports `result: PASS` for the target tier, or `result: FAIL-REPORTED` when `REPORT_ONLY=1` for evidence-only rehearsal | Any required server SLO row fails in strict mode (`REPORT_ONLY=0`) or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |
 | Teardown | Resources are stopped or deleted and cost risk is closed | Orphaned remote resources remain |
 

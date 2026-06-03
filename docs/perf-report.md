@@ -173,6 +173,21 @@ BASE_URL="https://your-domain" \
   PERF_GATE_OUT_DIR=./rehearsal-perf
 ```
 
+For evidence-only remote checks, append:
+
+```sh
+REPORT_ONLY=1 \
+```
+
+for `deploy-perf-rehearsal`, or
+
+```sh
+DEPLOY_REHEARSAL_100K_REPORT_ONLY=1 \
+```
+
+for the super-stretch wrapper, and record `result: FAIL-REPORTED` as a
+non-blocking signal in `perf-gate/summary.md`.
+
 For manual remote-load scenarios that dump metrics after peak load, set:
 
 ```sh
