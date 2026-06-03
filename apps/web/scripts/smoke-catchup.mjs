@@ -19,6 +19,7 @@ import { WebSocket } from 'ws';
 const SCHEMA = 1;
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
+const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 
 async function devLogin(nick) {
   const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
@@ -66,7 +67,7 @@ let snapshotSeq = null;
 let bidSeq = null;
 const phase1Events = [];
 
-const ws1 = await openRoom(token, 'auc_demo', 0, (env) => {
+const ws1 = await openRoom(token, AUCTION_ID, 0, (env) => {
   phase1Events.push(env);
   console.log('[ws1] ←', env.type, 'seq=' + env.seq);
   if (env.type === 'ROOM_SNAPSHOT') {
@@ -94,7 +95,7 @@ console.log('\nphase2: reconnecting with lastSeq=' + snapshotSeq + ' (one behind
 
 const phase2Events = [];
 await new Promise((r) => setTimeout(r, 300));
-const ws2 = await openRoom(token, 'auc_demo', snapshotSeq, (env) => {
+const ws2 = await openRoom(token, AUCTION_ID, snapshotSeq, (env) => {
   phase2Events.push(env);
   console.log('[ws2] ←', env.type, 'seq=' + env.seq);
 });
