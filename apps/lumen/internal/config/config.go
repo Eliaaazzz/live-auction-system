@@ -20,6 +20,7 @@ type Config struct {
 }
 
 const defaultJWTSecret = "change-me-local-only"
+const defaultMySQLDSN = "lumen:lumen@tcp(localhost:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
 
 // defaultEvidenceKey is the dev HMAC key for the auction_events hash chain (T4).
 // Per §6 threat model: the key must NOT live in the same DB as the events, else the
@@ -32,7 +33,6 @@ const defaultEvidenceKey = "change-me-evidence-local-only"
 func Load() (Config, error) {
 	c := Config{
 		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		MySQLDSN:        env("MYSQL_DSN", "lumen:lumen@tcp(localhost:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"),
 		RedisAddr:       env("REDIS_ADDR", "localhost:6379"),
 		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
 		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
@@ -40,6 +40,11 @@ func Load() (Config, error) {
 		AppEnv:          env("APP_ENV", "dev"),
 		EnableDevLogin:  env("ENABLE_DEV_LOGIN", "true") == "true",
 		EvidenceHMACKey: env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
+	}
+	var err error
+	c.MySQLDSN, err = resolveMySQLDSN(c.AppEnv)
+	if err != nil {
+		return c, err
 	}
 
 	// §8: outside dev the default signing secret and dev-login must be off.
@@ -57,6 +62,39 @@ func Load() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+func resolveMySQLDSN(appEnv string) (string, error) {
+	if dsn := env("MYSQL_DSN", ""); dsn != "" {
+		return dsn, nil
+	}
+
+	host := env("MYSQL_HOST", "")
+	if host == "" {
+		if appEnv == "dev" {
+			return defaultMySQLDSN, nil
+		}
+		return "", fmt.Errorf("MYSQL_DSN or MYSQL_HOST must be set when APP_ENV=%q", appEnv)
+	}
+
+	user := env("MYSQL_USER", "")
+	password := env("MYSQL_PASSWORD", "")
+	database := env("MYSQL_DATABASE", "")
+	port := env("MYSQL_PORT", "3306")
+	tls := env("MYSQL_TLS", "")
+
+	if user == "" {
+		return "", fmt.Errorf("MYSQL_USER must be set when APP_ENV=%q and MYSQL_HOST is used", appEnv)
+	}
+	if database == "" {
+		return "", fmt.Errorf("MYSQL_DATABASE must be set when APP_ENV=%q and MYSQL_HOST is used", appEnv)
+	}
+
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&charset=utf8mb4", user, password, host, port, database)
+	if tls != "" {
+		dsn += "&tls=" + tls
+	}
+	return dsn, nil
 }
 
 func env(key, def string) string {
