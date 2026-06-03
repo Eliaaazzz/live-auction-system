@@ -218,6 +218,32 @@ describe('applyEvent · ROOM_SNAPSHOT', () => {
     expect(useAuctionStore.getState().currentCents).toBe('13000000');
   });
 
+  it('captures auctionMode from rules when backend sends second_price', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.ROOM_SNAPSHOT,
+      seq: 9,
+      serverTimeMs: Date.now(),
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '13000000',
+        winnerId: 'u1',
+        endAtMs: Date.now() + 38_000,
+        seq: 9,
+        rules: {
+          stepCents: '250000',
+          capCents: null,
+          reserveCents: '10000000',
+          maxExtensions: 5,
+          antiSnipeWindowMs: 10000,
+          auctionMode: 'second_price',
+        },
+      },
+    });
+
+    expect(useAuctionStore.getState().auctionMode).toBe('second_price');
+  });
+
   it('resets seqguard watermark via data.seq (gap > 200 fallback path)', () => {
     const apply = useAuctionStore.getState().applyEvent;
     apply(env({
@@ -311,6 +337,45 @@ describe('applyEvent · terminal states', () => {
     expect(s.currentCents).toBe('15000000');
     expect(s.winnerId).toBe('u_other');
     expect(s.hammerTrans).toBe(true);
+  });
+
+  it('AUCTION_SOLD uses the payload winnerId/amountCents as settlement result', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      type: EventType.BID_ACCEPTED,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'legacy_other', displayName: 'Legacy', endAtMs: Date.now() + 28_000 },
+    }));
+    expect(useAuctionStore.getState().currentCents).toBe('11000000');
+    expect(useAuctionStore.getState().winnerId).toBe('legacy_other');
+
+    useAuctionStore.getState().applyEvent(env({
+      seq: 2,
+      type: EventType.AUCTION_SOLD,
+      data: { winnerId: 'winner_paid', amountCents: '12000000' },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.currentCents).toBe('12000000');
+    expect(s.winnerId).toBe('winner_paid');
+    expect(s.hammerTrans).toBe(true);
+  });
+
+  it('AUCTION_SOLD keeps existing price/winner when amount or winnerId is absent', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      type: EventType.BID_ACCEPTED,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'legacy_other', displayName: 'Legacy', endAtMs: Date.now() + 28_000 },
+    }));
+
+    useAuctionStore.getState().applyEvent(env({
+      seq: 2,
+      type: EventType.AUCTION_SOLD,
+      data: {},
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.currentCents).toBe('11000000');
+    expect(s.winnerId).toBe('legacy_other');
   });
 
   it('AUCTION_NO_BID sets status without touching price', () => {
