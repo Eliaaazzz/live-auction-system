@@ -28,6 +28,9 @@ WEB_SMOKE_AUTO_SEED ?= 0
 WEB_SMOKE_AUTO_SEED_FORCE ?= 0
 WEB_SMOKE_AID ?= $(or $(VERIFY_AID),$(AUCTION_ID),auc_demo)
 WEB_SMOKE_AID_EFF = $(or $(strip $(WEB_SMOKE_AID)), $(strip $(VERIFY_AID)), $(strip $(AUCTION_ID)), auc_demo)
+WEB_SMOKE_SCHEMA_VERSION ?=
+WEB_SMOKE_SCHEMA_ENV = $(if $(strip $(WEB_SMOKE_SCHEMA_VERSION)),WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)" SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)",)
+WEB_SMOKE_ID_ENV = WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)"
 REVIEW_REQUIRED_SCRIPTS := \
   scripts/review-pr-dependency.sh \
   scripts/review-project-status.sh \
@@ -102,39 +105,39 @@ web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
 	@echo "$(WEB_SMOKE_AID) seeded."
 
 web-smoke:        ## T6: run web-side smoke scripts (requires stack up + seed, e.g. make up && make seed)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:all
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:all
 
 web-smoke-prepare: ## T6: prepare smoke prerequisites only (make up + make seed)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 web-smoke-ratelimit: ## T6: run only TC-T6-116 (single-socket burst -> ERR_RATE_LIMITED)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:ratelimit
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:ratelimit
 
 web-smoke-ratelimit-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-116
-	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
+	@$(MAKE) web-smoke-ratelimit WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 web-smoke-selfbid: ## T6: run only TC-T6-115 (seller self-bid rejected)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:selfbid
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:selfbid
 
 web-smoke-selfbid-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-115
-	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
+	@$(MAKE) web-smoke-selfbid WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 web-smoke-multitab: ## T6: run only TC-T6-113 (same-account bid on tab1 should be visible on tab2)
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:multitab
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:multitab
 
 web-smoke-multitab-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-113
-	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
+	@$(MAKE) web-smoke-multitab WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 web-smoke-vickrey: ## T6: run only Vickrey/AuctionMode second-price closure smoke
-	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
-	cd apps/web && WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" VERIFY_AID="$(WEB_SMOKE_AID_EFF)" AUCTION_ID="$(WEB_SMOKE_AID_EFF)" npm run -s smoke:vickrey
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:vickrey
 
 web-smoke-vickrey-prepare: ## T6: auto-prepare (up+seed) then run second-price smoke
-	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)"
+	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \

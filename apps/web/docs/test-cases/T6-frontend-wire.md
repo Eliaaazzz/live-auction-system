@@ -113,6 +113,8 @@ cd <repo-root> && make web-smoke-prepare && make web-smoke
 cd <repo-root> && make web-smoke-check
 # Full one-command flow (auto-up + auto-seed):
 cd <repo-root> && WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 make web-smoke
+# Full one-command flow with explicit schema override (e.g. schema migration smoke check):
+cd <repo-root> && WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_SCHEMA_VERSION=2 make web-smoke
 # Focused run:
 cd <repo-root> && make up && make seed && make web-smoke-ratelimit
 cd <repo-root> && make web-smoke-ratelimit-prepare
