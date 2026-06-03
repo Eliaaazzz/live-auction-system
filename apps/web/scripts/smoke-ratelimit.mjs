@@ -7,14 +7,15 @@
 //   cd apps/web && node scripts/smoke-ratelimit.mjs
 // Optional overrides:
 //   HOST_HTTP=http://localhost:8080 HOST_WS=ws://localhost:8080 \
-//   AUCTION_ID=auc_demo BURST_MS=10 TIMEOUT_MS=8000 node scripts/smoke-ratelimit.mjs
+//   VERIFY_AID=<auction-id> (or AUCTION_ID=<auction-id>) BURST_MS=10 TIMEOUT_MS=8000 node scripts/smoke-ratelimit.mjs
 
 import { WebSocket } from 'ws';
+import { resolveAuctionId } from './smoke-shared.mjs';
 
 const SCHEMA = 1;
 const HOST_HTTP = process.env.HOST_HTTP || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || 'ws://localhost:8080';
-const AUCTION_ID = process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-ratelimit' });
 const BURST_MS = Number.isFinite(Number(process.env.BURST_MS)) && Number(process.env.BURST_MS) >= 0
   ? Number(process.env.BURST_MS)
   : 10;

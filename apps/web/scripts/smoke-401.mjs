@@ -20,8 +20,10 @@
 //   make up && make seed
 //   cd apps/web && node scripts/smoke-401.mjs
 
+import { resolveAuctionId } from './smoke-shared.mjs';
+
 const HOST = 'http://localhost:8080';
-const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-401' });
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };

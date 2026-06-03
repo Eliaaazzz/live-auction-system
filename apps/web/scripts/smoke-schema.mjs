@@ -15,10 +15,11 @@
 //   cd apps/web && node scripts/smoke-schema.mjs
 
 import { WebSocket } from 'ws';
+import { resolveAuctionId } from './smoke-shared.mjs';
 
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
-const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-schema' });
 
 async function devLogin() {
   const r = await fetch(`${HOST_HTTP}/api/dev-login`, {

@@ -15,11 +15,12 @@
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
+import { resolveAuctionId } from './smoke-shared.mjs';
 
 const SCHEMA = 1;
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
-const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-catchup' });
 
 async function devLogin(nick) {
   const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
@@ -52,7 +53,7 @@ function openRoom(token, auctionId, lastSeq, onEvent) {
   });
 }
 
-const send = (ws, type, data, auctionId = 'auc_demo') => {
+const send = (ws, type, data, auctionId = AUCTION_ID) => {
   ws.send(JSON.stringify({ schemaVersion: SCHEMA, type, auctionId, serverTimeMs: Date.now(), data }));
 };
 

@@ -12,9 +12,10 @@
 // Covers TC-T6-001/004-013 from docs/test-cases/T6-frontend-wire.md.
 
 import { WebSocket } from 'ws';
+import { resolveAuctionId } from './smoke-shared.mjs';
 
 const SCHEMA = 1;
-const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-wire' });
 const TYPES = {
   ROOM_JOIN: 'ROOM_JOIN', BID_PLACE: 'BID_PLACE', PING: 'PING',
   ROOM_SNAPSHOT: 'ROOM_SNAPSHOT', BID_ACCEPTED: 'BID_ACCEPTED', BID_REJECTED: 'BID_REJECTED',
