@@ -117,15 +117,17 @@ async function runScenario({
   console.log(`\n[scenario] ${title}`);
 
   const slug = title.replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
-  const seller = await devLogin(`vickrey-${slug}-seller`);
   const presetAuctionId =
     USE_PRESET_AUCTION && PRESET_AUCTION_IDS.length > presetAuctionIndex
       ? PRESET_AUCTION_IDS[presetAuctionIndex]
       : '';
+  const sellerToken = presetAuctionId
+    ? null
+    : (await devLogin(`vickrey-${slug}-seller`)).token;
 
   const { auctionId, reserveCents } = presetAuctionId
     ? { auctionId: presetAuctionId, reserveCents: expectedReserveCents }
-    : await createSecondPriceAuction(seller.token, {
+    : await createSecondPriceAuction(sellerToken, {
       durationSec: 9,
       capCents: '30000',
       reserveCents: expectedReserveCents,
