@@ -47,9 +47,12 @@ func Load() (Config, error) {
 		RedisPassword:   env("REDIS_PASSWORD", ""),
 	}
 	var err error
-	c.RedisAddr, c.RedisUseTLS, err = resolveRedisAddr()
+	c.RedisAddr, c.RedisUseTLS, redisPasswordFromURL, err := resolveRedisAddr()
 	if err != nil {
 		return c, err
+	}
+	if c.RedisPassword == "" && redisPasswordFromURL != "" {
+		c.RedisPassword = redisPasswordFromURL
 	}
 	c.MySQLDSN, err = resolveMySQLDSN(c.AppEnv)
 	if err != nil {
@@ -110,37 +113,38 @@ func resolveMySQLDSN(appEnv string) (string, error) {
 	return dsn, nil
 }
 
-func resolveRedisAddr() (string, bool, error) {
+func resolveRedisAddr() (string, bool, string, error) {
 	addr := strings.TrimSpace(env("REDIS_ADDR", ""))
 	if addr != "" {
 		if strings.Contains(addr, "://") {
 			return normalizeRedisAddr(addr)
 		}
-		return addr, false, nil
+		return addr, false, "", nil
 	}
 	if raw := strings.TrimSpace(env("REDIS_URL", "")); raw != "" {
 		return normalizeRedisAddr(raw)
 	}
-	return "localhost:6379", false, nil
+	return "localhost:6379", false, "", nil
 }
 
-func normalizeRedisAddr(raw string) (string, bool, error) {
+func normalizeRedisAddr(raw string) (string, bool, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL parse failed: %w", err)
+		return "", false, "", fmt.Errorf("REDIS_ADDR/REDIS_URL parse failed: %w", err)
 	}
 	if u.Scheme != "redis" && u.Scheme != "rediss" {
-		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL must use redis:// or rediss://, got %q", u.Scheme)
+		return "", false, "", fmt.Errorf("REDIS_ADDR/REDIS_URL must use redis:// or rediss://, got %q", u.Scheme)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return "", false, fmt.Errorf("REDIS_ADDR/REDIS_URL must include host")
+		return "", false, "", fmt.Errorf("REDIS_ADDR/REDIS_URL must include host")
 	}
 	port := u.Port()
 	if port == "" {
 		port = "6379"
 	}
-	return net.JoinHostPort(host, port), u.Scheme == "rediss", nil
+	password, _ := u.User.Password()
+	return net.JoinHostPort(host, port), u.Scheme == "rediss", password, nil
 }
 
 func normalizeMySQLDSN(raw string) (string, error) {

@@ -154,3 +154,22 @@ func TestRedisURLWithTLSAndPasswordAlias(t *testing.T) {
 		t.Fatalf("redis password=%q", cfg.RedisPassword)
 	}
 }
+
+func TestRedisURLPasswordFallback(t *testing.T) {
+	t.Setenv("APP_ENV", "prod")
+	t.Setenv("MYSQL_DSN", "prod-user:prod-pass@tcp(mysql.internal:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4")
+	t.Setenv("REDIS_ADDR", "")
+	t.Setenv("REDIS_URL", "rediss://:url-pass@redis.internal:6380/0")
+	t.Setenv("REDIS_PASSWORD", "")
+	t.Setenv("JWT_SECRET", "a-real-production-secret")
+	t.Setenv("ENABLE_DEV_LOGIN", "false")
+	t.Setenv("EVIDENCE_HMAC_KEY", "a-real-evidence-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load with rediss URL password should pass: %v", err)
+	}
+	if cfg.RedisPassword != "url-pass" {
+		t.Fatalf("redis password from URL=%q", cfg.RedisPassword)
+	}
+}
