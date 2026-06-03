@@ -14,7 +14,7 @@ import { WebSocket } from 'ws';
 const SCHEMA = 1;
 const HOST_HTTP = process.env.HOST_HTTP || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || 'ws://localhost:8080';
-const AUCTION_ID = process.env.AUCTION_ID || 'auc_demo';
+const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 const BURST_MS = Number.isFinite(Number(process.env.BURST_MS)) && Number(process.env.BURST_MS) >= 0
   ? Number(process.env.BURST_MS)
   : 10;

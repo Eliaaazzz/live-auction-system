@@ -14,6 +14,7 @@
 import { WebSocket } from 'ws';
 
 const SCHEMA = 1;
+const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 const TYPES = {
   ROOM_JOIN: 'ROOM_JOIN', BID_PLACE: 'BID_PLACE', PING: 'PING',
   ROOM_SNAPSHOT: 'ROOM_SNAPSHOT', BID_ACCEPTED: 'BID_ACCEPTED', BID_REJECTED: 'BID_REJECTED',
@@ -39,7 +40,7 @@ const received = [];
 let bidSeqSeen = null;
 
 const send = (type, data) => {
-  const env = { schemaVersion: SCHEMA, type, auctionId: 'auc_demo', serverTimeMs: Date.now(), data };
+  const env = { schemaVersion: SCHEMA, type, auctionId: AUCTION_ID, serverTimeMs: Date.now(), data };
   ws.send(JSON.stringify(env));
   console.log('→ sent', type, data);
 };
@@ -47,7 +48,7 @@ const send = (type, data) => {
 await new Promise((resolve, reject) => {
   ws.on('open', () => {
     console.log('ws open');
-    send(TYPES.ROOM_JOIN, { auctionId: 'auc_demo' });
+    send(TYPES.ROOM_JOIN, { auctionId: AUCTION_ID });
   });
   ws.on('message', (raw) => {
     const env = JSON.parse(raw.toString());
