@@ -50,7 +50,8 @@ larger concurrency tier.
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
    `metrics-summary.json`. The helper reads public endpoints:
    `/healthz`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
-   and `/ws` (expects websocket upgrade `101`).
+   and `/ws` (by default expects auth-gated response `401/403`; set `WS_PRECHECK_TOKEN=<token>`
+   and `REQUIRE_WS_UPGRADE=1` for a full upgrade check that expects `101`).
 
 3. Decide whether SRS is in scope.
 
@@ -139,7 +140,7 @@ larger concurrency tier.
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1` is intentionally documented |
-| WebSocket reachability | `/ws` returns successful websocket upgrade (`101`) with no preflight error | `/ws` fails or downgrades to non-websocket response during rehearsal path |
+| WebSocket reachability | `/ws` returns `401/403` by default, or `101` when `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1` is used | `/ws` returns unexpected HTTP status, or 101 is broken when upgrade-mode check is enabled |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier | Any required server SLO row fails or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |

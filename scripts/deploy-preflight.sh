@@ -37,7 +37,7 @@ esac
     echo "git_branch=$(git branch --show-current 2>/dev/null || true)"
   fi
   echo
-  echo "This preflight reads only public HTTP endpoints and does not inspect secrets."
+  echo "This preflight reads public endpoints and does not inspect secrets."
 } > "$MANIFEST_FILE"
 
 record_http() {
@@ -81,12 +81,36 @@ record_http() {
 record_ws() {
   local name="$1"
   local path="$2"
+  local mode="$3"
   local url="$BASE_URL$path"
   local dir="$OUT_DIR/$name"
+  local token="${WS_PRECHECK_TOKEN:-}"
+  local expected_code_1xx="401"
+  local expected_code_2xx="403"
   local rc
   local http_code
 
   mkdir -p "$dir"
+
+  if [ "$mode" = "1" ]; then
+    expected_code_1xx="101"
+    expected_code_2xx=""
+    if [ -z "$token" ]; then
+      echo "==> WS_PRECHECK_TOKEN is empty; fallback to auth-gate check (401)"
+      expected_code_1xx="401"
+      expected_code_2xx="403"
+      mode="0"
+    fi
+  fi
+
+  if [ -n "$token" ]; then
+    if printf '%s' "$path" | grep -q '?'; then
+      url="${url}&token=${token}"
+    else
+      url="${url}?token=${token}"
+    fi
+  fi
+
   echo "==> $name $url"
 
   set +e
@@ -106,25 +130,30 @@ record_ws() {
   printf "%s\t%d\t%s\t%s\n" "$name" "$rc" "$http_code" "$dir" >> "$STATUS_FILE"
 
   # Some websocket servers keep the upgraded connection open; curl can still be
-  # terminated by --max-time (28). If we already got 101, treat that as success.
+  # terminated by --max-time (28). If we already got the expected success code,
+  # treat that as success.
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 28 ]; then
     failures=$((failures + 1))
     echo "==> $name curl failed with exit code $rc"
     return
   fi
 
-  if [ "$http_code" != "101" ]; then
-    if [ "$rc" -eq 28 ] && grep -q '^HTTP/.* 101 ' "$dir/headers.txt" 2>/dev/null; then
+  if [[ "$http_code" != "$expected_code_1xx" && ( -z "$expected_code_2xx" || "$http_code" != "$expected_code_2xx" ) ]]; then
+    if [ "$rc" -eq 28 ] && [ "${expected_code_1xx}" = "101" ] && grep -q '^HTTP/.* 101 ' "$dir/headers.txt" 2>/dev/null; then
       return
     fi
     failures=$((failures + 1))
-    echo "==> $name expected HTTP 101 websocket upgrade, got ${http_code}"
+    if [ "$expected_code_1xx" = "101" ]; then
+      echo "==> $name expected HTTP 101 websocket upgrade, got ${http_code}"
+    else
+      echo "==> $name expected HTTP ${expected_code_1xx}/${expected_code_2xx}, got ${http_code}"
+    fi
     return
   fi
 
-  if [ "$rc" -eq 28 ] && ! grep -q '^HTTP/.* 101 ' "$dir/headers.txt" 2>/dev/null; then
+  if [ "$rc" -eq 28 ] && ! grep -q "^HTTP/.* ${http_code} " "$dir/headers.txt" 2>/dev/null; then
     failures=$((failures + 1))
-    echo "==> $name exited by timeout before ws upgrade"
+    echo "==> $name exited by timeout before ws handshake/auth response"
   fi
 }
 
@@ -132,7 +161,7 @@ record_http "healthz" "/healthz" "2"
 record_http "metrics" "/metrics" "2"
 record_http "admin" "/admin.html" "2"
 record_http "room" "/room.html?auction=$AID" "2"
-record_ws "ws" "/ws" 
+record_ws "ws" "/ws" "${REQUIRE_WS_UPGRADE:-0}"
 
 if [ -s "$OUT_DIR/metrics/body.txt" ]; then
   if command -v jq >/dev/null 2>&1; then
