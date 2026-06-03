@@ -18,10 +18,10 @@ larger concurrency tier.
 - #154 teardown is the final cleanup and cost-control step after the rehearsal.
 
 > [!warning]
-> This card does not make a 100,000-concurrent-user claim by itself. Treat 10,000
-> as the current demonstrated tier unless a distributed v100k evidence bundle and
-> verifier pass are attached. Client RTT, WAN latency, video delivery, proxy
-> delay, and runner delay are not backend SLO proof.
+> This card does not make a 100,000-concurrent-user claim by itself. Treat the
+> P0 demonstrated tier as the proven 500/50 scenario unless a distributed
+> v100k evidence bundle and verifier pass are attached. Client RTT, WAN latency,
+> video delivery, proxy delay, and runner delay are not backend SLO proof.
 
 ## Preconditions
 
