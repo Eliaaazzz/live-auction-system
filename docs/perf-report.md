@@ -138,6 +138,15 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 - 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
 - `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`/`attempt_interval_sec`）以及运行元信息（命令行、仓库 commit、主机），用于后续对账时避免“同参数复用”误差。
 
+如需把断线回放校验并入同一套打点，可加 `--catchup-smoke`：
+
+```bash
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-rehearse
+```
+
+开启后每个 run 会额外产出 `runs/<run-id>/catchup.log`，并在 `summary.tsv` / `manifest.json` 里记录 `catchup_status` / `catchup_rc` / `catchup_checks`。
+
 便于后续并发证明归档。
 
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
