@@ -630,8 +630,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+  const soldEventWinner = events.slice().reverse().find((ev) => ev.type === 'AUCTION_SOLD' && ev.winner)?.winner;
   const topWinner = isWired
-    ? (evidence.winnerId ?? events.find((ev) => ev.winner)?.winner ?? '—')
+    ? (evidence.winnerId ?? soldEventWinner ?? '—')
     : (events.find((ev) => ev.winner)?.winner ?? '—');
 
   const showHint = (msg) => {

@@ -113,6 +113,7 @@ export function LiveRoomRoute() {
           status: 'LIVE',
           currentCents: '12880000',
           stepCents:    '500000',
+          auctionMode:   'first_price',
           endAtMs:      Date.now() + 28400,
           extendCount:  2,
           yourUserId:   'u3',
@@ -146,6 +147,7 @@ export function LiveRoomRoute() {
           stepCents:    rules.stepCents ?? snap.stepCents ?? '500000',
           capCents:     hasOwn(rules, 'capCents') ? rules.capCents : (snap.capCents ?? null),
           reserveCents: rules.reserveCents ?? snap.reserveCents ?? '0',
+          auctionMode:  rules.auctionMode ?? 'first_price',
           endAtMs:      snap.endAtMs ?? null,
           winnerId:     snap.winnerId ?? null,
           yourUserId:   useAuctionStore.getState().yourUserId,
@@ -229,6 +231,7 @@ export function LiveRoomRoute() {
       currentCents={store.currentCents}
       stepCents={store.stepCents}
       capCents={store.capCents}
+      auctionMode={store.auctionMode}
       status={store.status}
       extendCount={store.extendCount}
       connStatus={store.connStatus}
