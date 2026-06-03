@@ -7,9 +7,18 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 LOAD_100K_REHEARSAL_ARGS ?= --confirm
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
+DEPLOY_REHEARSAL_100K_TARGET ?= 100000
+DEPLOY_REHEARSAL_100K_AID ?= $(DEPLOY_REHEARSAL_AID)
+DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS ?= 800
+DEPLOY_REHEARSAL_100K_BROADCAST_P95_MAX_MS ?= 1000
+DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS ?= 2000
+DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS ?= 3000
+DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER ?= 1
+DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP ?= 1
+DEPLOY_REHEARSAL_100K_REPORT_ONLY ?= 0
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-100k load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -292,6 +301,21 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	fi; \
 	echo "rehearsal artifacts: preflight=$$out_dir manifest/status, perf= $$perf_out"
+
+deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with 默认 10万并发门禁参数
+	@$(MAKE) deploy-perf-rehearsal \
+		BASE_URL="$(BASE_URL)" \
+		DEPLOY_REHEARSAL_TARGET="$(DEPLOY_REHEARSAL_100K_TARGET)" \
+		DEPLOY_REHEARSAL_AID="$(DEPLOY_REHEARSAL_100K_AID)" \
+		ACK_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS)" \
+		BROADCAST_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_BROADCAST_P95_MAX_MS)" \
+		HAMMER_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS)" \
+		CATCHUP_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS)" \
+		REQUIRE_HAMMER="$(DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER)" \
+		REQUIRE_CATCHUP="$(DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP)" \
+		REPORT_ONLY="$(DEPLOY_REHEARSAL_100K_REPORT_ONLY)" \
+		PERF_GATE_CLIENT_SUMMARY="$(PERF_GATE_CLIENT_SUMMARY)" \
+		PERF_GATE_OUT_DIR="$(PERF_GATE_OUT_DIR)"
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \

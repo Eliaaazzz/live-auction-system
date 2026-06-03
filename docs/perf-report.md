@@ -163,6 +163,21 @@ BASE_URL="https://your-domain" \
   PERF_GATE_OUT_DIR=./rehearsal-perf
 ```
 
+For a non-P0 100k-tier remote lane, use the super-stretch wrapper:
+
+```sh
+BASE_URL="https://your-domain" \
+  make deploy-perf-rehearsal-100k \
+  DEPLOY_REHEARSAL_100K_TARGET=100000 \
+  DEPLOY_REHEARSAL_100K_AID=auc_demo \
+  DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS=800 \
+  DEPLOY_REHEARSAL_100K_BROADCAST_P95_MAX_MS=1000 \
+  DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS=2000 \
+  DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS=3000 \
+  PERF_GATE_CLIENT_SUMMARY=./client-summary.json \
+  PERF_GATE_OUT_DIR=./rehearsal-perf-100k
+```
+
 ---
 
 ## 7. Reproduce
