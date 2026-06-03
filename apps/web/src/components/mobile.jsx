@@ -28,6 +28,7 @@ function MobileRoom({
   currentCents = '12880000',
   stepCents = '500000',
   capCents = null,
+  auctionMode = 'first_price',
   extendCount = 2,
   extendSweep = false,
   isYouLeading = false,
@@ -269,6 +270,14 @@ function MobileRoom({
               当前价 · CURRENT
             </span>
             <PriceDisplay cents={currentCents} size={36} tone="ink" flash={flashPrice} withUnderline/>
+            <span style={{
+              marginTop: 4,
+              fontSize: 10,
+              color: 'var(--douyin-ink-muted)',
+              letterSpacing: '.02em',
+            }}>
+              {auctionMode === 'second_price' ? '二价拍 · 赢者付次高价' : '一价拍 · 赢者出价'}
+            </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
