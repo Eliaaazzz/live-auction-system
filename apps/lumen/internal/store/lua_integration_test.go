@@ -473,6 +473,46 @@ func TestCloseAuctionSecondPriceUsesRunnerUpPrice(t *testing.T) {
 	}
 }
 
+func TestCloseAuctionSecondPriceFallsBackToReserveWhenNoRunnerUp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.CapPriceCents = 0
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("single bidder bid: code=%s err=%v", code, err)
+	}
+
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	code, _, err := s.CloseAuction(ctx, aid)
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("close auction: code=%s err=%v", code, err)
+	}
+
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 || events[1].Type != model.TypeAuctionSold || events[1].ID != "2-0" {
+		t.Fatalf("events=%+v", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.WinnerID != "u1" {
+		t.Fatalf("winner=%s want u1", sold.WinnerID)
+	}
+	if sold.AmountCents != "10000" {
+		t.Fatalf("sold amount=%s want 10000 (reserve)", sold.AmountCents)
+	}
+}
+
 // Anti-snipe respects maxExtensions: once the cap is hit, an in-window bid is a
 // normal accept (no endAtMs bump, no AUCTION_EXTENDED) — bounds auction lifetime.
 func TestPlaceBidAntiSnipeRespectsMaxExtensions(t *testing.T) {
