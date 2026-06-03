@@ -92,9 +92,16 @@ export const api = {
 
   /**
    * Seller: publish auction.
-   *   payload = { productId, rules: { startCents, stepCents, durationMs,
-   *               maxExtensions, antiSnipeWindowMs, capCents?, reserveCents?,
-   *               auctionMode? } // first_price | second_price
+   *   payload = { productId, rules: {
+   *     startPriceCents, incrementCents, durationSec,
+   *     extendWindowMs?, extendSec?, maxExtensions?,
+   *     capCents?, reserveCents?, antiSnipeWindowMs?, auctionMode?
+   *   } }
+   *
+   * Notes:
+   * - duration may be supplied as milliseconds (`durationMs`) by older callers,
+   *   but the current canonical key is `durationSec`.
+   * - Auction mode: `first_price` (default) or `second_price`.
    */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),
 
