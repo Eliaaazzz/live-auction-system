@@ -7,12 +7,41 @@ AID="${AID:-auc_demo}"
 OUT_DIR="${OUT_DIR:-/tmp/lumen-deploy-preflight-$(date -u +%Y%m%dT%H%M%SZ)}"
 MAX_TIME="${MAX_TIME:-10}"
 ALLOW_FAILURE="${ALLOW_FAILURE:-0}"
+REQUIRE_WS_UPGRADE="${REQUIRE_WS_UPGRADE:-0}"
 
 mkdir -p "$OUT_DIR"
 
 STATUS_FILE="$OUT_DIR/status.tsv"
 MANIFEST_FILE="$OUT_DIR/manifest.txt"
 METRICS_SUMMARY="$OUT_DIR/metrics-summary.json"
+
+is_true() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_bool() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on)
+      echo 1
+      ;;
+    0|false|no|off)
+      echo 0
+      ;;
+    *)
+      echo "$1"
+      ;;
+  esac
+}
+
+REQUIRE_WS_UPGRADE="$(normalize_bool "$REQUIRE_WS_UPGRADE")"
+ALLOW_FAILURE="$(normalize_bool "$ALLOW_FAILURE")"
 
 printf "check\texit_code\thttp_code\tartifact\n" > "$STATUS_FILE"
 
@@ -36,7 +65,7 @@ esac
     echo "git_head=$(git rev-parse --short=12 HEAD 2>/dev/null || true)"
     echo "git_branch=$(git branch --show-current 2>/dev/null || true)"
   fi
-  echo "require_ws_upgrade=${REQUIRE_WS_UPGRADE:-0}"
+  echo "require_ws_upgrade=$REQUIRE_WS_UPGRADE"
   echo "ws_precheck_token_set=$([ -n "${WS_PRECHECK_TOKEN:-}" ] && echo true || echo false)"
   echo
   echo "This preflight reads public endpoints and does not inspect secrets."
@@ -96,7 +125,7 @@ record_ws() {
 
   mkdir -p "$dir"
 
-  if [ "$mode" = "1" ]; then
+  if is_true "$mode"; then
     expected_code_1xx="101"
     expected_code_2xx=""
     expected_upgrade="1"
@@ -181,7 +210,7 @@ record_http "healthz" "/healthz" "2"
 record_http "metrics" "/metrics" "2"
 record_http "admin" "/admin.html" "2"
 record_http "room" "/room.html?auction=$AID" "2"
-record_ws "ws" "/ws" "${REQUIRE_WS_UPGRADE:-0}"
+record_ws "ws" "/ws" "$REQUIRE_WS_UPGRADE"
 
 if [ -s "$OUT_DIR/metrics/body.txt" ]; then
   if command -v jq >/dev/null 2>&1; then
@@ -205,6 +234,6 @@ echo "manifest:        $MANIFEST_FILE"
 echo "status:          $STATUS_FILE"
 echo "metrics summary: $METRICS_SUMMARY"
 
-if [ "$failures" -ne 0 ] && [ "$ALLOW_FAILURE" != "1" ]; then
+if [ "$failures" -ne 0 ] && ! is_true "$ALLOW_FAILURE"; then
   exit 1
 fi

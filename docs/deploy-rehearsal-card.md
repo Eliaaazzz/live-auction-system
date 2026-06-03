@@ -52,7 +52,7 @@ larger concurrency tier.
    `/healthz`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
   and `/ws`. By default it expects auth-gated response `401/403`; if `WS_PRECHECK_TOKEN=<token>`
   is set it also accepts a valid upgrade `101` for token-authenticated endpoints. If you want
-  a strict handshake-only check, set `REQUIRE_WS_UPGRADE=1` as well.
+  a strict handshake-only check, set `REQUIRE_WS_UPGRADE=true` (or `1`/`yes`/`on`) as well.
 
 3. Decide whether SRS is in scope.
 
@@ -150,8 +150,8 @@ larger concurrency tier.
 
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
-| Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1` is intentionally documented |
-| WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
+| Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1`/`true`/`yes`/`on` is intentionally documented |
+| WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1`/`true`/`yes`/`on` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier, or `result: FAIL-REPORTED` when evidence-only mode is enabled (`DEPLOY_REHEARSAL_REPORT_ONLY=1` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=1`) | Any required server SLO row fails in strict mode (`DEPLOY_REHEARSAL_REPORT_ONLY=0` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=0`) or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |
