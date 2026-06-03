@@ -177,7 +177,12 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
 	set +e; set -o pipefail; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
-	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; fi; \
+	if [ -z "$$aid" ]; then \
+		echo "make load: FAIL — missing LOAD_AUCTION_ID in $$logfile"; \
+		exit 2; \
+	fi; \
+	printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
+	echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; \
 	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
 	@# T8 acceptance §9: Verifier consistent on the post-load auction. CI red if either step fails.
 	@# MAXLEN trim guard: load uses a long auction with bounded events (~6k at default), well
@@ -196,7 +201,11 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
 		load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
 	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
-	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
+	if [ -z "$$aid" ]; then \
+		echo "make load-smoke: FAIL — missing LOAD_AUCTION_ID in $$logfile"; \
+		exit 2; \
+	fi; \
+	printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
 
