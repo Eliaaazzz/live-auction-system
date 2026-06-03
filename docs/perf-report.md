@@ -109,7 +109,27 @@ Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
 ---
 
-## 7. Reproduce
+## 7. Super-stretch (100k / 非 P0)
+
+用于对外场景的规模边界演练（企业级演示/审计前）
+
+目标不是将结果钉为 P0 阈值，而是给 `#112` / 部署复盘提供规模压测结果与瓶颈证据。
+
+```bash
+make load-100k
+```
+
+记录字段（仅建议、非硬门槛）：
+
+- `load` 退出码 / `load: PASS|FAIL`
+- `seqGapCount`
+- `observer` 的 `readErrors` / `dialErrors`
+- `backpressureForceClose`
+- 重点异常是否来自单一子系统（WS 握手、Redis roundtrip、broadcast、verify）
+
+---
+
+## 8. Reproduce
 
 ```bash
 # full P0 gate
@@ -124,7 +144,7 @@ curl -s http://localhost:8080/metrics | jq
 
 ---
 
-## 8. Deployed / WAN re-measurement (#112)
+## 9. Deployed / WAN re-measurement (#112)
 
 > The §2 numbers are same-box compose (loopback, no WAN). After a real deploy, re-measure under real
 > RTT. Method + gated decisions (target / cost / secrets): `docs/deploy-and-latency.md`.

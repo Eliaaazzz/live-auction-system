@@ -5,7 +5,7 @@ LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke verify verify-evidence build vet test fmt guard \
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke demo-auction \
         k6 k6-setup k6-run
@@ -108,6 +108,22 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
+load-100k:       ## Large-scale rehearsal: 100k connected, 2k active (non-gate, external environment only).
+	@$(MAKE) load \
+		LOAD_OBSERVERS=100000 \
+		LOAD_BIDDERS=2000 \
+		LOAD_SHARDS=4 \
+		LOAD_DURATION_SEC=60 \
+		LOAD_BID_INTERVAL_MS=150 \
+		LOAD_ACK_P95_MS=1500 \
+		LOAD_BROADCAST_P95_MS=2000 \
+		LOAD_CATCHUP_P95_MS=4000 \
+		LOAD_HAMMER_P95_MS=5000 \
+		LOAD_SCRIPT_P99_MS=20 \
+		LOAD_AUCTION_DUR_SEC=1200 \
+		LOAD_OBSERVER_STAGGER_MS=20 \
+		LOAD_RESET_METRICS=1
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
