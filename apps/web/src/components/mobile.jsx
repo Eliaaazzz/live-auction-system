@@ -595,7 +595,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           prev: e.prevHash || '0000000000000000',
           hash: e.eventHash || '',
           extendCount: p.extendCount ?? undefined,
-          winner: p.displayName ?? undefined,
+          winner: p.displayName ?? p.winnerId ?? undefined,
         };
       })
     : EVIDENCE_EVENTS;
