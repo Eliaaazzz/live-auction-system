@@ -31,6 +31,9 @@ Options:
   --ack-p95 N          override LOAD_ACK_P95_MS (default: 1000)
   --broadcast-p95 N    override LOAD_BROADCAST_P95_MS (default: 1500)
   --script-p99 N       override LOAD_SCRIPT_P99_MS (default: 30)
+  --hammer-p95 N       override LOAD_HAMMER_P95_MS (default: 2000)
+  --catchup-p95 N      override LOAD_CATCHUP_P95_MS (default: 3000)
+  --observer-stagger N  override LOAD_OBSERVER_STAGGER_MS (default: 0)
   --json               print manifest JSON to stdout at end
   -h, --help           show this help
 
@@ -135,6 +138,18 @@ while [[ $# -gt 0 ]]; do
       LOAD_SCRIPT_P99_MS="$2"
       shift 2
       ;;
+    --hammer-p95)
+      LOAD_HAMMER_P95_MS="$2"
+      shift 2
+      ;;
+    --catchup-p95)
+      LOAD_CATCHUP_P95_MS="$2"
+      shift 2
+      ;;
+    --observer-stagger)
+      LOAD_OBSERVER_STAGGER_MS="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -199,6 +214,12 @@ fi
 
 if ! [[ "$LOAD_DURATION_SEC" =~ ^[0-9]+$ && "$LOAD_AUCTION_DUR_SEC" =~ ^[0-9]+$ && "$LOAD_BID_INTERVAL_MS" =~ ^[0-9]+$ ]]; then
   echo "duration/interval overrides must be integers"
+  exit 1
+fi
+
+if ! [[ "$LOAD_HAMMER_P95_MS" =~ ^[0-9]+$ && "$LOAD_SCRIPT_P99_MS" =~ ^[0-9]+$ \
+  && "$LOAD_CATCHUP_P95_MS" =~ ^[0-9]+$ && "$LOAD_OBSERVER_STAGGER_MS" =~ ^[0-9]+$ ]]; then
+  echo "hammer/catchup/observer overrides must be integers"
   exit 1
 fi
 
