@@ -250,7 +250,7 @@ load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks befor
 			port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
 			port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
 			port_count=$$((port_high - port_low + 1)); \
-			if [ "$$port_count" -lt 50000 ]; then \
+			if [ "$$port_count" -lt 50000 ] && [ "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-}" != "1" ] && [ "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-}" != "true" ]; then \
 				echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal."; \
 				exit 1; \
 			fi; \
