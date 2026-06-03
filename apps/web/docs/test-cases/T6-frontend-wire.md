@@ -366,10 +366,12 @@ existing tooling and dev-log links don't break.
 - **前置条件**:`/admin/auctions/new` 已加载;backend up
 - **测试步骤**:
   1. 表单保留默认值(`title='百达翡丽 5711/1A · 蓝面'`,`startCents='12000000'`,`stepCents='500000'`,`reserveCents='10000000'`,`capCents='30000000'`)
-  2. 点击 "下一步 · VLM 核对 →"
+  2. （可选）切换 `结算方式` 为 `二价拍卖（赢者付次高价）`
+  3. 点击 "下一步 · VLM 核对 →"
 - **预期结果**:
   - DevTools Network:`POST /api/products` 返回 `{ productId: 'prod_…' }`
   - 紧接着 `POST /api/auctions` 返回 `{ auctionId: 'auc_…' }`
+  - `POST /api/auctions` payload `rules` 包含 `auctionMode`（默认 `first_price`，切换时为 `second_price`）
   - 路由跳转到 `/admin/auctions/<auctionId>/vlm`
   - 按钮按下后立即变 disabled + 文字变 "正在创建 …"(busy state)
 - **优先级**:P0
