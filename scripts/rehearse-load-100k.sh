@@ -177,6 +177,10 @@ if ! command -v jq >/dev/null 2>&1; then
   echo "required: jq"
   exit 1
 fi
+if ! command -v grep >/dev/null 2>&1; then
+  echo "required: grep"
+  exit 1
+fi
 
 if [[ "$ATTEMPTS" -le 0 ]]; then
   echo "--attempts must be > 0"
@@ -301,20 +305,20 @@ while (( run_idx < ATTEMPTS )); do
 
   if [ "$rc" != "0" ]; then
     run_status="FAIL"
-  elif rg -q '^load: PASS$' "$log_file"; then
+  elif grep -q '^load: PASS$' "$log_file"; then
     run_status="PASS"
   else
     run_status="FAIL"
   fi
 
-  if rg -q 'panic:' "$log_file"; then
+  if grep -q 'panic:' "$log_file"; then
     run_panic=1
   else
     run_panic=0
   fi
 
-  observer_line="$(rg -n '^observer:' "$log_file" | tail -n1 | sed 's/^.*observer: //')"
-  bidder_line="$(rg -n '^bidder:' "$log_file" | tail -n1 | sed 's/^.*bidder: //')"
+  observer_line="$(grep -n '^observer:' "$log_file" | tail -n1 | sed 's/^.*observer: //')"
+  bidder_line="$(grep -n '^bidder:' "$log_file" | tail -n1 | sed 's/^.*bidder: //')"
   observer_frames="$(extract_metric "$observer_line" frames)"
   observer_read_errors="$(extract_metric "$observer_line" readErrors)"
   observer_dial_errors="$(extract_metric "$observer_line" dialErrors)"
@@ -322,7 +326,7 @@ while (( run_idx < ATTEMPTS )); do
   bidder_acked="$(extract_metric "$bidder_line" acked)"
   bidder_rejected="$(extract_metric "$bidder_line" rejected)"
   bidder_errors="$(extract_metric "$bidder_line" errors)"
-  auction_id="$(rg -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
+  auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
 
   total_read_errors=$((total_read_errors + observer_read_errors))
   total_dial_errors=$((total_dial_errors + observer_dial_errors))
