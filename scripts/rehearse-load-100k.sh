@@ -41,6 +41,7 @@ Options:
   --catchup-p95 N      override LOAD_CATCHUP_P95_MS (default: 3000)
   --observer-stagger N  override LOAD_OBSERVER_STAGGER_MS (default: 0)
   --json               print manifest JSON to stdout at end
+  --catchup-smoke      run ROOM_JOIN catchup smoke after each attempt
   -h, --help           show this help
 
 Output:
@@ -56,6 +57,7 @@ ATTEMPTS=1
 INTERVAL=0
 CONFIRM=0
 OUTPUT_JSON=0
+RUN_CATCHUP_SMOKE=0
 PACK_DIR_BASE=".load-100k-rehearsals"
 PACK_LABEL=""
 BASE_URL="${BASE_URL:-${TARGET_URL:-http://localhost:8080}}"
@@ -183,6 +185,10 @@ while [[ $# -gt 0 ]]; do
       LOAD_OBSERVER_STAGGER_MS="$2"
       shift 2
       ;;
+    --catchup-smoke)
+      RUN_CATCHUP_SMOKE=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -229,6 +235,10 @@ if ! command -v grep >/dev/null 2>&1; then
   echo "required: grep"
   exit 1
 fi
+if [[ "$RUN_CATCHUP_SMOKE" == "1" ]] && ! command -v node >/dev/null 2>&1; then
+  echo "required: node (for --catchup-smoke)"
+  exit 1
+fi
 
 if [[ "$ATTEMPTS" -le 0 ]]; then
   echo "--attempts must be > 0"
@@ -262,12 +272,20 @@ else
   PACK_LABEL="$(echo "$PACK_LABEL" | sed 's/[^A-Za-z0-9._-]/-/g')"
 fi
 
+if [[ "$BASE_URL" == https://* ]]; then
+  BASE_WS_URL="wss://${BASE_URL#https://}"
+elif [[ "$BASE_URL" == http://* ]]; then
+  BASE_WS_URL="ws://${BASE_URL#http://}"
+else
+  BASE_WS_URL="$BASE_URL"
+fi
+
 PACK_DIR="${PACK_DIR_BASE}/${PACK_LABEL}"
 mkdir -p "$PACK_DIR/runs"
 summary_file="$PACK_DIR/summary.tsv"
 manifest_file="$PACK_DIR/manifest.json"
 
-echo "#run	status	rc	auction_id	auction_ids	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present" > "$summary_file"
+echo "#run	status	rc	auction_id	auction_ids	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present	catchup_status	catchup_rc" > "$summary_file"
 
 HEALTHZ_URL="${BASE_URL}/healthz"
 METRICS_URL="${BASE_URL}/metrics"
@@ -342,6 +360,9 @@ total_bid_errors=0
 total_seq_gap_count=0
 total_backpressure_force_close=0
 total_panic_runs=0
+total_catchup_runs=0
+total_catchup_pass=0
+total_catchup_failed=0
 
 run_idx=0
 while (( run_idx < ATTEMPTS )); do
@@ -429,16 +450,44 @@ while (( run_idx < ATTEMPTS )); do
     total_panic_runs=$((total_panic_runs + 1))
   fi
 
+  catchup_status="SKIP"
+  catchup_rc="-"
+  catchup_log="-"
+  if [[ "$RUN_CATCHUP_SMOKE" == "1" ]]; then
+    catchup_log="$run_dir/catchup.log"
+    if [[ -n "${auction_id:-}" ]]; then
+      set +e
+      (
+        export AUCTION_ID="$auction_id"
+        export HOST_HTTP="$BASE_URL"
+        export HOST_WS="$BASE_WS_URL"
+        node "$SCRIPT_ROOT/apps/web/scripts/smoke-catchup.mjs" > "$catchup_log" 2>&1
+      )
+      catchup_rc="$?"
+      set -e
+      total_catchup_runs=$((total_catchup_runs + 1))
+      if [[ "$catchup_rc" == "0" ]]; then
+        catchup_status="PASS"
+        total_catchup_pass=$((total_catchup_pass + 1))
+      else
+        catchup_status="FAIL"
+        total_catchup_failed=$((total_catchup_failed + 1))
+      fi
+    else
+      catchup_status="SKIP_NO_AUCTION"
+    fi
+  fi
+
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
       "$run_idx" "$run_status" "$rc" "$auction_id" "${auction_ids:-}" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
       "$run_idx" "$run_status" "$rc" "-" "-" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
   fi
 
   if [[ "$run_status" == "PASS" ]]; then
@@ -462,12 +511,16 @@ while (( run_idx < ATTEMPTS )); do
     --arg bidder_acked "$bidder_acked" \
     --arg bidder_rejected "$bidder_rejected" \
     --arg bidder_errors "$bidder_errors" \
-    --arg seq_gap_count "$seq_gap_count" \
-    --arg backpressure_force_close "$backpressure_force_close" \
-    --arg panic "$run_panic" \
-    --arg log "$log_file" \
-    --arg metrics "$metrics_file" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), log: $log, metrics: $metrics}')"
+  --arg seq_gap_count "$seq_gap_count" \
+  --arg backpressure_force_close "$backpressure_force_close" \
+  --arg panic "$run_panic" \
+  --arg catchup_status "$catchup_status" \
+  --arg catchup_rc "$catchup_rc" \
+  --arg catchup_log "$catchup_log" \
+  --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
+  --arg log "$log_file" \
+  --arg metrics "$metrics_file" \
+  '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -529,10 +582,15 @@ jq -cn \
   --arg total_bid_errors "$total_bid_errors" \
   --arg total_seq_gap_count "$total_seq_gap_count" \
   --arg total_backpressure_force_close "$total_backpressure_force_close" \
+  --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
+  --arg catchup_runs "$total_catchup_runs" \
+  --arg catchup_pass "$total_catchup_pass" \
+  --arg catchup_failed "$total_catchup_failed" \
+  --arg base_ws_url "$BASE_WS_URL" \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\")), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\")), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"
