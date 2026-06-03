@@ -93,8 +93,13 @@ curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
 从**异地机**(非 ECS)打 `wss://<your-domain>`，复用现成 harness:
 - k6: `HOST_WS=wss://<your-domain> AID=<aid> TOKENS=.k6-tokens k6 run tools/loadtest/k6-ws.js`
 - Locust: `python -m locust -f tools/loadtest/locustfile.py --headless -u 1500 -r 150 -t 60s --host wss://<your-domain>`
+- Go load harness / sharded runs: set `TARGET=https://<your-domain>` and **use production login**, not dev-login:
+  ```bash
+  LOGIN_PATH=/api/login TARGET=https://<your-domain> LOAD_AUCTION_ID=<aid> \
+    LOAD_RETRY_TOO_LOW=true LOAD_BIDS_PER_BIDDER=1 go run ./apps/lumen/cmd/lumen load
+  ```
 - 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
-- ⚠️ **dev-login 生产关闭**，压测需令牌: 开一个**受控窗口** — 临时把安全组锁到压测机 IP + 临时 `ENABLE_DEV_LOGIN=true` 重启 lumen，跑完**立刻**改回 `false` 重启 + 收紧安全组。(或预先 seed 一批令牌，压测只读。)
+- ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
 
 ## A9 — 成本收尾
 测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
