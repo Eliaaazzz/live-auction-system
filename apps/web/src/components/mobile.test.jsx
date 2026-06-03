@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { MobileRoom } from './mobile.jsx';
+import { MobileEvidence, MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
 import { BidErrorCode, bidRejectCopy } from '../lib/types.js';
 
@@ -134,5 +134,37 @@ describe('PullToResync · gesture handling (TC-T6-#51-H2)', () => {
     fireEvent.touchEnd(root, {});
 
     expect(onResync).not.toHaveBeenCalled();
+  });
+});
+
+describe('MobileEvidence · summary winner visibility', () => {
+  it('shows winner for SOLD evidence and hides it when winner is not present', () => {
+    const soldEvidence = {
+      auctionId: 'a1',
+      status: 'SOLD',
+      currentPriceCents: '12000',
+      winnerId: 'winner-user',
+      timeline: [
+        { seq: 1, eventType: 'BID_ACCEPTED', payload: '{"userId":"bid-user","displayName":"Bidder","amountCents":"11000"}', eventHash: 'aaa', prevHash: '000', },
+        { seq: 2, eventType: 'AUCTION_SOLD', payload: '{"winnerId":"winner-user","amountCents":"12000"}', eventHash: 'bbb', prevHash: 'aaa' },
+      ],
+      chainVerified: true,
+      eventsHash: 'ccc',
+    };
+
+    const soldRender = render(<MobileEvidence evidence={soldEvidence} />);
+    expect(soldRender.container.textContent).toContain('拍卖状态: SOLD · 成交方: winner-user');
+
+    const noBidEvidence = {
+      ...soldEvidence,
+      status: 'NO_BID',
+      winnerId: '',
+      timeline: [
+        { seq: 1, eventType: 'BID_ACCEPTED', payload: '{"userId":"bid-user","displayName":"Bidder","amountCents":"11000"}', eventHash: 'aaa', prevHash: '000', },
+      ],
+    };
+
+    const noBidRender = render(<MobileEvidence evidence={noBidEvidence} />);
+    expect(noBidRender.container.textContent).not.toContain('成交方:');
   });
 });
