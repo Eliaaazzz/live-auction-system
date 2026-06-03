@@ -227,14 +227,16 @@ if ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
 fi
 
 start_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-health_start="$(mktemp)"
-health_end="$(mktemp)"
+health_start_file="$PACK_DIR/health-start.json"
+health_end_file="$PACK_DIR/health-end.json"
+echo "{}" > "$health_start_file"
+echo "{}" > "$health_end_file"
 json_payload="$(mktemp)"
 cleanup_tmp() {
-  rm -f "$health_start" "$health_end" "$json_payload"
+  rm -f "$json_payload"
 }
 trap cleanup_tmp EXIT
-curl -sS http://localhost:8080/healthz > "$health_start" || true
+curl -sS http://localhost:8080/healthz > "$health_start_file" || true
 
 extract_metric() {
   local line="$1"
@@ -333,13 +335,13 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
       "$run_idx" "$run_status" "$rc" "$auction_id" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$run_panic" >> "$summary_file"
+      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" "$run_panic" >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
       "$run_idx" "$run_status" "$rc" "-" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$run_panic" >> "$summary_file"
+      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" "$run_panic" >> "$summary_file"
   fi
 
   if [[ "$run_status" == "PASS" ]]; then
@@ -374,7 +376,7 @@ while (( run_idx < ATTEMPTS )); do
 done
 
 printf ']\n' >> "$json_payload"
-curl -sS http://localhost:8080/healthz > "$health_end" || true
+curl -sS http://localhost:8080/healthz > "$health_end_file" || true
 
 pass_rate=0
 if (( ATTEMPTS > 0 )); then
@@ -407,8 +409,8 @@ jq -cn \
   --arg total_bid_acked "$total_bid_acked" \
   --arg total_bid_rejected "$total_bid_rejected" \
   --arg total_bid_errors "$total_bid_errors" \
-  --arg health_start "$health_start" \
-  --arg health_end "$health_end" \
+  --arg health_start "$health_start_file" \
+  --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
   '{pack_dir: $pack_dir, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber)}, attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
 
