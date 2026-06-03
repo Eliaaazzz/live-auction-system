@@ -168,9 +168,10 @@ jobs:
         # is bounded.
         timeout-minutes: 5
         run: |
-          test -n "${VERIFY_AID:-}" || { echo "missing VERIFY_AID for frontend smoke scripts"; exit 1; }
-          echo "frontend smoke VERIFY_AID=$VERIFY_AID"
-          make web-smoke
+          aimid="${VERIFY_AID:-$AUCTION_ID}"
+          test -n "$aimid" || { echo "missing VERIFY_AID for frontend smoke scripts"; exit 1; }
+          echo "frontend smoke VERIFY_AID=$aimid"
+          make web-smoke WEB_SMOKE_AID="$aimid"
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs
