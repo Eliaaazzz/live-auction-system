@@ -152,6 +152,10 @@ func TestRulesValidate(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("valid rules rejected: %v", err)
 	}
+	okSecond := Rules{StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000, DurationSec: 60, AuctionMode: AuctionModeSecondPrice}
+	if err := okSecond.Validate(); err != nil {
+		t.Fatalf("second-price rules rejected: %v", err)
+	}
 	// cap==0 means no ceiling — valid.
 	noCap := ok
 	noCap.CapPriceCents = 0
@@ -171,6 +175,7 @@ func TestRulesValidate(t *testing.T) {
 		"negative cap":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: -1, DurationSec: 60},
 		"cap equals start":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10000, DurationSec: 60},
 		"cap below start":     {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 9000, DurationSec: 60},
+		"bad auction mode":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 12000, DurationSec: 60, AuctionMode: "sealed"},
 		"money over max":      {StartPriceCents: MaxMoneyCents + 1, IncrementCents: 1000, DurationSec: 60},
 		"cap over max":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: MaxMoneyCents + 1, DurationSec: 60},
 		"zero duration":       {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 0},

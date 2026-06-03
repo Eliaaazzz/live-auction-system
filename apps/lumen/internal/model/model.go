@@ -198,6 +198,10 @@ type RoomSnapshotData struct {
 type RoomSnapshotRules struct {
 	StepCents string  `json:"stepCents"`
 	CapCents  *string `json:"capCents"`
+	// AuctionMode selects how winners are settled (first_price default).
+	// Backward compatible default is first_price for legacy auctions and API
+	// callers that omit this field.
+	AuctionMode string `json:"auctionMode"`
 	// ReserveCents mirrors StartPriceCents until a separate reserve rule lands.
 	ReserveCents      string `json:"reserveCents"`
 	MaxExtensions     int64  `json:"maxExtensions"`
@@ -267,6 +271,10 @@ type Rules struct {
 	DurationSec     int64 `json:"durationSec"`
 	ExtendWindowSec int64 `json:"extendWindowSec"`
 	ExtendSec       int64 `json:"extendSec"`
+	// AuctionMode selects settlement mode:
+	// - first_price (default, backward-compatible)
+	// - second_price (mode is accepted/recorded, behavior remains first-price for now)
+	AuctionMode string `json:"auctionMode"`
 	// MaxExtensions caps anti-snipe extensions to bound an auction's lifetime
 	// (two bidders bouncing the price inside the window could otherwise extend
 	// forever). 0 = unlimited (back-compat). Once reached, an in-window bid is
@@ -275,6 +283,10 @@ type Rules struct {
 }
 
 func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
+	auctionMode := r.AuctionMode
+	if auctionMode == "" {
+		auctionMode = AuctionModeFirstPrice
+	}
 	var capCents *string
 	if r.CapPriceCents > 0 {
 		c := strconv.FormatInt(int64(r.CapPriceCents), 10)
@@ -283,16 +295,27 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 	return RoomSnapshotRules{
 		StepCents:         strconv.FormatInt(int64(r.IncrementCents), 10),
 		CapCents:          capCents,
+		AuctionMode:       auctionMode,
 		ReserveCents:      strconv.FormatInt(int64(r.StartPriceCents), 10),
 		MaxExtensions:     r.MaxExtensions,
 		AntiSnipeWindowMs: r.ExtendWindowSec * 1000,
 	}
 }
 
+const (
+	AuctionModeFirstPrice  = "first_price"
+	AuctionModeSecondPrice = "second_price"
+)
+
 // Validate enforces the rule-DSL invariants the Lua hot path assumes, so a
 // misconfigured auction is rejected at creation rather than producing a live but
 // unwinnable room. `capPriceCents == 0` means "no buy-now ceiling".
 func (r Rules) Validate() error {
+	switch r.AuctionMode {
+	case "", AuctionModeFirstPrice, AuctionModeSecondPrice:
+	default:
+		return fmt.Errorf("auctionMode must be %q or %q", AuctionModeFirstPrice, AuctionModeSecondPrice)
+	}
 	switch {
 	case r.StartPriceCents < 0:
 		return fmt.Errorf("startPriceCents must be >= 0")
