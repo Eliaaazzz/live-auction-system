@@ -436,22 +436,6 @@ while (( run_idx < ATTEMPTS )); do
 
   curl -sS "$METRICS_URL" > "$metrics_file" || true
 
-  if [ "$rc" != "0" ]; then
-    run_status="FAIL"
-  elif [ -z "${auction_id:-}" ]; then
-    run_status="FAIL"
-  elif grep -q '^load: PASS$' "$log_file"; then
-    run_status="PASS"
-  else
-    run_status="FAIL"
-  fi
-
-  if grep -q 'panic:' "$log_file"; then
-    run_panic=1
-  else
-    run_panic=0
-  fi
-
   observer_line="$(grep -n '^observer:' "$log_file" | tail -n1 | sed 's/^.*observer: //')"
   bidder_line="$(grep -n '^bidder:' "$log_file" | tail -n1 | sed 's/^.*bidder: //')"
   observer_frames="$(extract_metric "$observer_line" frames)"
@@ -464,6 +448,28 @@ while (( run_idx < ATTEMPTS )); do
   counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
   seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
   backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
+
+  if grep -q 'panic:' "$log_file"; then
+    run_panic=1
+  else
+    run_panic=0
+  fi
+
+  if [ "$rc" != "0" ]; then
+    run_status="FAIL"
+  elif [ -z "${auction_id:-}" ]; then
+    run_status="FAIL"
+  elif grep -q '^load: PASS$' "$log_file"; then
+    run_status="PASS"
+  else
+    run_status="FAIL"
+  fi
+
+  if [ "$run_status" = "PASS" ]; then
+    if (( observer_read_errors > 0 )) || (( seq_gap_count > 0 )) || (( backpressure_force_close > 0 )) || (( run_panic > 0 )); then
+      run_status="FAIL"
+    fi
+  fi
 
   total_read_errors=$((total_read_errors + observer_read_errors))
   total_dial_errors=$((total_dial_errors + observer_dial_errors))
@@ -503,6 +509,10 @@ while (( run_idx < ATTEMPTS )); do
     else
       catchup_status="SKIP_NO_AUCTION"
     fi
+  fi
+
+  if [ "$run_status" = "PASS" ] && [[ "$RUN_CATCHUP_SMOKE" == "1" ]] && [ "$catchup_status" = "FAIL" ]; then
+    run_status="FAIL"
   fi
 
   if [ -n "${auction_id:-}" ]; then

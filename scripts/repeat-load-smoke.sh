@@ -236,7 +236,7 @@ while (( run_idx < ATTEMPTS )); do
 
   status="PASS"
   if (( rc != 0 )) || [ -z "${auction_id:-}" ] || ! grep -q '^load: PASS$' "$log_file" \
-    || (( observer_read_errors > 0 )) || (( panic_present > 0 )); then
+    || (( observer_read_errors > 0 )) || (( seq_gap_count > 0 )) || (( backpressure_force_close > 0 )) || (( panic_present > 0 )); then
     status="FAIL"
     failed=$((failed + 1))
   else
