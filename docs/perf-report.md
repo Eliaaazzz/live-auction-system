@@ -132,6 +132,10 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
+If you perform a public remote rehearsal for a distributed run, execute the
+end-to-end sequence in [docs/deploy-rehearsal-card.md](deploy-rehearsal-card.md)
+to keep server-side and client-side evidence boundaries explicit.
+
 ---
 
 ## 7. Reproduce

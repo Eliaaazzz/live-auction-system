@@ -43,6 +43,7 @@ that proves it**, and the assertable signal to point at.
 | 6 | Replay Verifier consistent | "Stream / Redis / MySQL 三方一致 + hash 链校验" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
 | 7 | 监控面板 500/50 | "500 在线 + 50 活跃出价，ack/broadcast p95 达标，**seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
 | 7.5 | 规模演练（非 P0，可选） | "企业级并发边界盘查：10万级压测用于瓶颈归档，不作为演示硬闸" | `make load-100k-rehearse LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)"`（演练机） | `seqGapCount` 与回放一致性为重点；请保留 `manifest.json` / `summary.tsv` 作为容量边界证据 |
+| 7.6 | 远端演练边界 | 如需发布环境/非本地压测路径，按 [deploy rehearsal 卡片](deploy-rehearsal-card.md) 执行 |  | 服务器端 SLO 与 client-observed 证据边界分离，避免把 WAN 延迟误判为后端瓶颈 |
 | 8 | 故障演练 30s ×5 | "MySQL/WS/Timer/AI/Redis 各挂一段，证明降级 + 自愈" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; AI 挂时出价继续 (V9 P3) |
 
 > `make demo` runs nodes 1–3 (`e2e-dummy-bid`), 5 (`verify-evidence`), 6 (`verify`),
