@@ -136,6 +136,17 @@ If you perform a public remote rehearsal for a distributed run, execute the
 end-to-end sequence in [docs/deploy-rehearsal-card.md](deploy-rehearsal-card.md)
 to keep server-side and client-side evidence boundaries explicit.
 
+For a single-shot operator flow, use:
+
+```sh
+BASE_URL="https://your-domain" \
+  make deploy-perf-rehearsal \
+  DEPLOY_REHEARSAL_TARGET=500 \
+  DEPLOY_REHEARSAL_AID=auc_demo \
+  PERF_GATE_CLIENT_SUMMARY=./client-summary.json \
+  PERF_GATE_OUT_DIR=./rehearsal-perf
+```
+
 ---
 
 ## 7. Reproduce
