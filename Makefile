@@ -276,7 +276,7 @@ load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks befor
 	@ulimit_n=$$(ulimit -n 2>/dev/null || echo 0); \
 	allow_low_ulimit="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_ULIMIT:-0}" | tr '[:upper:]' '[:lower:]')"; \
 	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$$allow_low_ulimit" != "1" ] && [ "$$allow_low_ulimit" != "true" ] && [ "$$allow_low_ulimit" != "yes" ] && [ "$$allow_low_ulimit" != "on" ]; then \
-		echo "FAIL: ulimit -n=$$ulimit_n is below 131072 (super-stretch threshold). Set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true) to proceed anyway."; \
+		echo "FAIL: ulimit -n=$$ulimit_n is below 131072 (super-stretch threshold). Set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true/yes/on) to proceed anyway."; \
 		exit 1; \
 	fi
 	@echo "- backlog/port window:" \
@@ -287,7 +287,7 @@ load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks befor
 				port_count=$$((port_high - port_low + 1)); \
 				allow_low_ephemeral="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}" | tr '[:upper:]' '[:lower:]')"; \
 				if [ "$$port_count" -lt 50000 ] && [ "$$allow_low_ephemeral" != "1" ] && [ "$$allow_low_ephemeral" != "true" ] && [ "$$allow_low_ephemeral" != "yes" ] && [ "$$allow_low_ephemeral" != "on" ]; then \
-					echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal."; \
+					echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal. Set LOAD_100K_ALLOW_LOW_EPHEMERAL=1 (or true/yes/on) to continue anyway."; \
 					exit 1; \
 				fi; \
 		else \
