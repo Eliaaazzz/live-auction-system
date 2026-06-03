@@ -239,6 +239,8 @@ echo "#run	status	rc	auction_id	observer_read_errors	observer_dial_errors	bid_se
 echo "super-stretch rehearsal pack: $PACK_DIR"
 echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms"
 
+LOAD_100K_CONFIRM=1 \
+LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}" \
 make load-100k-preflight
 
 if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf http://localhost:8080/healthz >/dev/null 2>&1; then
@@ -319,6 +321,8 @@ while (( run_idx < ATTEMPTS )); do
   LOAD_SCRIPT_P99_MS="$LOAD_SCRIPT_P99_MS" \
   LOAD_CATCHUP_P95_MS="$LOAD_CATCHUP_P95_MS" \
   LOAD_OBSERVER_STAGGER_MS="$LOAD_OBSERVER_STAGGER_MS" \
+  LOAD_100K_CONFIRM=1 \
+  LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}" \
   LOAD_RESET_METRICS=1 \
   make load 2>&1 | tee "$log_file"
   rc="${PIPESTATUS[0]}"
