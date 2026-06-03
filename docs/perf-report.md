@@ -99,8 +99,11 @@ If `mismatch_at_seq=...` or `hash_break_at_seq=...` appears: the load was post-l
 
 | Metric | Stretch budget | Result |
 |---|---|---|
-| ack p99 | < 100 ms | `_____` |
-| broadcast p99 | < 300 ms | `_____` |
+| 500ms+ lane（ACK）p95 | < 800 ms | `_____` |
+| 500ms+ lane（Broadcast）p95 | < 1000 ms | `_____` |
+| Hammer p95（可重放窗口） | < 2000 ms | `_____` |
+| Catchup 200 events p95（可重放窗口） | < 3000 ms | `_____` |
+| Seq gap | = 0 | `_____` |
 
 Run via:
 ```bash
@@ -111,10 +114,14 @@ Super-stretch（100k / 2k / 4-shards）目标：
 ```bash
 make load-100k
 ```
-（如需固定预算覆写，直接传入 LOAD_* 环境变量）
+（如需固定预算覆写，直接传入 LOAD_* 环境变量；当前 `make load-100k` 默认会写入：
+`LOAD_ACK_P95_MS=800`、`LOAD_BROADCAST_P95_MS=1000`、`LOAD_HAMMER_P95_MS=2000`、`LOAD_CATCHUP_P95_MS=3000`、`LOAD_SCRIPT_P99_MS=20`）
 ```bash
 LOAD_OBSERVERS=100000 LOAD_BIDDERS=2000 LOAD_SHARDS=4 \
-LOAD_ACK_P95_MS=1000 LOAD_BROADCAST_P95_MS=1500 LOAD_SCRIPT_P99_MS=30 make load
+LOAD_AUCTION_DUR_SEC=3600 LOAD_BID_INTERVAL_MS=100 \
+LOAD_ACK_P95_MS=800 LOAD_BROADCAST_P95_MS=1000 \
+LOAD_HAMMER_P95_MS=2000 LOAD_CATCHUP_P95_MS=3000 \
+LOAD_SCRIPT_P99_MS=20 LOAD_OBSERVER_STAGGER_MS=0 make load
 ```
   
 非 P0 演练打包（建议）：
@@ -127,6 +134,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 - `summary.tsv`
 - `health-start.json` / `health-end.json`
 - 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
+- `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`），用于后续对账时避免“同参数复用”误差。
 
 便于后续并发证明归档。
 
