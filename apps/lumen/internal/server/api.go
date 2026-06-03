@@ -267,6 +267,10 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			rules.ExtendSec = 30
 		}
 	}
+	// Canonicalize string-like enum values once at normalization time so downstream
+	// hot-path scripts only see a normalized mode value and don't silently fall
+	// back to first_price for whitespace-only drift from clients.
+	rules.AuctionMode = rules.AuctionModeOrDefault()
 	return rules, nil
 }
 

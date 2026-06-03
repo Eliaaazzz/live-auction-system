@@ -123,6 +123,22 @@ func TestNormalizeCreateAuctionRulesSupportsLegacyFormFields(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreateAuctionRulesTrimsAuctionMode(t *testing.T) {
+	raw := json.RawMessage(`{
+		"startPriceCents":"10000",
+		"incrementCents":"1000",
+		"durationSec":60,
+		"auctionMode":" second_price "
+	}`)
+	rules, err := normalizeCreateAuctionRules(raw, model.Rules{})
+	if err != nil {
+		t.Fatalf("normalize auction rules: %v", err)
+	}
+	if rules.AuctionMode != model.AuctionModeSecondPrice {
+		t.Fatalf("auctionMode=%q want=%q", rules.AuctionMode, model.AuctionModeSecondPrice)
+	}
+}
+
 func TestNormalizeCreateAuctionRulesPrefersCanonicalFields(t *testing.T) {
 	raw := json.RawMessage(`{
 		"startPriceCents":"12000000",
