@@ -136,7 +136,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 - `summary.tsv`
 - `health-start.json` / `health-end.json`
 - 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
-- `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`），用于后续对账时避免“同参数复用”误差。
+- `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`/`attempt_interval_sec`）以及运行元信息（命令行、仓库 commit、主机），用于后续对账时避免“同参数复用”误差。
 
 便于后续并发证明归档。
 
