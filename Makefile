@@ -191,26 +191,39 @@ e2e-ai-offline:   ## T7-5 chaos gate: kill ai-sidecar, assert bid path still gre
 	$(MAKE) e2e-dummy-bid
 	@echo "✓ T7-5 PASSED · bid path stayed green throughout AI down + recovery"
 
-load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budgets, exit!=0 on breach + Verifier consistent on the post-load auction.
+load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budgets, exit!=0 on breach + Verifier consistent on post-load auctions.
 	@# Run the load harness; tee to stdout AND to a log so we can extract the
-	@# LOAD_AUCTION_ID after the run (the harness prints it within the first
-	@# second; the run continues for LOAD_DURATION_SEC). We capture the id even
-	@# on failure so an operator can `make verify VERIFY_AID=<id>` manually.
+	@# LOAD_AUCTION_IDS after the run (or legacy LOAD_AUCTION_ID if needed).
+	@# The run continues for LOAD_DURATION_SEC. We capture IDs even on failure
+	@# so an operator can `make verify VERIFY_AID=<id>` manually.
 	@set -e; mkdir -p .load-logs
 	@logfile=".load-logs/load-$$(date +%Y%m%dT%H%M%S).log"; \
 	set +e; set -o pipefail; $(COMPOSE) --profile tools run --rm --build load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
-	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+	auction_ids="$$(grep -m1 '^LOAD_AUCTION_IDS=' $$logfile | sed 's/^LOAD_AUCTION_IDS=//')"; \
+	if [ -z "$$auction_ids" ]; then \
+		aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+		auction_ids="$$aid"; \
+	else \
+		aid="$$(printf '%s' "$$auction_ids" | tr -d '\r' | tr ',' ' ' | awk '{print $$1}')"; \
+	fi; \
+	auction_ids="$$(printf '%s' "$$auction_ids" | tr -d '\r' | tr ',' ' ')"; \
 	if [ -z "$$aid" ]; then \
-		echo "make load: FAIL — missing LOAD_AUCTION_ID in $$logfile"; \
+		echo "make load: FAIL — missing LOAD_AUCTION_IDS (or legacy LOAD_AUCTION_ID) in $$logfile"; \
 		exit 2; \
 	fi; \
 	printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
 	echo "load auction captured: $$aid → $(LOAD_AID_FILE)"; \
-	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi
-	@# T8 acceptance §9: Verifier consistent on the post-load auction. CI red if either step fails.
+	if [ -n "$$auction_ids" ]; then echo "load auction ids: $$auction_ids"; fi; \
+	if [ $$rc -ne 0 ]; then echo "make load: FAIL (rc=$$rc) — see $$logfile"; exit $$rc; fi; \
+	for aid in $$auction_ids; do \
+		if [ -z "$$aid" ]; then continue; fi; \
+		echo ">>> make verify (auction $$aid)"; \
+		printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
+		$(MAKE) verify VERIFY_AID="$$aid" || exit $$?; \
+	done
+	@# T8 acceptance §9: Verifier consistent on post-load auctions. CI red if any step fails.
 	@# MAXLEN trim guard: load uses a long auction with bounded events (~6k at default), well
 	@# under the verifier replay budget — see docs/perf-report.md for the trim/replay alignment.
-	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
 
 load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets — exercises the load + verify chain so the harness itself stays a regression net.
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
@@ -222,15 +235,27 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 		-e LOAD_ACK_P95_MS=400 -e LOAD_BROADCAST_P95_MS=800 \
 		-e LOAD_HAMMER_P95_MS=2000 -e LOAD_SCRIPT_P99_MS=20 \
 		-e LOAD_AUCTION_DUR_SEC=120 -e LOAD_OBSERVER_STAGGER_MS=20 \
-		load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
-	aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+	load 2>&1 | tee "$$logfile"; rc=$$?; set +o pipefail; set -e; \
+	auction_ids="$$(grep -m1 '^LOAD_AUCTION_IDS=' $$logfile | sed 's/^LOAD_AUCTION_IDS=//')"; \
+	if [ -z "$$auction_ids" ]; then \
+		aid="$$(grep -m1 '^LOAD_AUCTION_ID=' $$logfile | sed 's/^LOAD_AUCTION_ID=//')"; \
+		auction_ids="$$aid"; \
+	else \
+		aid="$$(printf '%s' "$$auction_ids" | tr -d '\r' | tr ',' ' ' | awk '{print $$1}')"; \
+	fi; \
+	auction_ids="$$(printf '%s' "$$auction_ids" | tr -d '\r' | tr ',' ' ')"; \
 	if [ -z "$$aid" ]; then \
-		echo "make load-smoke: FAIL — missing LOAD_AUCTION_ID in $$logfile"; \
+		echo "make load-smoke: FAIL — missing LOAD_AUCTION_IDS (or legacy LOAD_AUCTION_ID) in $$logfile"; \
 		exit 2; \
 	fi; \
 	printf '%s\n' "$$aid" > $(LOAD_AID_FILE); \
-	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
-	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+	if [ -n "$$auction_ids" ]; then echo "load-smoke auction ids: $$auction_ids"; fi; \
+	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi; \
+	for aid in $$auction_ids; do \
+		if [ -z "$$aid" ]; then continue; fi; \
+		echo ">>> make verify (auction $$aid)"; \
+		$(MAKE) verify VERIFY_AID="$$aid" || exit $$?; \
+	done
 
 load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSON output support
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
