@@ -189,6 +189,9 @@ BASE_URL="https://your-domain" \
   make deploy-perf-rehearsal-100k
 ```
 
+If `DEPLOY_REHEARSAL_100K_REPORT_ONLY` is not set, it defaults to
+`DEPLOY_REHEARSAL_REPORT_ONLY`.
+
 Record `result: FAIL-REPORTED` as a non-blocking signal in
 `perf-gate/summary.md` for these evidence-only runs.
 
