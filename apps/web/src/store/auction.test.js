@@ -137,6 +137,59 @@ describe('applyEvent · BID_ACCEPTED', () => {
   });
 });
 
+describe('applyEvent ROOM_STATE_PATCH', () => {
+  beforeEach(RESET);
+
+  it('updates room projection and advances seq without needing every BID_ACCEPTED', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 2,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '12000000',
+        winnerId: 'u_other',
+        winnerDisplayName: 'Patch Winner',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 2,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.currentCents).toBe('12000000');
+    expect(s.winnerId).toBe('u_other');
+    expect(s.winnerDisplayName).toBe('Patch Winner');
+    expect(s.lastSeq).toBe(2);
+    expect(s.totalBidsCount).toBe(2);
+    expect(s.leaders[0]).toMatchObject({ userId: 'u_other', cents: '12000000' });
+  });
+
+  it('counts only unapplied seqs when a direct ack already advanced the client', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 3,
+      data: { status: 'LIVE', amountCents: '11500000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000 },
+    }));
+    apply(env({
+      seq: 5,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '12500000',
+        winnerId: 'u_other',
+        winnerDisplayName: 'Other',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 5,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.totalBidsCount).toBe(3);
+    expect(s.lastSeq).toBe(5);
+    expect(s.overtakeBanner).toBe(true);
+  });
+});
+
 describe('applyEvent · cumulative counters (#64-M1/M2)', () => {
   beforeEach(RESET);
 

@@ -100,6 +100,7 @@ const (
 	TypeBidPlace         = "BID_PLACE"
 	TypePing             = "PING"
 	TypeRoomSnapshot     = "ROOM_SNAPSHOT"
+	TypeRoomStatePatch   = "ROOM_STATE_PATCH"
 	TypeBidAccepted      = "BID_ACCEPTED"
 	TypeBidRejected      = "BID_REJECTED"
 	TypeAuctionExtended  = "AUCTION_EXTENDED"  // anti-snipe extension (event, not a state)
@@ -305,6 +306,22 @@ type RoomSnapshotData struct {
 	Seq               int64              `json:"seq"`
 	ViewerCount       int                `json:"viewerCount"` // live room occupancy (参与人数) at snapshot time
 	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
+}
+
+// RoomStatePatchData is the high-fanout room projection used when a large room
+// would otherwise receive one BID_ACCEPTED broadcast per accepted bid. The
+// authoritative bid events still live in Redis Stream and the originating
+// bidder still receives its direct BID_ACCEPTED ack; this patch is a coalesced
+// UI state projection for everyone else in the room.
+type RoomStatePatchData struct {
+	Seq               int64  `json:"seq"`
+	Status            string `json:"status"`
+	CurrentPriceCents string `json:"currentPriceCents"`
+	WinnerID          string `json:"winnerId"`
+	WinnerDisplayName string `json:"winnerDisplayName"`
+	EndAtMs           int64  `json:"endAtMs"`
+	BidCountDelta     int64  `json:"bidCountDelta"`
+	ServerTimeMs      int64  `json:"serverTimeMs"`
 }
 
 type RoomSnapshotRules struct {

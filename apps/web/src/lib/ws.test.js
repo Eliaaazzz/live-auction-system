@@ -152,6 +152,34 @@ describe('RoomClient', () => {
     expect(rejects[0].data.code).toBe('ERR_RATE_LIMITED')
   })
 
+  it('forwards ROOM_STATE_PATCH envelopes to onEvent', () => {
+    const events = []
+    const client = new RoomClient({
+      url: 'ws://localhost:8080/ws',
+      auctionId: 'auc1',
+      onEvent: (env) => events.push(env),
+    })
+
+    client.connect()
+    const ws = latestSocket()
+    ws.onopen()
+
+    ws.onmessage({
+      data: JSON.stringify({
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        type: EventType.ROOM_STATE_PATCH,
+        auctionId: 'auc1',
+        seq: 12,
+        serverTimeMs: Date.now(),
+        data: { currentPriceCents: '12000000', winnerId: 'u2' },
+      }),
+    })
+    client.leave()
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: EventType.ROOM_STATE_PATCH, seq: 12 })
+  })
+
   it('hard-stops on schema mismatch', () => {
     const states = []
     const client = new RoomClient({

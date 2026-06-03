@@ -426,6 +426,7 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
 
 	lastSeq := make(map[string]int64)
+	patches := newRoomStatePatchCoalescer(roomStatePatchConfigFromEnv())
 	fanout := func(aid string) {
 		events, _, err := st.ReadEventsAfter(ctx, aid, streamIDForSeq(lastSeq[aid]))
 		if err != nil {
@@ -457,14 +458,18 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				log.Printf("fanout marshal %s seq=%d type=%s: %v", aid, e.Seq, e.Type, err)
 				continue
 			}
-			h.broadcast(aid, b)
+			coalesced := patches.offerBidAccepted(h, aid, e)
+			if !coalesced {
+				patches.flushAid(h, m, aid)
+				h.broadcast(aid, b)
+			}
 			// V10k Tier C: ratchet the gateway-side roomState cache from this
 			// observed event so dispatchWS BID_PLACE can fast-reject without a
 			// Lua round-trip. Drop the cache on terminal events. Done AFTER
 			// broadcast so a marshal-error skip above doesn't half-update state
 			// (the `continue` jumps back to the next event without reaching here).
 			updateRoomStateFromEvent(h, aid, e)
-			if m != nil {
+			if m != nil && !coalesced {
 				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
 				// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
 				// field rather than parse the full payload — the event payloads share
@@ -505,10 +510,19 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 
 	ticker := time.NewTicker(fanoutSweepInterval)
 	defer ticker.Stop()
+	var patchTicker *time.Ticker
+	var patchC <-chan time.Time
+	if interval := patches.interval(); interval > 0 {
+		patchTicker = time.NewTicker(interval)
+		patchC = patchTicker.C
+		defer patchTicker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-patchC:
+			patches.flushAll(h, m)
 		case <-ticker.C:
 			for _, aid := range h.roomAIDs() { // backstop: independent of Pub/Sub delivery
 				fanout(aid)

@@ -258,6 +258,40 @@ export const useAuctionStore = create((set, get) => ({
           break;
         }
 
+        case EventType.ROOM_STATE_PATCH: {
+          const prevWinnerId = s.winnerId;
+          const wasSelf      = prevWinnerId != null && prevWinnerId === s.yourUserId;
+
+          next.status            = data.status ?? s.status;
+          next.currentCents      = data.currentPriceCents ?? s.currentCents;
+          next.endAtMs           = data.endAtMs ?? s.endAtMs;
+          next.winnerId          = data.winnerId ?? s.winnerId;
+          next.winnerDisplayName = data.winnerDisplayName ?? s.winnerDisplayName;
+
+          const seqDelta = typeof seq === 'number' ? Math.max(0, seq - s.lastSeq) : 0;
+          const bidDelta = Number.isFinite(data.bidCountDelta) ? Math.max(0, data.bidCountDelta) : seqDelta;
+          next.totalBidsCount = s.totalBidsCount + Math.min(bidDelta, seqDelta || bidDelta);
+          if (data.winnerId && !s.bidderIds.includes(data.winnerId)) {
+            next.bidderIds = [...s.bidderIds, data.winnerId];
+          }
+          if (data.winnerId) {
+            next.leaders = mergeLeader(s.leaders, {
+              userId:      data.winnerId,
+              displayName: data.winnerDisplayName || data.winnerId,
+              cents:       data.currentPriceCents ?? s.currentCents,
+              isYou:       data.winnerId === s.yourUserId,
+            });
+          }
+          if (wasSelf && data.winnerId !== s.yourUserId) {
+            next.overtakeBanner = true;
+            scheduleClear('overtakeBanner', 5000);
+          }
+          next.lastRejectCode = null;
+          next.lastRejectAt = null;
+          next.lastRejectSeq = 0;
+          break;
+        }
+
         case EventType.AUCTION_EXTENDED: {
           next.endAtMs     = data.endAtMs;
           next.extendCount = data.extendCount ?? (s.extendCount + 1);
