@@ -458,7 +458,7 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				log.Printf("fanout marshal %s seq=%d type=%s: %v", aid, e.Seq, e.Type, err)
 				continue
 			}
-			coalesced := patches.offerBidAccepted(h, aid, e)
+			coalesced := patches.offer(h, aid, e)
 			if !coalesced {
 				patches.flushAid(h, m, aid)
 				h.broadcast(aid, b)

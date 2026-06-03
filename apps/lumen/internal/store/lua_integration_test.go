@@ -104,9 +104,23 @@ func TestPlaceBidAcceptAndMonotonicSeq(t *testing.T) {
 	if payload == "" {
 		t.Fatal("expected non-empty ack payload")
 	}
-	code, seq, _, err = s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2")
+	var first model.BidAcceptedData
+	if err := json.Unmarshal([]byte(payload), &first); err != nil {
+		t.Fatalf("first payload: %v", err)
+	}
+	if first.BidCount != 1 {
+		t.Fatalf("first bidCount=%d want 1", first.BidCount)
+	}
+	code, seq, payload, err = s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2")
 	if err != nil || code != model.CodeOKAccepted || seq != 2 {
 		t.Fatalf("second bid: code=%s seq=%d err=%v", code, seq, err)
+	}
+	var second model.BidAcceptedData
+	if err := json.Unmarshal([]byte(payload), &second); err != nil {
+		t.Fatalf("second payload: %v", err)
+	}
+	if second.BidCount != 2 {
+		t.Fatalf("second bidCount=%d want 2", second.BidCount)
 	}
 	snap, _ := s.Snapshot(ctx, aid)
 	if snap.CurrentPriceCents != "12000" || snap.WinnerID != "u2" || snap.Seq != 2 {

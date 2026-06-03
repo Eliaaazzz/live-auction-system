@@ -26,11 +26,11 @@
 | TC-T6-004 | WS 连接 URL 形态 `ws://host/ws?auction=<id>&token=<jwt>` (`?auction` 不被后端读但保留为 debug 标记) | smoke (WS open succeeds) + code-verify backend `handleWS` line 297 | P0 |
 | TC-T6-005 | client → server envelope shape `{schemaVersion,type,auctionId?,seq?,serverTimeMs,data}`,`type` SCREAMING_SNAKE | smoke (send ROOM_JOIN/BID_PLACE/PING; backend accepts) + code-verify `apps/lumen/internal/model/model.go:34-46` | P0 |
 | TC-T6-006 | ROOM_SNAPSHOT 初始化 store:status/currentPriceCents(string)/winnerId/endAtMs(number)/seq | smoke `← recv ROOM_SNAPSHOT … status=LIVE price=10000` | P0 |
-| TC-T6-007 | BID_PLACE → BID_ACCEPTED 含完整字段:seq/userId/displayName/amountCents(string)/endAtMs(number)/status/serverTimeMs | smoke `← recv BID_ACCEPTED seq=1 … winner=user_fari_smoke amount=15000 status=LIVE endAtMs=…` | P0 |
+| TC-T6-007 | BID_PLACE → BID_ACCEPTED 含完整字段:seq/userId/displayName/amountCents(string)/endAtMs(number)/status/bidCount/serverTimeMs | smoke `← recv BID_ACCEPTED seq=1 … winner=user_fari_smoke amount=15000 status=LIVE endAtMs=…` | P0 |
 | TC-T6-008 | BID_ACCEPTED 双广播(直接 ack + Pub/Sub fanout)被 seqguard 去重 | smoke 显示 2 条 seq=1;store `applyEvent` 第二条 `seq <= lastSeq` return | P0 |
 | TC-T6-009 | PING → PONG 心跳(15s 间隔),PONG 走 lossy lane | smoke `→ sent PING / ← recv PONG`;code-verify backend `dispatchWS:340` | P1 |
 | TC-T6-010 | 低于最低加价 → BID_REJECTED `code=ERR_TOO_LOW`,触发 F08 摇头 | smoke `→ sent BID_PLACE amount=1 / ← recv BID_REJECTED code=ERR_TOO_LOW` | P0 |
-| TC-T6-011 | schemaVersion=1 stamped on every envelope (in + out) | smoke `schemaVer=1` on each frame;code-verify `model.Envelope.MarshalJSON` | P0 |
+| TC-T6-011 | schemaVersion=2 stamped on every envelope (in + out) | smoke `schemaVer=2` on each frame;code-verify `model.Envelope.MarshalJSON` | P0 |
 | TC-T6-012 | Money 字段在 wire / store / display 全链路 string 不 parseFloat | code-verify `lib/format.js` BigInt + `model.Cents.MarshalJSON` returns `strconv.Quote(...)` | P0 |
 | TC-T6-013 | `currentPriceCents` / `amountCents` 用 BigInt 比较 — leaderboard 排序、jump-bid 检测、加价计算 | code-verify `store/auction.js:mergeLeader` + `addCentsStr` + black-horse `BigInt(...) >= step*5n` | P1 |
 | TC-T6-014 | Vite 同源代理:client → ws://localhost:5173/ws → 后端,Origin 经 `changeOrigin:true` 改成 `http://localhost:8080` 命中 `FRONTEND_ORIGIN` 白名单 | code-verify `vite.config.js` + `apps/lumen/internal/auth/auth.go:36-41 OriginAllowed`;手测 Origin 通过 | P0 |
@@ -182,7 +182,7 @@ cd <repo-root> && make web-smoke-multitab-prepare
   1. send `BID_PLACE { clientBidId: 'cbid-x', amountCents: '15000' }`(snapshot 当前价 10000)
   2. 收 BID_ACCEPTED
 - **输入数据**:见 step 1
-- **预期结果**:`type='BID_ACCEPTED'`;`schemaVersion=1`;`seq=1`;`data.userId='user_fari_smoke'`;`data.displayName='fari-smoke'`;`data.amountCents='15000'`(**string**);`data.endAtMs` typeof 'number';`data.status='LIVE'`;`data.serverTimeMs` typeof 'number'
+- **预期结果**:`type='BID_ACCEPTED'`;`schemaVersion=2`;`seq=1`;`data.userId='user_fari_smoke'`;`data.displayName='fari-smoke'`;`data.amountCents='15000'`(**string**);`data.endAtMs` typeof 'number';`data.status='LIVE'`;`data.bidCount` typeof 'number';`data.serverTimeMs` typeof 'number'
 - **优先级**:P0
 - **状态**:✅ smoke PASS(see `/tmp/lumen-repo/smoke-ws.mjs` output)
 

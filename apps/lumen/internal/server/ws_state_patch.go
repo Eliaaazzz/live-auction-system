@@ -32,14 +32,21 @@ func (c roomStatePatchConfig) enabled() bool {
 }
 
 type roomStatePatchCoalescer struct {
-	cfg     roomStatePatchConfig
-	pending map[string]model.RoomStatePatchData
+	cfg       roomStatePatchConfig
+	pending   map[string]pendingRoomStatePatch
+	bidTotals map[string]int64
+}
+
+type pendingRoomStatePatch struct {
+	data              model.RoomStatePatchData
+	firstServerTimeMs int64
 }
 
 func newRoomStatePatchCoalescer(cfg roomStatePatchConfig) *roomStatePatchCoalescer {
 	return &roomStatePatchCoalescer{
-		cfg:     cfg,
-		pending: make(map[string]model.RoomStatePatchData),
+		cfg:       cfg,
+		pending:   make(map[string]pendingRoomStatePatch),
+		bidTotals: make(map[string]int64),
 	}
 }
 
@@ -54,13 +61,28 @@ func (p *roomStatePatchCoalescer) interval() time.Duration {
 	return p.cfg.interval
 }
 
-// offerBidAccepted stores the latest accepted-bid state for a high-fanout room
-// and returns true when the caller should suppress the per-bid room broadcast.
-// Terminal cap-hit BID_ACCEPTED(status=SOLD) is never coalesced.
-func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.StreamEvent) bool {
-	if !p.enabled() || e.Type != model.TypeBidAccepted || h.viewerCount(aid) < p.cfg.minViewers {
+// offer stores a high-fanout room projection and returns true when the caller
+// should suppress the per-event room broadcast. Terminal events are never
+// coalesced; an AUCTION_EXTENDED immediately after a coalesced bid is folded
+// into that pending state patch so anti-snipe does not reintroduce O(N*M) fanout.
+func (p *roomStatePatchCoalescer) offer(h *Hub, aid string, e store.StreamEvent) bool {
+	if !p.enabled() {
 		return false
 	}
+	switch e.Type {
+	case model.TypeBidAccepted:
+		return p.offerBidAccepted(h, aid, e)
+	case model.TypeAuctionExtended:
+		if h.viewerCount(aid) < p.cfg.minViewers {
+			return false
+		}
+		return p.offerAuctionExtended(aid, e)
+	default:
+		return false
+	}
+}
+
+func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.StreamEvent) bool {
 	var bid model.BidAcceptedData
 	if err := json.Unmarshal([]byte(e.Payload), &bid); err != nil {
 		return false
@@ -68,7 +90,16 @@ func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.S
 	if bid.Status == model.StateSold {
 		return false
 	}
+	if bid.BidCount > 0 {
+		p.bidTotals[aid] = bid.BidCount
+	} else {
+		p.bidTotals[aid]++
+	}
+	if h.viewerCount(aid) < p.cfg.minViewers {
+		return false
+	}
 	next := model.RoomStatePatchData{
+		FromSeq:           e.Seq,
 		Seq:               e.Seq,
 		Status:            bid.Status,
 		CurrentPriceCents: bid.AmountCents,
@@ -76,12 +107,39 @@ func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.S
 		WinnerDisplayName: bid.DisplayName,
 		EndAtMs:           bid.EndAtMs,
 		BidCountDelta:     1,
+		BidCountTotal:     p.bidTotals[aid],
 		ServerTimeMs:      bid.ServerTimeMs,
 	}
 	if prev, ok := p.pending[aid]; ok {
-		next.BidCountDelta = prev.BidCountDelta + 1
+		next.FromSeq = prev.data.FromSeq
+		next.BidCountDelta = prev.data.BidCountDelta + 1
+		p.pending[aid] = pendingRoomStatePatch{
+			data:              next,
+			firstServerTimeMs: prev.firstServerTimeMs,
+		}
+		return true
 	}
-	p.pending[aid] = next
+	p.pending[aid] = pendingRoomStatePatch{
+		data:              next,
+		firstServerTimeMs: bid.ServerTimeMs,
+	}
+	return true
+}
+
+func (p *roomStatePatchCoalescer) offerAuctionExtended(aid string, e store.StreamEvent) bool {
+	prev, ok := p.pending[aid]
+	if !ok {
+		return false
+	}
+	var ext model.AuctionExtendedData
+	if err := json.Unmarshal([]byte(e.Payload), &ext); err != nil {
+		return false
+	}
+	prev.data.Seq = e.Seq
+	prev.data.EndAtMs = ext.EndAtMs
+	prev.data.ExtendCount = ext.ExtendCount
+	prev.data.ServerTimeMs = ext.ServerTimeMs
+	p.pending[aid] = prev
 	return true
 }
 
@@ -102,25 +160,29 @@ func (p *roomStatePatchCoalescer) flushAll(h *Hub, m *metrics.Registry) {
 		return
 	}
 	pending := p.pending
-	p.pending = make(map[string]model.RoomStatePatchData, len(pending))
+	p.pending = make(map[string]pendingRoomStatePatch, len(pending))
 	for aid, patch := range pending {
 		p.broadcast(h, m, aid, patch)
 	}
 }
 
-func (p *roomStatePatchCoalescer) broadcast(h *Hub, m *metrics.Registry, aid string, patch model.RoomStatePatchData) {
-	env, err := model.NewEnvelope(model.TypeRoomStatePatch, aid, patch.Seq, patch)
+func (p *roomStatePatchCoalescer) broadcast(h *Hub, m *metrics.Registry, aid string, patch pendingRoomStatePatch) {
+	env, err := model.NewEnvelope(model.TypeRoomStatePatch, aid, patch.data.Seq, patch.data)
 	if err != nil {
-		log.Printf("room-state-patch envelope %s seq=%d: %v", aid, patch.Seq, err)
+		log.Printf("room-state-patch envelope %s seq=%d: %v", aid, patch.data.Seq, err)
 		return
 	}
 	b, err := json.Marshal(env)
 	if err != nil {
-		log.Printf("room-state-patch marshal %s seq=%d: %v", aid, patch.Seq, err)
+		log.Printf("room-state-patch marshal %s seq=%d: %v", aid, patch.data.Seq, err)
 		return
 	}
 	h.broadcast(aid, b)
-	if m != nil && patch.ServerTimeMs > 0 {
-		m.BroadcastLatency.Observe(time.Since(time.UnixMilli(patch.ServerTimeMs)))
+	if m != nil {
+		m.RoomStatePatches.Inc()
+		m.RoomStatePatchBids.Add(patch.data.BidCountDelta)
+		if patch.firstServerTimeMs > 0 {
+			m.RoomStatePatch.Observe(time.Since(time.UnixMilli(patch.firstServerTimeMs)))
+		}
 	}
 }

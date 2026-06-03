@@ -152,6 +152,7 @@ describe('applyEvent ROOM_STATE_PATCH', () => {
         winnerDisplayName: 'Patch Winner',
         endAtMs: Date.now() + 28_000,
         bidCountDelta: 2,
+        bidCountTotal: 2,
       },
     }));
 
@@ -187,6 +188,35 @@ describe('applyEvent ROOM_STATE_PATCH', () => {
     expect(s.totalBidsCount).toBe(3);
     expect(s.lastSeq).toBe(5);
     expect(s.overtakeBanner).toBe(true);
+  });
+
+  it('applies bidCountTotal when a direct ack and patch share the same seq', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 5,
+      data: { status: 'LIVE', amountCents: '12500000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000 },
+    }));
+    expect(useAuctionStore.getState().totalBidsCount).toBe(1);
+
+    apply(env({
+      seq: 5,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        fromSeq: 1,
+        status: 'LIVE',
+        currentPriceCents: '12500000',
+        winnerId: 'u_me',
+        winnerDisplayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 5,
+        bidCountTotal: 5,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.totalBidsCount).toBe(5);
+    expect(s.lastSeq).toBe(5);
+    expect(s.currentCents).toBe('12500000');
   });
 });
 

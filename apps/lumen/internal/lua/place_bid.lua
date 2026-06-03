@@ -110,6 +110,7 @@ local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
   and (maxExtensions <= 0 or curExtendCount < maxExtensions)
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
+local bidCount = redis.call('HINCRBY', state_key, 'bidCount', 1)
 redis.call('HMSET', state_key, 'currentPriceCents', amountStr, 'winnerId', userId)
 local priorScore = redis.call('ZSCORE', lb_key, userId)
 if not priorScore or tonumber(priorScore) < amount then
@@ -131,7 +132,8 @@ end
 -- status reflects the post-transition room state (SOLD on cap-hit, else LIVE).
 local bid = {
   seq = seq, userId = userId, displayName = displayName, amountCents = amountStr,
-  endAtMs = newEndAtMs, status = (capHit and 'SOLD' or 'LIVE'), serverTimeMs = now,
+  endAtMs = newEndAtMs, status = (capHit and 'SOLD' or 'LIVE'), bidCount = bidCount,
+  serverTimeMs = now,
 }
 local bidJson = cjson.encode(bid)
 redis.call('XADD', stream_key, seq .. '-0', 'type', 'BID_ACCEPTED', 'seq', seq, 'payload', bidJson)

@@ -99,9 +99,9 @@ func TestT8MetricsEndpointShapeIsStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{
-		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
+		"ackLatencyMs", "broadcastLatencyMs", "roomStatePatchLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
 		"placeBidScriptTimeMs", "bidHandlerOverheadMs", "bidsAccepted", "bidsRejected",
-		"backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
+		"roomStatePatches", "roomStatePatchBids", "backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
 	} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("/metrics missing field %q (shape break)", k)
@@ -221,43 +221,43 @@ func TestT8SeqGapDetectorObservesMissingSeq(t *testing.T) {
 // the Observe out of the OK_SOLD/OK_NO_BID case), the hammer SLO becomes
 // silently unrecorded and the load report shows count=0 forever.
 func TestT8HammerLatencyObservation(t *testing.T) {
-	target, srv := startTestServer(t)
+	st := fullStore(t)
+	m := metrics.New()
 	ctx := context.Background()
 	aid := newAID("test_t8_hammer")
 
 	// Bring the auction live with a 100ms duration so endAtMs is in the
 	// near-past by the time the next 100ms scan tick fires close_auction.lua.
-	if code, err := srv.st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
+	if code, err := st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
 		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
 		DurationSec: 1, ExtendWindowSec: 0, ExtendSec: 0,
 	}); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze: code=%s err=%v", code, err)
 	}
-	if code, _, err := srv.st.StartAuction(ctx, aid, 100); err != nil || code != model.CodeOKLive {
+	if code, _, err := st.StartAuction(ctx, aid, 100); err != nil || code != model.CodeOKLive {
 		t.Fatalf("start: code=%s err=%v", code, err)
 	}
 	t.Cleanup(func() {
-		if keys, _ := srv.st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
-			_ = srv.st.Redis().Del(ctx, keys...).Err()
+		if keys, _ := st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
+			_ = st.Redis().Del(ctx, keys...).Err()
 		}
-		_, _ = srv.st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
+		_, _ = st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
 	})
 
-	hc := &http.Client{Timeout: 5 * time.Second}
-	pre := scrapeOrFatal(t, hc, target).Hammer.Count
-
-	// Timer Worker scans every 100ms. Allow up to 3s for it to hammer this
-	// auction (NO_BID path: no winning bid was placed). Hammer.Count must
-	// advance by exactly 1 — the closeDue Observe ran with the snapshot's
-	// endAtMs as the reference (now - endAtMs ≈ a small detection lag).
+	pre := m.Snapshot().Hammer.Count
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if post := scrapeOrFatal(t, hc, target).Hammer.Count; post == pre+1 {
+		closeDue(ctx, st, aid, m)
+		post := m.Snapshot().Hammer.Count
+		if post == pre+1 {
 			return
+		}
+		if post > pre+1 {
+			t.Fatalf("HammerLatency overshot: pre=%d post=%d (expected pre+1)", pre, post)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("HammerLatency did not advance: pre=%d post=%d (expected pre+1)", pre, scrapeOrFatal(t, hc, target).Hammer.Count)
+	t.Fatalf("HammerLatency did not advance: pre=%d post=%d (expected pre+1)", pre, m.Snapshot().Hammer.Count)
 }
 
 // TestT8CatchupLatencyObservation — assert the ROOM_JOIN catchup branch
@@ -367,7 +367,7 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 		{ackP95: 50, bcastP95: 80, hammerP95: 200, scriptP99: 1,
 			ackCount: 100, bcastCount: 100, hammerCount: 1, sent: 100, acked: 100, wantClean: true},
 		// no samples (instrumentation unwired).
-		{ackCount: 0, sent: 0, acked: 0, wantBreach: []string{"no ack samples", "no broadcast samples"}},
+		{ackCount: 0, sent: 0, acked: 0, wantBreach: []string{"no ack samples", "no public fanout samples"}},
 		// ack p95 just over.
 		{ackP95: 81, bcastP95: 80, scriptP99: 1, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
 			wantBreach: []string{"ack p95 81.0ms > 80ms"}},

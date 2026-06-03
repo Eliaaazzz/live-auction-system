@@ -12,7 +12,7 @@
 // ─── Envelope (proto/ws-envelope.md) ─────────────────────────────
 // All WS traffic in BOTH directions uses this shape. Backend rejects
 // envelopes with schemaVersion ≠ CURRENT_SCHEMA_VERSION.
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 // ─── Auction status (docs/state-machine.md — canonical 7 states) ─
 export const AuctionStatus = Object.freeze({

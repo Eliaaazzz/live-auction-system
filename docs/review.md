@@ -6,7 +6,7 @@ Review this branch for production readiness of the high-fanout room broadcast pa
 
 ## Scope
 
-Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis Stream as the authoritative bid path, while coalescing public room UI updates into `ROOM_STATE_PATCH` frames when a room crosses a viewer threshold.
+Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis Stream as the authoritative bid path, while coalescing public room UI updates into `ROOM_STATE_PATCH` frames after a room crosses the configured viewer threshold.
 
 ## Architecture
 
@@ -14,7 +14,16 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 - Redis Stream still stores every accepted bid and remains the replay/evidence source of truth.
 - Small rooms keep the existing per-event `BID_ACCEPTED` room broadcast behavior.
 - Large rooms coalesce non-terminal `BID_ACCEPTED` room broadcasts into `ROOM_STATE_PATCH` at a configurable interval.
-- Terminal `BID_ACCEPTED(status=SOLD)` and all terminal auction events are not coalesced.
+- Terminal `BID_ACCEPTED(status=SOLD)` and terminal auction events are not coalesced.
+- `AUCTION_EXTENDED` is folded into an already-pending large-room patch so anti-snipe does not add a separate high-fanout frame for the same bid window.
+
+## Protocol Notes
+
+- `schemaVersion` is now `2`; frontend and protocol docs were updated together.
+- `BID_ACCEPTED` now carries optional `bidCount`, atomically incremented by Lua with the accepted bid.
+- `ROOM_STATE_PATCH` carries `fromSeq`, `seq`, `bidCountDelta`, `bidCountTotal`, price/winner/status/end time, and optional `extendCount`; `bidCountTotal` is sourced from Lua `bidCount` with an old-payload fallback.
+- `ROOM_JOIN.lastSeq` is now the client-applied room-state high-watermark. Reconnect catchup replays Stream-backed deltas after that high-watermark, then sends a snapshot.
+- The frontend treats `ROOM_STATE_PATCH.seq` as the reconnect high-watermark and uses `bidCountTotal` to avoid double-counting when a direct bidder ack and patch share the same sequence.
 
 ## Runtime Knobs
 
@@ -22,32 +31,51 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 - `ROOM_STATE_PATCH_MIN_VIEWERS`, default `1000`.
 - Setting either value to `0` disables coalesced room-state patching.
 
+## Review-Round Closure
+
+- Schema/versioning: bumped to v2 and documented `ROOM_STATE_PATCH`.
+- Seq semantics: documented patch high-watermark semantics and added reconnect high-watermark coverage.
+- Counter correctness: Lua now emits accepted-bid `bidCount`; patch includes cumulative `bidCountTotal`; frontend applies max(total) instead of blindly adding deltas after direct acks.
+- Metrics: added dedicated room-state patch latency/counter metrics and load-report budget checks.
+- Anti-snipe fanout: folds `AUCTION_EXTENDED` into pending patches for large rooms.
+- Test gaps: `TestT4EvidenceAfterHammer` and `TestT8HammerLatencyObservation` now pass; T4 test projection is isolated from shared local persistence workers before replaying its Stream.
+
 ## Files Changed
 
+- `apps/lumen/internal/metrics/metrics.go`
+- `apps/lumen/internal/lua/place_bid.lua`
+- `apps/lumen/internal/lua/place_bid_hybrid.lua`
 - `apps/lumen/internal/model/model.go`
+- `apps/lumen/internal/model/model_test.go`
+- `apps/lumen/internal/server/evidence_t4_test.go`
+- `apps/lumen/internal/server/load.go`
+- `apps/lumen/internal/server/load_test.go`
 - `apps/lumen/internal/server/ws.go`
 - `apps/lumen/internal/server/ws_state_patch.go`
 - `apps/lumen/internal/server/ws_state_patch_test.go`
+- `apps/lumen/internal/store/lua_hybrid_reveal_privacy_test.go`
+- `apps/lumen/internal/store/lua_integration_test.go`
+- `apps/web/README.md`
+- `apps/web/docs/test-cases/T6-frontend-wire.md`
 - `apps/web/src/lib/types.js`
-- `apps/web/src/lib/ws.js`
 - `apps/web/src/lib/ws.test.js`
 - `apps/web/src/store/auction.js`
 - `apps/web/src/store/auction.test.js`
+- `docs/ws-protocol.md`
+- `proto/redis-keys.md`
+- `proto/ws-envelope.md`
 
 ## Verification Run
 
-- `go test ./apps/lumen/internal/server -run "TestRoomStatePatch|TestBroadcastFanout|TestT8LoadReportBreaches"`
-- `go test ./apps/lumen/internal/model ./apps/lumen/internal/server -run "Test(RoomStatePatch|Envelope|BidAccepted|BroadcastFanout|T8LoadSmokeRunsAndPasses)$"`
-- `go test ./apps/lumen/internal/server -run "TestRoomStatePatch|TestBroadcastFanout|TestT8LoadSmokeRunsAndPasses" -count=1`
+- `go test ./apps/lumen/internal/model ./apps/lumen/internal/metrics ./apps/lumen/internal/server -run "Test(RoomStatePatch|HiddenEnvelope|NewEnvelope|T8MetricsEndpointShape|T8LoadReportBreaches|BroadcastFanout|T8LoadSmokeRunsAndPasses|T4EvidenceAfterHammer|T8HammerLatencyObservation)$" -count=1`
+- `go test ./apps/lumen/internal/server -run "TestT4EvidenceAfterHammer|TestT8HammerLatencyObservation" -count=1 -v`
+- `go test ./apps/lumen/internal/server -count=1`
 - `npm test -- --run src/store/auction.test.js src/lib/ws.test.js`
-
-## Known Local Test Gap
-
-`go test ./apps/lumen/internal/server` currently fails on `TestT4EvidenceAfterHammer` in this workspace. The failure reproduces when run alone and the new coalescing code is inactive for that small-room test path because the default threshold is 1000 viewers. Treat it as a residual integration-test issue unless review finds a causal path.
+- `npm run build`
 
 ## Review Focus
 
-- Does `ROOM_STATE_PATCH` preserve client seq semantics when direct acks and patches interleave?
-- Does flushing pending patches before non-coalesced events preserve event order well enough for UI state?
-- Are the default threshold and interval suitable for production demos?
-- Should the protocol docs be updated in this PR or in a follow-up doc-only PR?
+- Does `ROOM_STATE_PATCH` preserve client state when direct acks and patches interleave?
+- Is `ROOM_JOIN.lastSeq` as an applied room-state high-watermark clear enough for reconnect behavior?
+- Are dedicated patch metrics and load-report checks sufficient evidence for the 10k fanout path?
+- Should `ROOM_STATE_PATCH_MIN_VIEWERS=1000` and `ROOM_STATE_PATCH_INTERVAL_MS=50` remain the demo defaults?

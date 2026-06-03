@@ -34,8 +34,9 @@ Protocol JSON uses camelCase. Money fields such as `amountCents` are strings at 
 | type | purpose |
 |---|---|
 | `ROOM_SNAPSHOT` | Current price, winner, leaderboard, `endAtMs`, `seq`, state. |
+| `ROOM_STATE_PATCH` | Coalesced high-fanout room projection; advances state high-watermark without delivering every intermediate bid frame. |
 | `CATCHUP_EVENTS` | Stream replay from `lastSeq + 1`. |
-| `BID_ACCEPTED` | Accepted bid ack with `seq`, amount, and updated time. |
+| `BID_ACCEPTED` | Accepted bid ack with `seq`, amount, updated time, and Lua-authoritative `bidCount`. |
 | `BID_REJECTED` | Rejected bid with machine-readable error code. |
 | `USER_OUTBID` | Current user was surpassed. |
 | `AUCTION_EXTENDED` | Anti-snipe extension event; not a state. |

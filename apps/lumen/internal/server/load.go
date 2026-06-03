@@ -525,6 +525,9 @@ func (r loadReport) print() {
 	fmt.Printf("broadcast p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms (count=%d, budget p95<%v)\n",
 		r.Post.Broadcast.P50, r.Post.Broadcast.P95, r.Post.Broadcast.P99, r.Post.Broadcast.Max,
 		r.Post.Broadcast.Count, r.Config.BroadcastP95Budget)
+	fmt.Printf("statePatch p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms (count=%d, budget p95<%v)\n",
+		r.Post.RoomStatePatch.P50, r.Post.RoomStatePatch.P95, r.Post.RoomStatePatch.P99, r.Post.RoomStatePatch.Max,
+		r.Post.RoomStatePatch.Count, r.Config.BroadcastP95Budget)
 	fmt.Printf("hammer    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p95<%v)\n",
 		r.Post.Hammer.P50, r.Post.Hammer.P95, r.Post.Hammer.P99, r.Post.Hammer.Count,
 		r.Config.HammerP95Budget)
@@ -537,9 +540,11 @@ func (r loadReport) print() {
 	fmt.Printf("handler   p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v · P8 Go-side, excl. Redis RTT)\n",
 		r.Post.HandlerOverhead.P50, r.Post.HandlerOverhead.P95, r.Post.HandlerOverhead.P99, r.Post.HandlerOverhead.Count,
 		r.Config.HandlerP99Budget)
-	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
+	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d roomStatePatches=%d roomStatePatchBids=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
 		r.Post.BidsAccepted-r.Pre.BidsAccepted,
 		r.Post.BidsRejected-r.Pre.BidsRejected,
+		r.Post.RoomStatePatches-r.Pre.RoomStatePatches,
+		r.Post.RoomStatePatchBids-r.Pre.RoomStatePatchBids,
 		r.Post.BackpressureDrop-r.Pre.BackpressureDrop,
 		r.Post.SeqGap-r.Pre.SeqGap,
 		r.Post.StreamLenMax, r.Post.ActiveConns)
@@ -553,14 +558,17 @@ func (r loadReport) breaches() []string {
 	if r.Post.Ack.Count == 0 {
 		out = append(out, "no ack samples observed (instrumentation unwired?)")
 	}
-	if r.Post.Broadcast.Count == 0 {
-		out = append(out, "no broadcast samples observed (instrumentation unwired?)")
+	if r.Post.Broadcast.Count == 0 && r.Post.RoomStatePatch.Count == 0 {
+		out = append(out, "no public fanout samples observed (broadcast/room-state patch instrumentation unwired?)")
 	}
 	if r.Post.Ack.P95 > ms(r.Config.AckP95Budget) {
 		out = append(out, fmt.Sprintf("ack p95 %.1fms > %v", r.Post.Ack.P95, r.Config.AckP95Budget))
 	}
 	if r.Post.Broadcast.P95 > ms(r.Config.BroadcastP95Budget) {
 		out = append(out, fmt.Sprintf("broadcast p95 %.1fms > %v", r.Post.Broadcast.P95, r.Config.BroadcastP95Budget))
+	}
+	if r.Post.RoomStatePatch.P95 > ms(r.Config.BroadcastP95Budget) {
+		out = append(out, fmt.Sprintf("room-state patch p95 %.1fms > %v", r.Post.RoomStatePatch.P95, r.Config.BroadcastP95Budget))
 	}
 	if r.Post.Hammer.Count > 0 && r.Post.Hammer.P95 > ms(r.Config.HammerP95Budget) {
 		out = append(out, fmt.Sprintf("hammer p95 %.1fms > %v", r.Post.Hammer.P95, r.Config.HammerP95Budget))
