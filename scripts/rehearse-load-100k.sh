@@ -246,7 +246,7 @@ mkdir -p "$PACK_DIR/runs"
 summary_file="$PACK_DIR/summary.tsv"
 manifest_file="$PACK_DIR/manifest.json"
 
-echo "#run	status	rc	auction_id	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present" > "$summary_file"
+echo "#run	status	rc	auction_id	auction_ids	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present" > "$summary_file"
 
 echo "super-stretch rehearsal pack: $PACK_DIR"
 echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms"
@@ -291,6 +291,20 @@ extract_metric() {
   echo 0
 }
 
+extract_auction_ids() {
+  local log_file="$1"
+  local ids
+
+  ids="$(grep -m1 '^LOAD_AUCTION_IDS=' "$log_file" | sed 's/^LOAD_AUCTION_IDS=//')"
+  if [[ -z "$ids" ]]; then
+    ids="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
+  fi
+
+  ids="${ids//$'\r'/}"
+  ids="${ids// /}"
+  echo "$ids"
+}
+
 printf '[' > "$json_payload"
 
 pass=0
@@ -320,7 +334,6 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   echo ">>> run #${run_idx}/${ATTEMPTS}: $run_tag"
-  auction_id=""
   set +e
   LOAD_OBSERVERS="$LOAD_OBSERVERS" \
   LOAD_BIDDERS="$LOAD_BIDDERS" \
@@ -342,7 +355,13 @@ while (( run_idx < ATTEMPTS )); do
   rc="${PIPESTATUS[0]}"
   set -e
 
-  auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
+  auction_ids="$(extract_auction_ids "$log_file")"
+  if [[ -n "${auction_ids:-}" ]]; then
+    auction_id="${auction_ids%%,*}"
+  else
+    auction_id=""
+  fi
+
   curl -sS http://localhost:8080/metrics > "$metrics_file" || true
 
   if [ "$rc" != "0" ]; then
@@ -387,13 +406,13 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
-      "$run_idx" "$run_status" "$rc" "$auction_id" \
+    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+      "$run_idx" "$run_status" "$rc" "$auction_id" "${auction_ids:-}" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
-      "$run_idx" "$run_status" "$rc" "-" \
+    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+      "$run_idx" "$run_status" "$rc" "-" "-" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
   fi
@@ -411,6 +430,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg status "$run_status" \
     --arg rc "$rc" \
     --arg auction_id "$auction_id" \
+    --arg auction_ids "$auction_ids" \
     --arg observer_read_errors "$observer_read_errors" \
     --arg observer_dial_errors "$observer_dial_errors" \
     --arg observer_frames "$observer_frames" \
@@ -423,7 +443,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg panic "$run_panic" \
     --arg log "$log_file" \
     --arg metrics "$metrics_file" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), log: $log, metrics: $metrics}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"

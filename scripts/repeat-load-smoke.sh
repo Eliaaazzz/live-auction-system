@@ -131,6 +131,20 @@ extract_metric() {
   echo 0
 }
 
+extract_auction_ids() {
+  local log_file="$1"
+  local ids
+
+  ids="$(grep -m1 '^LOAD_AUCTION_IDS=' "$log_file" | sed 's/^LOAD_AUCTION_IDS=//')"
+  if [[ -z "$ids" ]]; then
+    ids="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
+  fi
+
+  ids="${ids//$'\r'/}"
+  ids="${ids// /}"
+  echo "$ids"
+}
+
 log_dir=".load-smoke-repeat"
 mkdir -p "$log_dir"
 
@@ -171,12 +185,16 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   echo ">>> run #${run_idx}/${ATTEMPTS}: ${log_file}"
-  auction_id=""
   set +e
   make load-smoke 2>&1 | tee "$log_file"
   rc="${PIPESTATUS[0]}"
   set -e
-  auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
+  auction_ids="$(extract_auction_ids "$log_file")"
+  if [[ -n "${auction_ids:-}" ]]; then
+    auction_id="${auction_ids%%,*}"
+  else
+    auction_id=""
+  fi
 
   observer_line="$(grep -n '^observer:' "$log_file" | tail -n1 | cut -d: -f2- | sed 's/^ *//')"
   bidder_line="$(grep -n '^bidder:' "$log_file" | tail -n1 | cut -d: -f2- | sed 's/^ *//')"
@@ -229,6 +247,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg status "$status" \
     --arg rc "$rc" \
     --arg auction_id "$auction_id" \
+    --arg auction_ids "$auction_ids" \
     --arg observer_frames "$observer_frames" \
     --arg observer_read_errors "$observer_read_errors" \
     --arg observer_dial_errors "$observer_dial_errors" \
@@ -242,7 +261,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg accept_rate "$load_accept_rate" \
     --arg panic "$panic_present" \
     --arg ts "$ts" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
