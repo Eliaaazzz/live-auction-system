@@ -28,9 +28,9 @@ Options:
   --duration N         override LOAD_DURATION_SEC (default: 60)
   --auction-dur N      override LOAD_AUCTION_DUR_SEC (default: 3600)
   --bid-interval N     override LOAD_BID_INTERVAL_MS (default: 100)
-  --ack-p95 N          override LOAD_ACK_P95_MS (default: 1000)
-  --broadcast-p95 N    override LOAD_BROADCAST_P95_MS (default: 1500)
-  --script-p99 N       override LOAD_SCRIPT_P99_MS (default: 30)
+  --ack-p95 N          override LOAD_ACK_P95_MS (default: 800)
+  --broadcast-p95 N    override LOAD_BROADCAST_P95_MS (default: 1000)
+  --script-p99 N       override LOAD_SCRIPT_P99_MS (default: 20)
   --hammer-p95 N       override LOAD_HAMMER_P95_MS (default: 2000)
   --catchup-p95 N      override LOAD_CATCHUP_P95_MS (default: 3000)
   --observer-stagger N  override LOAD_OBSERVER_STAGGER_MS (default: 0)
@@ -60,9 +60,9 @@ LOAD_SHARDS=4
 LOAD_DURATION_SEC=60
 LOAD_AUCTION_DUR_SEC=3600
 LOAD_BID_INTERVAL_MS=100
-LOAD_ACK_P95_MS=1000
-LOAD_BROADCAST_P95_MS=1500
-LOAD_SCRIPT_P99_MS=30
+LOAD_ACK_P95_MS=800
+LOAD_BROADCAST_P95_MS=1000
+LOAD_SCRIPT_P99_MS=20
 LOAD_HAMMER_P95_MS=2000
 LOAD_CATCHUP_P95_MS=3000
 LOAD_OBSERVER_STAGGER_MS=0
@@ -217,9 +217,9 @@ if ! [[ "$LOAD_DURATION_SEC" =~ ^[0-9]+$ && "$LOAD_AUCTION_DUR_SEC" =~ ^[0-9]+$ 
   exit 1
 fi
 
-if ! [[ "$LOAD_HAMMER_P95_MS" =~ ^[0-9]+$ && "$LOAD_SCRIPT_P99_MS" =~ ^[0-9]+$ \
-  && "$LOAD_CATCHUP_P95_MS" =~ ^[0-9]+$ && "$LOAD_OBSERVER_STAGGER_MS" =~ ^[0-9]+$ ]]; then
-  echo "hammer/catchup/observer overrides must be integers"
+if ! [[ "$LOAD_ACK_P95_MS" =~ ^[0-9]+$ && "$LOAD_BROADCAST_P95_MS" =~ ^[0-9]+$ && "$LOAD_HAMMER_P95_MS" =~ ^[0-9]+$ \
+  && "$LOAD_SCRIPT_P99_MS" =~ ^[0-9]+$ && "$LOAD_CATCHUP_P95_MS" =~ ^[0-9]+$ && "$LOAD_OBSERVER_STAGGER_MS" =~ ^[0-9]+$ ]]; then
+  echo "timing overrides must be integers"
   exit 1
 fi
 
@@ -234,7 +234,7 @@ mkdir -p "$PACK_DIR/runs"
 summary_file="$PACK_DIR/summary.tsv"
 manifest_file="$PACK_DIR/manifest.json"
 
-echo "#run	status	rc	auction_id	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	panic_present" > "$summary_file"
+echo "#run	status	rc	auction_id	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present" > "$summary_file"
 
 echo "super-stretch rehearsal pack: $PACK_DIR"
 echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms"
@@ -287,6 +287,8 @@ total_bid_sents=0
 total_bid_acked=0
 total_bid_rejected=0
 total_bid_errors=0
+total_seq_gap_count=0
+total_backpressure_force_close=0
 total_panic_runs=0
 
 run_idx=0
@@ -347,6 +349,9 @@ while (( run_idx < ATTEMPTS )); do
   bidder_acked="$(extract_metric "$bidder_line" acked)"
   bidder_rejected="$(extract_metric "$bidder_line" rejected)"
   bidder_errors="$(extract_metric "$bidder_line" errors)"
+  counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
+  seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
+  backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
   auction_id="$(grep -m1 '^LOAD_AUCTION_ID=' "$log_file" | sed 's/^LOAD_AUCTION_ID=//')"
 
   total_read_errors=$((total_read_errors + observer_read_errors))
@@ -355,18 +360,22 @@ while (( run_idx < ATTEMPTS )); do
   total_bid_acked=$((total_bid_acked + bidder_acked))
   total_bid_rejected=$((total_bid_rejected + bidder_rejected))
   total_bid_errors=$((total_bid_errors + bidder_errors))
+  total_seq_gap_count=$((total_seq_gap_count + seq_gap_count))
+  total_backpressure_force_close=$((total_backpressure_force_close + backpressure_force_close))
   if (( run_panic > 0 )); then
     total_panic_runs=$((total_panic_runs + 1))
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
       "$run_idx" "$run_status" "$rc" "$auction_id" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" "$run_panic" >> "$summary_file"
+      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
+    printf '%d\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n' \
       "$run_idx" "$run_status" "$rc" "-" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" "$run_panic" >> "$summary_file"
+      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" >> "$summary_file"
   fi
 
   if [[ "$run_status" == "PASS" ]]; then
@@ -375,7 +384,7 @@ while (( run_idx < ATTEMPTS )); do
     failed=$((failed + 1))
   fi
 
-  echo "run ${run_idx}: status=${run_status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked}"
+  echo "run ${run_idx}: status=${run_status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
 
   run_obj="$(jq -nc \
     --arg run "${run_idx}" \
@@ -389,10 +398,12 @@ while (( run_idx < ATTEMPTS )); do
     --arg bidder_acked "$bidder_acked" \
     --arg bidder_rejected "$bidder_rejected" \
     --arg bidder_errors "$bidder_errors" \
+    --arg seq_gap_count "$seq_gap_count" \
+    --arg backpressure_force_close "$backpressure_force_close" \
     --arg panic "$run_panic" \
     --arg log "$log_file" \
     --arg metrics "$metrics_file" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), panic_present: ($panic == "1"), log: $log, metrics: $metrics}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -437,10 +448,12 @@ jq -cn \
   --arg total_bid_acked "$total_bid_acked" \
   --arg total_bid_rejected "$total_bid_rejected" \
   --arg total_bid_errors "$total_bid_errors" \
+  --arg total_seq_gap_count "$total_seq_gap_count" \
+  --arg total_backpressure_force_close "$total_backpressure_force_close" \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"

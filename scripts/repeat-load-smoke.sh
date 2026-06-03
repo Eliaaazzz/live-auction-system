@@ -152,6 +152,8 @@ total_bid_errors=0
 total_bid_sents=0
 total_bid_acked=0
 total_bid_rejected=0
+total_seq_gap_count=0
+total_backpressure_force_close=0
 total_panic_runs=0
 
 json_payload=$(mktemp)
@@ -188,6 +190,9 @@ while (( run_idx < ATTEMPTS )); do
   bidder_acked="$(extract_metric "$bidder_line" acked)"
   bidder_rejected="$(extract_metric "$bidder_line" rejected)"
   bidder_errors="$(extract_metric "$bidder_line" errors)"
+  counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
+  seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
+  backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
 
   total_read_errors=$((total_read_errors + observer_read_errors))
   total_dial_errors=$((total_dial_errors + observer_dial_errors))
@@ -195,6 +200,8 @@ while (( run_idx < ATTEMPTS )); do
   total_bid_sents=$((total_bid_sents + bidder_sent))
   total_bid_acked=$((total_bid_acked + bidder_acked))
   total_bid_rejected=$((total_bid_rejected + bidder_rejected))
+  total_seq_gap_count=$((total_seq_gap_count + seq_gap_count))
+  total_backpressure_force_close=$((total_backpressure_force_close + backpressure_force_close))
 
   status="PASS"
   if (( rc != 0 )) || ! grep -q '^load: PASS$' "$log_file" \
@@ -213,7 +220,7 @@ while (( run_idx < ATTEMPTS )); do
     load_accept_rate="$(awk -v s="$bidder_sent" -v a="$bidder_acked" 'BEGIN { printf "%.2f", (a*100)/s }')%"
   fi
 
-  echo "run ${run_idx}: status=${status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.accept_rate=${load_accept_rate}"
+  echo "run ${run_idx}: status=${status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.accept_rate=${load_accept_rate} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
 
   run_obj="$(jq -nc \
     --arg run "${run_idx}" \
@@ -226,11 +233,13 @@ while (( run_idx < ATTEMPTS )); do
     --arg bidder_acked "$bidder_acked" \
     --arg bidder_rejected "$bidder_rejected" \
     --arg bidder_errors "$bidder_errors" \
+    --arg seq_gap_count "$seq_gap_count" \
+    --arg backpressure_force_close "$backpressure_force_close" \
     --arg logfile "$log_file" \
     --arg accept_rate "$load_accept_rate" \
     --arg panic "$panic_present" \
     --arg ts "$ts" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -250,7 +259,7 @@ if (( ATTEMPTS > 0 )); then
 fi
 
 echo "summary: pass=${pass}/${ATTEMPTS} fail=${failed}/${ATTEMPTS} pass_rate=${pass_pct}%"
-echo "totals: observer.readErrors=${total_read_errors}, observer.dialErrors=${total_dial_errors}, panicRuns=${total_panic_runs}, bidder.sent=${total_bid_sents}, bidder.acked=${total_bid_acked}, bidder.rejected=${total_bid_rejected}, bidder.errors=${total_bid_errors}"
+echo "totals: observer.readErrors=${total_read_errors}, observer.dialErrors=${total_dial_errors}, panicRuns=${total_panic_runs}, bidder.sent=${total_bid_sents}, bidder.acked=${total_bid_acked}, bidder.rejected=${total_bid_rejected}, bidder.errors=${total_bid_errors}, seqGapCount=${total_seq_gap_count}, backpressureForceClose=${total_backpressure_force_close}"
 
 if (( OUTPUT_JSON == 1 )); then
   jq -cn --arg attempts "$ATTEMPTS" --arg failed "$failed" --arg pass "$pass" \
@@ -259,8 +268,10 @@ if (( OUTPUT_JSON == 1 )); then
     --arg total_panic_runs "$total_panic_runs" \
     --arg total_bid_sents "$total_bid_sents" --arg total_bid_acked "$total_bid_acked" \
     --arg total_bid_rejected "$total_bid_rejected" --arg total_bid_errors "$total_bid_errors" \
+    --arg total_seq_gap_count "$total_seq_gap_count" \
+    --arg total_backpressure_force_close "$total_backpressure_force_close" \
     --rawfile runs "$json_payload" \
-    '{attempts: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate: ($pass_pct|tonumber), totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber)}, runs: ($runs|fromjson)}'
+    '{attempts: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate: ($pass_pct|tonumber), totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, runs: ($runs|fromjson)}'
 fi
 
 if [[ "$CLEANUP_STACK" == "1" ]]; then
