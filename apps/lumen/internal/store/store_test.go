@@ -47,3 +47,18 @@ func TestAIDFromPubChannelEdge(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotRulesReserveFallsBackToCurrentPrice(t *testing.T) {
+	rules := snapshotRules(map[string]string{
+		"incrementCents":    "1000",
+		"reserveCents":      "",
+		"startPriceCents":   "",
+		"currentPriceCents": "9000",
+	})
+	if rules == nil {
+		t.Fatal("snapshotRules returned nil")
+	}
+	if got, want := rules.ReserveCents, "9000"; got != want {
+		t.Fatalf("ReserveCents=%q want %q", got, want)
+	}
+}

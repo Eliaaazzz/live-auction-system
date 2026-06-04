@@ -453,6 +453,9 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 	if reserve == "0" {
 		reserve = moneyOrZero(m["startPriceCents"])
 	}
+	if reserve == "0" {
+		reserve = moneyOrZero(m["currentPriceCents"])
+	}
 	return &model.RoomSnapshotRules{
 		StepCents:         moneyOrZero(m["incrementCents"]),
 		CapCents:          capCents,
