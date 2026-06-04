@@ -18,7 +18,7 @@ Environment:
   BASE_URL               Base URL for backend health/metrics endpoints (default: http://localhost:8080)
   BASE_WS_URL            WebSocket URL for catchup smoke (optional). If omitted, derived from BASE_URL.
   REQUIRE_WS_SCHEMA_CHECK Whether schema precheck should run during catchup smoke (1/true/yes/on).
-  WS_PRECHECK_SCHEMA      Expected WS schema version for precheck (default: SCHEMA_VERSION or 2).
+  WS_PRECHECK_SCHEMA      Expected WS schema version for precheck (default: SCHEMA_VERSION or 1).
   WS_PRECHECK_TOKEN       WS token for schema precheck (optional).
   WS_PRECHECK_TIMEOUT_MS  Timeout for schema precheck in ms (default: 8000).
   WS_PRECHECK_AUCTION     WS precheck auction id override (optional).
@@ -53,6 +53,8 @@ Options:
   --hammer-p95 N       override LOAD_HAMMER_P95_MS (default: 2000)
   --catchup-p95 N      override LOAD_CATCHUP_P95_MS (default: 3000)
   --observer-stagger N  override LOAD_OBSERVER_STAGGER_MS (default: 0)
+  --min-peak-active-connections N
+                       minimum observed max active connections across all runs
   --json               print manifest JSON to stdout at end
   --catchup-smoke      run ROOM_JOIN catchup smoke after each attempt
   -h, --help           show this help
@@ -73,7 +75,7 @@ CONFIRM="${CONFIRM:-0}"
 OUTPUT_JSON="${OUTPUT_JSON:-0}"
 RUN_CATCHUP_SMOKE="${RUN_CATCHUP_SMOKE:-0}"
 RUN_WS_SCHEMA_PRECHECK="${RUN_WS_SCHEMA_PRECHECK:-${REQUIRE_WS_SCHEMA_CHECK:-0}}"
-WS_PRECHECK_SCHEMA="${WS_PRECHECK_SCHEMA:-${SCHEMA_VERSION:-2}}"
+WS_PRECHECK_SCHEMA="${WS_PRECHECK_SCHEMA:-${SCHEMA_VERSION:-1}}"
 WS_PRECHECK_TOKEN="${WS_PRECHECK_TOKEN:-${DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN:-}}"
 WS_PRECHECK_TIMEOUT_MS="${WS_PRECHECK_TIMEOUT_MS:-8000}"
 WS_PRECHECK_AUCTION="${WS_PRECHECK_AUCTION:-}"
@@ -99,6 +101,7 @@ LOAD_SCRIPT_P99_MS=20
 LOAD_HAMMER_P95_MS=2000
 LOAD_CATCHUP_P95_MS=3000
 LOAD_OBSERVER_STAGGER_MS=0
+MIN_PEAK_ACTIVE_CONNECTIONS="${MIN_PEAK_ACTIVE_CONNECTIONS:-0}"
 
 POSITIONAL=()
 SCRIPT_ARGS=("$@")
@@ -296,6 +299,10 @@ while [[ $# -gt 0 ]]; do
       LOAD_OBSERVER_STAGGER_MS="$2"
       shift 2
       ;;
+    --min-peak-active-connections)
+      MIN_PEAK_ACTIVE_CONNECTIONS="$2"
+      shift 2
+      ;;
     --catchup-smoke)
       RUN_CATCHUP_SMOKE=1
       shift
@@ -460,6 +467,10 @@ if ! is_non_negative_int "$LOAD_OBSERVER_STAGGER_MS"; then
   echo "--observer-stagger must be a non-negative integer"
   exit 1
 fi
+if ! is_non_negative_int "$MIN_PEAK_ACTIVE_CONNECTIONS"; then
+  echo "--min-peak-active-connections must be a non-negative integer"
+  exit 1
+fi
 
 if [[ "$PACK_LABEL" == "" ]]; then
   PACK_LABEL="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -496,7 +507,7 @@ preflight_status_exists=0
 
 auction_mode_label="${LOAD_AUCTION_MODE_NORMALIZED}"
 auction_mode_label="${auction_mode_label:-first_price}"
-echo -n "#run\tstatus\trc\trun_dir\tlog_file\tmetrics_file\tauction_id\tauction_ids\tauction_mode\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc\tcatchup_log\tws_precheck_status\tws_precheck_rc\tws_precheck_log" > "$summary_file"
+echo -n "#run\tstatus\trc\trun_dir\tlog_file\tmetrics_file\tauction_id\tauction_ids\tauction_mode\tactive_connections\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc\tcatchup_log\tws_precheck_status\tws_precheck_rc\tws_precheck_log" > "$summary_file"
 echo >> "$summary_file"
 
 HEALTHZ_URL="${BASE_URL}/healthz"
@@ -547,6 +558,19 @@ extract_metric() {
   echo 0
 }
 
+extract_json_metric() {
+  local file="$1"
+  local filter="$2"
+  local value
+
+  value="$(jq -er "$filter" "$file" 2>/dev/null | sed 's/\r$//' || true)"
+  if [[ -z "$value" ]] || [[ "$value" == "null" ]] || ! is_non_negative_int "$value"; then
+    echo 0
+    return
+  fi
+  echo "$value"
+}
+
 extract_auction_ids() {
   local log_file="$1"
   local ids
@@ -573,6 +597,7 @@ total_bid_rejected=0
 total_bid_errors=0
 total_seq_gap_count=0
 total_backpressure_force_close=0
+total_peak_active_connections=0
 total_panic_runs=0
 total_catchup_runs=0
 total_catchup_pass=0
@@ -627,6 +652,10 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   curl -sS "$METRICS_URL" > "$metrics_file" || true
+  active_connections="$(extract_json_metric "$metrics_file" '.activeConns // .active_connections // .connections.active // .ws.activeConns // .ws.active_connections // .lumen.activeConns // .lumen_ws_active_connections')"
+  if (( active_connections > total_peak_active_connections )); then
+    total_peak_active_connections="$active_connections"
+  fi
 
   observer_line="$(grep -n '^observer:' "$log_file" | tail -n1 | sed 's/^.*observer: //')"
   bidder_line="$(grep -n '^bidder:' "$log_file" | tail -n1 | sed 's/^.*bidder: //')"
@@ -753,14 +782,14 @@ while (( run_idx < ATTEMPTS )); do
     printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
       "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "$auction_id" "${auction_ids:-}" \
       "$auction_mode_label" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
+      "$active_connections" "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   else
     printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
       "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "-" "-" \
       "$auction_mode_label" \
-      "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
+      "$active_connections" "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   fi
@@ -771,7 +800,7 @@ while (( run_idx < ATTEMPTS )); do
     failed=$((failed + 1))
   fi
 
-  echo "run ${run_idx}: status=${run_status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
+  echo "run ${run_idx}: status=${run_status} rc=${rc} activeConns=${active_connections} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
 
   run_obj="$(jq -nc \
     --arg run "${run_idx}" \
@@ -798,12 +827,13 @@ while (( run_idx < ATTEMPTS )); do
     --arg ws_precheck_log "$ws_precheck_log" \
     --arg ws_precheck_schema "$WS_PRECHECK_SCHEMA" \
     --arg ws_precheck_token_set "${WS_PRECHECK_TOKEN:+true}" \
-    --arg ws_precheck_auction "$ws_precheck_effective_auction" \
-    --arg run_ws_precheck_enabled "$RUN_WS_SCHEMA_PRECHECK" \
-    --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
-    --arg log "$log_file" \
-    --arg metrics "$metrics_file" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), run_dir: $run_dir, auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
+  --arg ws_precheck_auction "$ws_precheck_effective_auction" \
+  --arg run_ws_precheck_enabled "$RUN_WS_SCHEMA_PRECHECK" \
+  --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
+  --arg log "$log_file" \
+  --arg metrics "$metrics_file" \
+  --arg active_connections "$active_connections" \
+  '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), run_dir: $run_dir, auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), active_connections: ($active_connections|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -817,6 +847,10 @@ curl -sS "$HEALTHZ_URL" > "$health_end_file" || true
 pass_rate=0
 if (( ATTEMPTS > 0 )); then
   pass_rate="$(awk -v p="$pass" -v t="$ATTEMPTS" 'BEGIN { printf "%.1f", (p*100)/t }')"
+fi
+if (( MIN_PEAK_ACTIVE_CONNECTIONS > 0 )) && (( total_peak_active_connections < MIN_PEAK_ACTIVE_CONNECTIONS )); then
+  echo "rehearsal failed: observed peak active connections=${total_peak_active_connections}, required min=${MIN_PEAK_ACTIVE_CONNECTIONS}"
+  failed=$((failed + 1))
 fi
 
 end_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -866,6 +900,7 @@ jq -cn \
   --arg total_bid_errors "$total_bid_errors" \
   --arg total_seq_gap_count "$total_seq_gap_count" \
   --arg total_backpressure_force_close "$total_backpressure_force_close" \
+  --arg min_peak_active_connections "$MIN_PEAK_ACTIVE_CONNECTIONS" \
   --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
   --arg run_ws_precheck_enabled "$RUN_WS_SCHEMA_PRECHECK" \
   --arg catchup_runs "$total_catchup_runs" \
@@ -885,7 +920,7 @@ jq -cn \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, preflight: {dir: $preflight_dir, status_file: (if $preflight_status_exists == "1" then $preflight_status else "-"), status_exists: (($preflight_status_exists|tonumber) == 1)}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), min_peak_active_connections: ($min_peak_active_connections|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber), max_active_connections: ($total_peak_active_connections|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, preflight: {dir: $preflight_dir, status_file: (if $preflight_status_exists == "1" then $preflight_status else "-"), status_exists: (($preflight_status_exists|tonumber) == 1)}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"

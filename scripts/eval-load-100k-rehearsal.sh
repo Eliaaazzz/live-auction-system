@@ -11,6 +11,7 @@ Environment:
   MAX_OBSERVER_DIAL_ERRORS   max allowed observer dialErrors in summary checks (default: 0)
   MAX_SEQ_GAP                max allowed seqGapCount in summary checks (default: 0)
   MAX_BACKPRESSURE           max allowed backpressureForceClose in summary checks (default: 0)
+  MIN_ACTIVE_CONNECTIONS_PEAK minimum required max active_connections across runs (default: 0)
   REQUIRE_CATCHUP            force catchup checks as required when summary was run with --catchup-smoke (default: auto)
   REQUIRE_WS_PRECHECK        force ws-precheck checks as required when summary was run with --ws-precheck (default: auto)
 
@@ -22,6 +23,7 @@ Options:
   --max-observer-dial-errors N
   --max-seq-gap N
   --max-backpressure N
+  --min-active-connections-peak N
   --min-bid-sent N          minimum allowed bidder.sent per run (default: 1)
   --min-bid-acked N         minimum allowed bidder.acked per run (default: 1)
   --require-catchup
@@ -86,6 +88,7 @@ MAX_SEQ_GAP="${MAX_SEQ_GAP:-0}"
 MAX_BACKPRESSURE="${MAX_BACKPRESSURE:-0}"
 MIN_BID_SENT="${MIN_BID_SENT:-1}"
 MIN_BID_ACKED="${MIN_BID_ACKED:-1}"
+MIN_ACTIVE_CONNECTIONS_PEAK="${MIN_ACTIVE_CONNECTIONS_PEAK:-0}"
 REQUIRE_CATCHUP="${REQUIRE_CATCHUP:-auto}"
 REQUIRE_WS_PRECHECK="${REQUIRE_WS_PRECHECK:-auto}"
 REPORT_PATH="${REPORT_PATH:-}"
@@ -126,6 +129,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-backpressure)
       MAX_BACKPRESSURE="$2"
+      shift 2
+      ;;
+    --min-active-connections-peak)
+      MIN_ACTIVE_CONNECTIONS_PEAK="$2"
       shift 2
       ;;
     --min-bid-sent)
@@ -199,6 +206,10 @@ if ! is_non_negative_int "$MIN_BID_SENT"; then
 fi
 if ! is_non_negative_int "$MIN_BID_ACKED"; then
   echo "error: --min-bid-acked must be a non-negative integer"
+  exit 2
+fi
+if ! is_non_negative_int "$MIN_ACTIVE_CONNECTIONS_PEAK"; then
+  echo "error: --min-active-connections-peak must be a non-negative integer"
   exit 2
 fi
 
@@ -280,6 +291,7 @@ eval_output=$(awk -F '\t' \
   -v max_back="$MAX_BACKPRESSURE" \
   -v min_bid_sent="$MIN_BID_SENT" \
   -v min_bid_acked="$MIN_BID_ACKED" \
+  -v min_active_conn_peak="$MIN_ACTIVE_CONNECTIONS_PEAK" \
   -v req_catchup="$REQUIRE_CATCHUP" \
   -v req_ws="$REQUIRE_WS_PRECHECK" '
 function col(name, alt,   i) {
@@ -303,11 +315,15 @@ NR==1 {
       exit 2
     }
   }
-  optional_cols = "catchup_status ws_precheck_status"
+  optional_cols = "active_connections catchup_status ws_precheck_status"
   optional_count = split(optional_cols, optional, " ")
   catchup_status_present = 0
   ws_status_present = 0
+  active_conn_present = 0
   for (i = 1; i <= optional_count; i++) {
+    if (optional[i] == "active_connections" && (optional[i] in h)) {
+      active_conn_present = 1
+    }
     if (optional[i] == "catchup_status" && (optional[i] in h)) {
       catchup_status_present = 1
     }
@@ -338,8 +354,12 @@ NR==1 {
   backpressure_force_close = col("backpressure_force_close", "") + 0
   bidder_sent = col("bidder_sent", "bid_sent") + 0
   bidder_acked = col("bidder_acked", "bid_acked") + 0
+  active_connections = col("active_connections", "") + 0
   catchup_status = col("catchup_status", "")
   ws_status = col("ws_precheck_status", "")
+  if (active_connections > active_connections_peak) {
+    active_connections_peak = active_connections
+  }
 
   if (run_raw == "") {
     ok = 0
@@ -414,10 +434,21 @@ END {
     exit 2
   }
 
+  if (min_active_conn_peak > 0) {
+    if (!active_conn_present) {
+      has_issue = 1
+      printf "run=global FAIL reasons: active_connections column missing but min_active_connections_peak=%d\n", min_active_conn_peak
+    } else if (active_connections_peak < min_active_conn_peak) {
+      has_issue = 1
+      printf "run=global FAIL reasons: active_connections_peak=%d < min=%d\n", active_connections_peak, min_active_conn_peak
+    }
+  }
+
   printf "rehearsal_pack=%s\n", pack
   printf "rows=%d\tpass=%d\tfail=%d\n", total, pass, fail
   printf "totals\tobserver_read_errors=%d\tobserver_dial_errors=%d\tseq_gap_count=%d\tbackpressure_force_close=%d\n", total_read, total_dial, total_seq, total_back
   printf "totals\tbidder_sent=%d\tbidder_acked=%d\n", total_bid_sent, total_bid_acked
+  printf "totals\tactive_connections_peak=%d\n", active_connections_peak
   if (has_issue) {
     print "result=FAIL"
     exit 1
