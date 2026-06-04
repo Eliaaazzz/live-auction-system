@@ -193,6 +193,24 @@ larger concurrency tier.
    - optional `client-observed.tsv`
    - optional SRS smoke evidence
 
+6.1 Run replay/catchup consistency checks when accessible.
+
+   If verifier can connect to the same auction data source, run:
+
+   ```sh
+   VERIFY_AID=<auction-id> make verify
+   VERIFY_AID=<auction-id> make verify-evidence
+   ```
+
+   If verifier is unavailable at the rehearsal node, require the load evidence
+   fields instead:
+
+   - `catchup` section in `summary.tsv` when `--catchup-smoke` is enabled.
+   - `catchup_checks` in `manifest.json` and `runs/<run>/catchup.log` for
+     super-stretch rehearsal packs.
+   - `ws_precheck` section in `manifest.json` and
+     `runs/<run>/ws-schema-precheck.log` when `--ws-precheck` is enabled.
+
 7. Run teardown.
 
    Follow the #154 teardown/cost checklist after the evidence has been copied to
@@ -206,6 +224,7 @@ larger concurrency tier.
 | HTTPS boundary | `DEPLOY_REHEARSAL_REQUIRE_HTTPS=1` (or `DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1` for super-stretch) and `BASE_URL` starts with `https://` | `require_https` row fails when HTTPS is enforced but HTTP URL is passed |
 | WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1`/`true`/`yes`/`on` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
 | WebSocket schema guard | `ws_schema` precheck passes when `REQUIRE_WS_SCHEMA_CHECK=true`, or row is intentionally skipped when check is off | Schema mismatch, timeout, or websocket handshake error |
+| Reconnect/replay consistency | Catchup checks are present and pass, or verifier (`make verify` / `make verify-evidence`) is explicitly executed and green | Catchup checks are missing for runs that claim disconnection/lag recovery behavior |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier, or `result: FAIL-REPORTED` when evidence-only mode is enabled (`DEPLOY_REHEARSAL_REPORT_ONLY=1` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=1`) | Any required server SLO row fails in strict mode (`DEPLOY_REHEARSAL_REPORT_ONLY=0` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=0`) or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |
