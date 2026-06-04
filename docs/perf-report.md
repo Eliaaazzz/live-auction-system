@@ -228,6 +228,7 @@ For super-stretch evidence-only:
 
 ```sh
 BASE_URL="https://your-domain" \
+  DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
   DEPLOY_REHEARSAL_100K_REPORT_ONLY=1 \
   make deploy-perf-rehearsal-100k
 ```
@@ -237,8 +238,13 @@ Super-stretch Vickrey path（演练前提是演练房间已按二价规则创建
 ```sh
 BASE_URL="https://your-domain" \
   DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
+  DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
   make deploy-perf-rehearsal-100k-second-price
 ```
+
+`DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1` is enabled by default in
+`deploy-perf-rehearsal-100k` and aligns the schema gate with the super-stretch
+profile.
 
 If `DEPLOY_REHEARSAL_100K_REPORT_ONLY` is not set, it defaults to
 `DEPLOY_REHEARSAL_REPORT_ONLY`.
