@@ -1,4 +1,5 @@
 import React from 'react';
+import { CURRENT_SCHEMA_VERSION } from '../lib/types.js';
 
 // lumen-misc.jsx — Mini-program stub landing + Connection states demo
 
@@ -191,7 +192,7 @@ function ConnSyncing() {
 
 function ConnSchema() {
   return <ConnStateFrame status="schema" title="协议版本不匹配"
-    sub="server.schemaVersion=2 · client.schemaVersion=1"
+    sub={`server.schemaVersion=${CURRENT_SCHEMA_VERSION + 1} · client.schemaVersion=${CURRENT_SCHEMA_VERSION}`}
     detail={[
       ['code', 'WS_SCHEMA_MISMATCH'],
       ['action', '请下拉刷新或重新进入直播间'],
