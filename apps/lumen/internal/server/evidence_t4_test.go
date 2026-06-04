@@ -369,6 +369,85 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 	t.Fatal("evidence card did not show a verified hash chain + order within 8s")
 }
 
+func TestT4EvidenceIncludesAuctionModeInSecondPrice(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence AuctionMode Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId": productID,
+		"rules": map[string]any{
+			"startPriceCents": 10000,
+			"incrementCents":  1000,
+			"capPriceCents":   1000000,
+			"durationSec":     60,
+			"mode":            "VICKREY",
+		},
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		t.Fatal(err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/start", seller.Token, map[string]int64{"durationMs": 1500}, model.CodeOKLive); err != nil {
+		t.Fatal(err)
+	}
+
+	buyer, err := devLogin(hc, target, "T4 Evidence AuctionMode Buyer", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := dialAndJoin(target, buyer.Token, created.AuctionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	bid, _ := model.NewEnvelope(model.TypeBidPlace, created.AuctionID, 0, model.BidPlaceData{
+		ClientBidID:  "cbT4Mode",
+		AmountCents: "11000",
+	})
+	if err := c.WriteJSON(bid); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForType(c, model.TypeBidAccepted, 5*time.Second); err != nil {
+		t.Fatalf("bid not accepted: %v", err)
+	}
+	if err := waitForType(c, model.TypeAuctionSold, 5*time.Second); err != nil {
+		t.Fatalf("timer did not hammer SOLD: %v", err)
+	}
+
+	// Poll for evidence consistency, then assert the API is now carrying the
+	// normalized auction mode for second-price reporting.
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		var ev struct {
+			ChainVerified bool   `json:"chainVerified"`
+			EventsHash    string `json:"eventsHash"`
+			AuctionMode   string `json:"auctionMode"`
+		}
+		if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", buyer.Token, &ev); err == nil {
+			if ev.ChainVerified && ev.EventsHash != "" && ev.AuctionMode != "" {
+				if ev.AuctionMode != model.AuctionModeSecondPrice {
+					t.Fatalf("auctionMode=%q want=%q", ev.AuctionMode, model.AuctionModeSecondPrice)
+				}
+				return
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatal("evidence card did not return auctionMode within 8s")
+}
+
 func TestT4EvidenceRequiresAuth(t *testing.T) {
 	target, _ := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}
