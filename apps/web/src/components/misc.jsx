@@ -191,7 +191,7 @@ function ConnSyncing() {
 
 function ConnSchema() {
   return <ConnStateFrame status="schema" title="协议版本不匹配"
-    sub="server.schemaVersion=3 · client.schemaVersion=2"
+    sub="server.schemaVersion=2 · client.schemaVersion=1"
     detail={[
       ['code', 'WS_SCHEMA_MISMATCH'],
       ['action', '请下拉刷新或重新进入直播间'],
