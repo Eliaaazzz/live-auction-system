@@ -36,7 +36,7 @@ DEPLOY_REHEARSAL_100K_BASE_WS_URL ?= $(DEPLOY_REHEARSAL_BASE_WS_URL)
 DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -170,6 +170,13 @@ web-smoke-vickrey: ## T6: run only Vickrey/AuctionMode second-price closure smok
 
 web-smoke-vickrey-prepare: ## T6: auto-prepare (up+seed) then run second-price smoke
 	@$(MAKE) web-smoke-vickrey WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_USE_PRESET_AUCTION="$(WEB_SMOKE_USE_PRESET_AUCTION)" WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+
+web-smoke-antisnipe: ## T6: run only TC-T6-100/101 (anti-snipe AUCTION_EXTENDED)
+	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
+	cd apps/web && $(WEB_SMOKE_ID_ENV) $(WEB_SMOKE_SCHEMA_ENV) npm run -s smoke:antisnipe
+
+web-smoke-antisnipe-prepare: ## T6: auto-prepare (up+seed) then run TC-T6-100/101
+	@$(MAKE) web-smoke-antisnipe WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
 
 e2e-dummy-bid:    ## T1 acceptance: full roundtrip, exit 0 on success
 	@out="$$( $(COMPOSE) --profile tools run --rm --build e2e )"; \
@@ -694,14 +701,16 @@ demo-smoke: ## T10: CI-cheap demo path (load-smoke + chaos-smoke) — orchestrat
 	$(MAKE) seed
 	@echo ">>> demo-smoke [2/6] section 12.1-3 e2e roundtrip"
 	$(MAKE) e2e-dummy-bid
-	@echo ">>> demo-smoke [3/6] section 12.5 evidence hash chain"
+	@echo ">>> demo-smoke [3/6] section 12.4 anti-snipe: AUCTION_EXTENDED in final window"
+	$(MAKE) web-smoke-antisnipe
+	@echo ">>> demo-smoke [4/6] section 12.5 evidence hash chain"
 	$(MAKE) verify-evidence
-	@echo ">>> demo-smoke [4/6] section 12.6 replay verifier"
+	@echo ">>> demo-smoke [5/6] section 12.6 replay verifier"
 	$(MAKE) verify
-	@echo ">>> demo-smoke [5/6] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
+	@echo ">>> demo-smoke [6/6] section 12.7 load-smoke (small N) + section 12.8 chaos-smoke (AI phase)"
 	$(MAKE) load-smoke
 	$(MAKE) chaos-smoke
-	@echo ">>> demo-smoke [6/6] V9 P3 AI offline -> core bidding continues"
+	@echo ">>> demo-smoke [7/7] V9 P3 AI offline -> core bidding continues"
 	$(MAKE) e2e-ai-offline
 	@echo "demo-smoke GREEN -- demo path wiring intact"
 
