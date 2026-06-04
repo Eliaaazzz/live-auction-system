@@ -9,7 +9,7 @@
 //   cd apps/web && node scripts/smoke-vickrey.mjs
 //
 // Advanced:
-//   WEB_SMOKE_USE_PRESET_AUCTION=1 and WEB_SMOKE_AID=<id>[,<id2>...]
+//   WEB_SMOKE_USE_PRESET_AUCTION=1|true|yes|on and WEB_SMOKE_AID=<id>[,<id2>...]
 //   (or VERIFY_AID/AUCTION_ID)
 //     → reuse preset auction(s) by index per scenario.
 //
@@ -17,12 +17,17 @@
 
 import { WebSocket } from 'ws';
 import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
+import { resolveAuctionMode } from '../src/lib/auctionMode.js';
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
+const isTruthy = (v) => {
+  const s = String(v || '').trim().toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+};
+
 const USE_PRESET_AUCTION =
-  process.env.WEB_SMOKE_USE_PRESET_AUCTION === '1'
-  || process.env.WEB_SMOKE_USE_PRESET_AUCTION === 'true';
+  isTruthy(process.env.WEB_SMOKE_USE_PRESET_AUCTION);
 const PRESET_AUCTION_IDS = USE_PRESET_AUCTION
   ? resolveAuctionId({ scriptName: 'smoke-vickrey' })
     .split(',')
@@ -50,7 +55,10 @@ async function devLogin(nick) {
 async function api(token, path, opts = {}) {
   const r = await fetch(`${HOST_HTTP}/api${path}`, {
     method: opts.method || 'GET',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
   if (!r.ok) {
@@ -58,6 +66,17 @@ async function api(token, path, opts = {}) {
     throw new Error(`${opts.method || 'GET'} ${path} → ${r.status}: ${body}`);
   }
   if (r.status === 204) return null;
+  return r.json();
+}
+
+async function getAuction(auctionId) {
+  const r = await fetch(`${HOST_HTTP}/api/auctions/${encodeURIComponent(auctionId)}`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`GET /api/auctions/${auctionId} → ${r.status}: ${body}`);
+  }
   return r.json();
 }
 
@@ -142,13 +161,24 @@ async function runScenario({
       reserveCents: expectedReserveCents,
       bidStepCents: '1000',
     });
+  let scenarioAuctionLabel = `created new auction ${auctionId} (reserve=${reserveCents})`;
+  if (presetAuctionId) {
+    const presetSnap = await getAuction(auctionId);
+    const presetAuctionMode = resolveAuctionMode(presetSnap?.rules);
+    const presetLive = presetSnap?.status === 'LIVE';
+    const presetSecond = presetAuctionMode === 'second_price';
+    must(
+      presetSecond,
+      `preset auction ${auctionId} is not second_price (got mode=${presetSnap?.rules?.auctionMode || presetSnap?.rules?.mode || 'undefined'})`,
+    );
+    must(presetLive, `preset auction ${auctionId} is not LIVE (got status=${presetSnap?.status ?? 'undefined'})`);
+    if (!presetSecond || !presetLive) {
+      return;
+    }
+    scenarioAuctionLabel = `using preset auction ${auctionId} (index=${presetAuctionIndex})`;
+  }
 
-  console.log(
-    `[scenario] ${title}: ` +
-    (presetAuctionId
-      ? `using preset auction ${auctionId} (index=${presetAuctionIndex})`
-      : `created new auction ${auctionId} (reserve=${reserveCents})`),
-  );
+  console.log(`[scenario] ${title}: ${scenarioAuctionLabel}`);
   if (!auctionId) {
     must(false, `failed to resolve auction for scenario="${title}"`);
     return;
