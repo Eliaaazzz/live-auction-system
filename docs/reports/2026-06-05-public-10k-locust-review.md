@@ -4,7 +4,7 @@
 
 Do **not** claim the public deployment is production-ready for single-room 10k concurrency yet.
 
-The backend design in the current branch is directionally strong: Redis Lua remains the authoritative bid adjudicator, Redis Stream remains the replayable event log, direct bidder ACKs stay immediate, and high-fanout public state can be coalesced into room-state patches. But the deployed public endpoint at `http://115.191.76.40` is not running the current schema, and the actual public Locust 10k run failed at the connection/handshake layer before it reached a stable 10k hold.
+The backend design in the reviewed branch is directionally strong: Redis Lua remains the authoritative bid adjudicator, Redis Stream remains the replayable event log, direct bidder ACKs stay immediate, and high-fanout public state can be coalesced into room-state patches. During the run window, the deployed public endpoint at `http://115.191.76.40` was not running the reviewed schema, and the actual public Locust 10k run failed at the connection/handshake layer before it reached a stable 10k hold.
 
 ## Scope
 
@@ -17,6 +17,19 @@ The backend design in the current branch is directionally strong: Redis Lua rema
 
 This run was driven from the current workstation to the public target. It is a public-network run against a China-hosted endpoint, but it is **not** a strict Beijing-source load test. A strict Beijing-source run needs a Beijing-region load worker or a documented network-latency injector.
 
+## Post-Report Update
+
+After this report was opened, PR #203 was merged to `main` as `423bd93` and the public runtime was manually refreshed from that commit.
+
+Post-deploy evidence from 2026-06-04 15:48 UTC:
+
+- HTTP preflight against `http://115.191.76.40` passed for `/healthz`, `/metrics`, `/admin.html`, and `/room.html?auction=auc_demo`.
+- The served frontend bundle changed to `assets/index-Ddb6NJVL.js`.
+- A no-secret `/api/login` + WS probe showed `schemaVersion=2` receives `AUCTION_NO_BID` and `ROOM_SNAPSHOT`; `schemaVersion=1` is rejected with close code `4001 schema mismatch`.
+- `volcverify.html` remained reachable after the deploy.
+
+This mitigates the schema-drift symptom from #209, but it does **not** retroactively validate the failed schema-1 Locust 10k run below. #209 should stay open until the deploy path has a version/schema endpoint or equivalent build identity, plus a current-schema bid smoke that proves `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED` on a LIVE auction. #210 remains open for a fresh current-schema public capacity run.
+
 ## Public Endpoint Preflight
 
 HTTP 80 was reachable:
@@ -27,9 +40,9 @@ HTTP 80 was reachable:
 
 Ports 443, 8080, and 3000 were not publicly reachable in the earlier probe. The current exposed production path is plain HTTP/WS on port 80, not HTTPS/WSS.
 
-## Blocking Finding 1 - Deploy Drift
+## Blocking Finding 1 - Deploy Drift During Run Window
 
-The deployed public server is stale relative to the repo head.
+The deployed public server was stale relative to the reviewed repo head during the run window.
 
 Evidence:
 
@@ -37,7 +50,7 @@ Evidence:
 - Public server closes current clients with `4001 schema mismatch`.
 - A temporary Locust client changed to `schemaVersion=1` can join and bid.
 
-Impact:
+Run-window impact:
 
 - Public 10k results from this endpoint do not validate the current PR head.
 - Current frontend clients that enforce schema 2 can fail against the public endpoint.
@@ -150,7 +163,7 @@ Current production-readiness gaps:
 
 ## Recommended Fix Order
 
-1. Fix deploy drift first: atomic deploy, `/version`, post-deploy current-schema WS smoke.
+1. Finish the deploy-drift guardrail: atomic deploy, `/version` or equivalent build/schema identity, and post-deploy current-schema bid smoke.
 2. Re-run current-schema 100-user smoke; require zero schema mismatch and no `bid_no_ack`.
 3. Clean or quarantine stale `auc_load_*` corruption loops.
 4. Re-run 10k with a realistic ramp and a Beijing-region load worker.
