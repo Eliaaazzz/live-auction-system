@@ -154,7 +154,7 @@ normalize_auction_mode() {
   mode="${mode##_}"
   mode="${mode%_}"
   case "$mode" in
-    ""|"first"|"first_price"|"firstprice"|"english")
+    ""|"first"|"first_price"|"firstprice"|"english"|"auction1"|"1")
       echo "first_price"
       ;;
     "second"|"second_price"|"secondprice"|"vickrey"|"auction2"|"2")
@@ -371,7 +371,7 @@ fi
 LOAD_AUCTION_MODE_NORMALIZED="$(normalize_auction_mode "${LOAD_AUCTION_MODE:-}")"
 if [ -n "${LOAD_AUCTION_MODE:-}" ] && ! is_supported_auction_mode "$LOAD_AUCTION_MODE_NORMALIZED"; then
   echo "invalid --auction-mode '${LOAD_AUCTION_MODE}'."
-  echo "supported: first_price (ENGLISH, first, firstprice, first price, english), second_price (second, secondprice, second price, vickrey, VICKREY, auction2, 2)."
+  echo "supported: first_price (ENGLISH, first, firstprice, first price, english, auction1, 1), second_price (second, secondprice, second price, vickrey, VICKREY, auction2, 2)."
   exit 2
 fi
 
