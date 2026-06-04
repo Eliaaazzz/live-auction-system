@@ -642,45 +642,17 @@ while (( run_idx < ATTEMPTS )); do
         total_catchup_failed=$((total_catchup_failed + 1))
       fi
 
-      if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
-        ws_precheck_log="$run_dir/ws-schema-precheck.log"
-        if [[ -z "$ws_precheck_effective_auction" ]]; then
-          ws_precheck_effective_auction="$auction_id"
-        fi
-        if [[ -z "$ws_precheck_auction_resolved" ]]; then
-          ws_precheck_auction_resolved="$ws_precheck_effective_auction"
-        fi
-        set +e
-        (
-          WS_PRECHECK_AUCTION="$ws_precheck_effective_auction" \
-          WS_PRECHECK_SCHEMA="$WS_PRECHECK_SCHEMA" \
-          WS_PRECHECK_TOKEN="$WS_PRECHECK_TOKEN" \
-          WS_PRECHECK_TIMEOUT_MS="$WS_PRECHECK_TIMEOUT_MS" \
-          node "$SCRIPT_ROOT/scripts/ws-schema-precheck.mjs" --url "${BASE_WS_URL}/ws" > "$ws_precheck_log" 2>&1
-        )
-        ws_precheck_rc="$?"
-        set -e
-        total_ws_precheck_runs=$((total_ws_precheck_runs + 1))
-        if [[ "$ws_precheck_rc" == "0" ]]; then
-          ws_precheck_status="PASS"
-          total_ws_precheck_pass=$((total_ws_precheck_pass + 1))
-        else
-          ws_precheck_status="FAIL"
-          total_ws_precheck_failed=$((total_ws_precheck_failed + 1))
-        fi
-      else
-        ws_precheck_status="SKIP_DISABLED"
-      fi
     else
       catchup_status="SKIP_NO_AUCTION"
-      ws_precheck_status="SKIP_NO_AUCTION"
     fi
-  elif [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
-    if [[ -n "${auction_id:-}" ]]; then
+  fi
+
+  if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
+    if [[ -z "$ws_precheck_effective_auction" ]]; then
+      ws_precheck_effective_auction="${auction_id:-}"
+    fi
+    if [[ -n "$ws_precheck_effective_auction" ]]; then
       ws_precheck_log="$run_dir/ws-schema-precheck.log"
-      if [[ -z "$ws_precheck_effective_auction" ]]; then
-        ws_precheck_effective_auction="$auction_id"
-      fi
       if [[ -z "$ws_precheck_auction_resolved" ]]; then
         ws_precheck_auction_resolved="$ws_precheck_effective_auction"
       fi
@@ -705,6 +677,8 @@ while (( run_idx < ATTEMPTS )); do
     else
       ws_precheck_status="SKIP_NO_AUCTION"
     fi
+  else
+    ws_precheck_status="SKIP_DISABLED"
   fi
 
   if [ "$run_status" = "PASS" ] && [[ "$RUN_CATCHUP_SMOKE" == "1" ]] && [ "$catchup_status" = "FAIL" ]; then
