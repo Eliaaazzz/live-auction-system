@@ -183,7 +183,7 @@ larger concurrency tier.
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1`/`true`/`yes`/`on` is intentionally documented |
-| HTTPS boundary | `REQUIRE_HTTPS=1` and `BASE_URL` starts with `https://` | `require_https` row fails when HTTPS is enforced but HTTP URL is passed |
+| HTTPS boundary | `DEPLOY_REHEARSAL_REQUIRE_HTTPS=1` (or `DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1` for super-stretch) and `BASE_URL` starts with `https://` | `require_https` row fails when HTTPS is enforced but HTTP URL is passed |
 | WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1`/`true`/`yes`/`on` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
 | WebSocket schema guard | `ws_schema` precheck passes when `REQUIRE_WS_SCHEMA_CHECK=true`, or row is intentionally skipped when check is off | Schema mismatch, timeout, or websocket handshake error |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
