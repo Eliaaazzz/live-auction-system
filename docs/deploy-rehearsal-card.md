@@ -69,7 +69,7 @@ larger concurrency tier.
      AID=auc_demo \
      REQUIRE_HTTPS=1 \
      REQUIRE_WS_SCHEMA_CHECK=true \
-     WS_PRECHECK_SCHEMA="2" \
+     WS_PRECHECK_SCHEMA="1" \
      WS_PRECHECK_TOKEN="..." \
      scripts/deploy-preflight.sh
    ```
@@ -77,6 +77,9 @@ larger concurrency tier.
    This opens an actual websocket handshake, sends `ROOM_JOIN`, and validates the
    first schema-bearing server message against `WS_PRECHECK_SCHEMA`. Use this for
    remote rehearsals where frontend/backend drift is a known risk.
+
+   For super-stretch paths, `make deploy-perf-rehearsal-100k` enables this check
+   by default (`DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1`).
 
 3. Decide whether SRS is in scope.
 
@@ -118,7 +121,7 @@ larger concurrency tier.
      DEPLOY_REHEARSAL_100K_AID=auc_demo \
      DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
-     DEPLOY_REHEARSAL_100K_WS_SCHEMA=2 \
+     DEPLOY_REHEARSAL_100K_WS_SCHEMA="1" \
      DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
      DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
