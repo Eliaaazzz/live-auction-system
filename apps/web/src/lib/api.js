@@ -95,14 +95,16 @@ export const api = {
    *   payload = { productId, rules: {
    *     startPriceCents, incrementCents, durationSec,
    *     extendWindowMs?, extendSec?, maxExtensions?,
-   *     capCents?, reserveCents?, antiSnipeWindowMs?, auctionMode?
+ *     capCents?, reserveCents?, antiSnipeWindowMs?, auctionMode? (legacy) 或 mode?
    *   } }
    *
    * Notes:
    * - duration may be supplied as milliseconds (`durationMs`) by older callers,
    *   but the current canonical key is `durationSec`.
-   * - Auction mode: `first_price` (default) or `second_price`.
-   */
+ * - Auction mode: `first_price` (default) or `second_price`. Legacy callers may
+ *   also send `mode` (`ENGLISH`/`VICKREY`) which is normalized to the same
+ *   canonical values on the backend.
+ */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),
 
   /**
