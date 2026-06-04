@@ -22,7 +22,7 @@ const RESET = () => useAuctionStore.getState().init({
 });
 
 const env = (over) => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   type: EventType.BID_ACCEPTED,
   serverTimeMs: Date.now(),
   seq: 1,
@@ -88,6 +88,14 @@ describe('applyEvent · BID_ACCEPTED', () => {
     expect(useAuctionStore.getState().leaders[0].isYou).toBe(true);
   });
 
+  it('uses Lua bidCount on direct BID_ACCEPTED without undercounting', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 9,
+      data: { status: 'LIVE', amountCents: '14000000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000, bidCount: 42 },
+    }));
+    expect(useAuctionStore.getState().totalBidsCount).toBe(42);
+  });
+
   it('fires overtakeBanner when self was leading and got overtaken', () => {
     const apply = useAuctionStore.getState().applyEvent;
     apply(env({ seq: 1, data: { status: 'LIVE', amountCents: '11000000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000 } }));
@@ -134,6 +142,126 @@ describe('applyEvent · BID_ACCEPTED', () => {
     }));
     expect(useAuctionStore.getState().lastRejectCode).toBeNull();
     expect(useAuctionStore.getState().lastRejectAt).toBeNull();
+  });
+});
+
+describe('applyEvent ROOM_STATE_PATCH', () => {
+  beforeEach(RESET);
+
+  it('updates room projection and advances seq without needing every BID_ACCEPTED', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 2,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '12000000',
+        winnerId: 'u_other',
+        winnerDisplayName: 'Patch Winner',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 2,
+        bidCountTotal: 2,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.currentCents).toBe('12000000');
+    expect(s.winnerId).toBe('u_other');
+    expect(s.winnerDisplayName).toBe('Patch Winner');
+    expect(s.lastSeq).toBe(2);
+    expect(s.totalBidsCount).toBe(2);
+    expect(s.leaders[0]).toMatchObject({ userId: 'u_other', cents: '12000000' });
+  });
+
+  it('counts only unapplied seqs when a direct ack already advanced the client', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 3,
+      data: { status: 'LIVE', amountCents: '11500000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000 },
+    }));
+    apply(env({
+      seq: 5,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '12500000',
+        winnerId: 'u_other',
+        winnerDisplayName: 'Other',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 5,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.totalBidsCount).toBe(3);
+    expect(s.lastSeq).toBe(5);
+    expect(s.overtakeBanner).toBe(true);
+  });
+
+  it('applies bidCountTotal when a direct ack and patch share the same seq', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 5,
+      data: { status: 'LIVE', amountCents: '12500000', userId: 'u_me', displayName: 'You', endAtMs: Date.now() + 28_000 },
+    }));
+    expect(useAuctionStore.getState().totalBidsCount).toBe(1);
+
+    apply(env({
+      seq: 5,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        fromSeq: 1,
+        status: 'LIVE',
+        currentPriceCents: '12500000',
+        winnerId: 'u_me',
+        winnerDisplayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 5,
+        bidCountTotal: 5,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.totalBidsCount).toBe(5);
+    expect(s.lastSeq).toBe(5);
+    expect(s.currentCents).toBe('12500000');
+  });
+
+  it('preserves self-bid UX when ROOM_STATE_PATCH arrives before same-seq direct ack', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 9,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        fromSeq: 7,
+        status: 'LIVE',
+        currentPriceCents: '14500000',
+        winnerId: 'u_me',
+        winnerDisplayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 2,
+        bidCountTotal: 9,
+      },
+    }));
+
+    apply(env({
+      seq: 9,
+      data: {
+        status: 'LIVE',
+        amountCents: '14500000',
+        userId: 'u_me',
+        displayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCount: 9,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.lastSeq).toBe(9);
+    expect(s.currentCents).toBe('14500000');
+    expect(s.winnerId).toBe('u_me');
+    expect(s.yourCents).toBe('14500000');
+    expect(s.leadingToast).toBe(true);
   });
 });
 

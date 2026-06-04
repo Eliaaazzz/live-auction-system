@@ -41,6 +41,9 @@ func TestPlaceBidHybridDoesNotExposeLiveLeaderThroughRoomSurfaces(t *testing.T) 
 	if roomPayload.UserID != "alice" || roomPayload.AmountCents != "12000" {
 		t.Fatalf("hybrid room payload should reveal only runner-up, got %+v", roomPayload)
 	}
+	if roomPayload.BidCount != 2 {
+		t.Fatalf("hybrid room payload bidCount=%d want 2", roomPayload.BidCount)
+	}
 	if strings.Contains(events[1].Payload, "bob") || strings.Contains(events[1].Payload, "13000") {
 		t.Fatalf("hybrid room payload leaked true leader: %s", events[1].Payload)
 	}

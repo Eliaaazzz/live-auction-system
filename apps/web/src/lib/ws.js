@@ -112,6 +112,7 @@ export class RoomClient {
           return;
 
         case EventType.ROOM_SNAPSHOT:
+        case EventType.ROOM_STATE_PATCH:
         case EventType.BID_ACCEPTED:
         case EventType.AUCTION_EXTENDED:
         case EventType.AUCTION_SOLD:

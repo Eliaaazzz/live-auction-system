@@ -6,7 +6,7 @@ Materialized from PR #13 `docs/ws-protocol.md`. Encoding: **JSON-only** in T1 (m
 
 ```ts
 type WsEnvelope<T = unknown> = {
-  schemaVersion: number   // wire-protocol version (currently 1); clients detect mismatch
+  schemaVersion: number   // wire-protocol version (currently 2); clients detect mismatch
   type: string            // SCREAMING_SNAKE, see tables below
   auctionId?: string
   requestId?: string
@@ -20,7 +20,7 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_JOIN` | `{ auctionId, lastSeq? }` | join room; `lastSeq` replays the missed Stream delta (then `ROOM_SNAPSHOT`); gap > 200 → snapshot only |
+| `ROOM_JOIN` | `{ auctionId, lastSeq? }` | join room; `lastSeq` is the client's applied room-state high-watermark. The gateway replays missed Stream events when the gap is small, then sends `ROOM_SNAPSHOT`; gap > 200 → snapshot only. In schemaVersion 2, a client may have reached `lastSeq` through `ROOM_STATE_PATCH`, so skipped bid events are intentionally not replayed. |
 | `BID_PLACE` | `{ clientBidId, amountCents: string }` | submit a bid |
 | `PING` | `{}` | heartbeat |
 
@@ -29,7 +29,8 @@ type WsEnvelope<T = unknown> = {
 | type | data | purpose |
 |---|---|---|
 | `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }` |
-| `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
+| `ROOM_STATE_PATCH` | `{ fromSeq, seq, status, currentPriceCents, winnerId, winnerDisplayName, endAtMs, extendCount?, bidCountDelta, bidCountTotal, serverTimeMs }` | large-room coalesced public UI projection. It advances the client high-watermark to `seq` without promising that every intermediate `BID_ACCEPTED` frame was delivered. `bidCountTotal` is sourced from Lua's atomic accepted-bid counter. Direct bidder acks and Redis Stream evidence remain per-bid. Client-side leaderboard projection may show only the latest patch winner until the REST leaderboard refresh fills intermediate bidders. |
+| `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, bidCount?, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `bidCount` = Lua-authoritative accepted-bid count; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
@@ -37,7 +38,7 @@ type WsEnvelope<T = unknown> = {
 | `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
 | `PONG` | `{}` | heartbeat response |
 
-`amountCents` is a **string** in every payload above (money-as-string boundary). All these events carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets both a direct `BID_ACCEPTED` ack and the Pub/Sub broadcast — and out-of-order frames).
+`amountCents` is a **string** in every payload above (money-as-string boundary). Sequenced room frames carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets a direct `BID_ACCEPTED` ack and may also receive either a room broadcast or a `ROOM_STATE_PATCH` — and out-of-order frames). `ROOM_STATE_PATCH` is a projection high-watermark, not a proof that the client received every intermediate bid frame.
 
 ## Leaderboard (REST, additive)
 
@@ -61,12 +62,13 @@ Gating is computed server-side off the live `auction:{aid}:state` hash (`status`
 
 - **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
 - **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
-- **`ROOM_SNAPSHOT.rules.capCents == null` = no buy-now ceiling**. The rules block is additive under schemaVersion 1; old clients can ignore it, new clients should prefer it over local fallback defaults.
+- **`ROOM_SNAPSHOT.rules.capCents == null` = no buy-now ceiling**. The rules block is additive under the current schemaVersion; old clients can ignore it, new clients should prefer it over local fallback defaults.
 - **`ROOM_SNAPSHOT.rules.reserveCents` currently mirrors `startPriceCents`** because the backend rule schema does not yet persist a separate reserve price.
 - **Anti-snipe is bounded** by `maxExtensions` (rule DSL; `0` = unlimited). Past the cap an in-window bid is a normal `BID_ACCEPTED` with no `AUCTION_EXTENDED` and no `endAtMs` change.
 - A `DUPLICATE` retry on the **same** socket after an extension replays the cached `BID_ACCEPTED` (which already carries the extended `endAtMs`) but **not** the separate `AUCTION_EXTENDED` event; the canonical recovery for a missed event is reconnect + `lastSeq` catchup (implemented in T2: `ROOM_JOIN{lastSeq}` → XRANGE delta replay + snapshot fallback; multi-gateway fanout is T5).
 - **Broadcast is Stream-authoritative**: on a Pub/Sub wakeup the gateway reads the canonical Redis Stream from the room's last-broadcast seq and fans out those events. Pub/Sub is a non-authoritative hint — a forged/stale message not backed by the Stream is never broadcast.
-- **Every envelope carries `schemaVersion`** (currently `1`) so clients can detect a wire-protocol mismatch; bump on a breaking change (all-member approve).
+- **Large-room state patching (schemaVersion 2)**: when a room crosses the gateway's high-fanout threshold, non-terminal public `BID_ACCEPTED` broadcasts may be coalesced into `ROOM_STATE_PATCH` frames. The originating bidder still receives an immediate direct `BID_ACCEPTED` ack, and Redis Stream still contains every bid for catchup, evidence, and verification. `AUCTION_EXTENDED` that immediately follows a coalesced bid can be folded into the same patch (`endAtMs` + `extendCount`) so anti-snipe does not reintroduce per-bid O(viewers × events) fanout. Terminal events are not coalesced.
+- **Every envelope carries `schemaVersion`** (currently `2`) so clients can detect a wire-protocol mismatch; bump on a breaking change (all-member approve).
 - **Seller self-bid is rejected** (`BID_REJECTED{ERR_NOT_ALLOWED}`): the seller id is frozen into Redis state and checked on the hot path (anti shill-bidding).
 - **Money is bounded by `MaxMoneyCents` (2^53-1)** and stored as exact decimal strings; larger amounts are rejected (`ERR_BAD_INPUT` at the gateway, `ERR_TOO_LOW` defensively in Lua) because float64 (Lua / JS / Redis ZSET score) can't represent them exactly.
 - **Backpressure — two-lane (T5)**: each connection has a **CRITICAL** lane (bid acks, `AUCTION_*` events incl. `AUCTION_EXTENDED`, `ROOM_SNAPSHOT`, catchup) and a **BEST-EFFORT** lane (`PONG` is the **only** type on this lane in v0 — see "Lossy lane policy" below). The critical buffer (`sendBufFrames=256`) is sized to exceed `catchupMaxGap=200` so a full Stream replay never trips force-close. A full critical lane **force-closes** the connection with **typed close code `4000 BACKPRESSURE_DROP`** (client reconnects + re-syncs via catchup/`ROOM_SNAPSHOT` — never a silent loss of a critical event); a full best-effort lane **drops the individual frame** and keeps the connection. The critical lane is drained with **best-effort priority** (a pending critical frame pre-empts a pending lossy one in the leading non-blocking poll; under Go's pseudo-random select fairness a critical frame can be delayed by at most one in-flight lossy write). All sends are non-blocking so one slow client never stalls the room broadcast.
@@ -77,7 +79,7 @@ Gating is computed server-side off the live `auction:{aid}:state` hash (`status`
 
 ## T1 / T2 subset
 
-T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) + `AUCTION_SOLD` (cap-hit) broadcasts, the client `seq-guard`, Stream-authoritative broadcast, `lastSeq` catchup, and `schemaVersion`. **T3** lands the remaining terminal events. **T5** lands the two-lane backpressure split (critical vs best-effort) and validates multi-gateway fanout (each gateway fans out the canonical Stream to its own room members; no shared in-process hub).
+T1 exercises `ROOM_JOIN → ROOM_SNAPSHOT`, `BID_PLACE → BID_ACCEPTED`, and room broadcast of `BID_ACCEPTED`. **T2** adds `AUCTION_EXTENDED` (anti-snipe) + `AUCTION_SOLD` (cap-hit) broadcasts, the client `seq-guard`, Stream-authoritative broadcast, `lastSeq` catchup, and `schemaVersion`. **T3** lands the remaining terminal events. **T5** lands the two-lane backpressure split (critical vs best-effort) and validates multi-gateway fanout (each gateway fans out the canonical Stream to its own room members; no shared in-process hub). **T8/v2** adds `ROOM_STATE_PATCH` for high-fanout rooms.
 
 ## Countdown
 

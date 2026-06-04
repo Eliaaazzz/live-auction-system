@@ -12,7 +12,7 @@
 // ─── Envelope (proto/ws-envelope.md) ─────────────────────────────
 // All WS traffic in BOTH directions uses this shape. Backend rejects
 // envelopes with schemaVersion ≠ CURRENT_SCHEMA_VERSION.
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 // ─── Auction status (docs/state-machine.md — canonical 7 states) ─
 export const AuctionStatus = Object.freeze({
@@ -35,6 +35,7 @@ export const AuctionStatus = Object.freeze({
 export const EventType = Object.freeze({
   // wire-broadcast (ws-envelope.md §3.2)
   ROOM_SNAPSHOT:     'ROOM_SNAPSHOT',
+  ROOM_STATE_PATCH:  'ROOM_STATE_PATCH',
   BID_ACCEPTED:      'BID_ACCEPTED',
   BID_REJECTED:      'BID_REJECTED',
   AUCTION_EXTENDED:  'AUCTION_EXTENDED',  // anti-snipe (event, NOT a status)

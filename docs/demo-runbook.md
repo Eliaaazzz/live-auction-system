@@ -70,6 +70,32 @@ Keep a terminal visible running `make demo` in parallel — the scrolling
 
 ---
 
+## 2.5 Innovation cutaway · #114 模式亮点（可选 20–30 秒）
+
+The main 3-minute path should stay focused. If the judges ask "what is the
+innovation beyond English auction?", use a short cutaway backed by `make demo-smoke`:
+
+```bash
+make demo-sudden-death
+make demo-sealed
+make demo-vickrey
+make demo-hybrid
+make demo-allpay
+make demo-prequalify
+```
+
+Narration points:
+
+- **Sealed / Vickrey**: hidden bids stay private during LIVE, then reveal atomically at close.
+- **HYBRID_REVEAL**: the room sees runner-up pressure, while the true leader is hidden until SOLD.
+- **ALL_PAY**: show only as a **virtual coin event** — explicitly say **「虚拟币 · 非真实支付 · 非赌博」**. The evidence card exposes `settlement: "VIRTUAL_COINS_ONLY"`, and the backend verifier asserts there are zero normal `orders` rows.
+- **PREQUALIFY**: a sealed parent seeds the formal auction's start price through `/spawn-formal`.
+
+This cutaway is optional for timing, but the commands are not hand-wavy: every mode
+demo asserts its own state/event/evidence invariant.
+
+---
+
 ## 3. Anti-snipe (node 4) · 反狙击演示
 
 `e2e-dummy-bid` does a single bid and exits before the timer, so it does **not**
@@ -120,9 +146,11 @@ if rung 2 isn't green at **T-2 min**, play rung 3. No live debugging on stage.
 Pre-record so rung 3 is complete (each is independently playable):
 
 - [ ] Full §12 path (admin → room → evidence card), ~3 min, clean audio
+- [ ] #114 mode cutaway: sealed reveal, Vickrey second-price, HYBRID hidden leader, ALL_PAY virtual-coin marker
 - [ ] `make chaos` terminal run (or 5× 30s clips: ai / redis / mysql / ws / timer) showing `CHAOS_OK` + self-heal
 - [ ] `make load` + Grafana panel: 500/50, p95, **seq gap = 0**
 - [ ] Evidence card hash-chain expand (`prev_hash → curr_hash`, first 8 hex)
+- [ ] ALL_PAY evidence marker: `settlement: "VIRTUAL_COINS_ONLY"` / 「虚拟币 · 非真实支付 · 非赌博」
 - [ ] AI-offline moment: badge flips "拍卖师暂离", bidding continues (V9 P3)
 
 ---
@@ -130,9 +158,11 @@ Pre-record so rung 3 is complete (each is independently playable):
 ## 6. Pre-demo checklist · 演示前检查
 
 - [ ] `make demo` green on the presenter laptop (full path) — **2026-06-09**
-- [ ] `make demo-smoke` green in CI (orchestration wiring intact)
+- [ ] CI green for the demo atoms (`e2e-ai-offline`, `chaos-smoke`, `load-smoke`, frontend smokes); run `make demo-smoke` locally if wrapper-order confidence is needed
 - [ ] Public deploy health-green + seeded + one manual bid (T-10 min)
+- [ ] Optional coalescing visibility check: set `ROOM_STATE_PATCH_MIN_VIEWERS=10` for a small judge room (or `1` locally), restart lumen, and confirm a `ROOM_STATE_PATCH`; keep the default `1000` for production-scale wording
 - [ ] Backup recording + 5 chaos clips on local disk (not only cloud)
 - [ ] Grafana panel bookmarked + datasource live (`infra/grafana`, `infra/prometheus`)
 - [ ] Two browser tabs pre-opened (admin + room), sound on for AI/auctioneer audio
+- [ ] #114 mode cutaway rehearsed, especially the ALL_PAY compliance wording
 - [ ] `AI uses Doubao, demo runs mock` line ready (the key was deprovisioned; mock path is honest + reproducible)

@@ -38,6 +38,8 @@ type Store struct {
 	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
+const redisUnavailableTimeout = time.Second
+
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
 // retried (up to ~30s) so startup is robust against datastores still booting
 // (e.g. MySQL finishing first-run init after its healthcheck flips healthy).
@@ -45,13 +47,21 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
-	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+	return NewWithRedisPassword(ctx, redisAddr, "", mysqlDSN, evidenceKey)
+}
+
+func NewWithRedisPassword(ctx context.Context, redisAddr, redisPassword, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithRedisPasswordAndEvidenceKeySource(ctx, redisAddr, redisPassword, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
 }
 
 // NewWithEvidenceKeySource is the rotation-ready constructor: production still
 // passes an env-backed static source through New, while a future KMS/key-ring
 // source can implement EvidenceKeySource without changing Store callers again.
 func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	return NewWithRedisPasswordAndEvidenceKeySource(ctx, redisAddr, "", mysqlDSN, evidenceKeys)
+}
+
+func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, redisPassword, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
 	if evidenceKeys == nil {
 		return nil, errors.New("evidence key source is nil")
 	}
@@ -59,7 +69,16 @@ func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, e
 	if err != nil {
 		return nil, fmt.Errorf("evidence key source: %w", err)
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb := redis.NewClient(&redis.Options{
+		Addr:                  redisAddr,
+		Password:              redisPassword,
+		MaxRetries:            -1,
+		DialTimeout:           redisUnavailableTimeout,
+		ReadTimeout:           redisUnavailableTimeout,
+		WriteTimeout:          redisUnavailableTimeout,
+		PoolTimeout:           redisUnavailableTimeout,
+		ContextTimeoutEnabled: true,
+	})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
 	}
@@ -67,6 +86,9 @@ func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, e
 	if err != nil {
 		return nil, fmt.Errorf("mysql open: %w", err)
 	}
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
+	db.SetConnMaxLifetime(2 * time.Minute)
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
@@ -97,6 +119,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	// id of the sealed PREQUALIFY parent it was seeded from. Nullable; standalone
 	// auctions leave it NULL.
 	if err := s.ensureColumn(ctx, "auctions", "parent_auction_id", "VARCHAR(64) NULL DEFAULT NULL"); err != nil {
+		return err
+	}
+	if err := s.ensureIndex(ctx, "auctions", "idx_auctions_parent", "(parent_auction_id)"); err != nil {
 		return err
 	}
 	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
@@ -768,10 +793,8 @@ func (s *Store) StreamLen(ctx context.Context, aid string) (int64, error) {
 // ReadEventsAfter returns Stream events after lastID (exclusive). lastID==""
 // reads from the beginning.
 func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]StreamEvent, string, error) {
-	start := "-"
-	if lastID != "" {
-		start = "(" + lastID
-	}
+	start := streamRangeStart(lastID)
+	lastSeq := streamIDSeq(lastID)
 	msgs, err := s.rdb.XRange(ctx, streamKey(aid), start, "+").Result()
 	if err != nil {
 		return nil, lastID, err
@@ -779,15 +802,73 @@ func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]Stre
 	out := make([]StreamEvent, 0, len(msgs))
 	newLast := lastID
 	for _, m := range msgs {
+		seq := parseInt(valStr(m.Values, "seq"))
+		if lastSeq > 0 && seq <= lastSeq {
+			continue
+		}
 		out = append(out, StreamEvent{
 			ID:      m.ID,
-			Seq:     parseInt(valStr(m.Values, "seq")),
+			Seq:     seq,
 			Type:    valStr(m.Values, "type"),
 			Payload: valStr(m.Values, "payload"),
 		})
 		newLast = m.ID
 	}
 	return out, newLast, nil
+}
+
+// LastAuctionReveal returns the sealed reveal event for a terminal sealed parent.
+// The private sealed ZSET is scrubbed at close, so formal-auction recommendations
+// must derive from the canonical Stream reveal event rather than private hot keys.
+func (s *Store) LastAuctionReveal(ctx context.Context, aid string) (model.AuctionRevealedData, error) {
+	msgs, err := s.rdb.XRevRangeN(ctx, streamKey(aid), "+", "-", 64).Result()
+	if err != nil {
+		return model.AuctionRevealedData{}, err
+	}
+	for _, m := range msgs {
+		if valStr(m.Values, "type") != model.TypeAuctionRevealed {
+			continue
+		}
+		var out model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(valStr(m.Values, "payload")), &out); err != nil {
+			return model.AuctionRevealedData{}, fmt.Errorf("decode auction reveal: %w", err)
+		}
+		return out, nil
+	}
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		return model.AuctionRevealedData{}, err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != model.TypeAuctionRevealed {
+			continue
+		}
+		var out model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(events[i].Payload), &out); err != nil {
+			return model.AuctionRevealedData{}, fmt.Errorf("decode auction reveal: %w", err)
+		}
+		return out, nil
+	}
+	return model.AuctionRevealedData{}, ErrNotFound
+}
+
+func streamRangeStart(lastID string) string {
+	if lastID == "" {
+		return "-"
+	}
+	lastID = strings.TrimPrefix(lastID, "(")
+	if !strings.Contains(lastID, "-") {
+		lastID += "-0"
+	}
+	return lastID
+}
+
+func streamIDSeq(id string) int64 {
+	id = strings.TrimPrefix(id, "(")
+	if i := strings.IndexByte(id, '-'); i >= 0 {
+		id = id[:i]
+	}
+	return parseInt(id)
 }
 
 // --- small typed accessors for Lua/redis results ---

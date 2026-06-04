@@ -50,6 +50,14 @@ func main() {
 			log.Fatalf("seed: %v", err)
 		}
 
+	case "seed-load":
+		fs := flag.NewFlagSet("seed-load", flag.ExitOnError)
+		durationSec := fs.Int64("duration-sec", 3600, "load auction duration in seconds")
+		_ = fs.Parse(os.Args[2:])
+		if err := server.SeedLoad(ctx, mustConfig(), *durationSec); err != nil {
+			log.Fatalf("seed-load: %v", err)
+		}
+
 	case "verify":
 		fs := flag.NewFlagSet("verify", flag.ExitOnError)
 		aid := fs.String("auction", os.Getenv("VERIFY_AID"), "auction id (default auc_demo)")

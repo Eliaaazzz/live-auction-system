@@ -309,6 +309,8 @@ chaos-ws:        ## phase 4: WS gateway — connect-fails under outage; catchup 
 	@$(COMPOSE) exec -T lumen /lumen chaos --phase=bid-expect \
 		--aid="$$(cat $(CHAOS_AID_FILE))" --token="$$(cat $(CHAOS_TOKEN_FILE))" \
 		--code=OK_ACCEPTED
+	@echo "--- ws: wait for persistence drain (events-count >= 2) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=wait-events --aid="$$(cat $(CHAOS_AID_FILE))" --want-seq=2 --timeout-ms=30000
 	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
 	@echo "✓ chaos[4/5] ws-gateway PASSED · stopped→/healthz refused · started→catchup → no seq gap"
 
@@ -354,6 +356,8 @@ chaos-timer:     ## phase 5: Timer Worker — LIVE outlives endAtMs while disabl
 	done
 	@echo "--- timer: state-expect SOLD (timer re-armed → scan tick → hammerDue → close_auction.lua) ---"
 	@$(COMPOSE) exec -T lumen /lumen chaos --phase=state-expect --aid="$$(cat $(CHAOS_AID_FILE))" --state=SOLD --timeout-ms=15000
+	@echo "--- timer: wait for persistence drain (events-count >= 2) ---"
+	@$(COMPOSE) exec -T lumen /lumen chaos --phase=wait-events --aid="$$(cat $(CHAOS_AID_FILE))" --want-seq=2 --timeout-ms=30000
 	@$(MAKE) verify VERIFY_AID="$$(cat $(CHAOS_AID_FILE))"
 	@echo "✓ chaos[5/5] timer PASSED · disabled→LIVE-past-endAtMs · re-enabled→SOLD within scan tick"
 

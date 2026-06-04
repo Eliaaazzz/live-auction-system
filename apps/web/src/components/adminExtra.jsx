@@ -20,6 +20,7 @@ function AdminPublish() {
   const [duration, setDuration] = React.useState(30);
   const [maxExtends, setMaxExtends] = React.useState(5);
   const [antiSnipe, setAntiSnipe] = React.useState(true);
+  const [auctionMode, setAuctionMode] = React.useState('ENGLISH');
   const [scheduleDate, setScheduleDate] = React.useState('2026-06-10');
   const [scheduleTime, setScheduleTime] = React.useState('21:00');
   // Real product media (item 4): an image URL the room renders + the VLM page
@@ -73,6 +74,7 @@ function AdminPublish() {
       const { auctionId } = await api.createDraft({
         productId,
         rules: {
+          mode:              auctionMode,
           startPriceCents: startCents,
           incrementCents:  stepCents,
           capPriceCents:   capCents,
@@ -176,6 +178,18 @@ function AdminPublish() {
 
           {/* ─ Section: pricing ─ */}
           <FormSection step="03" title="起拍设置" desc="货币以分(cents)为单位 · 字符串存储 · 永不浮点">
+            <FormRow label="拍卖流程">
+              <SegBar value={auctionMode} onChange={setAuctionMode}
+                options={[
+                  {v:'ENGLISH', l:'正式明拍'},
+                  {v:'SEALED_FIRST', l:'提前暗拍'},
+                ]}/>
+              <Hint>
+                {auctionMode === 'SEALED_FIRST'
+                  ? '先收集隐藏出价，结束后按聚合结果推荐正式明拍 reserve'
+                  : '直接进入公开竞价'}
+              </Hint>
+            </FormRow>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 14 }}>
               <FormRow label="起拍价" required>
                 <CurrencyInput cents={startCents} onChange={setStartCents}/>
@@ -672,6 +686,8 @@ function auctionToRow(a) {
     hammer: sold ? (a.currentPriceCents || '0') : '0',
     settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
     t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
+    mode: a.mode || 'ENGLISH',
+    parentAuctionId: a.parentAuctionId || '',
   };
 }
 
@@ -720,6 +736,8 @@ const mapBackendRows = (rows = []) => rows.map((it, i) => {
     hammer: normalizeCents(it?.hammer ?? it?.currentPriceCents ?? it?.currentPrice ?? '0'),
     settle: normalizeSettlement(status),
     t: normalizeTimeText(it?.t ?? it?.updatedAt ?? it?.createdAt),
+    mode: String(it?.mode ?? 'ENGLISH'),
+    parentAuctionId: String(it?.parentAuctionId ?? ''),
   };
 });
 
@@ -884,6 +902,33 @@ function AdminOrders() {
       setIsDemoData(!rawRows.length);
     } catch (e) {
       window.alert('更新失败: ' + (e?.message || e));
+    }
+  };
+  const handleSpawnFormal = async (aid) => {
+    try {
+      await ensureSession('seller-demo');
+      const rec = await api.prequalifyRecommendation(aid);
+      const reserve = normalizeCents(rec?.recommendedReserveCents || rec?.recommendedStartPriceCents || '0');
+      const count = rec?.sealedSummary?.count ?? 0;
+      const ok = window.confirm(`暗拍 ${count} 人，推荐正式明拍 reserve ${formatCentsCNY(reserve)}。是否创建正式明拍？`);
+      if (!ok) return;
+      const spawned = await api.spawnFormal(aid, {
+        rules: {
+          mode: 'ENGLISH',
+          startPriceCents: reserve,
+          incrementCents: '1000',
+          capPriceCents: '0',
+          durationSec: 60,
+          extendWindowSec: 10,
+          extendSec: 10,
+          maxExtensions: 2,
+        },
+      });
+      if (spawned?.auctionId) {
+        navigate(`/admin/auctions/${spawned.auctionId}/vlm`);
+      }
+    } catch (e) {
+      window.alert('生成正式明拍失败: ' + (e?.message || e));
     }
   };
 
@@ -1053,6 +1098,12 @@ function AdminOrders() {
                         color: 'var(--douyin-ink-text)', cursor: 'pointer', fontSize: 11,
                         padding: '3px 10px', borderRadius: 6,
                       }}>编辑规则</button>
+                    ) : ((r.status === 'SOLD' || r.status === 'ORDER_CREATED') && ['SEALED_FIRST', 'VICKREY'].includes(r.mode)) ? (
+                      <button onClick={() => handleSpawnFormal(r.lot)} style={{
+                        border: '1px solid rgba(37,244,238,.32)', background: 'rgba(37,244,238,.08)',
+                        color: 'var(--douyin-cyan)', cursor: 'pointer', fontSize: 11,
+                        padding: '3px 10px', borderRadius: 6,
+                      }}>生成正式明拍</button>
                     ) : (
                       <button onClick={() => navigate(
                         (r.status === 'LIVE') ? `/room/${r.lot}` : `/evidence/${r.lot}`)} style={{

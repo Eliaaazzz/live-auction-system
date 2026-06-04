@@ -140,7 +140,8 @@ function MobileRoom({
   const effectiveVideoUrl = videoBroken ? null : videoUrl;
 
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
-  const warn = remainingMs <= 10000 && status === 'LIVE';
+  const warn = remainingMs > 0 && remainingMs <= 10000 && status === 'LIVE';
+  const biddingLocked = status !== 'LIVE' || remainingMs <= 0;
   const bg = warn && showColorRamp
     ? 'radial-gradient(ellipse at top, rgba(254,44,85,.18) 0%, var(--douyin-ink) 55%)'
     : 'var(--douyin-ink)';
@@ -440,10 +441,10 @@ function MobileRoom({
             currentCents={currentCents}
             stepCents={stepCents}
             capCents={capCents}
-            disabled={status !== 'LIVE'}
+            disabled={biddingLocked}
             isLeading={isYouLeading}
             shake={rejectShake}
-            onBid={(c) => { if (onBid) onBid(c); }}
+            onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
           />
           <div style={{
             display: 'flex', justifyContent: 'space-between',

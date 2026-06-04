@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func chaosSetup(opts ChaosOptions) error {
 	if err != nil {
 		return fmt.Errorf("create product: %w", err)
 	}
-	aid, err := createAuction(hc, opts.Target, seller.Token, productID)
+	aid, err := createChaosAuction(hc, opts.Target, seller.Token, productID, opts)
 	if err != nil {
 		return fmt.Errorf("create auction: %w", err)
 	}
@@ -131,6 +132,27 @@ func chaosSetup(opts ChaosOptions) error {
 	return nil
 }
 
+func createChaosAuction(hc *http.Client, target, token, productID string, opts ChaosOptions) (string, error) {
+	rules := model.Rules{
+		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
+		DurationSec: 60, ExtendWindowSec: 10, ExtendSec: 10,
+	}
+	if opts.DurationMs > 0 && opts.DurationMs <= int64(rules.ExtendWindowSec)*1000 {
+		rules.ExtendWindowSec = 0
+		rules.ExtendSec = 0
+	}
+	var out struct {
+		AuctionID string `json:"auctionId"`
+	}
+	body := map[string]any{
+		"productId":      productID,
+		"rules":          rules,
+		"factsConfirmed": true,
+	}
+	err := postJSON(hc, target+"/api/auctions", token, body, &out)
+	return out.AuctionID, err
+}
+
 // chaosBidExpect dials the gateway, sends one BID_PLACE, and asserts the
 // resulting code (BID_ACCEPTED.* or BID_REJECTED.code) equals opts.Code.
 // `opts.Code` accepts OK_* or ERR_* — both are accepted equivalents on the
@@ -159,17 +181,26 @@ func chaosBidExpect(opts ChaosOptions) error {
 // BID_ACCEPTED or BID_REJECTED. amount is the literal AmountCents string
 // (kept as string to preserve the JS-visible money boundary).
 //
-// Critically this function does NOT use the e2e helper `dialAndJoin` — that one
-// waits for ROOM_SNAPSHOT, which the gateway can't produce when Redis is down
-// (the JOIN handler returns silently on Snapshot error). For the chaos drill
-// we only need c.aid to be set on the connection (the gateway DOES set it
-// before the snapshot read), then BID_PLACE flows through the Lua dispatch
-// which produces the expected error code. We dial and send JOIN without
-// waiting for the snapshot ack.
+// Redis-up probes consume ROOM_SNAPSHOT first so prior catchup frames cannot be
+// mistaken for this bid's result. The Redis-down pause probe uses the no-wait
+// join path because the gateway cannot produce a snapshot during that outage.
 func chaosPlaceBidExpect(target, aid, token, amount, expectCode string, timeout time.Duration) error {
-	conn, err := chaosDialJoinNoWait(target, token, aid, timeout)
-	if err != nil {
-		return fmt.Errorf("dial+join: %w", err)
+	var conn *websocket.Conn
+	var err error
+	if expectCode == model.CodeErrPaused {
+		conn, err = chaosDialJoinNoWait(target, token, aid, timeout)
+		if err != nil {
+			return fmt.Errorf("dial+join: %w", err)
+		}
+	} else {
+		var snap model.RoomSnapshotData
+		conn, snap, err = chaosDialJoinSnapshot(target, token, aid, timeout)
+		if err != nil {
+			return fmt.Errorf("dial+join: %w", err)
+		}
+		if isAcceptCode(expectCode) {
+			amount = chaosNextAcceptedAmount(amount, snap)
+		}
 	}
 	defer conn.Close()
 	bid, _ := model.NewEnvelope(model.TypeBidPlace, aid, 0, model.BidPlaceData{
@@ -210,6 +241,22 @@ func chaosPlaceBidExpect(target, aid, token, amount, expectCode string, timeout 
 		}
 	}
 	return fmt.Errorf("timed out waiting for BID_ACCEPTED/BID_REJECTED (expected %s)", expectCode)
+}
+
+func chaosNextAcceptedAmount(requested string, snap model.RoomSnapshotData) string {
+	current, _ := strconv.ParseInt(snap.CurrentPriceCents, 10, 64)
+	amount, _ := strconv.ParseInt(requested, 10, 64)
+	step := int64(1000)
+	if snap.Rules != nil && snap.Rules.StepCents != "" {
+		if parsed, err := strconv.ParseInt(snap.Rules.StepCents, 10, 64); err == nil && parsed > 0 {
+			step = parsed
+		}
+	}
+	next := current + step
+	if amount > next {
+		next = amount
+	}
+	return strconv.FormatInt(next, 10)
 }
 
 // chaosConnectFails dials /ws expecting a hard transport failure (gateway is
@@ -308,8 +355,8 @@ func chaosCatchup(opts ChaosOptions) error {
 }
 
 // chaosWaitEvents polls /events-count for opts.AID until it reaches
-// opts.WantSeq (the persistence-drain assertion for the MySQL chaos drill).
-// Times out and returns an error if persistence stays stuck.
+// opts.WantSeq. Chaos phases use it before replay verification whenever the
+// preceding action writes a Redis Stream event that MySQL projects async.
 func chaosWaitEvents(opts ChaosOptions) error {
 	if opts.AID == "" || opts.WantSeq == 0 {
 		return errors.New("wait-events: --aid and --want-seq required")
@@ -334,12 +381,45 @@ func isAcceptCode(code string) bool {
 	return false
 }
 
+func chaosDialJoinSnapshot(target, token, aid string, timeout time.Duration) (*websocket.Conn, model.RoomSnapshotData, error) {
+	u := strings.Replace(target, "http://", "ws://", 1)
+	u = strings.Replace(u, "https://", "wss://", 1) + "/ws?token=" + token
+	d := websocket.Dialer{HandshakeTimeout: timeout}
+	conn, _, err := d.Dial(u, nil)
+	if err != nil {
+		return nil, model.RoomSnapshotData{}, err
+	}
+	join, _ := model.NewEnvelope(model.TypeRoomJoin, aid, 0, model.RoomJoinData{AuctionID: aid})
+	if err := conn.WriteJSON(join); err != nil {
+		conn.Close()
+		return nil, model.RoomSnapshotData{}, err
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(timeout))
+	for {
+		var env model.Envelope
+		if err := conn.ReadJSON(&env); err != nil {
+			conn.Close()
+			return nil, model.RoomSnapshotData{}, err
+		}
+		if env.Type != model.TypeRoomSnapshot {
+			continue
+		}
+		var snap model.RoomSnapshotData
+		if err := json.Unmarshal(env.Data, &snap); err != nil {
+			conn.Close()
+			return nil, model.RoomSnapshotData{}, err
+		}
+		_ = conn.SetReadDeadline(time.Time{})
+		return conn, snap, nil
+	}
+}
+
 // chaosDialJoinNoWait opens a WS connection and sends ROOM_JOIN but does NOT
 // wait for ROOM_SNAPSHOT. The gateway sets the connection's auction-id BEFORE
 // reading the snapshot from Redis, so even when Redis is down the connection
 // is correctly bound for BID_PLACE — the difference from dialAndJoin is that
 // we don't block on a snapshot the gateway never sent. Used by the chaos
-// bid-expect path only; production clients always wait for the snapshot.
+// Redis-down pause probe only; production clients always wait for the snapshot.
 func chaosDialJoinNoWait(target, token, aid string, timeout time.Duration) (*websocket.Conn, error) {
 	u := strings.Replace(target, "http://", "ws://", 1)
 	u = strings.Replace(u, "https://", "wss://", 1) + "/ws?token=" + token

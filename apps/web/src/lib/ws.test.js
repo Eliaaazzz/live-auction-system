@@ -152,6 +152,75 @@ describe('RoomClient', () => {
     expect(rejects[0].data.code).toBe('ERR_RATE_LIMITED')
   })
 
+  it('forwards ROOM_STATE_PATCH envelopes to onEvent', () => {
+    const events = []
+    const client = new RoomClient({
+      url: 'ws://localhost:8080/ws',
+      auctionId: 'auc1',
+      onEvent: (env) => events.push(env),
+    })
+
+    client.connect()
+    const ws = latestSocket()
+    ws.onopen()
+
+    ws.onmessage({
+      data: JSON.stringify({
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        type: EventType.ROOM_STATE_PATCH,
+        auctionId: 'auc1',
+        seq: 12,
+        serverTimeMs: Date.now(),
+        data: { currentPriceCents: '12000000', winnerId: 'u2' },
+      }),
+    })
+    client.leave()
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: EventType.ROOM_STATE_PATCH, seq: 12 })
+  })
+
+  it('uses ROOM_STATE_PATCH seq as the reconnect high-watermark', () => {
+    vi.useFakeTimers()
+
+    let lastSeq = 0
+    const client = new RoomClient({
+      url: 'ws://localhost:8080/ws',
+      auctionId: 'auc1',
+      getLastSeq: () => lastSeq,
+      onEvent: (env) => { if (env.seq != null) lastSeq = Math.max(lastSeq, env.seq) },
+    })
+
+    try {
+      client.connect()
+      const ws1 = latestSocket()
+      ws1.onopen()
+
+      ws1.onmessage({
+        data: JSON.stringify({
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          type: EventType.ROOM_STATE_PATCH,
+          auctionId: 'auc1',
+          seq: 100,
+          serverTimeMs: Date.now(),
+          data: { fromSeq: 1, currentPriceCents: '12000000', bidCountTotal: 100 },
+        }),
+      })
+      ws1.onclose({ code: 1006, reason: 'drop' })
+      vi.advanceTimersByTime(1100)
+
+      const ws2 = latestSocket()
+      expect(ws2).not.toBe(ws1)
+      ws2.onopen()
+      const join = JSON.parse(ws2.sent[0])
+      expect(join.type).toBe(ClientFrameType.ROOM_JOIN)
+      expect(join.data).toEqual({ auctionId: 'auc1', lastSeq: 100 })
+    } finally {
+      client.leave()
+      vi.useRealTimers()
+    }
+  })
+
   it('hard-stops on schema mismatch', () => {
     const states = []
     const client = new RoomClient({

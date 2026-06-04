@@ -30,6 +30,7 @@ type Registry struct {
 	// Hot-path latencies (V9 §4.2). p95 budgets:
 	//   AckLatency       < 80ms  (P0 gate)
 	//   BroadcastLatency < 150ms (P0 gate; Bid Engine → last viewer)
+	//   RoomStatePatch   < 150ms (P0 gate; oldest coalesced bid → public patch)
 	//   HammerLatency    < 500ms (P0 gate; scan→fanout)
 	//   CatchupLatency   < 1s    (P0 gate; 200-event replay)
 	//   ScriptTime       < 5ms   (P0 *pre-gate*; place_bid.lua exec)
@@ -40,6 +41,7 @@ type Registry struct {
 	//                             already covers.)
 	AckLatency       *Histogram
 	BroadcastLatency *Histogram
+	RoomStatePatch   *Histogram
 	HammerLatency    *Histogram
 	CatchupLatency   *Histogram
 	ScriptTime       *Histogram
@@ -56,6 +58,8 @@ type Registry struct {
 	// filter is effective; low value indicates light bid contention. Always
 	// also bumps BidsRejected so the aggregate stays consistent.
 	BidsRejectedFastPath *Counter
+	RoomStatePatches     *Counter
+	RoomStatePatchBids   *Counter
 
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
@@ -69,6 +73,7 @@ func New() *Registry {
 	return &Registry{
 		AckLatency:           NewHistogram(4096),
 		BroadcastLatency:     NewHistogram(4096),
+		RoomStatePatch:       NewHistogram(4096),
 		HammerLatency:        NewHistogram(4096),
 		CatchupLatency:       NewHistogram(4096),
 		ScriptTime:           NewHistogram(4096),
@@ -76,6 +81,8 @@ func New() *Registry {
 		BidsAccepted:         &Counter{},
 		BidsRejected:         &Counter{},
 		BidsRejectedFastPath: &Counter{},
+		RoomStatePatches:     &Counter{},
+		RoomStatePatchBids:   &Counter{},
 		BackpressureDrop:     &Counter{},
 		SeqGap:               &Counter{},
 	}
@@ -101,6 +108,7 @@ func (r *Registry) ObserveStreamLen(n int64) {
 type Snapshot struct {
 	Ack                  HistogramSnapshot `json:"ackLatencyMs"`
 	Broadcast            HistogramSnapshot `json:"broadcastLatencyMs"`
+	RoomStatePatch       HistogramSnapshot `json:"roomStatePatchLatencyMs"`
 	Hammer               HistogramSnapshot `json:"hammerLatencyMs"`
 	Catchup              HistogramSnapshot `json:"catchupLatencyMs"`
 	ScriptTime           HistogramSnapshot `json:"placeBidScriptTimeMs"`
@@ -108,6 +116,8 @@ type Snapshot struct {
 	BidsAccepted         int64             `json:"bidsAccepted"`
 	BidsRejected         int64             `json:"bidsRejected"`
 	BidsRejectedFastPath int64             `json:"bidsRejectedFastPath"`
+	RoomStatePatches     int64             `json:"roomStatePatches"`
+	RoomStatePatchBids   int64             `json:"roomStatePatchBids"`
 	BackpressureDrop     int64             `json:"backpressureForceClose"`
 	SeqGap               int64             `json:"seqGapCount"`
 	StreamLenMax         int64             `json:"streamLenMax"`
@@ -120,6 +130,7 @@ func (r *Registry) Snapshot() Snapshot {
 	return Snapshot{
 		Ack:                  r.AckLatency.Snapshot(),
 		Broadcast:            r.BroadcastLatency.Snapshot(),
+		RoomStatePatch:       r.RoomStatePatch.Snapshot(),
 		Hammer:               r.HammerLatency.Snapshot(),
 		Catchup:              r.CatchupLatency.Snapshot(),
 		ScriptTime:           r.ScriptTime.Snapshot(),
@@ -127,6 +138,8 @@ func (r *Registry) Snapshot() Snapshot {
 		BidsAccepted:         r.BidsAccepted.Load(),
 		BidsRejected:         r.BidsRejected.Load(),
 		BidsRejectedFastPath: r.BidsRejectedFastPath.Load(),
+		RoomStatePatches:     r.RoomStatePatches.Load(),
+		RoomStatePatchBids:   r.RoomStatePatchBids.Load(),
 		BackpressureDrop:     r.BackpressureDrop.Load(),
 		SeqGap:               r.SeqGap.Load(),
 		StreamLenMax:         r.StreamLenMax.Load(),

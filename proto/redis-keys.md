@@ -68,7 +68,7 @@ Returns:
 | `ERR_AUCTION_PAUSED` | `{code}` |
 | `ERR_INTERNAL` | `{code, 'key_type' \| 'seq_stream_mismatch'}` |
 
-`bidJson` (also the dedupe-cached ack and the Stream `BID_ACCEPTED` payload) = `BidAcceptedData{seq,userId,displayName,amountCents,endAtMs,status,serverTimeMs}` where `endAtMs` is the post-extension value and `status` is `SOLD` on a cap-hit else `LIVE`. The gateway acks the originating socket with `BID_ACCEPTED(bidJson)` for all accept codes; the `AUCTION_EXTENDED`/`AUCTION_SOLD` event reaches the room via Pub/Sub.
+`bidJson` (also the dedupe-cached ack and the Stream `BID_ACCEPTED` payload) = `BidAcceptedData{seq,userId,displayName,amountCents,endAtMs,status,bidCount,serverTimeMs}` where `endAtMs` is the post-extension value, `status` is `SOLD` on a cap-hit else `LIVE`, and `bidCount` is atomically incremented in the same Lua accept path as `seq`. The gateway acks the originating socket with `BID_ACCEPTED(bidJson)` for all accept codes; the `AUCTION_EXTENDED`/`AUCTION_SOLD` event reaches the room via Pub/Sub.
 
 **Pub/Sub fanout message** (`auction:{<aid>}:pub`, non-authoritative): `{type, seq, data}` (`PubMessage`) — `type` is the wire type (`BID_ACCEPTED` / `AUCTION_EXTENDED` / `AUCTION_SOLD`), `data` is that type's payload. The gateway subscriber re-emits it as a WS envelope verbatim; the durable Stream remains the source of truth.
 

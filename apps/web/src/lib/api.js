@@ -128,6 +128,12 @@ export const api = {
   /** Seller: modify a pre-start auction's rules (DRAFT/SCHEDULED). model.Rules shape. */
   updateRules: (id, rules) => request(`/auctions/${id}`, { method: 'PATCH', body: { rules } }),
 
+  /** Seller: aggregate sealed warm-up result into recommended formal-auction reserve/floor. */
+  prequalifyRecommendation: (id) => request(`/auctions/${id}/prequalify-recommendation`),
+
+  /** Seller: create or reuse the formal open auction spawned from a sealed warm-up parent. */
+  spawnFormal: (id, payload) => request(`/auctions/${id}/spawn-formal`, { method: 'POST', body: payload }),
+
   // ---------- Orders / 模拟支付 ----------
   /** Settlement order for a SOLD auction (404 if not sold yet). */
   getOrder: (id) => request(`/auctions/${id}/order`),

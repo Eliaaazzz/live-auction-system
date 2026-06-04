@@ -7,7 +7,7 @@
 //
 // Scenario:
 //   1. Login + open WS
-//   2. Send ROOM_JOIN with schemaVersion: 999
+//   2. Send ROOM_JOIN with schemaVersion: SCHEMA + 1
 //   3. Assert: connection closes with code 4001 (NOT a normal close)
 //
 // Usage:
@@ -16,8 +16,10 @@
 
 import { WebSocket } from 'ws';
 
+const SCHEMA = 2;
 const HOST_HTTP = 'http://localhost:8080';
 const HOST_WS = 'ws://localhost:8080';
+const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 
 async function devLogin() {
   const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
@@ -33,7 +35,7 @@ const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
 
 const { token } = await devLogin();
-const url = `${HOST_WS}/ws?token=${encodeURIComponent(token)}&auction=auc_demo`;
+const url = `${HOST_WS}/ws?token=${encodeURIComponent(token)}&auction=${encodeURIComponent(AUCTION_ID)}`;
 const ws = new WebSocket(url);
 
 let closeCode = null;
@@ -44,11 +46,11 @@ await new Promise((resolve) => {
   ws.on('open', () => {
     console.log('ws open · sending bad-schema ROOM_JOIN');
     ws.send(JSON.stringify({
-      schemaVersion: 999,
+      schemaVersion: SCHEMA + 1,
       type: 'ROOM_JOIN',
-      auctionId: 'auc_demo',
+      auctionId: AUCTION_ID,
       serverTimeMs: Date.now(),
-      data: { auctionId: 'auc_demo' },
+      data: { auctionId: AUCTION_ID },
     }));
   });
   ws.on('message', (raw) => {
