@@ -8,6 +8,7 @@ import { ensureSession, currentToken } from '../lib/auth.js';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
+import { resolveAuctionMode } from '../lib/auctionMode.js';
 
 const WS_BASE = import.meta.env.VITE_WS_BASE || undefined;
 
@@ -809,17 +810,27 @@ function AdminConsole() {
         await ensureSession('seller-demo');
         useAuctionStore.getState().setSelfUserId(null); // broadcaster, not a bidder
       } catch (e) {
-        console.warn('[Console] dev-login failed', e);
+        console.warn('[Console] session bootstrap failed', e);
       }
       try {
         const snap = await api.getAuction(auctionId);
         if (!alive) return;
+        const rules = snap.rules ?? {};
+        const initialAuctionMode = resolveAuctionMode(rules) ?? 'first_price';
+        const currentPriceCents = snap.currentPriceCents ?? '0';
+        const initialReserveCents = rules.reserveCents ?? snap.reserveCents ?? currentPriceCents;
+        const initialStartCents = rules.startPriceCents ?? initialReserveCents;
         // getState().init avoids a stale-closure issue from the removed
         // `store` var; init is a stable function ref on the store.
         useAuctionStore.getState().init({
           auctionId,
           status: snap.status,
-          currentCents: snap.currentPriceCents ?? '0',
+          currentCents: currentPriceCents,
+          startCents: snap.startCents ?? initialStartCents,
+          stepCents: rules.stepCents ?? snap.stepCents ?? '500000',
+          capCents: rules.hasOwnProperty('capCents') ? rules.capCents : (snap.capCents ?? null),
+          reserveCents: initialReserveCents,
+          auctionMode: initialAuctionMode,
           endAtMs: snap.endAtMs ?? null,
           winnerId: snap.winnerId ?? null,
         });
