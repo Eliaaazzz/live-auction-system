@@ -97,18 +97,22 @@ local lastStreamSeq = 0
 if lastEntry[1] then lastStreamSeq = tonumber(string.match(lastEntry[1][1], '^(%d+)')) or 0 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. ACCEPT (same as English): seq + state HMSET + leaderboard ZADD GT.
+-- 6. ACCEPT (same as English): seq + state HMSET + max leaderboard score.
 local capHit = capPriceCents > 0 and amount >= capPriceCents
 local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
   and (endAtMs - now) <= extendWindowSec * 1000
   and (maxExtensions <= 0 or curExtendCount < maxExtensions)
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
+local bidCount = redis.call('HINCRBY', state_key, 'bidCount', 1)
 redis.call('HMSET', state_key,
   'currentPriceCents', amountStr,
   'winnerId', userId,
   'winnerDisplayName', displayName)
-redis.call('ZADD', lb_key, 'GT', amountStr, userId)
+local priorScore = redis.call('ZSCORE', lb_key, userId)
+if not priorScore or tonumber(priorScore) < amount then
+  redis.call('ZADD', lb_key, amountStr, userId)
+end
 
 local newEndAtMs = endAtMs
 local extendCount = 0
@@ -129,7 +133,7 @@ end
 --     retry replays the private ack (never the redacted broadcast).
 local statusOut = (capHit and 'SOLD' or 'LIVE')
 local ackBid = {seq = seq, userId = userId, displayName = displayName, amountCents = amountStr,
-  endAtMs = newEndAtMs, status = statusOut, serverTimeMs = now}
+  endAtMs = newEndAtMs, status = statusOut, bidCount = bidCount, serverTimeMs = now}
 local ackJson = cjson.encode(ackBid)
 
 local streamBid
@@ -141,7 +145,8 @@ else
   -- the very first bid there is no prior leader, so the broadcast shows the
   -- reserve (startPrice == priorPriceStr) with an empty identity.
   streamBid = {seq = seq, userId = priorWinnerId, displayName = priorWinnerName,
-    amountCents = priorPriceStr, endAtMs = newEndAtMs, status = statusOut, serverTimeMs = now}
+    amountCents = priorPriceStr, endAtMs = newEndAtMs, status = statusOut,
+    bidCount = bidCount, serverTimeMs = now}
 end
 local streamJson = cjson.encode(streamBid)
 

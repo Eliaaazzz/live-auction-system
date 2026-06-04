@@ -393,7 +393,7 @@ func parseCents(s string) (int64, bool) {
 
 func envelope(typ, aid string, data any) []byte {
 	b, _ := json.Marshal(map[string]any{
-		"schemaVersion": 1,
+		"schemaVersion": 2,
 		"type":          typ,
 		"auctionId":     aid,
 		"serverTimeMs":  time.Now().UnixMilli(),

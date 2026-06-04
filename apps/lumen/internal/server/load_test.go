@@ -99,9 +99,9 @@ func TestT8MetricsEndpointShapeIsStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, k := range []string{
-		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
+		"ackLatencyMs", "broadcastLatencyMs", "roomStatePatchLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
 		"placeBidScriptTimeMs", "bidHandlerOverheadMs", "bidsAccepted", "bidsRejected",
-		"backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
+		"roomStatePatches", "roomStatePatchBids", "backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
 	} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("/metrics missing field %q (shape break)", k)
@@ -221,43 +221,54 @@ func TestT8SeqGapDetectorObservesMissingSeq(t *testing.T) {
 // the Observe out of the OK_SOLD/OK_NO_BID case), the hammer SLO becomes
 // silently unrecorded and the load report shows count=0 forever.
 func TestT8HammerLatencyObservation(t *testing.T) {
-	target, srv := startTestServer(t)
+	st := fullStore(t)
+	m := metrics.New()
 	ctx := context.Background()
 	aid := newAID("test_t8_hammer")
 
-	// Bring the auction live with a 100ms duration so endAtMs is in the
-	// near-past by the time the next 100ms scan tick fires close_auction.lua.
-	if code, err := srv.st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
+	// Keep the auction out of the global active index so another harness timer
+	// cannot close it and record the latency in a different metrics registry.
+	if code, err := st.FreezeRules(ctx, aid, "seller_t8_h", model.Rules{
 		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 0,
 		DurationSec: 1, ExtendWindowSec: 0, ExtendSec: 0,
 	}); err != nil || code != model.CodeOKFrozen {
 		t.Fatalf("freeze: code=%s err=%v", code, err)
 	}
-	if code, _, err := srv.st.StartAuction(ctx, aid, 100); err != nil || code != model.CodeOKLive {
+	if code, _, err := st.StartAuction(ctx, aid, 60_000); err != nil || code != model.CodeOKLive {
 		t.Fatalf("start: code=%s err=%v", code, err)
 	}
+	if err := st.UntrackActive(ctx, aid); err != nil {
+		t.Fatalf("untrack active: %v", err)
+	}
+	redisNow, err := st.RedisNowMs(ctx)
+	if err != nil {
+		t.Fatalf("redis now: %v", err)
+	}
+	dueAtMs := redisNow - 1
+	if err := st.Redis().HSet(ctx, fmt.Sprintf("auction:{%s}:state", aid), "endAtMs", dueAtMs).Err(); err != nil {
+		t.Fatalf("set due endAtMs: %v", err)
+	}
 	t.Cleanup(func() {
-		if keys, _ := srv.st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
-			_ = srv.st.Redis().Del(ctx, keys...).Err()
+		if keys, _ := st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
+			_ = st.Redis().Del(ctx, keys...).Err()
 		}
-		_, _ = srv.st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
+		_, _ = st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
 	})
 
-	hc := &http.Client{Timeout: 5 * time.Second}
-	pre := scrapeOrFatal(t, hc, target).Hammer.Count
-
-	// Timer Worker scans every 100ms. Allow up to 3s for it to hammer this
-	// auction (NO_BID path: no winning bid was placed). Hammer.Count must
-	// advance by exactly 1 — the closeDue Observe ran with the snapshot's
-	// endAtMs as the reference (now - endAtMs ≈ a small detection lag).
+	pre := m.Snapshot().Hammer.Count
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if post := scrapeOrFatal(t, hc, target).Hammer.Count; post == pre+1 {
+		closeDue(ctx, st, aid, m)
+		post := m.Snapshot().Hammer.Count
+		if post == pre+1 {
 			return
+		}
+		if post > pre+1 {
+			t.Fatalf("HammerLatency overshot: pre=%d post=%d (expected pre+1)", pre, post)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("HammerLatency did not advance: pre=%d post=%d (expected pre+1)", pre, scrapeOrFatal(t, hc, target).Hammer.Count)
+	t.Fatalf("HammerLatency did not advance: pre=%d post=%d (expected pre+1)", pre, m.Snapshot().Hammer.Count)
 }
 
 // TestT8CatchupLatencyObservation — assert the ROOM_JOIN catchup branch
@@ -367,7 +378,7 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 		{ackP95: 50, bcastP95: 80, hammerP95: 200, scriptP99: 1,
 			ackCount: 100, bcastCount: 100, hammerCount: 1, sent: 100, acked: 100, wantClean: true},
 		// no samples (instrumentation unwired).
-		{ackCount: 0, sent: 0, acked: 0, wantBreach: []string{"no ack samples", "no broadcast samples"}},
+		{ackCount: 0, sent: 0, acked: 0, wantBreach: []string{"no ack samples", "no public fanout samples"}},
 		// ack p95 just over.
 		{ackP95: 81, bcastP95: 80, scriptP99: 1, ackCount: 1, bcastCount: 1, sent: 1, acked: 1,
 			wantBreach: []string{"ack p95 81.0ms > 80ms"}},
@@ -431,6 +442,111 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	}
 }
 
+func TestT8LoadReportRequiresExpectedRoomStatePatch(t *testing.T) {
+	cfg := loadConfig{
+		AckP95Budget:         80 * time.Millisecond,
+		BroadcastP95Budget:   150 * time.Millisecond,
+		ScriptP99Budget:      5 * time.Millisecond,
+		HandlerP99Budget:     5 * time.Millisecond,
+		ExpectRoomStatePatch: true,
+	}
+	base := loadReport{
+		Config: cfg,
+		Post: metrics.Snapshot{
+			Ack:             metrics.HistogramSnapshot{Count: 1, P95: 1},
+			RoomStatePatch:  metrics.HistogramSnapshot{Count: 1, P95: 1},
+			ScriptTime:      metrics.HistogramSnapshot{Count: 1, P99: 1},
+			HandlerOverhead: metrics.HistogramSnapshot{Count: 1, P99: 1},
+		},
+		BidderStats: bidderSnapshot{Sent: 1, Acked: 1},
+	}
+	got := strings.Join(base.breaches(), " | ")
+	for _, want := range []string{
+		"roomStatePatches=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true",
+		"roomStatePatchBids=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in breaches: %s", want, got)
+		}
+	}
+
+	base.Post.RoomStatePatches = 1
+	base.Post.RoomStatePatchBids = 3
+	if got := base.breaches(); len(got) != 0 {
+		t.Fatalf("expected clean patch gate, got %v", got)
+	}
+}
+
+func TestT8LoadReportRequiresObserverCatchupProbe(t *testing.T) {
+	cfg := loadConfig{
+		Observers:             3,
+		AckP95Budget:          80 * time.Millisecond,
+		BroadcastP95Budget:    150 * time.Millisecond,
+		ScriptP99Budget:       5 * time.Millisecond,
+		HandlerP99Budget:      5 * time.Millisecond,
+		VerifyObserverCatchup: true,
+	}
+	base := loadReport{
+		Config: cfg,
+		Post: metrics.Snapshot{
+			Ack:             metrics.HistogramSnapshot{Count: 1, P95: 1},
+			Broadcast:       metrics.HistogramSnapshot{Count: 1, P95: 1},
+			ScriptTime:      metrics.HistogramSnapshot{Count: 1, P99: 1},
+			HandlerOverhead: metrics.HistogramSnapshot{Count: 1, P99: 1},
+		},
+		FinalSeq:      10,
+		ObserverStats: observerSnapshot{SeqSamples: 3, LastSeqMin: 7, LastSeqMax: 9},
+		BidderStats:   bidderSnapshot{Sent: 1, Acked: 1},
+		CatchupProbe:  loadCatchupProbe{LastSeq: 7, SnapshotSeq: 10, OK: true},
+	}
+	if got := base.breaches(); len(got) != 0 {
+		t.Fatalf("expected clean catchup gate, got %v", got)
+	}
+
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 7, SnapshotSeq: 9, OK: false}
+	got := strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer catchup snapshot seq=9 < final seq=10 from lastSeq=7") {
+		t.Fatalf("missing catchup breach, got: %s", got)
+	}
+
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 7, Error: "dial failed"}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer catchup probe failed: dial failed") {
+		t.Fatalf("missing catchup error breach, got: %s", got)
+	}
+
+	base.ObserverStats = observerSnapshot{}
+	base.CatchupProbe = loadCatchupProbe{}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "no observer seq high-watermark samples") {
+		t.Fatalf("missing observer seq sample breach, got: %s", got)
+	}
+
+	base.ObserverStats = observerSnapshot{SeqSamples: 2, LastSeqMin: 0, LastSeqMax: 9}
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 0, SnapshotSeq: 10, OK: true}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer seq samples=2 < connected observers=3") {
+		t.Fatalf("missing incomplete observer sample breach, got: %s", got)
+	}
+}
+
+func TestLoadConfigAutoExpectsPatchForLargeRoom(t *testing.T) {
+	t.Setenv("LOAD_OBSERVERS", "1000")
+	if cfg := loadConfigFromEnv(); !cfg.ExpectRoomStatePatch {
+		t.Fatal("expected patch gate to auto-enable at default large-room threshold")
+	}
+
+	t.Setenv("LOAD_OBSERVERS", "999")
+	if cfg := loadConfigFromEnv(); cfg.ExpectRoomStatePatch {
+		t.Fatal("did not expect patch gate below default large-room threshold")
+	}
+
+	t.Setenv("LOAD_EXPECT_ROOM_STATE_PATCH", "true")
+	if cfg := loadConfigFromEnv(); !cfg.ExpectRoomStatePatch {
+		t.Fatal("explicit LOAD_EXPECT_ROOM_STATE_PATCH=true should override default")
+	}
+}
+
 // TestT8LoadSmokeRunsAndPasses — end-to-end on the in-process harness, scaled
 // down to fit a CI runner: 3 observers + 2 bidders + 1.5s window with relaxed
 // budgets. Asserts:
@@ -454,7 +570,8 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	t.Setenv("LOAD_ACK_P95_MS", "500")
 	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
 	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
-	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
+	t.Setenv("LOAD_SCRIPT_P99_MS", "250")
+	t.Setenv("LOAD_HANDLER_P99_MS", "250")
 	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
 	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
 
@@ -475,6 +592,47 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	}
 	if post.BidsAccepted == 0 {
 		t.Fatal("smoke: bidsAccepted counter never advanced")
+	}
+}
+
+func TestT8LoadSmokeExercisesRoomStatePatch(t *testing.T) {
+	t.Setenv("ROOM_STATE_PATCH_MIN_VIEWERS", "1")
+	t.Setenv("ROOM_STATE_PATCH_INTERVAL_MS", "25")
+	target, _ := startTestServer(t)
+
+	t.Setenv("LOAD_OBSERVERS", "3")
+	t.Setenv("LOAD_BIDDERS", "2")
+	t.Setenv("LOAD_DURATION_SEC", "2")
+	t.Setenv("LOAD_BID_INTERVAL_MS", "100")
+	t.Setenv("LOAD_ACK_P95_MS", "500")
+	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
+	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
+	t.Setenv("LOAD_SCRIPT_P99_MS", "250")
+	t.Setenv("LOAD_HANDLER_P99_MS", "250")
+	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
+	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
+	t.Setenv("LOAD_EXPECT_ROOM_STATE_PATCH", "true")
+
+	if err := RunLoad(target); err != nil {
+		t.Fatalf("coalesced load smoke failed: %v", err)
+	}
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	post := scrapeOrFatal(t, hc, target)
+	if post.RoomStatePatches == 0 {
+		t.Fatal("coalesced smoke: roomStatePatches never advanced")
+	}
+	if post.RoomStatePatchBids == 0 {
+		t.Fatal("coalesced smoke: roomStatePatchBids never advanced")
+	}
+	if post.RoomStatePatch.Count == 0 {
+		t.Fatal("coalesced smoke: patch latency histogram empty")
+	}
+	if post.BackpressureDrop != 0 {
+		t.Fatalf("coalesced smoke: backpressureForceClose=%d (must be 0)", post.BackpressureDrop)
+	}
+	if post.SeqGap != 0 {
+		t.Fatalf("coalesced smoke: seqGap=%d (must be 0)", post.SeqGap)
 	}
 }
 

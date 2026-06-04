@@ -158,7 +158,13 @@ jobs:
         # time is the sum but each is short enough that the total is bounded).
         timeout-minutes: 5
         working-directory: apps/web
-        run: npm run -s smoke:all
+        run: |
+          aid="${VERIFY_AID:-$AUCTION_ID}"
+          if [ -n "$aid" ]; then
+            VERIFY_AID="$aid" AUCTION_ID="$aid" npm run -s smoke:all
+          else
+            npm run -s smoke:all
+          fi
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

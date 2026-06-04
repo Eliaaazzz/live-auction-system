@@ -105,7 +105,7 @@ class _WSBase(User):
             self.ws.send(
                 json.dumps(
                     {
-                        "schemaVersion": 1,
+                        "schemaVersion": 2,
                         "type": "ROOM_JOIN",
                         "auctionId": _AID,
                         "serverTimeMs": int(t0 * 1000),
@@ -176,7 +176,7 @@ class Bidder(_WSBase):
             self.ws.send(
                 json.dumps(
                     {
-                        "schemaVersion": 1,
+                        "schemaVersion": 2,
                         "type": "BID_PLACE",
                         "auctionId": _AID,
                         "serverTimeMs": int(t0 * 1000),

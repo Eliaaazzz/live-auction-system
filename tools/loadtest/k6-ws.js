@@ -99,7 +99,7 @@ function pickToken() {
 
 function envelope(type, data, seq) {
   return JSON.stringify({
-    schemaVersion: 1, type, auctionId: AID,
+    schemaVersion: 2, type, auctionId: AID,
     serverTimeMs: Date.now(), seq: seq || 0, data,
   });
 }

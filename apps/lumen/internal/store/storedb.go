@@ -138,21 +138,38 @@ func (s *Store) UpdateConfirmedFacts(ctx context.Context, id, confirmedFacts str
 
 // Auction is the minimal row used for ownership + state checks.
 type Auction struct {
-	ID             string
-	ProductID      string
-	SellerID       string
-	Status         string
-	FactsConfirmed bool
+	ID              string
+	ProductID       string
+	SellerID        string
+	Status          string
+	FactsConfirmed  bool
+	ParentAuctionID string
 }
 
 func (s *Store) GetAuction(ctx context.Context, id string) (Auction, error) {
 	var a Auction
+	var parent sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, product_id, seller_id, status, facts_confirmed FROM auctions WHERE id = ?`, id).
-		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status, &a.FactsConfirmed)
+		`SELECT id, product_id, seller_id, status, facts_confirmed, parent_auction_id FROM auctions WHERE id = ?`, id).
+		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status, &a.FactsConfirmed, &parent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
+	a.ParentAuctionID = parent.String
+	return a, err
+}
+
+func (s *Store) ChildAuctionByParent(ctx context.Context, parentAID string) (Auction, error) {
+	var a Auction
+	var parent sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, product_id, seller_id, status, facts_confirmed, parent_auction_id
+		   FROM auctions WHERE parent_auction_id = ? ORDER BY created_at ASC LIMIT 1`, parentAID).
+		Scan(&a.ID, &a.ProductID, &a.SellerID, &a.Status, &a.FactsConfirmed, &parent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a, ErrNotFound
+	}
+	a.ParentAuctionID = parent.String
 	return a, err
 }
 
@@ -221,6 +238,8 @@ type AuctionListItem struct {
 	WinnerID          string
 	EndAtMs           int64
 	CreatedAtMs       int64
+	Mode              string
+	ParentAuctionID   string
 }
 
 // ListAuctions returns recent auctions (newest first), joined to their product.
@@ -232,8 +251,11 @@ func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem,
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, COALESCE(p.name,''), COALESCE(p.image_url,''), a.status,
-		        a.current_price_cents, COALESCE(a.winner_id,''), a.end_at, a.created_at
-		   FROM auctions a LEFT JOIN products p ON a.product_id = p.id
+		        a.current_price_cents, COALESCE(a.winner_id,''), a.end_at, a.created_at,
+		        COALESCE(ar.mode,'ENGLISH'), COALESCE(a.parent_auction_id,'')
+		   FROM auctions a
+		   LEFT JOIN products p ON a.product_id = p.id
+		   LEFT JOIN auction_rules ar ON ar.auction_id = a.id
 		  ORDER BY a.created_at DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
@@ -244,7 +266,7 @@ func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem,
 		var it AuctionListItem
 		var endAt, createdAt sql.NullTime
 		if err := rows.Scan(&it.ID, &it.ProductName, &it.ImageURL, &it.Status,
-			&it.CurrentPriceCents, &it.WinnerID, &endAt, &createdAt); err != nil {
+			&it.CurrentPriceCents, &it.WinnerID, &endAt, &createdAt, &it.Mode, &it.ParentAuctionID); err != nil {
 			return nil, err
 		}
 		if endAt.Valid {

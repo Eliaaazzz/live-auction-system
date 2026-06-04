@@ -34,6 +34,36 @@ func TestParseInt(t *testing.T) {
 	}
 }
 
+func TestStreamRangeStart(t *testing.T) {
+	cases := map[string]string{
+		"":    "-",
+		"1":   "1-0",
+		"1-0": "1-0",
+		"(2":  "2-0",
+	}
+	for in, want := range cases {
+		if got := streamRangeStart(in); got != want {
+			t.Errorf("streamRangeStart(%q)=%q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestStreamIDSeq(t *testing.T) {
+	cases := map[string]int64{
+		"":      0,
+		"1":     1,
+		"1-0":   1,
+		"(2-0":  2,
+		"nope":  0,
+		"3-999": 3,
+	}
+	for in, want := range cases {
+		if got := streamIDSeq(in); got != want {
+			t.Errorf("streamIDSeq(%q)=%d, want %d", in, got, want)
+		}
+	}
+}
+
 func TestAIDFromPubChannelEdge(t *testing.T) {
 	cases := []string{
 		"garbage",

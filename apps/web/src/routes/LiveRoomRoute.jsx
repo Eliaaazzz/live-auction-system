@@ -55,6 +55,10 @@ export function LiveRoomRoute() {
   // by (auctionId, userId, clientBidId) doesn't collapse two legit
   // sequential bids. Generated client-side; opaque to the server.
   const handleBid = useCallback((amountCents) => {
+    const s = useAuctionStore.getState();
+    if (s.status !== 'LIVE') return;
+    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return;
+
     const client = clientRef.current;
     if (!client) return;
     const clientBidId = (typeof crypto !== 'undefined' && crypto.randomUUID)
@@ -91,10 +95,10 @@ export function LiveRoomRoute() {
     if (!s) return;
     s.applyEvent(env);
 
-    if (env?.type === 'BID_ACCEPTED') {
-      pendingLeaderBumpRef.current += 1;
-      if (pendingLeaderBumpRef.current >= 3) {
-        pendingLeaderBumpRef.current = 0;
+    const bump = nextLeaderRefreshBump(pendingLeaderBumpRef.current, env);
+    if (bump.hadBidActivity) {
+      pendingLeaderBumpRef.current = bump.pending;
+      if (bump.shouldRefresh) {
         void maybeRefreshLeaders({ force: false });
       }
       return;
@@ -219,9 +223,10 @@ export function LiveRoomRoute() {
   // Bids/sec over the last 5s window. recentEvents is bounded to 50 by the
   // store reducer; that's safely > 5s of typical bid traffic.
   const nowMs = serverNow();
-  const bidsLast5s = store.recentEvents.filter(
-    (e) => e.type === 'BID_ACCEPTED' && e.ts && nowMs - e.ts < 5000,
-  ).length;
+  const bidsLast5s = store.recentEvents.reduce((sum, e) => {
+    if (!e.ts || nowMs - e.ts >= 5000) return sum;
+    return sum + bidActivityDeltaFromEvent(e);
+  }, 0);
   const bidsPerSec = bidsLast5s / 5;
 
   // #54-M1: bidsPerSecPeak was hardcoded to 6 which is right for a calm
@@ -258,9 +263,9 @@ export function LiveRoomRoute() {
       winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
       onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
       ticker={store.recentEvents
-        .filter((e) => e.type === 'BID_ACCEPTED')
-        .slice(0, 6)
-        .map((e) => ({ id: e.seq, name: e.data?.displayName, cents: e.data?.amountCents }))}
+        .map(tickerItemFromEvent)
+        .filter(Boolean)
+        .slice(0, 6)}
       isYouLeading={top?.isYou ?? false}
       showLeadingToast={store.leadingToast}
       overtakeBanner={store.overtakeBanner}
@@ -315,6 +320,40 @@ function hasOwn(obj, key) {
 
 function safeSubBigInt(a, b) {
   try { return (BigInt(a) - BigInt(b)).toString(); } catch { return '0'; }
+}
+
+export function bidActivityDeltaFromEvent(env) {
+  if (env?.type === 'BID_ACCEPTED') return 1;
+  if (env?.type !== 'ROOM_STATE_PATCH') return 0;
+  const delta = Number(env.data?.bidCountDelta);
+  if (!Number.isFinite(delta)) return 1;
+  return Math.max(0, delta);
+}
+
+export function nextLeaderRefreshBump(current, env) {
+  const delta = bidActivityDeltaFromEvent(env);
+  if (delta <= 0) {
+    return { hadBidActivity: false, shouldRefresh: false, pending: current };
+  }
+  const pending = current + delta;
+  if (pending >= 3) {
+    return { hadBidActivity: true, shouldRefresh: true, pending: 0 };
+  }
+  return { hadBidActivity: true, shouldRefresh: false, pending };
+}
+
+export function tickerItemFromEvent(e) {
+  if (e?.type === 'BID_ACCEPTED') {
+    return { id: e.seq, name: e.data?.displayName, cents: e.data?.amountCents };
+  }
+  if (e?.type === 'ROOM_STATE_PATCH') {
+    return {
+      id: e.seq,
+      name: e.data?.winnerDisplayName || e.data?.winnerId,
+      cents: e.data?.currentPriceCents,
+    };
+  }
+  return null;
 }
 
 const DEMO_LEADERS = [

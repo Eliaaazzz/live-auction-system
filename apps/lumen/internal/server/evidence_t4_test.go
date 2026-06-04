@@ -410,7 +410,7 @@ func TestT4ProjectSoldMissingAuctionIsPermanent(t *testing.T) {
 // recompute-verified hash chain, a non-empty chain head, and the buyer order. Ties the
 // persistence projection + hash chain + order together through the running worker stack.
 func TestT4EvidenceAfterHammer(t *testing.T) {
-	target, _ := startTestServer(t)
+	target, srv := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}
 	seller, err := devLogin(hc, target, "T4 E2E Seller", "seller")
 	if err != nil {
@@ -457,6 +457,9 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 	if err := waitForType(c, model.TypeAuctionSold, 5*time.Second); err != nil {
 		t.Fatalf("timer did not hammer SOLD: %v", err)
 	}
+	if err := projectAuctionForEvidenceTest(context.Background(), srv.st, aid); err != nil {
+		t.Fatalf("project evidence events: %v", err)
+	}
 
 	// The persistence sweep (hash chain + order) is async; poll the evidence card.
 	deadline := time.Now().Add(8 * time.Second)
@@ -466,24 +469,110 @@ func TestT4EvidenceAfterHammer(t *testing.T) {
 			EventsHash    string `json:"eventsHash"`
 			Status        string `json:"status"`
 			Order         *struct {
-				BuyerID     string `json:"buyerId"`
-				AmountCents string `json:"amountCents"`
+				BuyerID     string      `json:"buyerId"`
+				AmountCents model.Cents `json:"amountCents"`
 			} `json:"order"`
 		}
+		var lastErr error
 		if err := getJSONAuth(hc, target+"/api/auctions/"+aid+"/evidence", buyer.Token, &ev); err == nil {
 			if ev.Order != nil && ev.ChainVerified && ev.EventsHash != "" {
 				if ev.Status != model.StateOrderCreated {
 					t.Fatalf("status=%s want ORDER_CREATED once order exists", ev.Status)
 				}
-				if ev.Order.BuyerID != buyer.UserID || ev.Order.AmountCents != "11000" {
+				if ev.Order.BuyerID != buyer.UserID || ev.Order.AmountCents != model.Cents(11000) {
 					t.Fatalf("order=%+v want buyer=%s amount=11000", ev.Order, buyer.UserID)
 				}
 				return // verified chain + correct order
 			}
+		} else {
+			lastErr = err
 		}
 		time.Sleep(100 * time.Millisecond)
+		if lastErr != nil && time.Now().After(deadline) {
+			t.Fatalf("evidence card did not decode before deadline: %v", lastErr)
+		}
 	}
 	t.Fatal("evidence card did not show a verified hash chain + order within 8s")
+}
+
+func projectAuctionForEvidenceTest(ctx context.Context, st *store.Store, aid string) error {
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM evidence_chain_cache WHERE auction_id = ?", aid); err != nil {
+		return err
+	}
+	if _, err := st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		events, _, err := st.ReadEventsAfter(ctx, aid, "")
+		if err != nil {
+			lastErr = err
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		sawSold := false
+		for _, e := range events {
+			if err := st.InsertEvent(ctx, aid, e.Seq, e.Type, e.Payload); err != nil {
+				return err
+			}
+			if e.Type == model.TypeAuctionSold {
+				sawSold = true
+				if err := projectSold(ctx, st, aid, e); err != nil {
+					return err
+				}
+			} else if status := terminalStatus(e.Type); status != "" {
+				if err := st.UpdateAuctionStatus(ctx, aid, status); err != nil {
+					return err
+				}
+			}
+		}
+		if !sawSold {
+			lastErr = fmt.Errorf("stream has no %s event yet", model.TypeAuctionSold)
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		ok, breakAtSeq, err := st.VerifyEvidenceChain(ctx, aid)
+		if err != nil {
+			lastErr = err
+		} else if !ok {
+			lastErr = fmt.Errorf("evidence chain breaks at seq=%d: %s", breakAtSeq, evidenceTimelineSummary(ctx, st, aid))
+		} else if _, err := st.GetOrder(ctx, aid); err != nil {
+			lastErr = fmt.Errorf("order projection not ready: %w", err)
+		} else {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("timed out projecting evidence events")
+}
+
+func evidenceTimelineSummary(ctx context.Context, st *store.Store, aid string) string {
+	timeline, err := st.EventTimeline(ctx, aid)
+	if err != nil {
+		return fmt.Sprintf("timeline error: %v", err)
+	}
+	if len(timeline) == 0 {
+		return "timeline empty"
+	}
+	out := ""
+	for i, e := range timeline {
+		if i > 0 {
+			out += "; "
+		}
+		out += fmt.Sprintf("seq=%d type=%s eventHash=%s prevHashLen=%d payload=%s", e.Seq, e.EventType, shortHash(e.EventHash), len(e.PrevHash), string(e.Payload))
+	}
+	return out
+}
+
+func shortHash(s string) string {
+	if len(s) <= 12 {
+		return s
+	}
+	return s[:12]
 }
 
 func TestT4EvidenceRequiresAuth(t *testing.T) {

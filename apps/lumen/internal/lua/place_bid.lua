@@ -96,8 +96,9 @@ if lastEntry[1] then
 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard (ZADD GT keeps
--- each member's accepted max). Money is written as the canonical STRING so values
+-- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard. Keep each
+-- member's accepted max without ZADD GT so older Redis versions remain compatible.
+-- Money is written as the canonical STRING so values
 -- up to MAX_MONEY stay exact (a Lua number arg would format via %.14g and lose
 -- precision past 14 digits). cap==0 means "no buy-now ceiling".
 local capHit = capPriceCents > 0 and amount >= capPriceCents
@@ -109,8 +110,12 @@ local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
   and (maxExtensions <= 0 or curExtendCount < maxExtensions)
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
+local bidCount = redis.call('HINCRBY', state_key, 'bidCount', 1)
 redis.call('HMSET', state_key, 'currentPriceCents', amountStr, 'winnerId', userId)
-redis.call('ZADD', lb_key, 'GT', amountStr, userId)
+local priorScore = redis.call('ZSCORE', lb_key, userId)
+if not priorScore or tonumber(priorScore) < amount then
+  redis.call('ZADD', lb_key, amountStr, userId)
+end
 
 local newEndAtMs = endAtMs
 local extendCount = 0
@@ -127,7 +132,8 @@ end
 -- status reflects the post-transition room state (SOLD on cap-hit, else LIVE).
 local bid = {
   seq = seq, userId = userId, displayName = displayName, amountCents = amountStr,
-  endAtMs = newEndAtMs, status = (capHit and 'SOLD' or 'LIVE'), serverTimeMs = now,
+  endAtMs = newEndAtMs, status = (capHit and 'SOLD' or 'LIVE'), bidCount = bidCount,
+  serverTimeMs = now,
 }
 local bidJson = cjson.encode(bid)
 redis.call('XADD', stream_key, seq .. '-0', 'type', 'BID_ACCEPTED', 'seq', seq, 'payload', bidJson)

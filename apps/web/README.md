@@ -63,7 +63,7 @@ discriminator**.
 
 ```jsonc
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "type": "BID_ACCEPTED",          // SCREAMING_SNAKE
   "auctionId": "auc_…",
   "requestId": "…",                // optional, echoed
@@ -86,7 +86,8 @@ discriminator**.
 | `type` | `data` payload |
 |---|---|
 | `ROOM_SNAPSHOT`     | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` |
-| `BID_ACCEPTED`      | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` |
+| `ROOM_STATE_PATCH`  | `{ fromSeq, seq, status, currentPriceCents, winnerId, winnerDisplayName, endAtMs, extendCount?, bidCountDelta, bidCountTotal, serverTimeMs }` |
+| `BID_ACCEPTED`      | `{ seq, userId, displayName, amountCents, endAtMs, status, bidCount?, serverTimeMs }` |
 | `BID_REJECTED`      | `{ code }` (see `bidRejectCopy` in `src/lib/types.js`) |
 | `AUCTION_EXTENDED`  | `{ seq, endAtMs, extendCount }` |
 | `AUCTION_SOLD`      | `{ seq, winnerId, amountCents, status: 'SOLD' }` |

@@ -169,7 +169,7 @@ export const useAuctionStore = create((set, get) => ({
 
     // ROOM_SNAPSHOT resets the seq watermark (it's the new ground truth).
     // All other events dedupe against lastSeq.
-    if (type !== EventType.ROOM_SNAPSHOT) {
+    if (type !== EventType.ROOM_SNAPSHOT && type !== EventType.ROOM_STATE_PATCH) {
       if (seq != null && seq <= get().lastSeq) return;
     }
 
@@ -220,7 +220,9 @@ export const useAuctionStore = create((set, get) => ({
           // #53-M1 / #53-M2: cumulative counters. totalBidsCount climbs
           // monotonically. bidderIds appends only if the userId is new
           // AND non-null — defensive .filter(Boolean) equivalent inline.
-          next.totalBidsCount = s.totalBidsCount + 1;
+          next.totalBidsCount = Number.isFinite(data.bidCount)
+            ? Math.max(s.totalBidsCount + 1, data.bidCount)
+            : s.totalBidsCount + 1;
           if (data.userId && !s.bidderIds.includes(data.userId)) {
             next.bidderIds = [...s.bidderIds, data.userId];
           }
@@ -251,6 +253,53 @@ export const useAuctionStore = create((set, get) => ({
                 scheduleClear('blackHorse', 5500);
               }
             } catch {/* ignore */}
+          }
+          next.lastRejectCode = null;
+          next.lastRejectAt = null;
+          next.lastRejectSeq = 0;
+          break;
+        }
+
+        case EventType.ROOM_STATE_PATCH: {
+          const prevWinnerId = s.winnerId;
+          const wasSelf      = prevWinnerId != null && prevWinnerId === s.yourUserId;
+          const patchSeq     = typeof seq === 'number' ? seq : (typeof data.seq === 'number' ? data.seq : null);
+          const freshState   = patchSeq == null || patchSeq >= s.lastSeq;
+
+          if (freshState) {
+            next.status            = data.status ?? s.status;
+            next.currentCents      = data.currentPriceCents ?? s.currentCents;
+            next.endAtMs           = data.endAtMs ?? s.endAtMs;
+            next.winnerId          = data.winnerId ?? s.winnerId;
+            next.winnerDisplayName = data.winnerDisplayName ?? s.winnerDisplayName;
+            if (data.extendCount != null) next.extendCount = data.extendCount;
+          }
+
+          if (Number.isFinite(data.bidCountTotal)) {
+            next.totalBidsCount = Math.max(s.totalBidsCount, data.bidCountTotal);
+          } else if (freshState) {
+            const seqDelta = typeof seq === 'number' ? Math.max(0, seq - s.lastSeq) : 0;
+            const bidDelta = Number.isFinite(data.bidCountDelta) ? Math.max(0, data.bidCountDelta) : seqDelta;
+            next.totalBidsCount = s.totalBidsCount + Math.min(bidDelta, seqDelta || bidDelta);
+          }
+          if (freshState && data.winnerId) {
+            next.leaders = mergeLeader(s.leaders, {
+              userId:      data.winnerId,
+              displayName: data.winnerDisplayName || data.winnerId,
+              cents:       data.currentPriceCents ?? s.currentCents,
+              isYou:       data.winnerId === s.yourUserId,
+            });
+          }
+          if (freshState && s.yourUserId != null && data.winnerId === s.yourUserId) {
+            next.yourCents = data.currentPriceCents ?? s.currentCents;
+            if (prevWinnerId !== s.yourUserId) {
+              next.leadingToast = true;
+              scheduleClear('leadingToast', 1700);
+            }
+          }
+          if (freshState && wasSelf && data.winnerId !== s.yourUserId) {
+            next.overtakeBanner = true;
+            scheduleClear('overtakeBanner', 5000);
           }
           next.lastRejectCode = null;
           next.lastRejectAt = null;

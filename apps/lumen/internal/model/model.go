@@ -100,6 +100,7 @@ const (
 	TypeBidPlace         = "BID_PLACE"
 	TypePing             = "PING"
 	TypeRoomSnapshot     = "ROOM_SNAPSHOT"
+	TypeRoomStatePatch   = "ROOM_STATE_PATCH"
 	TypeBidAccepted      = "BID_ACCEPTED"
 	TypeBidRejected      = "BID_REJECTED"
 	TypeAuctionExtended  = "AUCTION_EXTENDED"  // anti-snipe extension (event, not a state)
@@ -111,7 +112,7 @@ const (
 	// proto/ai-events.md §POST /llm/auctioneer.
 	TypeAICommentary = "AI_COMMENTARY"
 	TypePong         = "PONG"
-	// Auction-mode events (issue #114). Additive under SchemaVersion 1 — clients
+	// Auction-mode events (issue #114). Additive under SchemaVersion 2 — clients
 	// ignore unknown types. Sealed / hybrid / all-pay modes emit these.
 	TypeSealedBidReceived = "SEALED_BID_RECEIVED" // redacted: a sealed bid landed (count only, no amount)
 	TypeAuctionRevealed   = "AUCTION_REVEALED"    // sealed reveal at close: sorted bids made public
@@ -145,7 +146,7 @@ const (
 // SchemaVersion is the WS wire-protocol schema version, stamped onto every
 // outgoing envelope so clients can detect a protocol mismatch and evolve safely.
 // Bump on a breaking envelope change (all-member approve).
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 // Envelope is the WS message frame. Money fields inside Data are strings.
 type Envelope struct {
@@ -201,6 +202,7 @@ type BidAcceptedData struct {
 	AmountCents  string `json:"amountCents"`
 	EndAtMs      int64  `json:"endAtMs"`
 	Status       string `json:"status"`
+	BidCount     int64  `json:"bidCount,omitempty"`
 	ServerTimeMs int64  `json:"serverTimeMs"` // Redis TIME at adjudication (Lua-authoritative)
 }
 
@@ -307,10 +309,29 @@ type RoomSnapshotData struct {
 	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
 }
 
+// RoomStatePatchData is the high-fanout room projection used when a large room
+// would otherwise receive one BID_ACCEPTED broadcast per accepted bid. The
+// authoritative bid events still live in Redis Stream and the originating
+// bidder still receives its direct BID_ACCEPTED ack; this patch is a coalesced
+// UI state projection for everyone else in the room.
+type RoomStatePatchData struct {
+	FromSeq           int64  `json:"fromSeq"`
+	Seq               int64  `json:"seq"`
+	Status            string `json:"status"`
+	CurrentPriceCents string `json:"currentPriceCents"`
+	WinnerID          string `json:"winnerId"`
+	WinnerDisplayName string `json:"winnerDisplayName"`
+	EndAtMs           int64  `json:"endAtMs"`
+	ExtendCount       int64  `json:"extendCount,omitempty"`
+	BidCountDelta     int64  `json:"bidCountDelta"`
+	BidCountTotal     int64  `json:"bidCountTotal"`
+	ServerTimeMs      int64  `json:"serverTimeMs"`
+}
+
 type RoomSnapshotRules struct {
 	// Mode is the auction format the room is running ("" normalized to ENGLISH),
 	// so the client can render mode-aware UI (hide price in sealed, show 2nd in
-	// hybrid, etc.). Additive under SchemaVersion 1.
+	// hybrid, etc.). Additive under SchemaVersion 2.
 	Mode      string  `json:"mode"`
 	StepCents string  `json:"stepCents"`
 	CapCents  *string `json:"capCents"`

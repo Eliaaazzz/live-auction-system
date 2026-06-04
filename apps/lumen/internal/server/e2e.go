@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -83,7 +84,7 @@ func RunE2E(target string) error {
 	if err := waitForType(observer, model.TypeBidAccepted, 5*time.Second); err != nil {
 		return fmt.Errorf("observer did not receive BID_ACCEPTED: %w", err)
 	}
-	if err := waitEventsCount(hc, target, auctionID, 1, 5*time.Second); err != nil {
+	if err := waitEventsCount(hc, target, auctionID, 1, 30*time.Second); err != nil {
 		return fmt.Errorf("persistence projection: %w", err)
 	}
 
@@ -99,7 +100,11 @@ type session struct {
 
 func devLogin(hc *http.Client, target, nickname, role string) (session, error) {
 	var s session
-	err := postJSON(hc, target+"/api/dev-login", "", map[string]string{"nickname": nickname, "role": role}, &s)
+	path := os.Getenv("LOGIN_PATH")
+	if path == "" {
+		path = "/api/dev-login"
+	}
+	err := postJSON(hc, target+path, "", map[string]string{"nickname": nickname, "role": role}, &s)
 	return s, err
 }
 

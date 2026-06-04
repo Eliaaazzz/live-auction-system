@@ -4,13 +4,18 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
+	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 type Config struct {
 	HTTPAddr        string
 	MySQLDSN        string
 	RedisAddr       string
+	RedisPassword   string
 	AISidecarURL    string
 	JWTSecret       string
 	FrontendOrigin  string
@@ -22,6 +27,7 @@ type Config struct {
 }
 
 const defaultJWTSecret = "change-me-local-only"
+const defaultMySQLDSN = "lumen:lumen@tcp(localhost:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
 
 // defaultEvidenceKey is the dev HMAC key for the auction_events hash chain (T4).
 // Per §6 threat model: the key must NOT live in the same DB as the events, else the
@@ -34,8 +40,9 @@ const defaultEvidenceKey = "change-me-evidence-local-only"
 func Load() (Config, error) {
 	c := Config{
 		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		MySQLDSN:        env("MYSQL_DSN", "lumen:lumen@tcp(localhost:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"),
+		MySQLDSN:        mysqlDSN(),
 		RedisAddr:       env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:   env("REDIS_PASSWORD", ""),
 		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
 		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
 		FrontendOrigin:  env("FRONTEND_ORIGIN", "http://localhost:8080"),
@@ -59,6 +66,9 @@ func Load() (Config, error) {
 		if c.EvidenceHMACKey == defaultEvidenceKey || c.EvidenceHMACKey == "" {
 			return c, fmt.Errorf("EVIDENCE_HMAC_KEY must be set to a non-default value when APP_ENV=%q", c.AppEnv)
 		}
+		if os.Getenv("MYSQL_DSN") == "" && os.Getenv("MYSQL_HOST") == "" {
+			return c, fmt.Errorf("MYSQL_DSN or MYSQL_HOST must be set when APP_ENV=%q", c.AppEnv)
+		}
 	}
 	return c, nil
 }
@@ -68,4 +78,25 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func mysqlDSN() string {
+	if dsn := os.Getenv("MYSQL_DSN"); dsn != "" {
+		return dsn
+	}
+	host := os.Getenv("MYSQL_HOST")
+	if host == "" {
+		return defaultMySQLDSN
+	}
+	cfg := mysql.NewConfig()
+	cfg.User = env("MYSQL_USER", "lumen")
+	cfg.Passwd = os.Getenv("MYSQL_PASSWORD")
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(host, env("MYSQL_PORT", "3306"))
+	cfg.DBName = env("MYSQL_DATABASE", "lumen")
+	cfg.ParseTime = true
+	cfg.Loc = time.UTC
+	cfg.TLSConfig = env("MYSQL_TLS", "")
+	cfg.Params = map[string]string{"charset": "utf8mb4"}
+	return cfg.FormatDSN()
 }

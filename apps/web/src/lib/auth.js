@@ -70,12 +70,19 @@ export function handleAuthFailure() {
  */
 export async function ensureSession(nickname = 'demo') {
   if (currentToken()) return readStorage();
-  const res = await fetch('/api/dev-login', {
+  let res = await fetch('/api/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ nickname }),
   });
-  if (!res.ok) throw new Error(`dev-login ${res.status}`);
+  if (res.status === 404) {
+    res = await fetch('/api/dev-login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ nickname }),
+    });
+  }
+  if (!res.ok) throw new Error(`login ${res.status}`);
   const session = await res.json();
   // session = { userId, token, nickname }
   writeStorage(session);

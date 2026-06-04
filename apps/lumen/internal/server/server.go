@@ -5,6 +5,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -35,7 +36,12 @@ type Server struct {
 // Serve connects datastores, starts the selected mode's background workers, and
 // serves HTTP (REST + WS + static web) until ctx is cancelled.
 func Serve(ctx context.Context, cfg config.Config, mode string) error {
-	st, err := store.New(ctx, cfg.RedisAddr, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	timerDisabled, err := timerDisabledByChaos(cfg, mode)
+	if err != nil {
+		return err
+	}
+
+	st, err := store.NewWithRedisPassword(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.MySQLDSN, cfg.EvidenceHMACKey)
 	if err != nil {
 		return err
 	}
@@ -67,10 +73,10 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		// LUMEN_CHAOS_DISABLE_TIMER is the T9 timer-fault knob: when set to "1",
 		// the Timer Worker goroutine is skipped at startup so the chaos drill
 		// can observe LIVE auctions outliving their endAtMs. The drill toggles
-		// the env via `docker compose up -d` with `-e` override; in prod the
-		// var is unset and behaviour is unchanged. Anything other than "1"
-		// (including missing) keeps the timer on — fail-closed.
-		if os.Getenv("LUMEN_CHAOS_DISABLE_TIMER") != "1" {
+		// the env via `docker compose up -d` with `-e` override. The startup
+		// guard only allows that in dev; non-dev fails fast. Anything other than
+		// "1" (including missing) keeps the timer on.
+		if !timerDisabled {
 			go runTimerWorker(ctx, st, s.auctioneer, s.metrics)
 		} else {
 			log.Printf("lumen: LUMEN_CHAOS_DISABLE_TIMER=1 — Timer Worker NOT started (T9 chaos drill)")
@@ -95,9 +101,23 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	return nil
 }
 
+func timerDisabledByChaos(cfg config.Config, mode string) (bool, error) {
+	if mode != "all" && mode != "timer" {
+		return false, nil
+	}
+	if os.Getenv("LUMEN_CHAOS_DISABLE_TIMER") != "1" {
+		return false, nil
+	}
+	if cfg.AppEnv != "dev" {
+		return false, fmt.Errorf("LUMEN_CHAOS_DISABLE_TIMER=1 is only allowed when APP_ENV=dev")
+	}
+	return true, nil
+}
+
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
+	mux.HandleFunc("POST /api/login", s.handleLogin)
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
@@ -114,6 +134,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("GET /api/auctions/{id}/prequalify-recommendation", s.handlePrequalifyRecommendation)
 	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
 	mux.HandleFunc("GET /ws", s.handleWS)

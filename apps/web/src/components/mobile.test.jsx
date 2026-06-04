@@ -80,6 +80,43 @@ describe('MobileRoom · reject toast copy', () => {
   });
 });
 
+describe('MobileRoom bid locking', () => {
+  it('does not submit chip bids after the local countdown reaches zero', () => {
+    const onBid = vi.fn();
+    const { container } = render(
+      <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid}/>,
+    );
+
+    const maxButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('MAX'));
+
+    expect(maxButton).toBeDefined();
+    expect(maxButton).toBeDisabled();
+
+    fireEvent.click(maxButton);
+
+    expect(onBid).not.toHaveBeenCalled();
+  });
+
+  it('still submits chip bids while LIVE and time remains', () => {
+    const onBid = vi.fn();
+    const { container } = render(
+      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid}/>,
+    );
+
+    const maxButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('MAX'));
+
+    expect(maxButton).toBeDefined();
+    expect(maxButton).not.toBeDisabled();
+
+    fireEvent.click(maxButton);
+
+    expect(onBid).toHaveBeenCalledTimes(1);
+    expect(onBid).toHaveBeenCalledWith(expect.any(String));
+  });
+});
+
 describe('MobileRoom · LiveVideo fallback (#126)', () => {
   it('falls back to the simulated sheen when a configured video errors at runtime', () => {
     const { container } = render(

@@ -62,6 +62,52 @@ describe('api.getAuction · happy path', () => {
   });
 });
 
+describe('prequalify formal-auction APIs', () => {
+  it('GETs seller-only reserve recommendation for a sealed parent', async () => {
+    const rec = { recommendedReserveCents: '9000', sealedSummary: { count: 3 } };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => rec,
+    });
+
+    const got = await api.prequalifyRecommendation('auc_parent');
+    expect(got).toEqual(rec);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_parent/prequalify-recommendation',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('POSTs formal-spawn rules with seller-confirmed reserve floor', async () => {
+    const payload = {
+      rules: {
+        mode: 'ENGLISH',
+        startPriceCents: '9000',
+        incrementCents: '1000',
+        capPriceCents: '0',
+        durationSec: 60,
+        extendWindowSec: 10,
+        extendSec: 10,
+      },
+    };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ auctionId: 'auc_formal', reused: false }),
+    });
+
+    await api.spawnFormal('auc_parent', payload);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_parent/spawn-formal',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+    );
+  });
+});
+
 describe('401 path triggers handleAuthFailure (PR #51-H4)', () => {
   it('clears cached session AND fires lumen:session-expired event', async () => {
     const sessionExpired = vi.fn();

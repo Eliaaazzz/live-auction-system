@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func TestHiddenEnvelopeCarriesSchemaVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(string(b), `"schemaVersion":1`) {
+	if !contains(string(b), fmt.Sprintf(`"schemaVersion":%d`, SchemaVersion)) {
 		t.Fatalf("envelope missing schemaVersion: %s", b)
 	}
 	// still decodes back to the typed fields (schemaVersion is ignored on decode).
@@ -72,7 +73,7 @@ func FuzzEnvelopeJSONBoundary(f *testing.F) {
 		if !json.Valid(out) {
 			t.Fatalf("marshaled envelope is invalid json: %q", out)
 		}
-		if !contains(string(out), `"schemaVersion":1`) {
+		if !contains(string(out), fmt.Sprintf(`"schemaVersion":%d`, SchemaVersion)) {
 			t.Fatalf("marshaled envelope missing schemaVersion: %s", out)
 		}
 		var roundTrip Envelope

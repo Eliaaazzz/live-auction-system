@@ -40,7 +40,7 @@
 - **网络/白名单**: 同 A2 (同 VPC+子网，白名单加 ECS 内网 IP)。
 - **持久化**: 开 **AOF everysec** (V8/V9 冻结决策)。
 - **节点规格**: 4G ≈ ¥0.66/hr，按目标选 (节点规格对费用影响最大)。
-- 记下 **内网地址:端口** → `REDIS_ADDR=<redis_intranet_host>:6379` (+ 若有密码，DSN 形式按代码 config 支持)。
+- 记下 **内网地址:端口** → `REDIS_ADDR=<redis_intranet_host>:6379`；若开启密码，另设 `REDIS_PASSWORD=<redis_pwd>`（不要把密码塞进 `REDIS_ADDR`）。
 
 ## A4 — ECS 装环境
 ```bash
@@ -55,7 +55,15 @@ git clone https://github.com/Eliaaazzz/live-auction-system.git && cd live-auctio
 ```bash
 cat > infra/.env.prod <<'EOF'
 MYSQL_DSN=lumen:<pwd>@tcp(<rds_intranet>:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4
+# Alternative to MYSQL_DSN for managed MySQL consoles that expose split fields:
+# MYSQL_HOST=<rds_intranet>
+# MYSQL_PORT=3306
+# MYSQL_USER=lumen
+# MYSQL_PASSWORD=<mysql_pwd>
+# MYSQL_DATABASE=lumen
+# MYSQL_TLS=skip-verify
 REDIS_ADDR=<redis_intranet>:6379
+REDIS_PASSWORD=<redis_pwd_if_enabled>
 JWT_SECRET=<openssl rand -hex 32>
 EVIDENCE_HMAC_KEY=<openssl rand -hex 32>
 FRONTEND_ORIGIN=https://<your-domain>
@@ -85,8 +93,13 @@ curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
 从**异地机**(非 ECS)打 `wss://<your-domain>`，复用现成 harness:
 - k6: `HOST_WS=wss://<your-domain> AID=<aid> TOKENS=.k6-tokens k6 run tools/loadtest/k6-ws.js`
 - Locust: `python -m locust -f tools/loadtest/locustfile.py --headless -u 1500 -r 150 -t 60s --host wss://<your-domain>`
+- Go load harness / sharded runs: set `TARGET=https://<your-domain>` and **use production login**, not dev-login:
+  ```bash
+  LOGIN_PATH=/api/login TARGET=https://<your-domain> LOAD_AUCTION_ID=<aid> \
+    LOAD_RETRY_TOO_LOW=true LOAD_BIDS_PER_BIDDER=1 go run ./apps/lumen/cmd/lumen load
+  ```
 - 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
-- ⚠️ **dev-login 生产关闭**，压测需令牌: 开一个**受控窗口** — 临时把安全组锁到压测机 IP + 临时 `ENABLE_DEV_LOGIN=true` 重启 lumen，跑完**立刻**改回 `false` 重启 + 收紧安全组。(或预先 seed 一批令牌，压测只读。)
+- ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
 
 ## A9 — 成本收尾
 测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
