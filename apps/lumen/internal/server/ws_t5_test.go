@@ -71,8 +71,8 @@ func TestT5MultiGatewayFanout(t *testing.T) {
 	}
 
 	hubA, hubB := newHub(), newHub()
-	go hubA.subscribe(ctx, st, nil, nil)
-	go hubB.subscribe(ctx, st, nil, nil)
+	go hubA.subscribe(ctx, st, nil, nil, roomStatePatchConfig{})
+	go hubB.subscribe(ctx, st, nil, nil, roomStatePatchConfig{})
 	cA := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
 	cB := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
 	hubA.join(aid, cA)
@@ -83,6 +83,92 @@ func TestT5MultiGatewayFanout(t *testing.T) {
 	}
 	assertConnReceives(t, cA, model.TypeBidAccepted, 4*time.Second)
 	assertConnReceives(t, cB, model.TypeBidAccepted, 4*time.Second)
+}
+
+// With room-state patching enabled, BID_ACCEPTED fanout is coalesced into
+// ROOM_STATE_PATCH frames once the room is above the viewer threshold.
+func TestT5RoomStatePatchCoalescesBidAccepted(t *testing.T) {
+	h := newHub()
+	st := fullStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	aid := fmt.Sprintf("test_t5_room_state_patch_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		c := context.Background()
+		if keys, _ := st.Redis().Keys(c, "auction:{"+aid+"}:*").Result(); len(keys) > 0 {
+			_ = st.Redis().Del(c, keys...).Err()
+		}
+	})
+
+	if code, err := st.FreezeRules(ctx, aid, "seller_t5", reconcileRules()); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: %s %v", code, err)
+	}
+	if code, _, err := st.StartAuction(ctx, aid, 3600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: %s %v", code, err)
+	}
+
+	// Enable patch mode for all rooms with at least one connected client, and flush
+	// after 2 frames at most.
+	go h.subscribe(ctx, st, nil, nil, roomStatePatchConfig{
+		minViewers: 1,
+		maxEvents:  2,
+	})
+
+	c := &Conn{send: make(chan []byte, 16), lossy: make(chan []byte, 4), done: make(chan struct{}), aid: aid}
+	h.join(aid, c)
+
+	if code, _, _, err := st.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("first bid: %s %v", code, err)
+	}
+	if code, _, _, err := st.PlaceBid(ctx, aid, "u2", "cb2", "12000", ""); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("second bid: %s %v", code, err)
+	}
+
+	var patch model.Envelope
+	deadline := time.After(4 * time.Second)
+	select {
+	case b := <-c.send:
+		if err := json.Unmarshal(b, &patch); err != nil {
+			t.Fatalf("unmarshal patch=%v", err)
+		}
+	case <-deadline:
+		t.Fatal("timed out waiting for ROOM_STATE_PATCH")
+	}
+
+	if patch.Type != model.TypeRoomStatePatch {
+		t.Fatalf("expect ROOM_STATE_PATCH, got %s", patch.Type)
+	}
+
+	var p model.RoomStatePatchData
+	if err := json.Unmarshal(patch.Data, &p); err != nil {
+		t.Fatalf("unmarshal ROOM_STATE_PATCH data=%v", err)
+	}
+
+	if p.Seq != 2 {
+		t.Fatalf("patch seq=%d want 2", p.Seq)
+	}
+	if p.BidCountDelta != 2 {
+		t.Fatalf("patch bidCountDelta=%d want 2", p.BidCountDelta)
+	}
+	if p.WinnerID != "u2" {
+		t.Fatalf("patch winner=%s want u2", p.WinnerID)
+	}
+	if p.WinnerDisplayName != "u2" {
+		t.Fatalf("patch winnerDisplayName=%s want u2", p.WinnerDisplayName)
+	}
+
+	select {
+	case b := <-c.send:
+		var next model.Envelope
+		if err := json.Unmarshal(b, &next); err != nil {
+			t.Fatalf("unexpected next frame=%v", err)
+		}
+		if next.Type == model.TypeBidAccepted {
+			t.Fatalf("coalesced mode should not emit BID_ACCEPTED directly")
+		}
+	default:
+		// good: no immediate extra frame under this controlled sequence.
+	}
 }
 
 // Catchup pre-condition: the per-conn CRITICAL buffer must exceed catchupMaxGap,

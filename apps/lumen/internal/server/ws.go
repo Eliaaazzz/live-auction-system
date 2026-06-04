@@ -31,6 +31,12 @@ const maxClientBidIDLen = 128
 // past it the client gets a snapshot instead (cheaper than a huge replay).
 const catchupMaxGap = 200
 
+// bidPlaceMinInterval limits how often one websocket connection can submit BID_PLACE.
+// It is a gateway-side protection against per-connection burst spam; Lua already
+// handles dedupe/replay for retries but this path prevents hot-loop traffic from
+// consuming Redis capacity.
+const bidPlaceMinInterval = 100 * time.Millisecond
+
 // sendBufFrames sizes the per-conn CRITICAL lane. It MUST exceed catchupMaxGap
 // so a full Stream replay into the buffer never trips the trySend force-close
 // before writePump can drain — the catchup case is exactly the one where the
@@ -94,6 +100,9 @@ const closeCodeBackpressureDrop = 4000
 // rather than weird socket behavior.
 const maxOutboundFrameBytes = 32 * 1024
 
+// loadClientQueryFlag marks the websocket handshake for load-harness clients.
+const loadClientQueryFlag = "lumenLoad"
+
 // streamIDForSeq returns the XRANGE-exclusive lower bound for "events after seq".
 func streamIDForSeq(seq int64) string { return fmt.Sprintf("%d-0", seq) }
 
@@ -116,6 +125,131 @@ type Hub struct {
 }
 
 func newHub() *Hub { return &Hub{rooms: make(map[string]map[*Conn]struct{})} }
+
+type roomStatePatchConfig struct {
+	minViewers    int
+	maxEvents     int
+	flushInterval time.Duration
+}
+
+type roomStatePatch struct {
+	patch      model.RoomStatePatchData
+	eventCount int
+	hasPending bool
+}
+
+func normalizeRoomStatePatchConfig(cfg roomStatePatchConfig) roomStatePatchConfig {
+	if cfg.minViewers <= 0 {
+		cfg.minViewers = 0
+	}
+	if cfg.maxEvents <= 0 {
+		cfg.maxEvents = 1
+	}
+	if cfg.flushInterval <= 0 {
+		cfg.flushInterval = 120 * time.Millisecond
+	}
+	return cfg
+}
+
+func (h *Hub) roomSize(aid string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.rooms[aid] == nil {
+		return 0
+	}
+	return len(h.rooms[aid])
+}
+
+func shouldUseRoomStatePatch(cfg roomStatePatchConfig, roomSize int) bool {
+	return cfg.minViewers > 0 && roomSize >= cfg.minViewers
+}
+
+func isTerminalRoomEvent(eventType string) bool {
+	switch eventType {
+	case model.TypeAuctionSold, model.TypeAuctionNoBid, model.TypeAuctionCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+func canCoalesceRoomEvent(eventType string) bool {
+	switch eventType {
+	case model.TypeBidAccepted, model.TypeAuctionExtended:
+		return true
+	default:
+		return false
+	}
+}
+
+func mergeRoomStatePatch(state *roomStatePatch, e store.StreamEvent, nowMs int64) bool {
+	switch e.Type {
+	case model.TypeBidAccepted:
+		var d model.BidAcceptedData
+		if err := json.Unmarshal([]byte(e.Payload), &d); err != nil {
+			return false
+		}
+		state.patch.Seq = d.Seq
+		state.patch.Status = d.Status
+		state.patch.CurrentPriceCents = d.AmountCents
+		state.patch.WinnerID = d.UserID
+		winnerDisplayName := strings.TrimSpace(d.DisplayName)
+		if winnerDisplayName == "" {
+			winnerDisplayName = d.UserID
+		}
+		state.patch.WinnerDisplayName = winnerDisplayName
+		state.patch.EndAtMs = d.EndAtMs
+		state.patch.BidCountDelta++
+		if d.ServerTimeMs > 0 {
+			nowMs = d.ServerTimeMs
+		}
+		state.patch.ServerTimeMs = nowMs
+		state.eventCount++
+		state.hasPending = true
+		return true
+	case model.TypeAuctionExtended:
+		var d model.AuctionExtendedData
+		if err := json.Unmarshal([]byte(e.Payload), &d); err != nil {
+			return false
+		}
+		state.patch.Seq = d.Seq
+		state.patch.EndAtMs = d.EndAtMs
+		state.patch.ExtendCount = d.ExtendCount
+		if state.patch.Status == "" {
+			state.patch.Status = model.StateLive
+		}
+		if d.ServerTimeMs > 0 {
+			nowMs = d.ServerTimeMs
+		}
+		state.patch.ServerTimeMs = nowMs
+		state.eventCount++
+		state.hasPending = true
+		return true
+	default:
+		return false
+	}
+}
+
+func emitRoomStatePatch(h *Hub, m *metrics.Registry, aid string, state *roomStatePatch) {
+	if state == nil || !state.hasPending {
+		return
+	}
+	env, err := model.NewEnvelope(model.TypeRoomStatePatch, aid, state.patch.Seq, state.patch)
+	if err != nil {
+		return
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		return
+	}
+	h.broadcast(aid, b)
+	if m != nil && state.patch.ServerTimeMs > 0 {
+		m.BroadcastLatency.Observe(time.Since(time.UnixMilli(state.patch.ServerTimeMs)))
+	}
+	state.patch = model.RoomStatePatchData{}
+	state.eventCount = 0
+	state.hasPending = false
+}
 
 func (h *Hub) join(aid string, c *Conn) {
 	h.mu.Lock()
@@ -169,17 +303,84 @@ func (h *Hub) roomAIDs() []string {
 // and fans out those events. A forged/stale Pub/Sub message not backed by the
 // Stream therefore can never reach clients. Runs for the lifetime of ctx in a
 // single goroutine (lastSeq needs no lock).
+//
+// When `ROOM_STATE_PATCH_MIN_VIEWERS` is enabled, bid accepted and anti-snipe
+// extension events are coalesced into a smaller projection frame for high-card
+// rooms. Terminal events are still sent directly to preserve sequencing and state
+// recovery semantics.
+//
 // T8 instrumentation: each fanout records broadcast latency (now - payload
 // serverTimeMs, the Lua-authoritative Redis TIME at adjudication) and detects
 // seq gaps against the prior lastSeq. Stream length is sampled on the backstop
 // ticker so the gauge tracks the peak even under bursty traffic. auctioneer/m may
 // be nil in unit tests that wire paths without those dependencies.
-func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks, m *metrics.Registry) {
+func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *AuctioneerHooks, m *metrics.Registry, roomStatePatchCfg roomStatePatchConfig) {
+	cfg := normalizeRoomStatePatchConfig(roomStatePatchCfg)
+
 	ps := st.Redis().PSubscribe(ctx, store.PubPattern)
 	defer func() { _ = ps.Close() }()
 	ch := ps.Channel() // create once; go-redis starts a delivery goroutine here
 
 	lastSeq := make(map[string]int64)
+	roomStatePatches := make(map[string]*roomStatePatch)
+
+	getRoomStatePatch := func(aid string) *roomStatePatch {
+		state, ok := roomStatePatches[aid]
+		if !ok {
+			state = &roomStatePatch{}
+			roomStatePatches[aid] = state
+		}
+		return state
+	}
+
+	clearRoomStatePatch := func(aid string) {
+		delete(roomStatePatches, aid)
+	}
+
+	emitRoomStatePatchIfAny := func(aid string) {
+		if state, ok := roomStatePatches[aid]; ok {
+			emitRoomStatePatch(h, m, aid, state)
+			if !state.hasPending {
+				delete(roomStatePatches, aid)
+			}
+		}
+	}
+
+	sendEvent := func(aid string, e store.StreamEvent) bool {
+		env := model.Envelope{
+			Type:         e.Type,
+			AuctionID:    aid,
+			Seq:          e.Seq,
+			ServerTimeMs: time.Now().UnixMilli(),
+			Data:         json.RawMessage(e.Payload),
+		}
+		b, err := json.Marshal(env)
+		if err != nil {
+			// Corrupt Stream payload (e.g. a non-UTF-8 byte from a future
+			// contributor's event type that breaks json.RawMessage round-trip):
+			// surface in the log and SKIP the broadcast rather than fan out a
+			// zero-byte / nil frame to every client in the room. The next sweep
+			// re-reads the same Stream window so a transient marshal error gets
+			// another chance; a persistent one shows up as a tight log loop.
+			log.Printf("fanout marshal %s seq=%d type=%s: %v", aid, e.Seq, e.Type, err)
+			return false
+		}
+		h.broadcast(aid, b)
+		if m != nil {
+			// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
+			// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
+			// field rather than parse the full payload — the event payloads share
+			// this field across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
+			// AUCTION_NO_BID / AUCTION_CANCELLED. Failing to unmarshal (e.g. an
+			// older event that predates the field) silently skips the observation,
+			// which is the correct behaviour: no fake zero in p50.
+			if ts := eventServerTimeMs(e.Payload); ts > 0 {
+				m.BroadcastLatency.Observe(time.Since(time.UnixMilli(ts)))
+			}
+		}
+		return true
+	}
+
 	fanout := func(aid string) {
 		events, _, err := st.ReadEventsAfter(ctx, aid, streamIDForSeq(lastSeq[aid]))
 		if err != nil {
@@ -196,35 +397,54 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			if m != nil && lastSeq[aid] > 0 && e.Seq > lastSeq[aid]+1 {
 				m.SeqGap.Add(e.Seq - lastSeq[aid] - 1)
 			}
-			env := model.Envelope{
-				Type: e.Type, AuctionID: aid, Seq: e.Seq,
-				ServerTimeMs: time.Now().UnixMilli(), Data: json.RawMessage(e.Payload),
+			usePatch := shouldUseRoomStatePatch(cfg, h.roomSize(aid))
+
+			if !usePatch {
+				emitRoomStatePatchIfAny(aid)
 			}
-			b, err := json.Marshal(env)
-			if err != nil {
-				// Corrupt Stream payload (e.g. a non-UTF-8 byte from a future
-				// contributor's event type that breaks json.RawMessage round-trip):
-				// surface in the log and SKIP the broadcast rather than fan out a
-				// zero-byte / nil frame to every client in the room. The next sweep
-				// re-reads the same Stream window so a transient marshal error gets
-				// another chance; a persistent one shows up as a tight log loop.
-				log.Printf("fanout marshal %s seq=%d type=%s: %v", aid, e.Seq, e.Type, err)
+
+			// Terminal states always go through immediately and always clear patch state.
+			if isTerminalRoomEvent(e.Type) {
+				if usePatch {
+					emitRoomStatePatchIfAny(aid)
+				}
+				if sendEvent(aid, e) {
+					lastSeq[aid] = e.Seq
+				}
+				// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
+				// for legacy paths (test harness, alt-mode startup) that
+				// don't initialize the hooks. Bid path NEVER awaits these
+				// (each method dispatches via `go a.fire(...)` internally).
+				if auctioneer != nil {
+					dispatchAuctioneer(ctx, auctioneer, aid, st, e)
+				}
+				if usePatch {
+					clearRoomStatePatch(aid)
+				}
 				continue
 			}
-			h.broadcast(aid, b)
-			if m != nil {
-				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
-				// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
-				// field rather than parse the full payload — the event payloads share
-				// this field across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
-				// AUCTION_NO_BID / AUCTION_CANCELLED. Failing to unmarshal (e.g. an
-				// older event that predates the field) silently skips the observation,
-				// which is the correct behaviour: no fake zero in p50.
-				if ts := eventServerTimeMs(e.Payload); ts > 0 {
-					m.BroadcastLatency.Observe(time.Since(time.UnixMilli(ts)))
+
+			if usePatch && canCoalesceRoomEvent(e.Type) {
+				state := getRoomStatePatch(aid)
+				if mergeRoomStatePatch(state, e, time.Now().UnixMilli()) {
+					if state.eventCount >= cfg.maxEvents {
+						emitRoomStatePatchIfAny(aid)
+					}
+					lastSeq[aid] = e.Seq
+					if auctioneer != nil {
+						dispatchAuctioneer(ctx, auctioneer, aid, st, e)
+					}
+					continue
 				}
+				// Parse failure fallback for a malformed payload: flush any coalesced
+				// state we already have, then send raw to avoid silently dropping the
+				// room transition.
+				emitRoomStatePatchIfAny(aid)
 			}
-			lastSeq[aid] = e.Seq
+
+			if sendEvent(aid, e) {
+				lastSeq[aid] = e.Seq
+			}
 			// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
 			// for legacy paths (test harness, alt-mode startup) that
 			// don't initialize the hooks. Bid path NEVER awaits these
@@ -233,6 +453,31 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				dispatchAuctioneer(ctx, auctioneer, aid, st, e)
 			}
 		}
+	}
+
+	flushPatch := func() {
+		if cfg.minViewers <= 0 {
+			return
+		}
+		for aid, state := range roomStatePatches {
+			if state == nil || !state.hasPending {
+				continue
+			}
+			if shouldUseRoomStatePatch(cfg, h.roomSize(aid)) {
+				emitRoomStatePatch(h, m, aid, state)
+				continue
+			}
+			// Room went below threshold: cancel pending patch and continue with
+			// direct event mode for canonical updates.
+			clearRoomStatePatch(aid)
+		}
+	}
+
+	var patchTicker <-chan time.Time
+	if cfg.minViewers > 0 {
+		t := time.NewTicker(cfg.flushInterval)
+		defer t.Stop()
+		patchTicker = t.C
 	}
 
 	// Stream-length sampler: XLEN is O(1) Redis-side but each call costs an RTT,
@@ -262,6 +507,8 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				fanout(aid)
 			}
 			sampleStreamLens()
+		case <-patchTicker:
+			flushPatch()
 		case msg, ok := <-ch:
 			if !ok {
 				return
@@ -318,7 +565,13 @@ type Conn struct {
 	// closeWithCode; readers MUST only access these in flushClose.
 	closeCode   int
 	closeReason string
-	pingPeriod  time.Duration
+	// lastBidAt tracks the last BID_PLACE validation attempt for this
+	// connection so we can enforce per-connection inbound rate limit.
+	lastBidAt time.Time
+	// skipBidRateLimit bypasses the websocket-level per-connection rate cap.
+	// It is used by the load harness to avoid distorting benchmark traffic.
+	skipBidRateLimit bool
+	pingPeriod       time.Duration
 }
 
 // close tears the connection down exactly once: signal writePump via done and
@@ -557,6 +810,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		ws: ws, send: make(chan []byte, sendBufFrames), lossy: make(chan []byte, 16),
 		done: make(chan struct{}), userID: userID, displayName: display,
 		metrics: s.metrics, pingPeriod: connPingPeriod,
+		skipBidRateLimit: r.URL.Query().Get(loadClientQueryFlag) == "1",
 	}
 	if s.metrics != nil {
 		s.metrics.ActiveConns.Add(1)
@@ -674,16 +928,22 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 			}
 			return
 		}
+		now := time.Now()
+		rateLimited := !c.skipBidRateLimit && !c.lastBidAt.IsZero() && now.Sub(c.lastBidAt) < bidPlaceMinInterval
+		c.lastBidAt = now
+		if rateLimited {
+			c.push(rejected(c.aid, model.CodeErrRateLimited))
+			if c.metrics != nil {
+				c.metrics.BidsRejected.Inc()
+			}
+			return
+		}
 		// T8 ack latency: includes envelope decode (caller), canonicalAmount, Lua
 		// dispatch, payload unmarshal, and the trySend (non-blocking enqueue). It is
 		// the full server-side processing time for one BID_PLACE — the user-visible
 		// "click → toast" budget. Script_time is the same call's narrow EVALSHA
 		// portion (Lua exec + Redis RTT), measured separately so a hot-path Lua
 		// regression separates from a Go-side regression.
-		// TODO(T3, [全员 approve]): per-connection inbound bid rate limit + wire code
-		// ERR_RATE_LIMITED (§8). Deferred: the new code is an all-member-approve
-		// contract change and dedupe already makes retries cheap. At T2 scale (single
-		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.
 		ackStart := time.Now()
 		scriptStart := time.Now()
 		code, _, payload, err := s.st.PlaceBid(ctx, c.aid, c.userID, d.ClientBidID, amount, c.displayName)
