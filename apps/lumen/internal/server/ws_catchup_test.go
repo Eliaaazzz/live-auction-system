@@ -124,3 +124,67 @@ func TestT2HiddenCatchupDoesNotReplayPastSnapshotSeq(t *testing.T) {
 		t.Fatalf("bounded catchup=%+v, want seq 1 and 2 only", got)
 	}
 }
+
+func TestT2HiddenRoomJoinSnapshotIncludesAuctionMode(t *testing.T) {
+	target, srv := startTestServer(t)
+	ctx := context.Background()
+	aid := newAID("test_snapshot_mode")
+
+	t.Cleanup(func() {
+		if keys, err := srv.st.Redis().Keys(ctx, "auction:{"+aid+"}:*").Result(); err == nil && len(keys) > 0 {
+			_ = srv.st.Redis().Del(ctx, keys...).Err()
+		}
+		_, _ = srv.st.DB().ExecContext(ctx, "DELETE FROM auction_events WHERE auction_id = ?", aid)
+		_, _ = srv.st.DB().ExecContext(ctx, "DELETE FROM orders WHERE auction_id = ?", aid)
+	})
+
+	rules := model.Rules{
+		StartPriceCents: 10000,
+		IncrementCents:  1000,
+		CapPriceCents:   0,
+		DurationSec:     3600,
+		AuctionMode:     "VICKREY",
+		ExtendWindowSec: 0,
+		ExtendSec:       0,
+		MaxExtensions:   0,
+	}
+	if code, err := srv.st.FreezeRules(ctx, aid, "seller_x", rules); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze rules: code=%s err=%v", code, err)
+	}
+	if code, _, err := srv.st.StartAuction(ctx, aid, 3_600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start auction: code=%s err=%v", code, err)
+	}
+
+	hc := &http.Client{Timeout: 5 * time.Second}
+	buyer, err := devLogin(hc, target, "Snapshot Buyer", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := dialRaw(t, target, buyer.Token)
+	join, _ := model.NewEnvelope(model.TypeRoomJoin, aid, 0, model.RoomJoinData{AuctionID: aid})
+	if err := c.WriteJSON(join); err != nil {
+		t.Fatalf("ROOM_JOIN write: %v", err)
+	}
+
+	_ = c.SetReadDeadline(time.Now().Add(3 * time.Second))
+	var got model.Envelope
+	if err := c.ReadJSON(&got); err != nil {
+		t.Fatalf("ROOM_JOIN read: %v", err)
+	}
+	if got.Type != model.TypeRoomSnapshot {
+		t.Fatalf("ROOM_JOIN first message=%s want %s", got.Type, model.TypeRoomSnapshot)
+	}
+	var snap model.RoomSnapshotData
+	if err := json.Unmarshal(got.Data, &snap); err != nil {
+		t.Fatalf("room snapshot decode: %v", err)
+	}
+	if snap.Rules == nil || snap.Rules.AuctionMode != model.AuctionModeSecondPrice {
+		t.Fatalf("auctionMode=%q want %q", func() string {
+			if snap.Rules == nil {
+				return "empty"
+			}
+			return snap.Rules.AuctionMode
+		}(), model.AuctionModeSecondPrice)
+	}
+}
