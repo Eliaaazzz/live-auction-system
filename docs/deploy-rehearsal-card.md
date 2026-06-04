@@ -81,6 +81,10 @@ larger concurrency tier.
 4. Run the load or remote performance scenario.
 
    For the local 500/50 benchmark lane, run `make deploy-perf-rehearsal`.
+   For Vickrey/second-price normal-tier remote rehearsal, run:
+   ```sh
+   BASE_URL="$BASE_URL" DEPLOY_REHEARSAL_SECOND_PRICE_AID=auc_vickrey make deploy-perf-rehearsal-second-price
+   ```
    For the optional super-stretch remote lane, run:
 
    ```sh
@@ -98,7 +102,7 @@ larger concurrency tier.
      DEPLOY_REHEARSAL_100K_AID=auc_demo \
      DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
-     DEPLOY_REHEARSAL_100K_WS_SCHEMA=1 \
+     DEPLOY_REHEARSAL_100K_WS_SCHEMA=2 \
      DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
      DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \

@@ -11,6 +11,8 @@ LOAD_100K_REHEARSAL_ARGS ?= --confirm
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
 DEPLOY_REHEARSAL_REPORT_ONLY ?= $(REPORT_ONLY)
+DEPLOY_REHEARSAL_SECOND_PRICE_AID ?= $(DEPLOY_REHEARSAL_AID)
+DEPLOY_REHEARSAL_SECOND_PRICE_REPORT_ONLY ?= $(DEPLOY_REHEARSAL_REPORT_ONLY)
 DEPLOY_REHEARSAL_REQUIRE_HTTPS ?= 0
 DEPLOY_REHEARSAL_100K_TARGET ?= 100000
 DEPLOY_REHEARSAL_100K_AID ?= $(DEPLOY_REHEARSAL_AID)
@@ -31,7 +33,7 @@ DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN ?= $(DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN)
 DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-smoke load-100k load-100k-second-price load-100k-second-price-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-second-price load-smoke load-smoke-second-price load-100k load-100k-second-price load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -252,6 +254,9 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@# MAXLEN trim guard: load uses a long auction with bounded events (~6k at default), well
 	@# under the verifier replay budget — see docs/perf-report.md for the trim/replay alignment.
 
+load-second-price: ## T8 P0 lane: second-price (Vickrey) mode on default load defaults.
+	@LOAD_AUCTION_MODE=second_price $(MAKE) load
+
 load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets — exercises the load + verify chain so the harness itself stays a regression net.
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
 	@set -e; mkdir -p .load-logs
@@ -283,6 +288,9 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 		echo ">>> make verify (auction $$aid)"; \
 		$(MAKE) verify VERIFY_AID="$$aid" || exit $$?; \
 	done
+
+load-smoke-second-price: ## CI-cheap smoke in second-price mode.
+	@LOAD_AUCTION_MODE=second_price $(MAKE) load-smoke
 
 load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSON output support
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
@@ -382,6 +390,12 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	fi; \
 	echo "rehearsal artifacts: preflight=$$out_dir manifest/status, perf= $$perf_out"
+
+deploy-perf-rehearsal-second-price: ## #112: remote normal target on auction already configured as 2nd-price / Vickrey
+	@$(MAKE) deploy-perf-rehearsal \
+		BASE_URL="$(BASE_URL)" \
+		DEPLOY_REHEARSAL_AID="$(DEPLOY_REHEARSAL_SECOND_PRICE_AID)" \
+		DEPLOY_REHEARSAL_REPORT_ONLY="$(DEPLOY_REHEARSAL_SECOND_PRICE_REPORT_ONLY)"
 
 deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with 默认 10万并发门禁参数
 	@$(MAKE) deploy-perf-rehearsal \

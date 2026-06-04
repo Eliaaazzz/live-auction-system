@@ -119,6 +119,8 @@ LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 `load-100k` 也支持该变量，`load-100k-rehearse` 会沿用该变量透传，例如：
 ```bash
 LOAD_AUCTION_MODE=second_price LOAD_100K_CONFIRM=1 make load-100k
+make load-second-price
+make load-smoke-second-price
 ```
 你也可以直接调用现有 wrapper：
 ```bash
@@ -188,6 +190,14 @@ BASE_URL="https://your-domain" \
   DEPLOY_REHEARSAL_AID=auc_demo \
   PERF_GATE_CLIENT_SUMMARY=./client-summary.json \
   PERF_GATE_OUT_DIR=./rehearsal-perf
+```
+
+If the rehearsal room is already second-price, use:
+
+```sh
+BASE_URL="https://your-domain" \
+  DEPLOY_REHEARSAL_SECOND_PRICE_AID=auc_vickrey \
+  make deploy-perf-rehearsal-second-price
 ```
 
 For evidence-only remote checks:
