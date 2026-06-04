@@ -16,6 +16,7 @@ Usage:
 
 Environment:
   BASE_URL               Base URL for backend health/metrics endpoints (default: http://localhost:8080)
+  BASE_WS_URL            WebSocket URL for catchup smoke (optional). If omitted, derived from BASE_URL.
 
 Options:
   --confirm            required; explicit opt-in for non-P0 rehearsal
@@ -25,6 +26,7 @@ Options:
   --interval SEC       sleep between attempts (default: 0)
   --label STR          label suffix for output directory (default: timestamp)
   --base-url URL       override BASE_URL for health/metrics checks
+  --base-ws-url URL    override BASE_WS_URL for catchup smoke
   --pack-dir DIR       base output dir (default: .load-100k-rehearsals)
   --up                 run `make up` before first attempt if health check fails
   --down               stop stack after all attempts finish
@@ -63,6 +65,7 @@ PACK_DIR_BASE=".load-100k-rehearsals"
 PACK_LABEL=""
 BASE_URL="${BASE_URL:-${TARGET_URL:-http://localhost:8080}}"
 BASE_URL="${BASE_URL%/}"
+BASE_WS_URL="${BASE_WS_URL:-}"
 ENSURE_UP="${ENSURE_UP:-0}"
 CLEANUP_STACK="${CLEANUP_STACK:-0}"
 LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}"
@@ -181,6 +184,12 @@ while [[ $# -gt 0 ]]; do
     --base-url)
       BASE_URL="$2"
       BASE_URL="${BASE_URL%/}"
+      shift 2
+      ;;
+    --base-ws-url)
+      BASE_WS_URL="$2"
+      BASE_WS_URL="$(printf '%s' "$BASE_WS_URL" | xargs)"
+      BASE_WS_URL="${BASE_WS_URL%/}"
       shift 2
       ;;
     --up)
@@ -345,12 +354,20 @@ else
   PACK_LABEL="$(echo "$PACK_LABEL" | sed 's/[^A-Za-z0-9._-]/-/g')"
 fi
 
-if [[ "$BASE_URL" == https://* ]]; then
-  BASE_WS_URL="wss://${BASE_URL#https://}"
-elif [[ "$BASE_URL" == http://* ]]; then
-  BASE_WS_URL="ws://${BASE_URL#http://}"
+if [[ -n "${BASE_WS_URL:-}" ]]; then
+  if [[ "$BASE_WS_URL" == https://* ]]; then
+    BASE_WS_URL="wss://${BASE_WS_URL#https://}"
+  elif [[ "$BASE_WS_URL" == http://* ]]; then
+    BASE_WS_URL="ws://${BASE_WS_URL#http://}"
+  fi
 else
-  BASE_WS_URL="$BASE_URL"
+  if [[ "$BASE_URL" == https://* ]]; then
+    BASE_WS_URL="wss://${BASE_URL#https://}"
+  elif [[ "$BASE_URL" == http://* ]]; then
+    BASE_WS_URL="ws://${BASE_URL#http://}"
+  else
+    BASE_WS_URL="$BASE_URL"
+  fi
 fi
 
 PACK_DIR="${PACK_DIR_BASE}/${PACK_LABEL}"

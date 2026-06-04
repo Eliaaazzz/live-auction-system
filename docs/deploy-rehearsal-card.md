@@ -26,6 +26,7 @@ larger concurrency tier.
 ## Preconditions
 
 - `BASE_URL` points at the remote stack root, for example `https://auction.example.com`.
+- `BASE_WS_URL` is optional when WebSocket traffic is served from a different host/domain than `BASE_URL` (for example `wss://ws.auction.example.com`).
 - For production remote rehearsal, prefer HTTPS and set `DEPLOY_REHEARSAL_REQUIRE_HTTPS=1` (or `DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1` for 100k lane) so the preflight fails fast on insecure base URLs.
 - No secrets, cookies, cloud tokens, or provider credentials are written into the
   repository or evidence bundle.

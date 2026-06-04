@@ -133,6 +133,11 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
   make load-100k-rehearse
 ```
+若后端 REST 与 WebSocket 入口不共用域名（如域名前置/回源不同），可同时覆盖 WS 地址：
+```bash
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --base-ws-url wss://ws.example.com" \
+  make load-100k-rehearse
+```
 如需在低资源上临时放行前置检查，可设置 `LOAD_100K_ALLOW_LOW_ULIMIT=1` / `true` / `yes` / `on`（仅限明确知道风险时）
 或 `LOAD_100K_ALLOW_LOW_EPHEMERAL=1` / `true` / `yes` / `on`。
 （如需固定预算覆写，直接传入 LOAD_* 环境变量；当前 `make load-100k` 默认会写入：
