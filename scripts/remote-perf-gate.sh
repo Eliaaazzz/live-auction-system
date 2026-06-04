@@ -19,8 +19,11 @@ Environment thresholds:
   BROADCAST_P95_MAX_MS=${BROADCAST_P95_MAX_MS:-150}
   HAMMER_P95_MAX_MS=${HAMMER_P95_MAX_MS:-500}
   CATCHUP_P95_MAX_MS=${CATCHUP_P95_MAX_MS:-1000}
+  CLIENT_CONNECT_FAIL_RATE_MAX_PCT=${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-}
   REQUIRE_HAMMER=${REQUIRE_HAMMER:-1}
   REQUIRE_CATCHUP=${REQUIRE_CATCHUP:-1}
+  ROOM_STATE_PATCH_MIN_EMITTED=${ROOM_STATE_PATCH_MIN_EMITTED:-0}
+  ROOM_STATE_PATCH_MIN_BIDS=${ROOM_STATE_PATCH_MIN_BIDS:-0}
   # When set to 1/true/yes/on, checks are still evaluated and reported but non-zero exit is
   # suppressed so this becomes an evidence-only dry run.
   REPORT_ONLY=${REPORT_ONLY:-0}
@@ -29,7 +32,7 @@ USAGE
 }
 
 is_true() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
     1|true|yes|on)
       return 0
       ;;
@@ -40,7 +43,7 @@ is_true() {
 }
 
 normalize_bool() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
     1|true|yes|on)
       echo 1
       ;;
@@ -48,7 +51,8 @@ normalize_bool() {
       echo 0
       ;;
     *)
-      echo "$1"
+      echo "error: invalid boolean value '$1'; expected 0/1/true/false/yes/no/on/off" >&2
+      exit 2
       ;;
   esac
 }
@@ -83,6 +87,25 @@ compare_ok() {
   '
 }
 
+is_non_negative_int() {
+  case "$1" in
+    ''|*[!0-9]*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+    esac
+}
+
+is_non_negative_number() {
+  awk -v v="$1" 'BEGIN {
+    if (v == "") exit 1
+    if (v ~ /^([0-9]+([.][0-9]*)?|[.][0-9]+)$/) exit 0
+    exit 1
+  }'
+}
+
 add_check() {
   check_name="$1"
   required="$2"
@@ -111,6 +134,22 @@ add_check() {
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$check_name" "$status" "${observed:-NA}" "$op" "$threshold" "$reason" >> "$GATE_TSV"
 }
 
+compute_connect_fail_rate_pct() {
+  attempts="$1"
+  failures="$2"
+
+  if [ -z "$attempts" ] || [ -z "$failures" ]; then
+    return 1
+  fi
+
+  awk -v attempts="$attempts" -v failures="$failures" '
+    BEGIN {
+      if (attempts == 0) exit 1
+      printf "%.10f", (failures / attempts) * 100.0
+    }
+  '
+}
+
 add_client_observed() {
   metric_name="$1"
   observed="$2"
@@ -129,9 +168,13 @@ ACK_P95_MAX_MS="${ACK_P95_MAX_MS:-80}"
 BROADCAST_P95_MAX_MS="${BROADCAST_P95_MAX_MS:-150}"
 HAMMER_P95_MAX_MS="${HAMMER_P95_MAX_MS:-500}"
 CATCHUP_P95_MAX_MS="${CATCHUP_P95_MAX_MS:-1000}"
+CLIENT_CONNECT_FAIL_RATE_MAX_PCT="${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-}"
 REQUIRE_HAMMER="${REQUIRE_HAMMER:-1}"
 REQUIRE_CATCHUP="${REQUIRE_CATCHUP:-1}"
+ROOM_STATE_PATCH_MIN_EMITTED="${ROOM_STATE_PATCH_MIN_EMITTED:-0}"
+ROOM_STATE_PATCH_MIN_BIDS="${ROOM_STATE_PATCH_MIN_BIDS:-0}"
 REPORT_ONLY="${REPORT_ONLY:-0}"
+REPORT_ONLY="$(normalize_bool "$REPORT_ONLY")"
 REQUIRE_HAMMER="$(normalize_bool "$REQUIRE_HAMMER")"
 REQUIRE_CATCHUP="$(normalize_bool "$REQUIRE_CATCHUP")"
 
@@ -166,6 +209,31 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if ! is_non_negative_int "$ACK_P95_MAX_MS"; then
+  die "ACK_P95_MAX_MS must be a non-negative integer"
+fi
+if ! is_non_negative_int "$BROADCAST_P95_MAX_MS"; then
+  die "BROADCAST_P95_MAX_MS must be a non-negative integer"
+fi
+if ! is_non_negative_int "$HAMMER_P95_MAX_MS"; then
+  die "HAMMER_P95_MAX_MS must be a non-negative integer"
+fi
+if ! is_non_negative_int "$CATCHUP_P95_MAX_MS"; then
+  die "CATCHUP_P95_MAX_MS must be a non-negative integer"
+fi
+if [ -n "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT" ] && ! is_non_negative_number "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT"; then
+  die "CLIENT_CONNECT_FAIL_RATE_MAX_PCT must be a non-negative number"
+fi
+if ! is_non_negative_int "$TARGET_CONNS"; then
+  die "TARGET_CONNS must be a non-negative integer"
+fi
+if ! is_non_negative_int "$ROOM_STATE_PATCH_MIN_EMITTED"; then
+  die "ROOM_STATE_PATCH_MIN_EMITTED must be a non-negative integer"
+fi
+if ! is_non_negative_int "$ROOM_STATE_PATCH_MIN_BIDS"; then
+  die "ROOM_STATE_PATCH_MIN_BIDS must be a non-negative integer"
+fi
 
 [ -n "$SERVER_METRICS" ] || usage
 [ -r "$SERVER_METRICS" ] || die "cannot read --server-metrics: $SERVER_METRICS"
@@ -208,6 +276,8 @@ HAMMER_P95=$(json_num '.hammerLatencyMs.p95 // .hammerLatencyMs.p95Ms // .hammer
 CATCHUP_P95=$(json_num '.catchupLatencyMs.p95 // .catchupLatencyMs.p95Ms // .catchup.p95 // .catchup.p95_ms // .catchup200Ms.p95 // .server.catchupP95Ms // .server.catchup_p95_ms // .lumen.catchupP95Ms // .lumen_catchup_latency_ms_p95' "$SERVER_COPY")
 SEQ_GAPS=$(json_num '.seqGapCount // .sequenceGapCount // .eventSeqGaps // .server.seqGapCount // .lumen.sequenceGapCount // .lumen_sequence_gap_count' "$SERVER_COPY")
 BACKPRESSURE_CLOSES=$(json_num '.backpressureForceClose // .backpressure_force_close // .ws.backpressureForceClose // .server.backpressureForceClose // .lumen.backpressureForceClose // .lumen_backpressure_force_close_total' "$SERVER_COPY")
+ROOM_PATCH_EMITTED=$(json_num '.roomStatePatchEmitted // .room_state_patch_emitted // .roomStatePatch' "$SERVER_COPY")
+ROOM_PATCH_BIDS=$(json_num '.roomStatePatchBids // .room_state_patch_bids // .roomStatePatchBids' "$SERVER_COPY")
 
 if [ "${TARGET_CONNS:-0}" = "0" ]; then
   add_check "server_active_conns" "0" "$ACTIVE_CONNS" ">=" "0"
@@ -220,6 +290,8 @@ add_check "server_hammer_p95_ms" "$REQUIRE_HAMMER" "$HAMMER_P95" "<=" "$HAMMER_P
 add_check "server_catchup_p95_ms" "$REQUIRE_CATCHUP" "$CATCHUP_P95" "<=" "$CATCHUP_P95_MAX_MS"
 add_check "server_seq_gap_count" "1" "$SEQ_GAPS" "==" "0"
 add_check "server_backpressure_force_close" "0" "$BACKPRESSURE_CLOSES" "==" "0"
+add_check "server_room_state_patch_emitted" "$([ "$ROOM_STATE_PATCH_MIN_EMITTED" -gt 0 ] && echo 1 || echo 0)" "$ROOM_PATCH_EMITTED" ">=" "$ROOM_STATE_PATCH_MIN_EMITTED"
+add_check "server_room_state_patch_bids" "$([ "$ROOM_STATE_PATCH_MIN_BIDS" -gt 0 ] && echo 1 || echo 0)" "$ROOM_PATCH_BIDS" ">=" "$ROOM_STATE_PATCH_MIN_BIDS"
 
 if [ -n "$CLIENT_SUMMARY" ]; then
   CLIENT_COPY="$OUT_DIR/client-summary.json"
@@ -227,11 +299,27 @@ if [ -n "$CLIENT_SUMMARY" ]; then
   CLIENT_ACK_P95=$(json_num '.metrics.ws_ack_rtt.values["p(95)"] // .metrics.bid_ack_rtt.values["p(95)"] // .metrics.ack_rtt.values["p(95)"] // .client.ackP95Ms // .client_ack_p95_ms' "$CLIENT_COPY")
   CLIENT_BROADCAST_P95=$(json_num '.metrics.ws_broadcast_lag.values["p(95)"] // .metrics.broadcast_lag.values["p(95)"] // .metrics.broadcast_rtt.values["p(95)"] // .client.broadcastP95Ms // .client_broadcast_p95_ms' "$CLIENT_COPY")
   CLIENT_CONN_P95=$(json_num '.metrics.ws_connecting.values["p(95)"] // .metrics.ws_session_duration.values["p(95)"] // .client.connectP95Ms // .client_connect_p95_ms' "$CLIENT_COPY")
+  CLIENT_CONNECT_FAIL_RATE_PCT=$(json_num '.connectFailRatePct // .connectFailureRatePct // .connect_fail_rate_pct // .connectFailPercent // .connectFailurePercent // .connect.failureRate // .connect.failurePct // .client.connectFailureRate // .client.connectFailurePercent // .client.connect_fail_rate_pct // .client.connectFailurePct // .stats.connect_failure_rate // .metrics.connectFailureRatePct // .metrics.connectFailRate // .metrics.ws_connect_fail_rate_pct // .metrics.connect_fail_rate_pct' "$CLIENT_COPY")
+
+  if [ -z "$CLIENT_CONNECT_FAIL_RATE_PCT" ]; then
+    CLIENT_CONNECT_ATTEMPTS=$(json_num '.connect.attempts // .connectAttempts // .connect.count // .connect.total // .client.connectAttempts // .client.connectCount // .stats.connect_attempts // .totals.connectAttempts // .metrics.connect_attempts' "$CLIENT_COPY")
+    CLIENT_CONNECT_FAILURES=$(json_num '.connect.failures // .connect.fails // .connect.failureCount // .connect.failed // .client.connectFailures // .client.connectFails // .stats.connect_failures // .totals.connectFailures // .metrics.connect_failures' "$CLIENT_COPY")
+    CLIENT_CONNECT_FAIL_RATE_PCT=$(compute_connect_fail_rate_pct "$CLIENT_CONNECT_ATTEMPTS" "$CLIENT_CONNECT_FAILURES")
+  fi
 
   add_client_observed "client_http_req_duration_p95_ms" "$CLIENT_HTTP_P95" "observed_only_not_server_slo"
   add_client_observed "client_ack_rtt_p95_ms" "$CLIENT_ACK_P95" "observed_only_not_server_slo"
   add_client_observed "client_broadcast_lag_p95_ms" "$CLIENT_BROADCAST_P95" "observed_only_not_server_slo"
   add_client_observed "client_connect_or_session_p95_ms" "$CLIENT_CONN_P95" "observed_only_not_server_slo"
+  add_client_observed "client_connect_failure_rate_pct" "$CLIENT_CONNECT_FAIL_RATE_PCT" "observed_only_not_server_slo"
+fi
+
+if [ -n "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT" ]; then
+  if [ -z "$CLIENT_SUMMARY" ]; then
+    add_check "client_connect_failure_rate_pct" "1" "" "<=" "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT"
+  else
+    add_check "client_connect_failure_rate_pct" "1" "$CLIENT_CONNECT_FAIL_RATE_PCT" "<=" "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT"
+  fi
 fi
 
 if is_true "$REPORT_ONLY" && [ "$FAILS" -ne 0 ]; then
@@ -257,7 +345,7 @@ fi
   echo
   echo "## Measurement boundary"
   echo
-  echo "Server-side rows in gate.tsv are the only pass/fail SLO gates. Client and end-to-end metrics are retained as observed evidence only because WAN, browser, proxy, and runner delays are outside the backend SLO boundary."
+  echo "Server-side rows in gate.tsv are the default pass/fail SLO gates. Client and end-to-end metrics are retained as observed evidence unless client-specific gates are explicitly enabled by client env vars, because WAN, browser, proxy, and runner delays are outside the backend SLO boundary."
   echo
   echo "## Thresholds"
   echo
@@ -265,6 +353,11 @@ fi
   echo "- broadcast_p95_ms <= $BROADCAST_P95_MAX_MS"
   echo "- hammer_p95_ms <= $HAMMER_P95_MAX_MS when REQUIRE_HAMMER=$REQUIRE_HAMMER"
   echo "- catchup_p95_ms <= $CATCHUP_P95_MAX_MS when REQUIRE_CATCHUP=$REQUIRE_CATCHUP"
+  if [ -n "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT" ]; then
+    echo "- client_connect_failure_rate_pct <= $CLIENT_CONNECT_FAIL_RATE_MAX_PCT"
+  fi
+  echo "- roomStatePatchEmitted >= $ROOM_STATE_PATCH_MIN_EMITTED if set (>0)"
+  echo "- roomStatePatchBids >= $ROOM_STATE_PATCH_MIN_BIDS if set (>0)"
   echo "- active_connections >= $TARGET_CONNS unless --target 0 is used"
   echo
   echo "## Server gate"

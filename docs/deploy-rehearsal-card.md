@@ -12,6 +12,20 @@ hunting during the #112/#121 rehearsal work and keep the evidence boundary clear
 Use this when rehearsing a public or remote Lumen Auction stack before claiming a
 larger concurrency tier.
 
+## Evidence naming contract (required fields)
+
+To keep every rehearsal replayable from one path, use this fixed naming map:
+
+- Remote rehearsal root: `DEPLOY_REHEARSAL_OUT_DIR` (default `.deploy-rehearsal-<timestamp>`)
+  - Preflight: `<root>/manifest.txt`, `<root>/status.tsv`, route artifacts under `<root>/<route-name>/`
+  - Remote perf gate: `<root>/perf-gate/summary.md`, `<root>/perf-gate/gate.tsv`
+  - Optional second-price proof: `<root>/verify-second-price-payment-summary.tsv`
+- Super-stretch local rehearsal root: `LOAD_100K_REHEARSAL_PACK_DIR/<label>` (default `.load-100k-rehearsals/<label>`)
+  - Core pack: `<pack>/manifest.json`, `<pack>/summary.tsv`
+  - Local preflight: `<pack>/preflight/status.tsv` (optional, written by `load-100k-preflight` path)
+  - Super-stretch gate: `<pack>/perf-gate/summary.md`, `<pack>/perf-gate/gate.tsv` (`load-100k-rehearsal-gate`)
+  - Optional second-price proof: `<pack>/verify-second-price-payment-summary.tsv`
+
 - #148 deploy preflight establishes that public routes are reachable and records
   a no-secret evidence pack.
 - #164/#165 SRS checks are optional and only apply when the live video path is in
@@ -82,17 +96,19 @@ Before each run, capture owner/deadline metadata for auditability:
 
    ```sh
    BASE_URL="$BASE_URL" \
-     BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
-     AID=auc_demo \
-     REQUIRE_HTTPS=1 \
-     REQUIRE_WS_SCHEMA_CHECK=true \
-     WS_PRECHECK_SCHEMA="${SCHEMA_VERSION:-2}" \
-     WS_PRECHECK_TOKEN="..." \
-     scripts/deploy-preflight.sh
+   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+   AID=auc_demo \
+   REQUIRE_HTTPS=1 \
+   REQUIRE_WS_SCHEMA_CHECK=true \
+   WS_PRECHECK_SCHEMA="${SCHEMA_VERSION:-1}" \
+   WS_PRECHECK_TOKEN="..." \
+   scripts/deploy-preflight.sh
    ```
 
    This opens an actual websocket handshake, sends `ROOM_JOIN`, and validates the
-   first schema-bearing server message against `WS_PRECHECK_SCHEMA`. Use this for
+   first schema-bearing server message against `WS_PRECHECK_SCHEMA` at the `/ws` route.
+   `BASE_WS_URL` should be the websocket base host (no `/ws` suffix; it is
+   appended automatically). Use this for
    remote rehearsals where frontend/backend drift is a known risk.
 
    For super-stretch paths, `make deploy-perf-rehearsal-100k` enables this check
@@ -117,51 +133,69 @@ Before each run, capture owner/deadline metadata for auditability:
    ```
    For the optional super-stretch remote lane, run:
 
-   ```sh
-   BASE_URL="$BASE_URL" \
-   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
-   make deploy-perf-rehearsal-100k
-   # 若演练房间已是二价（Vickrey）规则，可直接：
-   BASE_URL="$BASE_URL" \
-   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
-   DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
-   make deploy-perf-rehearsal-100k-second-price
+```sh
+BASE_URL="$BASE_URL" \
+BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+make deploy-perf-rehearsal-100k
+# 若演练房间已是二价（Vickrey）规则，可直接：
+BASE_URL="$BASE_URL" \
+BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
+make deploy-perf-rehearsal-100k-second-price
+```
 
-   # 二价模式会在演练收尾自动尝试生成核验报告（若提供证据 token）：
-   # ${DEPLOY_REHEARSAL_OUT_DIR}/verify-second-price-payment-summary.tsv
-   # 若脚本 token 与环境不一致，可显式覆盖：
-   DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
-   DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN="$TOKEN" \
-   DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE="$TOKEN_FILE" \
-   make deploy-perf-rehearsal-second-price
-   ```
+如果你要固定做单房间十万并发（更贴近 #112 的核心目标），可以指定单房间 aid + coalesced patch 门槛：
+
+```sh
+BASE_URL="$BASE_URL" \
+BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_AID=auc_single_room_vickrey \
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_EMITTED=1 \
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_BIDS=1 \
+make deploy-perf-rehearsal-100k-single-room-second-price
+```
+
+上述会在 10万参数下对远端演练执行 server-side SLO + `roomStatePatch` 最低出现 1 次的软验收；如需不做 patch 硬约束，可把对应阈值设为 0。
+`DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_*` 为通用覆盖参数，优先级高于单房间默认值；也可用 `DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_*` 指定 lane-only 默认值。
+
+二价模式会在演练收尾自动尝试生成核验报告（若提供证据 token）。
+报告路径：`${DEPLOY_REHEARSAL_OUT_DIR}/verify-second-price-payment-summary.tsv`。若脚本 token 与环境不一致，可显式覆盖：
+```sh
+DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
+DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN="$TOKEN" \
+DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE="$TOKEN_FILE" \
+make deploy-perf-rehearsal-second-price
+```
 
    Copy-paste operator form (recommended):
 
    ```sh
    BASE_URL="https://auction.example.com" \
-  BASE_WS_URL="wss://ws.auction.example.com" \
-     DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
-     DEPLOY_REHEARSAL_100K_TARGET=100000 \
-     DEPLOY_REHEARSAL_100K_AID=auc_demo \
-     DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
-     DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
-     DEPLOY_REHEARSAL_100K_WS_SCHEMA="${SCHEMA_VERSION:-2}" \
-     DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
-     DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
-     DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
-     DEPLOY_REHEARSAL_100K_REPORT_ONLY=0 \
-     DEPLOY_REHEARSAL_METRICS="./peak-metrics.json" \
-     PERF_GATE_CLIENT_SUMMARY="./client-summary.json" \
-     PERF_GATE_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)/perf-gate" \
-     make deploy-perf-rehearsal-100k
+   BASE_WS_URL="wss://ws.auction.example.com" \
+   DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
+   DEPLOY_REHEARSAL_100K_TARGET=100000 \
+   DEPLOY_REHEARSAL_100K_AID=auc_demo \
+   DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
+   DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
+   DEPLOY_REHEARSAL_100K_SINGLE_ROOM_AID=auc_single_room_vickrey \
+   DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED=1 \
+   DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS=1 \
+   DEPLOY_REHEARSAL_100K_WS_SCHEMA="${SCHEMA_VERSION:-1}" \
+   DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
+   DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
+   DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
+   DEPLOY_REHEARSAL_100K_REPORT_ONLY=0 \
+   DEPLOY_REHEARSAL_METRICS="./peak-metrics.json" \
+   PERF_GATE_CLIENT_SUMMARY="./client-summary.json" \
+   PERF_GATE_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)/perf-gate" \
+   make deploy-perf-rehearsal-100k
    ```
 
-   For 100k/2k/4-shards Vickrey checks, drive the rehearsal itself on auctions
-   that are already configured with second-price rules (`rules.mode: VICKREY`, `rules.mode: vickrey`,
-   or legacy `auctionMode: second_price` / `auctionMode: vickrey`);
-   `deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
-   not inject bid mode itself.
+For 100k/2k/4-shards Vickrey checks, drive the rehearsal itself on auctions
+that are already configured with second-price rules (`rules.mode: VICKREY`,
+legacy aliases such as `second`, `vickrey`, `auction2`, `2`, `second_price`);
+`deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
+not inject bid mode itself.
 
    For single-room 100k local rehearsal with second-price mode (for evidence prep
    before/alongside remote runs), use:
@@ -178,8 +212,19 @@ Before each run, capture owner/deadline metadata for auditability:
    make load-100k-single-room-vickrey-rehearse
    ```
 
-   Result artifacts are collected in `DEPLOY_REHEARSAL_OUT_DIR` and in `PERF_GATE_OUT_DIR`.
-   Keep both paths in the issue/meeting note so evidence is recoverable later.
+   If you want local 100k single-room evidence + hard gate in one command, run:
+
+   ```sh
+   LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-single-room-gate-$(date +%Y%m%d) --auction-mode VICKREY --shards 1" \
+     make load-100k-single-room-rehearsal-gate
+   make load-100k-single-room-second-price-gate
+   make load-100k-single-room-vickrey-gate
+   ```
+
+   For local `load-100k` packs (`...-rehearse` / `...-rehearsal-gate`), evidence stays in
+   `.load-100k-rehearsals/<label>`; for deploy-perf wrappers it is in
+   `DEPLOY_REHEARSAL_OUT_DIR` / `PERF_GATE_OUT_DIR`.
+   Keep the relevant paths in the issue/meeting note so evidence is recoverable later.
 
    `*_REPORT_ONLY` controls whether remote perf gate failures should stop this
    operator target. For evidence-only runs, set to `1` and record `result:
@@ -200,6 +245,7 @@ Before each run, capture owner/deadline metadata for auditability:
    SERVER_METRICS="${DEPLOY_REHEARSAL_OUT_DIR:-.deploy-rehearsal}/metrics/body.txt" \
    TARGET_CONNS="${DEPLOY_REHEARSAL_100K_TARGET:-${DEPLOY_REHEARSAL_TARGET:-500}}" \
    PERF_GATE_CLIENT_SUMMARY="${PERF_GATE_CLIENT_SUMMARY:-}" \
+   CLIENT_CONNECT_FAIL_RATE_MAX_PCT="${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-${DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT:-}}" \
    PERF_GATE_OUT_DIR="${PERF_GATE_OUT_DIR:-${DEPLOY_REHEARSAL_OUT_DIR:-.deploy-rehearsal}/perf-gate}" \
    scripts/remote-perf-gate.sh \
      --server-metrics "$SERVER_METRICS" \
@@ -212,7 +258,9 @@ Before each run, capture owner/deadline metadata for auditability:
    active connections, ack p95, broadcast p95, sequence-gap count, and
    backpressure force-close count. For full gate coverage it should also include
    hammer and catchup p95 metrics, or the run must explicitly document why those
-   checks were not required.
+   checks were not required. For remote proof runs that also track client
+   connect outcome, set `CLIENT_CONNECT_FAIL_RATE_MAX_PCT` (for example
+   `0.1` for 0.1%).
 
    In operator runs with evidence-only mode (`DEPLOY_REHEARSAL_REPORT_ONLY=1` for
    500/50 or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=1` for super-stretch),
@@ -226,6 +274,8 @@ Before each run, capture owner/deadline metadata for auditability:
    - preflight `manifest.txt`
    - preflight `status.tsv`
    - preflight route artifacts
+   - (for super-stretch local pack path, keep `preflight/status.tsv` in
+     `pack_root/preflight`)
    - server metrics JSON used by the perf gate
    - local `load-100k-rehearsal` pack 可选项：`preflight/status.tsv`（保存本地门禁检查快照）
    - remote perf gate `summary.md`

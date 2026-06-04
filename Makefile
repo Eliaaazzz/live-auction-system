@@ -30,6 +30,8 @@ DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY ?= 0
 DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN ?= $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN)
 DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE ?= $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE)
 DEPLOY_REHEARSAL_REQUIRE_HTTPS ?= 0
+DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED ?= 0
+DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS ?= 0
 DEPLOY_REHEARSAL_100K_TARGET ?= 100000
 DEPLOY_REHEARSAL_100K_AID ?= $(DEPLOY_REHEARSAL_AID)
 DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS ?= 800
@@ -38,17 +40,25 @@ DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS ?= 2000
 DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS ?= 3000
 DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER ?= 1
 DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP ?= 1
+DEPLOY_REHEARSAL_100K_ROOM_STATE_PATCH_MIN_EMITTED ?= 0
+DEPLOY_REHEARSAL_100K_ROOM_STATE_PATCH_MIN_BIDS ?= 0
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_AID ?= $(DEPLOY_REHEARSAL_100K_AID)
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_SECOND_PRICE_AID ?= $(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID)
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_EMITTED ?= 1
+DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_BIDS ?= 1
 DEPLOY_REHEARSAL_100K_REPORT_ONLY ?= $(DEPLOY_REHEARSAL_REPORT_ONLY)
 DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS ?= $(DEPLOY_REHEARSAL_REQUIRE_HTTPS)
 DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID ?= $(DEPLOY_REHEARSAL_SECOND_PRICE_AID)
 DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK ?= 0
-DEPLOY_REHEARSAL_WS_SCHEMA ?= 2
+DEPLOY_REHEARSAL_WS_SCHEMA ?= 1
 DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN ?=
 DEPLOY_REHEARSAL_BASE_WS_URL ?= $(BASE_WS_URL)
+DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT ?=
 DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK ?= 1
 DEPLOY_REHEARSAL_100K_WS_SCHEMA ?= $(DEPLOY_REHEARSAL_WS_SCHEMA)
 DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN ?= $(DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN)
 DEPLOY_REHEARSAL_100K_BASE_WS_URL ?= $(DEPLOY_REHEARSAL_BASE_WS_URL)
+DEPLOY_REHEARSAL_100K_CONNECT_FAIL_RATE_MAX_PCT ?= $(DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT)
 DEPLOY_REHEARSAL_METRICS ?=
 DEPLOY_REHEARSAL_CHECK_OUT_DIR ?=
 DEPLOY_REHEARSAL_CHECK_REPORT ?=
@@ -56,7 +66,7 @@ DEPLOY_REHEARSAL_CHECK_FORMAT ?= tsv
 DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-single-room load-100k-single-room-vickrey load-100k-single-room-second-price load-100k-single-room-rehearse load-100k-single-room-second-price-rehearse load-100k-single-room-vickrey-rehearse load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearsal load-100k-rehearsal-second-price load-100k-rehearsal-gate load-100k-rehearsal-gate-second-price load-100k-eval deploy-perf-rehearsal-100k-second-price \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price deploy-perf-rehearsal-100k-single-room deploy-perf-rehearsal-100k-single-room-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-single-room load-100k-single-room-vickrey load-100k-single-room-second-price load-100k-single-room-rehearse load-100k-single-room-second-price-rehearse load-100k-single-room-vickrey-rehearse load-100k-single-room-rehearsal-gate load-100k-single-room-second-price-gate load-100k-single-room-vickrey-gate load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearsal load-100k-rehearsal-second-price load-100k-rehearsal-gate load-100k-rehearsal-gate-second-price load-100k-eval deploy-perf-rehearsal-100k-second-price \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         deploy-rehearsal-check deploy-rehearsal-check-md \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat load-100k-eval \
@@ -460,6 +470,15 @@ load-100k-single-room-second-price-rehearse: ## 10w single-room super-stretch ev
 load-100k-single-room-vickrey-rehearse: ## 10w single-room super-stretch evidence pack in Vickrey mode.
 	@$(MAKE) load-100k-single-room-second-price-rehearse
 
+load-100k-single-room-rehearsal-gate: ## 10w single-room super-stretch evidence pack + gate.
+	@$(MAKE) load-100k-rehearsal-gate LOAD_100K_REHEARSAL_ARGS="$(strip $(LOAD_100K_REHEARSAL_ARGS)) --shards 1"
+
+load-100k-single-room-second-price-gate: ## 10w single-room super-stretch + gate in Vickrey / second-price mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-single-room-rehearsal-gate
+
+load-100k-single-room-vickrey-gate: ## 10w single-room super-stretch + gate in Vickrey mode.
+	@$(MAKE) load-100k-single-room-second-price-gate
+
 load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
 	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
 
@@ -591,8 +610,11 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 		BROADCAST_P95_MAX_MS="$(BROADCAST_P95_MAX_MS)" \
 		HAMMER_P95_MAX_MS="$(HAMMER_P95_MAX_MS)" \
 		CATCHUP_P95_MAX_MS="$(CATCHUP_P95_MAX_MS)" \
+		CLIENT_CONNECT_FAIL_RATE_MAX_PCT="$(DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT)" \
 		REQUIRE_HAMMER="$(REQUIRE_HAMMER)" \
 		REQUIRE_CATCHUP="$(REQUIRE_CATCHUP)" \
+		ROOM_STATE_PATCH_MIN_EMITTED="$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED)" \
+		ROOM_STATE_PATCH_MIN_BIDS="$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS)" \
 		REPORT_ONLY="$(DEPLOY_REHEARSAL_REPORT_ONLY)" \
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --client-summary "$(PERF_GATE_CLIENT_SUMMARY)" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	else \
@@ -600,8 +622,11 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 		BROADCAST_P95_MAX_MS="$(BROADCAST_P95_MAX_MS)" \
 		HAMMER_P95_MAX_MS="$(HAMMER_P95_MAX_MS)" \
 		CATCHUP_P95_MAX_MS="$(CATCHUP_P95_MAX_MS)" \
+		CLIENT_CONNECT_FAIL_RATE_MAX_PCT="$(DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT)" \
 		REQUIRE_HAMMER="$(REQUIRE_HAMMER)" \
 		REQUIRE_CATCHUP="$(REQUIRE_CATCHUP)" \
+		ROOM_STATE_PATCH_MIN_EMITTED="$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED)" \
+		ROOM_STATE_PATCH_MIN_BIDS="$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS)" \
 		REPORT_ONLY="$(DEPLOY_REHEARSAL_REPORT_ONLY)" \
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	fi; \
@@ -635,12 +660,15 @@ deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with �
 		BASE_URL="$(BASE_URL)" \
 		DEPLOY_REHEARSAL_TARGET="$(DEPLOY_REHEARSAL_100K_TARGET)" \
 		DEPLOY_REHEARSAL_AID="$(DEPLOY_REHEARSAL_100K_AID)" \
+		DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT="$(if $(strip $(DEPLOY_REHEARSAL_100K_CONNECT_FAIL_RATE_MAX_PCT)),$(DEPLOY_REHEARSAL_100K_CONNECT_FAIL_RATE_MAX_PCT),$(DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT))" \
 		ACK_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS)" \
 		BROADCAST_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_BROADCAST_P95_MAX_MS)" \
 		HAMMER_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS)" \
 		CATCHUP_P95_MAX_MS="$(DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS)" \
 		REQUIRE_HAMMER="$(DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER)" \
 		REQUIRE_CATCHUP="$(DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP)" \
+		DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED="$(if $(strip $(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED)),$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED),$(DEPLOY_REHEARSAL_100K_ROOM_STATE_PATCH_MIN_EMITTED))" \
+		DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS="$(if $(strip $(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS)),$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS),$(DEPLOY_REHEARSAL_100K_ROOM_STATE_PATCH_MIN_BIDS))" \
 		DEPLOY_REHEARSAL_REPORT_ONLY="$(DEPLOY_REHEARSAL_100K_REPORT_ONLY)" \
 		DEPLOY_REHEARSAL_BASE_WS_URL="$(DEPLOY_REHEARSAL_100K_BASE_WS_URL)" \
 		DEPLOY_REHEARSAL_REQUIRE_HTTPS="$(DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS)" \
@@ -654,6 +682,17 @@ deploy-perf-rehearsal-100k-second-price: ## #112: remote super-stretch target on
 	@$(MAKE) deploy-perf-rehearsal-100k \
 		DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
 		DEPLOY_REHEARSAL_100K_AID="$(if $(strip $(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID)),$(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID),$(DEPLOY_REHEARSAL_100K_AID))"
+
+deploy-perf-rehearsal-100k-single-room: ## #112: remote 10万 super-stretch 单房间演练（不自动注入拍卖模式）
+	@$(MAKE) deploy-perf-rehearsal-100k \
+		DEPLOY_REHEARSAL_100K_AID="$(if $(strip $(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_AID)),$(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_AID),$(DEPLOY_REHEARSAL_100K_AID))" \
+		DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED="$(if $(strip $(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED)),$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_EMITTED),$(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_EMITTED))" \
+		DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS="$(if $(strip $(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS)),$(DEPLOY_REHEARSAL_ROOM_STATE_PATCH_MIN_BIDS),$(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_ROOM_STATE_PATCH_MIN_BIDS))"
+
+deploy-perf-rehearsal-100k-single-room-second-price: ## #112: remote super-stretch 单房间 + 二价核验演练
+	@$(MAKE) deploy-perf-rehearsal-100k-single-room \
+		DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
+		DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID="$(if $(strip $(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_SECOND_PRICE_AID)),$(DEPLOY_REHEARSAL_100K_SINGLE_ROOM_SECOND_PRICE_AID),$(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID))"
 
 deploy-rehearsal-check: ## #112: aggregate one rehearsal evidence directory into a single PASS/FAIL closure.
 	@out_dir="$(strip $(DEPLOY_REHEARSAL_CHECK_OUT_DIR))"; \
