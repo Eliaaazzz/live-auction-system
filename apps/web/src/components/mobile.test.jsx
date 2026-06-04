@@ -168,6 +168,26 @@ describe('MobileEvidence · summary winner visibility', () => {
     expect(noBidRender.container.textContent).not.toContain('成交方:');
   });
 
+  it('shows second-price settlement label on evidence for second-price mode', () => {
+    const soldEvidence = {
+      auctionId: 'a4',
+      status: 'SOLD',
+      currentPriceCents: '12000',
+      winnerId: 'winner-user',
+      winnerDisplayName: '赢家',
+      auctionMode: 'second_price',
+      timeline: [
+        { seq: 1, eventType: 'BID_ACCEPTED', payload: '{"userId":"bidder","displayName":"先到先得","amountCents":"12000"}', eventHash: 'aaa', prevHash: '000', },
+        { seq: 2, eventType: 'AUCTION_SOLD', payload: '{"winnerId":"winner-user","amountCents":"12000"}', eventHash: 'bbb', prevHash: 'aaa' },
+      ],
+      chainVerified: true,
+      eventsHash: 'ccc',
+    };
+
+    const soldRender = render(<MobileEvidence evidence={soldEvidence} />);
+    expect(soldRender.container.textContent).toContain('结算规则：二价拍 · 赢者付次高价');
+  });
+
   it('prefers winnerDisplayName when provided by evidence summary', () => {
     const evidence = {
       auctionId: 'a2',
@@ -185,5 +205,24 @@ describe('MobileEvidence · summary winner visibility', () => {
 
     const renderResult = render(<MobileEvidence evidence={evidence} />);
     expect(renderResult.container.textContent).toContain('拍卖状态: ORDER_CREATED · 成交方: 优先展示名字');
+  });
+
+  it('falls back summary winnerDisplayName to sold-event winner when evidence summary is empty', () => {
+    const evidence = {
+      auctionId: 'a3',
+      status: 'ORDER_CREATED',
+      currentPriceCents: '15000',
+      winnerDisplayName: '',
+      winnerId: 'winner-id',
+      timeline: [
+        { seq: 1, eventType: 'BID_ACCEPTED', payload: '{"userId":"bid-user","displayName":"","amountCents":"11000"}', eventHash: 'aaa', prevHash: '000' },
+        { seq: 2, eventType: 'AUCTION_SOLD', payload: '{"winnerId":"sold-user","amountCents":"15000"}', eventHash: 'bbb', prevHash: 'aaa' },
+      ],
+      chainVerified: true,
+      eventsHash: 'ccc',
+    };
+
+    const renderResult = render(<MobileEvidence evidence={evidence} />);
+    expect(renderResult.container.textContent).toContain('拍卖状态: ORDER_CREATED · 成交方: sold-user');
   });
 });

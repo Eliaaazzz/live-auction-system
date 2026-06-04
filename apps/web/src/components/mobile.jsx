@@ -21,6 +21,12 @@ const DEMO_LEADERS = [
   { userId: 'u5', displayName: 'Echo🌙',        cents: '12200000', avatarBg: 'linear-gradient(135deg,#10b981,#059669)' },
 ];
 
+function normalizeDisplayName(value, fallback) {
+  if (typeof value === 'string' && value.trim() !== '') return value;
+  if (typeof fallback === 'string' && fallback.trim() !== '') return fallback;
+  return undefined;
+}
+
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   remainingMs = 30000,
@@ -604,7 +610,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           prev: e.prevHash || '0000000000000000',
           hash: e.eventHash || '',
           extendCount: p.extendCount ?? undefined,
-          winner: p.displayName ?? p.winnerId ?? undefined,
+          winner: normalizeDisplayName(p.displayName, p.winnerId),
         };
       })
     : EVIDENCE_EVENTS;
@@ -630,9 +636,11 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
   const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+  const evidenceMode = isWired ? (evidence.auctionMode || 'first_price') : 'first_price';
+  const settlementModeLabel = evidenceMode === 'second_price' ? '二价拍 · 赢者付次高价' : '一价拍 · 赢者出价';
   const soldEventWinner = events.slice().reverse().find((ev) => ev.type === 'AUCTION_SOLD' && ev.winner)?.winner;
   const topWinner = isWired
-    ? (evidence.winnerDisplayName ?? soldEventWinner ?? evidence.winnerId ?? '—')
+    ? (normalizeDisplayName(evidence.winnerDisplayName, soldEventWinner ?? evidence.winnerId) ?? '—')
     : (events.find((ev) => ev.winner)?.winner ?? '—');
 
   const showHint = (msg) => {
@@ -807,6 +815,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
               {isWired ? `拍卖状态: ${evidence.status || '—'}` : '拍卖状态: SOLD'}
               {topWinner !== '—' ? ` · 成交方: ${topWinner}` : ''}
+            </div>
+            <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
+              结算规则：{settlementModeLabel}
             </div>
           </div>
           <div style={{ textAlign: 'right' }}>

@@ -175,6 +175,14 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 	if _, ok := raw["durationSec"]; ok {
 		hasDurationSec = true
 	}
+	hasMode := false
+	if _, ok := raw["mode"]; ok {
+		hasMode = true
+	}
+	hasAuctionMode := false
+	if _, ok := raw["auctionMode"]; ok {
+		hasAuctionMode = true
+	}
 	hasExtendWindow := false
 	if _, ok := raw["extendWindowSec"]; ok {
 		hasExtendWindow = true
@@ -198,6 +206,12 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			}
 			rules.StartPriceCents = parsed
 		}
+	} else if cents, ok := raw["startPriceCents"]; ok {
+		parsed, err := parseJSONCents(cents)
+		if err != nil {
+			return rules, errors.New("invalid startPriceCents")
+		}
+		rules.StartPriceCents = parsed
 	}
 	if !hasStep {
 		if cents, ok := raw["stepCents"]; ok {
@@ -207,6 +221,12 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			}
 			rules.IncrementCents = parsed
 		}
+	} else if cents, ok := raw["incrementCents"]; ok {
+		parsed, err := parseJSONCents(cents)
+		if err != nil {
+			return rules, errors.New("invalid incrementCents")
+		}
+		rules.IncrementCents = parsed
 	}
 	if !hasCapPrice {
 		if cents, ok := raw["capCents"]; ok {
@@ -216,6 +236,12 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			}
 			rules.CapPriceCents = parsed
 		}
+	} else if cents, ok := raw["capPriceCents"]; ok {
+		parsed, err := parseJSONCents(cents)
+		if err != nil {
+			return rules, errors.New("invalid capPriceCents")
+		}
+		rules.CapPriceCents = parsed
 	}
 
 	if !hasDurationSec {
@@ -229,6 +255,13 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			}
 			rules.DurationSec = parsed / 1000
 		}
+	}
+	if rawValue, ok := raw["durationSec"]; ok {
+		parsed, err := parseJSONInt64(rawValue)
+		if err != nil {
+			return rules, errors.New("invalid durationSec")
+		}
+		rules.DurationSec = parsed
 	}
 
 	if rawValue, ok := raw["extendWindowSec"]; ok {
@@ -253,6 +286,19 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			return rules, errors.New("invalid maxExtensions")
 		}
 		rules.MaxExtensions = parsed
+	}
+	if hasAuctionMode {
+		parsed, err := parseJSONString(raw["auctionMode"])
+		if err != nil {
+			return rules, errors.New("invalid auctionMode")
+		}
+		rules.AuctionMode = parsed
+	} else if hasMode {
+		parsed, err := parseJSONString(raw["mode"])
+		if err != nil {
+			return rules, errors.New("invalid mode")
+		}
+		rules.AuctionMode = parsed
 	}
 	if ms, ok := raw["antiSnipeWindowMs"]; ok && !hasExtendWindow {
 		parsed, err := parseJSONInt64(ms)
@@ -295,6 +341,18 @@ func parseJSONInt64(v json.RawMessage) (int64, error) {
 		return out, nil
 	}
 	return 0, errors.New("integer expected")
+}
+
+func parseJSONString(v json.RawMessage) (string, error) {
+	trimmed := strings.TrimSpace(string(v))
+	if trimmed == "" || trimmed == "null" {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(v, &s); err != nil {
+		return "", errors.New("string expected")
+	}
+	return s, nil
 }
 
 func parseJSONCents(v json.RawMessage) (model.Cents, error) {
@@ -740,6 +798,11 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	rules, err := s.st.GetRules(r.Context(), aid)
+	if err != nil && err != store.ErrNotFound {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	verified, breakAtSeq, err := s.st.VerifyEvidenceChain(r.Context(), aid)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -757,6 +820,7 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		"currentPriceCents": summary.CurrentPriceCents,
 		"winnerId":          summary.WinnerID,
 		"winnerDisplayName": summary.WinnerDisplayName,
+		"auctionMode":       rules.AuctionModeOrDefault(),
 		"seq":               summary.Seq,
 		"eventsCount":       len(timeline),
 		"factsConfirmed":    a.FactsConfirmed,
