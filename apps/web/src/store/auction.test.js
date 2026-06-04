@@ -226,6 +226,43 @@ describe('applyEvent ROOM_STATE_PATCH', () => {
     expect(s.lastSeq).toBe(5);
     expect(s.currentCents).toBe('12500000');
   });
+
+  it('preserves self-bid UX when ROOM_STATE_PATCH arrives before same-seq direct ack', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    apply(env({
+      seq: 9,
+      type: EventType.ROOM_STATE_PATCH,
+      data: {
+        fromSeq: 7,
+        status: 'LIVE',
+        currentPriceCents: '14500000',
+        winnerId: 'u_me',
+        winnerDisplayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCountDelta: 2,
+        bidCountTotal: 9,
+      },
+    }));
+
+    apply(env({
+      seq: 9,
+      data: {
+        status: 'LIVE',
+        amountCents: '14500000',
+        userId: 'u_me',
+        displayName: 'You',
+        endAtMs: Date.now() + 28_000,
+        bidCount: 9,
+      },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.lastSeq).toBe(9);
+    expect(s.currentCents).toBe('14500000');
+    expect(s.winnerId).toBe('u_me');
+    expect(s.yourCents).toBe('14500000');
+    expect(s.leadingToast).toBe(true);
+  });
 });
 
 describe('applyEvent · cumulative counters (#64-M1/M2)', () => {

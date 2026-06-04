@@ -290,6 +290,13 @@ export const useAuctionStore = create((set, get) => ({
               isYou:       data.winnerId === s.yourUserId,
             });
           }
+          if (freshState && s.yourUserId != null && data.winnerId === s.yourUserId) {
+            next.yourCents = data.currentPriceCents ?? s.currentCents;
+            if (prevWinnerId !== s.yourUserId) {
+              next.leadingToast = true;
+              scheduleClear('leadingToast', 1700);
+            }
+          }
           if (freshState && wasSelf && data.winnerId !== s.yourUserId) {
             next.overtakeBanner = true;
             scheduleClear('overtakeBanner', 5000);
