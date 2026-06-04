@@ -55,6 +55,10 @@ export function LiveRoomRoute() {
   // by (auctionId, userId, clientBidId) doesn't collapse two legit
   // sequential bids. Generated client-side; opaque to the server.
   const handleBid = useCallback((amountCents) => {
+    const s = useAuctionStore.getState();
+    if (s.status !== 'LIVE') return;
+    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return;
+
     const client = clientRef.current;
     if (!client) return;
     const clientBidId = (typeof crypto !== 'undefined' && crypto.randomUUID)
