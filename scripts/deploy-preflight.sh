@@ -325,6 +325,8 @@ record_ws "ws" "/ws" "$REQUIRE_WS_UPGRADE"
 check_https
 if is_true "$REQUIRE_WS_SCHEMA_CHECK"; then
   record_ws_schema "ws_schema" "$WS_PRECHECK_SCHEMA" "$WS_PRECHECK_AUCTION" "$WS_PRECHECK_TOKEN"
+else
+  printf "%s\t%d\t%s\t%s\n" "ws_schema" "0" "-" "$OUT_DIR" >> "$STATUS_FILE"
 fi
 
 if [ -s "$OUT_DIR/metrics/body.txt" ]; then
