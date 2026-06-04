@@ -190,6 +190,7 @@ For a single-shot operator flow, use:
 
 ```sh
 BASE_URL="https://your-domain" \
+  BASE_WS_URL="wss://ws.example.com" \
   make deploy-perf-rehearsal \
   DEPLOY_REHEARSAL_TARGET=500 \
   DEPLOY_REHEARSAL_AID=auc_demo \
@@ -247,6 +248,7 @@ For a non-P0 100k-tier remote lane, use the super-stretch wrapper:
 
 ```sh
 BASE_URL="https://your-domain" \
+  BASE_WS_URL="wss://ws.example.com" \
   make deploy-perf-rehearsal-100k \
   DEPLOY_REHEARSAL_100K_TARGET=100000 \
   DEPLOY_REHEARSAL_100K_AID=auc_demo \

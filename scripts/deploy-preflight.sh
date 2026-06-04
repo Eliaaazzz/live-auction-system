@@ -3,6 +3,9 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 BASE_URL="${BASE_URL%/}"
+BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}"
+BASE_WS_URL="$(printf '%s' "$BASE_WS_URL" | xargs)"
+BASE_WS_URL="${BASE_WS_URL%/}"
 AID="${AID:-auc_demo}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -74,7 +77,7 @@ printf "check\texit_code\thttp_code\tartifact\n" > "$STATUS_FILE"
 
 failures=0
 
-ws_url="$BASE_URL"
+ws_url="$BASE_WS_URL"
 case "$ws_url" in
   https://*) ws_url="wss://${ws_url#https://}" ;;
   http://*) ws_url="ws://${ws_url#http://}" ;;
@@ -84,6 +87,7 @@ esac
   echo "lumen deploy preflight"
   echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "base_url=$BASE_URL"
+  echo "base_ws_url=$BASE_WS_URL"
   echo "derived_ws_url=$ws_url/ws"
   echo "auction_id=$AID"
   echo "out_dir=$OUT_DIR"

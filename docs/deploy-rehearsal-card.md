@@ -46,7 +46,12 @@ larger concurrency tier.
 2. Run deploy preflight.
 
    ```sh
-   BASE_URL="$BASE_URL" AID="${AID:-auc_demo}" OUT_DIR="$PREFLIGHT_OUT" REQUIRE_HTTPS=1 scripts/deploy-preflight.sh
+   BASE_URL="$BASE_URL" \
+   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+   AID="${AID:-auc_demo}" \
+   OUT_DIR="$PREFLIGHT_OUT" \
+   REQUIRE_HTTPS=1 \
+   scripts/deploy-preflight.sh
    ```
 
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
@@ -60,6 +65,7 @@ larger concurrency tier.
 
    ```sh
    BASE_URL="$BASE_URL" \
+     BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
      AID=auc_demo \
      REQUIRE_HTTPS=1 \
      REQUIRE_WS_SCHEMA_CHECK=true \
@@ -84,20 +90,29 @@ larger concurrency tier.
    For the local 500/50 benchmark lane, run `make deploy-perf-rehearsal`.
    For Vickrey/second-price normal-tier remote rehearsal, run:
    ```sh
-   BASE_URL="$BASE_URL" DEPLOY_REHEARSAL_SECOND_PRICE_AID=auc_vickrey make deploy-perf-rehearsal-second-price
+   BASE_URL="$BASE_URL" \
+   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+   DEPLOY_REHEARSAL_SECOND_PRICE_AID=auc_vickrey \
+   make deploy-perf-rehearsal-second-price
    ```
    For the optional super-stretch remote lane, run:
 
    ```sh
-   BASE_URL="$BASE_URL" make deploy-perf-rehearsal-100k
+   BASE_URL="$BASE_URL" \
+   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+   make deploy-perf-rehearsal-100k
    # 若演练房间已是二价（Vickrey）规则，可直接：
-   BASE_URL="$BASE_URL" DEPLOY_REHEARSAL_100K_AID=auc_vickrey make deploy-perf-rehearsal-100k-second-price
+   BASE_URL="$BASE_URL" \
+   BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
+   DEPLOY_REHEARSAL_100K_AID=auc_vickrey \
+   make deploy-perf-rehearsal-100k-second-price
    ```
 
    Copy-paste operator form (recommended):
 
    ```sh
    BASE_URL="https://auction.example.com" \
+  BASE_WS_URL="https://ws.auction.example.com" \
      DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
      DEPLOY_REHEARSAL_100K_TARGET=100000 \
      DEPLOY_REHEARSAL_100K_AID=auc_demo \
