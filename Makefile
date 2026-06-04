@@ -7,7 +7,12 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 WEB_SMOKE_BASE_URL ?= http://localhost:8080
 WEB_SMOKE_BASE_URL := $(strip $(WEB_SMOKE_BASE_URL))
 WEB_SMOKE_BASE_URL := $(patsubst %/,%,${WEB_SMOKE_BASE_URL})
-LOAD_100K_REHEARSAL_ARGS ?= --confirm
+LOAD_100K_REHEARSAL_ARGS ?= --confirm --attempts 1 --json
+LOAD_100K_REHEARSAL_PACK_DIR ?= .load-100k-rehearsals
+LOAD_100K_REHEARSAL_LABEL ?=
+LOAD_100K_REHEARSAL_GATE_TARGET ?= 100000
+LOAD_100K_REHEARSAL_GATE_OUT_DIR ?=
+LOAD_100K_REHEARSAL_CLIENT_SUMMARY ?=
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
 DEPLOY_REHEARSAL_REPORT_ONLY ?= $(REPORT_ONLY)
@@ -36,7 +41,7 @@ DEPLOY_REHEARSAL_100K_BASE_WS_URL ?= $(DEPLOY_REHEARSAL_BASE_WS_URL)
 DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse load-100k-rehearsal-gate verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -361,6 +366,46 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 
 load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
 	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
+
+load-100k-rehearsal-gate: ## #112: run load-100k-rehearsal then gate latest run via remote-perf-gate.sh
+	@label="$(strip $(LOAD_100K_REHEARSAL_LABEL))"; \
+	if [ -z "$$label" ]; then \
+		label="superstretch-$$(date -u +%Y%m%dT%H%M%SZ)"; \
+	fi; \
+	pack_dir="$(strip $(LOAD_100K_REHEARSAL_PACK_DIR))"; \
+	pack_dir="$$pack_dir/$$label"; \
+	run_args="$(strip $(LOAD_100K_REHEARSAL_ARGS))"; \
+	if printf '%s' "$$run_args" | grep -Eq '(^|[[:space:]])--label([[:space:]]|$$)'; then \
+		:; \
+	else \
+		run_args="$$run_args --label $$label"; \
+	fi; \
+	$(MAKE) load-100k-rehearse LOAD_100K_REHEARSAL_ARGS="$$run_args"; \
+	latest_run="$$(ls -1dt "$${pack_dir}/runs/"* 2>/dev/null | head -n 1)"; \
+	if [ -z "$$latest_run" ]; then \
+		echo "FAIL: no run directories in $$pack_dir/runs"; \
+		exit 1; \
+	fi; \
+	if [ ! -f "$$latest_run/metrics.txt" ]; then \
+		echo "FAIL: missing metrics snapshot: $$latest_run/metrics.txt"; \
+		exit 1; \
+	fi; \
+	perf_out="$(strip $(LOAD_100K_REHEARSAL_GATE_OUT_DIR))"; \
+	if [ -z "$$perf_out" ]; then \
+		perf_out="$$pack_dir/perf-gate"; \
+	fi; \
+	if [ -n "$(strip $(LOAD_100K_REHEARSAL_CLIENT_SUMMARY))" ]; then \
+		scripts/remote-perf-gate.sh \
+			--server-metrics "$$latest_run/metrics.txt" \
+			--client-summary "$(strip $(LOAD_100K_REHEARSAL_CLIENT_SUMMARY))" \
+			--target "$(strip $(LOAD_100K_REHEARSAL_GATE_TARGET))" \
+			--out-dir "$$perf_out"; \
+	else \
+		scripts/remote-perf-gate.sh \
+			--server-metrics "$$latest_run/metrics.txt" \
+			--target "$(strip $(LOAD_100K_REHEARSAL_GATE_TARGET))" \
+			--out-dir "$$perf_out"; \
+	fi
 
 load-100k-vickrey: ## 10w rehearsal load using Vickrey / second-price mode.
 	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k

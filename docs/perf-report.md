@@ -292,37 +292,24 @@ PERF_GATE_OUT_DIR=./rehearsal-perf-100k
 如果你必须在外部机器跑 `load-100k`（与 #112 对齐的非本地演练口径），可按以下两步复用同一份 run 包：
 
 ```sh
-# Step 1: 先把超发包跑起来（示例 label 用于后续联动）
-RUN_LABEL="superstretch-$(date +%Y%m%d)"
+# Step 1: 跑 100k 演练并用 label 归档
+RUN_LABEL="superstretch-$(date +%Y%m%dT%H%M%SZ)"
 BASE_URL="https://api.example.com" \
 BASE_WS_URL="wss://ws.example.com" \
-LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label ${RUN_LABEL}" \
-  make load-100k-rehearse
+LOAD_100K_REHEARSAL_LABEL="${RUN_LABEL}" \
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json" \
+  make load-100k-rehearsal-gate
 
-# Step 2: 用本次 run 的 server metrics 触发后端硬闸（client 指标仅作观察证据）
-PACK_DIR=".load-100k-rehearsals/${RUN_LABEL}"
-LATEST_RUN="$(ls -1dt "${PACK_DIR}/runs/"* 2>/dev/null | head -n 1)"
-if [ -n "${LATEST_RUN}" ] && [ -f "${PACK_DIR}/client-summary.json" ]; then \
-  scripts/remote-perf-gate.sh \
-    --server-metrics "${LATEST_RUN}/metrics.txt" \
-    --client-summary "${PACK_DIR}/client-summary.json" \
-    --target 100000 \
-    --out-dir "${PACK_DIR}/perf-gate"; \
-elif [ -n "${LATEST_RUN}" ]; then \
-  scripts/remote-perf-gate.sh \
-    --server-metrics "${LATEST_RUN}/metrics.txt" \
-    --target 100000 \
-    --out-dir "${PACK_DIR}/perf-gate"; \
-else \
-  echo "No run directory found in ${PACK_DIR}/runs"; \
-  exit 1; \
-fi
+# Step 2: 该目标会自动读取 ${RUN_LABEL} 下最近一次 run 的 metrics.txt 做服务端门控；
+# 需要观测证据可补充：
+# LOAD_100K_REHEARSAL_CLIENT_SUMMARY=/path/to/client-summary.json
 ```
 
 说明：
-- `remote-perf-gate.sh` 仅把 `--server-metrics`（如 `/metrics` 导出的 `ackLatencyMs`、`broadcastLatencyMs`）作为后端硬门禁。
-- `--client-summary` 位置可替换为压测工具产物（k6/wsload/jMeter）中的观测指标；缺失时命令仅做服务端门禁。
-- 推荐将 `PACK_DIR` 与 `--label` 固定成统一时间戳，便于演练报告中归档 `manifest.json`、`summary.tsv`、`client-observed.tsv` 与 `server-side gate.tsv`。
+- `load-100k-rehearsal-gate` 会读取最新 run 的 `metrics.txt`，把 `ackLatencyMs` / `broadcastLatencyMs` 等服务端指标做后端硬闸。
+- `LOAD_100K_REHEARSAL_CLIENT_SUMMARY` 可接入 k6/wsload/jMeter 观测摘要；缺失时只做服务端硬闸，仍可通过。
+- 演练打包默认落到 `.load-100k-rehearsals/${RUN_LABEL}`（含 `manifest.json`、`summary.tsv`、`runs/*/metrics.txt`）。
+- `LOAD_100K_REHEARSAL_GATE_OUT_DIR` 可覆盖 `remote-perf-gate.sh` 输出目录（默认同目录下 `perf-gate`）。
 
 ---
 
