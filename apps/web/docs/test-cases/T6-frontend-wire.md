@@ -370,6 +370,7 @@ existing tooling and dev-log links don't break.
 - **预期结果**:
   - DevTools Network:`POST /api/products` 返回 `{ productId: 'prod_…' }`
   - 紧接着 `POST /api/auctions` 返回 `{ auctionId: 'auc_…' }`
+  - `POST /api/auctions` payload `rules` 使用 backend `model.Rules` 字段；`mode` 可省略（默认 `ENGLISH`），二价/Vickrey 使用 `mode: "VICKREY"`
   - 路由跳转到 `/admin/auctions/<auctionId>/vlm`
   - 按钮按下后立即变 disabled + 文字变 "正在创建 …"(busy state)
 - **优先级**:P0

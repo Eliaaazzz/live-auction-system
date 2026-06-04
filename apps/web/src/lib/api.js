@@ -92,8 +92,9 @@ export const api = {
 
   /**
    * Seller: publish auction.
-   *   payload = { productId, rules: { startCents, stepCents, durationMs,
-   *               maxExtensions, antiSnipeWindowMs, capCents?, reserveCents? } }
+   *   payload = { productId, rules: { mode?, startPriceCents, incrementCents,
+   *               capPriceCents?, durationSec, extendWindowSec, extendSec,
+   *               maxExtensions? } } // mode: ENGLISH default; VICKREY = second-price
    */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),
 
