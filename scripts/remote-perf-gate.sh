@@ -13,6 +13,8 @@ owned by the auction backend.
 
 Environment thresholds:
   TARGET_CONNS=${TARGET_CONNS:-500}
+  CLIENT_SUMMARY=${CLIENT_SUMMARY:-${PERF_GATE_CLIENT_SUMMARY:-}}
+    (or PERF_GATE_CLIENT_SUMMARY, kept for Makefile compatibility)
   ACK_P95_MAX_MS=${ACK_P95_MAX_MS:-80}
   BROADCAST_P95_MAX_MS=${BROADCAST_P95_MAX_MS:-150}
   HAMMER_P95_MAX_MS=${HAMMER_P95_MAX_MS:-500}
