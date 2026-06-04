@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
@@ -19,6 +20,12 @@ const timerScanInterval = 100 * time.Millisecond
 // after start_auction committed LIVE), so a transient Redis blip can never
 // orphan an auction from the hammer permanently.
 const reconcileInterval = 5 * time.Second
+const timerErrInternalSuppressionInterval = 30 * time.Minute
+
+var (
+	timerErrInternalSuppressMu    sync.Mutex
+	timerErrInternalSuppressUntil = make(map[string]time.Time)
+)
 
 // runTimerWorker is the single hammer authority: it does NOT depend on the next
 // bid. Every 100ms tick it asks Redis for due auctions (endAtMs <= Redis now) and
@@ -84,11 +91,11 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 	// metric — never block the close.
 	var endAtMs int64
 	if m != nil {
-		if snap, err := st.Snapshot(ctx, aid); err == nil {
-			endAtMs = snap.EndAtMs
+		if _, snapEndAtMs, _, _, err := st.ReconcileSnapshot(ctx, aid); err == nil {
+			endAtMs = snapEndAtMs
 		}
 	}
-	code, endAtMsFromClose, err := st.CloseAuction(ctx, aid)
+	code, errReason, endAtMsFromClose, err := st.CloseAuctionWithReason(ctx, aid)
 	if err != nil {
 		log.Printf("timer close %s: %v", aid, err)
 		return
@@ -129,7 +136,17 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 		// ERROR) instead of 10x/s — bounded log volume + a human-actionable signal. The
 		// underlying corruption still needs an operator; this just stops the storm.
 		// (TC-T3-104)
+		if m != nil {
+			m.TimerErrInternal.Inc()
+			switch errReason {
+			case "key_type":
+				m.TimerErrInternalKeyType.Inc()
+			case "seq_stream_mismatch":
+				m.TimerErrInternalSeqMismatch.Inc()
+			}
+		}
 		log.Printf("ERROR timer close %s: ERR_INTERNAL (state/stream corruption); untracking to stop the 100ms retry loop, reconcile will re-probe in %s", aid, reconcileInterval)
+		markErrInternalSuppression(aid)
 		if err := st.UntrackActive(ctx, aid); err != nil {
 			log.Printf("timer untrack %s after ERR_INTERNAL: %v", aid, err)
 		}
@@ -150,12 +167,15 @@ func reconcileActive(ctx context.Context, st *store.Store, auctioneer *Auctionee
 		return
 	}
 	for _, aid := range aids {
-		snap, err := st.Snapshot(ctx, aid)
+		status, endAtMs, winnerID, currentPriceCents, err := st.ReconcileSnapshot(ctx, aid)
 		if err != nil {
 			continue
 		}
-		if snap.Status == model.StateLive && snap.EndAtMs > 0 {
-			if err := st.TrackActive(ctx, aid, snap.EndAtMs); err != nil {
+		if status == model.StateLive && endAtMs > 0 {
+			if isErrInternalSuppressed(aid) {
+				continue
+			}
+			if err := st.TrackActive(ctx, aid, endAtMs); err != nil {
 				log.Printf("timer reconcile track %s: %v", aid, err)
 			}
 			// T7 §4.2: piggyback on the existing 5s reconcile sweep to
@@ -164,8 +184,28 @@ func reconcileActive(ctx context.Context, st *store.Store, auctioneer *Auctionee
 			// firing it every reconcile is safe and free (no Redis
 			// read; uses last-seen-bid from the in-memory cache).
 			if auctioneer != nil {
-				auctioneer.OnTickStall(ctx, aid, snap.WinnerID, snap.CurrentPriceCents)
+				auctioneer.OnTickStall(ctx, aid, winnerID, currentPriceCents)
 			}
 		}
 	}
+}
+
+func isErrInternalSuppressed(aid string) bool {
+	timerErrInternalSuppressMu.Lock()
+	defer timerErrInternalSuppressMu.Unlock()
+	expireAt, ok := timerErrInternalSuppressUntil[aid]
+	if !ok {
+		return false
+	}
+	if time.Now().After(expireAt) {
+		delete(timerErrInternalSuppressUntil, aid)
+		return false
+	}
+	return true
+}
+
+func markErrInternalSuppression(aid string) {
+	timerErrInternalSuppressMu.Lock()
+	defer timerErrInternalSuppressMu.Unlock()
+	timerErrInternalSuppressUntil[aid] = time.Now().Add(timerErrInternalSuppressionInterval)
 }

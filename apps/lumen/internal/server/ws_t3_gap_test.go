@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
 
@@ -121,6 +122,7 @@ func TestT3CloseDueErrInternalUntracks(t *testing.T) {
 	st := fullStore(t)
 	ctx := context.Background()
 	aid := fmt.Sprintf("test_errinternal_%d", time.Now().UnixNano())
+	m := metrics.New()
 	stateK := fmt.Sprintf("auction:{%s}:state", aid)
 	t.Cleanup(func() {
 		c := context.Background()
@@ -144,7 +146,18 @@ func TestT3CloseDueErrInternalUntracks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	closeDue(ctx, st, aid, nil)
+	before := m.TimerErrInternal.Load()
+	closeDue(ctx, st, aid, m)
+
+	if got := m.TimerErrInternal.Load() - before; got != 1 {
+		t.Fatalf("timer err internal counter delta=%d want=1", got)
+	}
+	if got := m.TimerErrInternalSeqMismatch.Load() - before; got != 1 {
+		t.Fatalf("timer err internal seq mismatch counter delta=%d want=1", got)
+	}
+	if got := m.TimerErrInternalKeyType.Load(); got != 0 {
+		t.Fatalf("timer err internal key type counter should stay 0, got=%d", got)
+	}
 
 	if inActive(t, st, aid) {
 		t.Fatal("closeDue must untrack on ERR_INTERNAL to stop the 100ms retry loop (TC-T3-104)")
@@ -152,5 +165,99 @@ func TestT3CloseDueErrInternalUntracks(t *testing.T) {
 	// the auction is untouched otherwise — still LIVE (no terminal write on ERR_INTERNAL).
 	if snap, _ := st.Snapshot(ctx, aid); snap.Status != model.StateLive {
 		t.Fatalf("status=%s want LIVE (ERR_INTERNAL must not write a terminal)", snap.Status)
+	}
+}
+
+func TestT3CloseDueErrInternalKeyTypeCounter(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_errinternal_keytype_%d", time.Now().UnixNano())
+	m := metrics.New()
+	stateK := fmt.Sprintf("auction:{%s}:state", aid)
+	streamK := fmt.Sprintf("auction:{%s}:events", aid)
+	lbK := fmt.Sprintf("auction:{%s}:leaderboard", aid)
+	t.Cleanup(func() {
+		c := context.Background()
+		st.Redis().Del(c, stateK, streamK, lbK, fmt.Sprintf("auction:{%s}:dedupe:u", aid))
+		_ = st.UntrackActive(c, aid)
+	})
+
+	if code, err := st.FreezeRules(ctx, aid, "seller_x", reconcileRules()); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: %s %v", code, err)
+	}
+	if code, _, err := st.StartAuction(ctx, aid, 3600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: %s %v", code, err)
+	}
+	if !inActive(t, st, aid) {
+		t.Fatal("precondition: StartAuction should have tracked the auction")
+	}
+	// Corrupt the leaderboard type to force close_auction.lua key_type branch:
+	// state is still a hash, stream is still a stream, but lb_key should be zset.
+	if err := st.Redis().Del(ctx, lbK).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Redis().Set(ctx, lbK, "bad-leaderboard", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Redis().HSet(ctx, stateK, "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	before := m.TimerErrInternal.Load()
+	beforeSeq := m.TimerErrInternalSeqMismatch.Load()
+	beforeKeyType := m.TimerErrInternalKeyType.Load()
+	closeDue(ctx, st, aid, m)
+
+	if got := m.TimerErrInternal.Load() - before; got != 1 {
+		t.Fatalf("timer err internal counter delta=%d want=1", got)
+	}
+	if got := m.TimerErrInternalKeyType.Load() - beforeKeyType; got != 1 {
+		t.Fatalf("timer err internal key type counter delta=%d want=1", got)
+	}
+	if got := m.TimerErrInternalSeqMismatch.Load() - beforeSeq; got != 0 {
+		t.Fatalf("timer err internal seq mismatch counter delta=%d want=0", got)
+	}
+
+	if inActive(t, st, aid) {
+		t.Fatal("closeDue must untrack on ERR_INTERNAL to stop the 100ms retry loop (TC-T3-104)")
+	}
+}
+
+func TestT3CloseDueErrInternalReconcileSuppressed(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_errinternal_suppressed_%d", time.Now().UnixNano())
+	m := metrics.New()
+	stateK := fmt.Sprintf("auction:{%s}:state", aid)
+	t.Cleanup(func() {
+		c := context.Background()
+		st.Redis().Del(c, stateK, fmt.Sprintf("auction:{%s}:events", aid))
+		_ = st.UntrackActive(c, aid)
+		timerErrInternalSuppressMu.Lock()
+		delete(timerErrInternalSuppressUntil, aid)
+		timerErrInternalSuppressMu.Unlock()
+	})
+
+	if code, err := st.FreezeRules(ctx, aid, "seller_x", reconcileRules()); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: %s %v", code, err)
+	}
+	if code, _, err := st.StartAuction(ctx, aid, 3600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: %s %v", code, err)
+	}
+	if !inActive(t, st, aid) {
+		t.Fatal("precondition: StartAuction should have tracked the auction")
+	}
+	if err := st.Redis().HSet(ctx, stateK, "seq", 5, "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	closeDue(ctx, st, aid, m)
+	if inActive(t, st, aid) {
+		t.Fatal("closeDue must untrack on ERR_INTERNAL")
+	}
+
+	reconcileActive(ctx, st, nil)
+	if inActive(t, st, aid) {
+		t.Fatal("reconcileActive must skip auctions recently suppressed after ERR_INTERNAL")
 	}
 }
