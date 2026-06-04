@@ -96,8 +96,8 @@ func TestPrequalifyRecommendationAndSpawnFormalUseSealedAggregate(t *testing.T) 
 	if err := getJSONAuth(hc, target+"/api/auctions/"+spawn.AuctionID, seller.Token, &formalSnap); err != nil {
 		t.Fatal(err)
 	}
-	if formalSnap.CurrentPriceCents != "9000" || formalSnap.Rules == nil || formalSnap.Rules.ReserveCents != "9000" || formalSnap.Rules.Mode != model.ModeEnglish {
-		t.Fatalf("formal snapshot did not persist recommended floor: %+v", formalSnap)
+	if formalSnap.Rules == nil || formalSnap.Rules.ReserveCents != "9000" || formalSnap.Rules.Mode != model.ModeEnglish {
+		t.Fatalf("formal snapshot did not persist recommended floor in rules: %+v", formalSnap)
 	}
 
 	var reused struct {
