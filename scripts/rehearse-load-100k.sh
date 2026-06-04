@@ -106,9 +106,12 @@ is_true() {
 normalize_auction_mode() {
   local mode="${1:-}"
   mode="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+  mode="$(printf '%s' "$mode" | xargs)"
   mode="${mode//-/_}"
   mode="$(printf '%s' "$mode" | tr -s '[:space:]' '_')"
-  mode="${mode//__/_}"
+  mode="$(printf '%s' "$mode" | tr -s '_')"
+  mode="${mode##_}"
+  mode="${mode%_}"
   case "$mode" in
     ""|"first"|"first_price"|"firstprice")
       echo "first_price"
