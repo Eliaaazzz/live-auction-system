@@ -413,13 +413,17 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]any, len(items))
 	for i, it := range items {
+		winnerName := strings.TrimSpace(it.WinnerName)
+		if winnerName == "" && it.WinnerID != "" {
+			winnerName = it.WinnerID
+		}
 		out[i] = map[string]any{
 			"id":                it.ID,
 			"title":             it.ProductName,
 			"status":            it.Status,
 			"currentPriceCents": strconv.FormatInt(it.CurrentPriceCents, 10),
 			"winnerId":          it.WinnerID,
-			"winnerName":        it.WinnerName,
+			"winnerName":        winnerName,
 			"createdAt":         it.CreatedAt,
 			"updatedAt":         it.UpdatedAt,
 		}
@@ -859,9 +863,13 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 			if json.Unmarshal(e.Payload, &p) == nil {
 				out.CurrentPriceCents = p.AmountCents
 				if p.UserID != "" {
-					winnerNames[p.UserID] = p.DisplayName
+					winnerDisplayName := strings.TrimSpace(p.DisplayName)
+					if winnerDisplayName == "" {
+						winnerDisplayName = p.UserID
+					}
+					winnerNames[p.UserID] = winnerDisplayName
 					out.WinnerID = p.UserID
-					out.WinnerDisplayName = p.DisplayName
+					out.WinnerDisplayName = winnerDisplayName
 				}
 			}
 		case model.TypeAuctionSold:
@@ -871,6 +879,9 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 				out.CurrentPriceCents = p.AmountCents
 				out.WinnerID = p.WinnerID
 				out.WinnerDisplayName = winnerNames[p.WinnerID]
+				if out.WinnerDisplayName == "" && p.WinnerID != "" {
+					out.WinnerDisplayName = p.WinnerID
+				}
 			}
 		case model.TypeAuctionNoBid:
 			out.Status = model.StateNoBid
@@ -890,6 +901,9 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 		out.CurrentPriceCents = strconv.FormatInt(int64(order.AmountCents), 10)
 		out.WinnerID = order.BuyerID
 		out.WinnerDisplayName = order.BuyerName
+		if out.WinnerDisplayName == "" {
+			out.WinnerDisplayName = order.BuyerID
+		}
 	}
 	return out
 }

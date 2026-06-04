@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/url"
 	"testing"
@@ -14,6 +15,8 @@ type auctionListItem struct {
 	Title             string `json:"title"`
 	Status            string `json:"status"`
 	CurrentPriceCents string `json:"currentPriceCents"`
+	WinnerID          string `json:"winnerId"`
+	WinnerName        string `json:"winnerName"`
 }
 
 func TestHandleListAuctionsRequiresAuth(t *testing.T) {
@@ -110,5 +113,55 @@ func TestHandleListAuctionsFiltersByStatus(t *testing.T) {
 	}
 	if got, want := onlyCancelled[0].ID, aid1; got != want {
 		t.Fatalf("cancelled[0].id=%s want %s", got, want)
+	}
+}
+
+func TestHandleListAuctionsUsesWinnerIDWhenWinnerNameIsBlank(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	ctx := context.Background()
+
+	seller, err := devLogin(hc, target, "List Seller Fallback", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auctionID, err := createAuction(hc, target, seller.Token, productID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winner, err := devLogin(hc, target, "List Winner Fallback", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	winnerDisplay := "   "
+	t.Cleanup(func() {
+		if _, err := srv.st.DB().ExecContext(ctx, `UPDATE users SET nickname = ? WHERE id = ?`, "List Winner Fallback", winner.UserID); err != nil {
+			t.Logf("cleanup winner nickname: %v", err)
+		}
+	})
+	if _, err := srv.st.DB().ExecContext(ctx, `UPDATE users SET nickname = ? WHERE id = ?`, winnerDisplay, winner.UserID); err != nil {
+		t.Fatalf("set blank winner nickname: %v", err)
+	}
+	if _, err := srv.st.DB().ExecContext(ctx, `UPDATE auctions SET winner_id = ?, current_price_cents = ?, updated_at = ? WHERE id = ?`, winner.UserID, 12000, time.Now().UTC(), auctionID); err != nil {
+		t.Fatalf("set auction winner fields: %v", err)
+	}
+
+	var out []auctionListItem
+	if err := getJSONAuth(hc, target+"/api/auctions?status=DRAFT", seller.Token, &out); err != nil {
+		t.Fatalf("auctions list: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("len(out)=%d want 1", len(out))
+	}
+	if got, want := out[0].WinnerID, winner.UserID; got != want {
+		t.Fatalf("winnerId=%s want %s", got, want)
+	}
+	if got, want := out[0].WinnerName, winner.UserID; got != want {
+		t.Fatalf("winnerName=%q want %q", got, want)
 	}
 }
