@@ -24,6 +24,7 @@ DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER ?= 1
 DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP ?= 1
 DEPLOY_REHEARSAL_100K_REPORT_ONLY ?= $(DEPLOY_REHEARSAL_REPORT_ONLY)
 DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS ?= $(DEPLOY_REHEARSAL_REQUIRE_HTTPS)
+DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID ?= $(DEPLOY_REHEARSAL_SECOND_PRICE_AID)
 DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK ?= 0
 DEPLOY_REHEARSAL_WS_SCHEMA ?= 1
 DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN ?=
@@ -441,7 +442,8 @@ deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with �
 		PERF_GATE_OUT_DIR="$(PERF_GATE_OUT_DIR)"
 
 deploy-perf-rehearsal-100k-second-price: ## #112: remote super-stretch target on 已配置二价拍卖的 10万并发演练
-	@$(MAKE) deploy-perf-rehearsal-100k
+	@$(MAKE) deploy-perf-rehearsal-100k \
+		DEPLOY_REHEARSAL_100K_AID="$(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID)"
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \

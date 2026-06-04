@@ -104,7 +104,7 @@ larger concurrency tier.
    # 若演练房间已是二价（Vickrey）规则，可直接：
    BASE_URL="$BASE_URL" \
    BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
-   DEPLOY_REHEARSAL_100K_AID=auc_vickrey \
+   DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
    make deploy-perf-rehearsal-100k-second-price
    ```
 
@@ -130,8 +130,8 @@ larger concurrency tier.
    ```
 
    For 100k/2k/4-shards Vickrey checks, drive the rehearsal itself on auctions
-   that are already configured with second-price rules (`rules.mode: VICKREY`, or
-   legacy `auctionMode: second_price`);
+   that are already configured with second-price rules (`rules.mode: VICKREY`, `rules.mode: vickrey`,
+   or legacy `auctionMode: second_price` / `auctionMode: vickrey`);
    `deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
    not inject bid mode itself.
 
