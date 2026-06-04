@@ -183,6 +183,17 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label 
 
 便于后续并发证明归档。
 
+如果演练场已确认 schema 版本，也可把 `ws-schema-precheck.mjs` 一并并入同一跑批：
+
+```bash
+  # 注意：--base-ws-url 传「WebSocket base」即可，不要再附带 /ws（脚本会自动拼接）
+  LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --ws-precheck --base-ws-url wss://ws.example.com" \
+    make load-100k-rehearse
+```
+
+如需显示固定版本号，可加 `WS_PRECHECK_SCHEMA=<n>`（缺省从 `SCHEMA_VERSION` 读取）；如需 Token 鉴权场景，可再加 `WS_PRECHECK_TOKEN=<token>` 与 `WS_PRECHECK_TIMEOUT_MS=<ms>`；如需强制用某个拍卖做前置检查可加 `--ws-precheck-auction <auction-id>`。  
+`--ws-precheck` 也可独立运行（不加 `--catchup-smoke` 时只做 schema 前置校验、并产出 `runs/<run-id>/ws-schema-precheck.log`）。
+
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
 If you perform a public remote rehearsal for a distributed run, execute the
@@ -273,8 +284,45 @@ BASE_URL="https://your-domain" \
   DEPLOY_REHEARSAL_100K_HAMMER_P95_MAX_MS=2000 \
   DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS=3000 \
   PERF_GATE_CLIENT_SUMMARY=./client-summary.json \
-  PERF_GATE_OUT_DIR=./rehearsal-perf-100k
+PERF_GATE_OUT_DIR=./rehearsal-perf-100k
 ```
+
+### 外部压测机 100k 演练（server-side SLO 门控）速查清单
+
+如果你必须在外部机器跑 `load-100k`（与 #112 对齐的非本地演练口径），可按以下两步复用同一份 run 包：
+
+```sh
+# Step 1: 先把超发包跑起来（示例 label 用于后续联动）
+RUN_LABEL="superstretch-$(date +%Y%m%d)"
+BASE_URL="https://api.example.com" \
+BASE_WS_URL="wss://ws.example.com" \
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label ${RUN_LABEL}" \
+  make load-100k-rehearse
+
+# Step 2: 用本次 run 的 server metrics 触发后端硬闸（client 指标仅作观察证据）
+PACK_DIR=".load-100k-rehearsals/${RUN_LABEL}"
+LATEST_RUN="$(ls -1dt "${PACK_DIR}/runs/"* 2>/dev/null | head -n 1)"
+if [ -n "${LATEST_RUN}" ] && [ -f "${PACK_DIR}/client-summary.json" ]; then \
+  scripts/remote-perf-gate.sh \
+    --server-metrics "${LATEST_RUN}/metrics.txt" \
+    --client-summary "${PACK_DIR}/client-summary.json" \
+    --target 100000 \
+    --out-dir "${PACK_DIR}/perf-gate"; \
+elif [ -n "${LATEST_RUN}" ]; then \
+  scripts/remote-perf-gate.sh \
+    --server-metrics "${LATEST_RUN}/metrics.txt" \
+    --target 100000 \
+    --out-dir "${PACK_DIR}/perf-gate"; \
+else \
+  echo "No run directory found in ${PACK_DIR}/runs"; \
+  exit 1; \
+fi
+```
+
+说明：
+- `remote-perf-gate.sh` 仅把 `--server-metrics`（如 `/metrics` 导出的 `ackLatencyMs`、`broadcastLatencyMs`）作为后端硬门禁。
+- `--client-summary` 位置可替换为压测工具产物（k6/wsload/jMeter）中的观测指标；缺失时命令仅做服务端门禁。
+- 推荐将 `PACK_DIR` 与 `--label` 固定成统一时间戳，便于演练报告中归档 `manifest.json`、`summary.tsv`、`client-observed.tsv` 与 `server-side gate.tsv`。
 
 ---
 
