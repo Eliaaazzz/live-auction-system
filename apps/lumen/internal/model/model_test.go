@@ -184,6 +184,10 @@ func TestRulesValidate(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("valid rules rejected: %v", err)
 	}
+	okVickrey := Rules{Mode: ModeVickrey, StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000, DurationSec: 60}
+	if err := okVickrey.Validate(); err != nil {
+		t.Fatalf("VICKREY rules rejected: %v", err)
+	}
 	// cap==0 means no ceiling — valid.
 	noCap := ok
 	noCap.CapPriceCents = 0
@@ -203,6 +207,7 @@ func TestRulesValidate(t *testing.T) {
 		"negative cap":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: -1, DurationSec: 60},
 		"cap equals start":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10000, DurationSec: 60},
 		"cap below start":     {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 9000, DurationSec: 60},
+		"bad mode":            {Mode: "sealed", StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 12000, DurationSec: 60},
 		"money over max":      {StartPriceCents: MaxMoneyCents + 1, IncrementCents: 1000, DurationSec: 60},
 		"cap over max":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: MaxMoneyCents + 1, DurationSec: 60},
 		"zero duration":       {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 0},
