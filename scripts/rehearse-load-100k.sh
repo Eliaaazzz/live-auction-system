@@ -40,6 +40,7 @@ Options:
   --ws-precheck-timeout-ms N
   --up                 run `make up` before first attempt if health check fails
   --down               stop stack after all attempts finish
+  --cleanup-load       run `lumen cleanup-load --auction <ids>` after each attempt
   --observers N        override LOAD_OBSERVERS (default: 100000)
   --bidders N          override LOAD_BIDDERS (default: 2000)
   --shards N           override LOAD_SHARDS (default: 4)
@@ -75,6 +76,8 @@ CONFIRM="${CONFIRM:-0}"
 OUTPUT_JSON="${OUTPUT_JSON:-0}"
 RUN_CATCHUP_SMOKE="${RUN_CATCHUP_SMOKE:-0}"
 RUN_WS_SCHEMA_PRECHECK="${RUN_WS_SCHEMA_PRECHECK:-${REQUIRE_WS_SCHEMA_CHECK:-0}}"
+RUN_CLEANUP_LOAD="${RUN_CLEANUP_LOAD:-0}"
+DOCKER_COMPOSE_CMD="${DOCKER_COMPOSE_CMD:-}"
 WS_PRECHECK_SCHEMA="${WS_PRECHECK_SCHEMA:-${SCHEMA_VERSION:-1}}"
 WS_PRECHECK_TOKEN="${WS_PRECHECK_TOKEN:-${DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN:-}}"
 WS_PRECHECK_TIMEOUT_MS="${WS_PRECHECK_TIMEOUT_MS:-8000}"
@@ -154,7 +157,7 @@ normalize_auction_mode() {
     ""|"first"|"first_price"|"firstprice"|"english")
       echo "first_price"
       ;;
-    "second"|"second_price"|"secondprice"|"vickrey")
+    "second"|"second_price"|"secondprice"|"vickrey"|"auction2"|"2")
       echo "second_price"
       ;;
     *)
@@ -192,6 +195,18 @@ as_bool01() {
 
 is_positive_int() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+detect_docker_compose_cmd() {
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker compose"
+    return
+  fi
+  if command -v docker-compose >/dev/null 2>&1; then
+    DOCKER_COMPOSE_CMD="docker-compose"
+    return
+  fi
+  die "docker compose is required for --cleanup-load (install docker compose plugin or docker-compose)"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -241,6 +256,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --up)
       ENSURE_UP=1
+      shift
+      ;;
+    --cleanup-load)
+      RUN_CLEANUP_LOAD=1
       shift
       ;;
     --down)
@@ -352,7 +371,7 @@ fi
 LOAD_AUCTION_MODE_NORMALIZED="$(normalize_auction_mode "${LOAD_AUCTION_MODE:-}")"
 if [ -n "${LOAD_AUCTION_MODE:-}" ] && ! is_supported_auction_mode "$LOAD_AUCTION_MODE_NORMALIZED"; then
   echo "invalid --auction-mode '${LOAD_AUCTION_MODE}'."
-  echo "supported: first_price (ENGLISH, first, firstprice, first price, english), second_price (second, secondprice, second price, vickrey, VICKREY)."
+  echo "supported: first_price (ENGLISH, first, firstprice, first price, english), second_price (second, secondprice, second price, vickrey, VICKREY, auction2, 2)."
   exit 2
 fi
 
@@ -690,6 +709,19 @@ while (( run_idx < ATTEMPTS )); do
     if (( observer_read_errors > 0 )) || (( seq_gap_count > 0 )) || (( backpressure_force_close > 0 )) || (( run_panic > 0 )); then
       run_status="FAIL"
     fi
+  fi
+
+  if [[ "$RUN_CLEANUP_LOAD" == "1" ]] && [ -n "${auction_ids:-}" ]; then
+    if [[ -z "$DOCKER_COMPOSE_CMD" ]]; then
+      detect_docker_compose_cmd
+    fi
+    cleanup_log="${run_dir}/cleanup-load.log"
+    set +e
+    if ! $DOCKER_COMPOSE_CMD exec -T lumen /lumen cleanup-load --auction "$auction_ids" > "$cleanup_log" 2>&1; then
+      run_status="FAIL"
+      echo "run ${run_idx}: cleanup-load failed for auction_ids=${auction_ids} (see ${cleanup_log})"
+    fi
+    set -e
   fi
 
   total_read_errors=$((total_read_errors + observer_read_errors))
