@@ -492,6 +492,9 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 			dto := rules.RoomSnapshotRules()
 			snap.Rules = &dto
 		}
+		if snap.CurrentPriceCents == "" && (snap.Status == model.StateDraft || snap.Status == model.StateScheduled) {
+			snap.CurrentPriceCents = strconv.FormatInt(int64(rules.StartPriceCents), 10)
+		}
 	} else if snap.Rules == nil {
 		if rerr == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "rules not found")
