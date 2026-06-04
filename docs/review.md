@@ -4,6 +4,18 @@
 
 Review this branch for production readiness of the high-fanout room broadcast path.
 
+Do not mark the single-room 10k fanout claim production-ready until the live Locust gate below has actually passed against a LIVE auction on the public target.
+
+## Current Status
+
+- Branch head: `e546164` (`fix(web): keep large-room patch activity hot`).
+- Current PR body explicitly keeps the single-room 10k claim behind a real public Locust gate.
+- Follow-up P1 fixes from strict review are implemented:
+  - `ROOM_STATE_PATCH` preserves self-bid UX when it arrives before the same-seq direct `BID_ACCEPTED` ack.
+  - Large-room `ROOM_STATE_PATCH.bidCountDelta` contributes to frontend bid activity, ticker rows, and leaderboard refresh cadence.
+- Public target probe from this environment returned HTTP 200 for `/healthz`, `/metrics`, and `/`.
+- Real single-room 10k Locust has not been run in this round because it still needs an existing LIVE `AUCTION_ID` or a production-safe seller/setup path.
+
 ## Scope
 
 Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis Stream as the authoritative bid path, while coalescing public room UI updates into `ROOM_STATE_PATCH` frames after a room crosses the configured viewer threshold.
@@ -40,6 +52,20 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 - Anti-snipe fanout: folds `AUCTION_EXTENDED` into pending patches for large rooms.
 - Test gaps: `TestT4EvidenceAfterHammer` and `TestT8HammerLatencyObservation` now pass; T4 test projection is isolated from shared local persistence workers before replaying its Stream.
 - Round 3 closure: direct `BID_ACCEPTED` reducer now honors Lua `bidCount`; `TestT8HammerLatencyObservation` untracks its auction before forcing it due so another harness timer cannot steal the close; coalesced load smoke forces the threshold down and asserts `roomStatePatches`, `roomStatePatchBids`, patch latency samples, `seqGap=0`, and `backpressureForceClose=0`; terminal events clear coalescer `bidTotals`.
+- Round 4 closure: `ROOM_STATE_PATCH` now handles the patch-before-direct-ack interleaving for the current bidder, and `LiveRoomRoute` treats patch deltas as live bid activity so large-room observers do not lose heat, ticker, or leaderboard refresh signals.
+
+## Live 10k Gate
+
+The production-readiness claim remains blocked until a real single-room public run produces evidence that satisfies all of these checks:
+
+- `direct_ack` p95 below 80 ms.
+- `roomStatePatch` p95 below 150 ms.
+- `seqGap=0`.
+- `backpressureForceClose=0`.
+- `roomStatePatches > 0`.
+- `roomStatePatchBids > 0`.
+- observer read errors are 0.
+- sampled observers converge to the authoritative high-watermark, or catch up through `ROOM_JOIN(lastSeq)`.
 
 ## Files Changed
 
@@ -60,6 +86,8 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 - `apps/web/docs/test-cases/T6-frontend-wire.md`
 - `apps/web/src/lib/types.js`
 - `apps/web/src/lib/ws.test.js`
+- `apps/web/src/routes/LiveRoomRoute.jsx`
+- `apps/web/src/routes/LiveRoomRoute.test.jsx`
 - `apps/web/src/store/auction.js`
 - `apps/web/src/store/auction.test.js`
 - `docs/ws-protocol.md`
@@ -68,6 +96,11 @@ Implemented a large-room WebSocket fanout mode that keeps Redis Lua and Redis St
 
 ## Verification Run
 
+- `npm test -- --run src/store/auction.test.js src/routes/LiveRoomRoute.test.jsx`
+- `npm test -- --run src/lib/ws.test.js`
+- `npm test -- --run src/store/auction.test.js src/routes/LiveRoomRoute.test.jsx src/lib/ws.test.js`
+- `npm run build`
+- PowerShell probe: `/healthz`, `/metrics`, and `/` on `http://115.191.76.40` returned HTTP 200.
 - `go test ./apps/lumen/internal/model ./apps/lumen/internal/metrics ./apps/lumen/internal/server -run "Test(RoomStatePatch|HiddenEnvelope|NewEnvelope|T8MetricsEndpointShape|T8LoadReportBreaches|BroadcastFanout|T8LoadSmokeRunsAndPasses|T8LoadSmokeExercisesRoomStatePatch|T4EvidenceAfterHammer|T8HammerLatencyObservation)$" -count=1`
 - `go test ./apps/lumen/internal/server -run "TestT4EvidenceAfterHammer|TestT8HammerLatencyObservation" -count=1 -v`
 - `go test ./apps/lumen/internal/server -run "TestT8HammerLatencyObservation" -count=5`
