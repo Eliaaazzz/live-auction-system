@@ -21,6 +21,7 @@ import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
 import { api } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
+import { resolveAuctionMode } from '../lib/auctionMode.js';
 
 const USE_MOCK = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'true') === 'true';
 const WS_BASE  = import.meta.env.VITE_WS_BASE || undefined;
@@ -129,7 +130,7 @@ export function LiveRoomRoute() {
         if (!alive) return;
         useAuctionStore.getState().setSelfUserId(session.userId);
       } catch (e) {
-        console.error('[LiveRoom] dev-login failed', e);
+        console.error('[LiveRoom] session bootstrap failed', e);
         useAuctionStore.getState().setConn('reconnecting', { reason: 'login-failed' });
         return;
       }
@@ -139,15 +140,19 @@ export function LiveRoomRoute() {
         const snap = await api.getAuction(auctionId);
         if (!alive) return;
         const rules = snap.rules ?? {};
+        const initialAuctionMode = resolveAuctionMode(rules) ?? 'first_price';
+        const currentPriceCents = snap.currentPriceCents ?? '0';
+        const initialReserveCents = rules.reserveCents ?? snap.reserveCents ?? currentPriceCents;
+        const initialStartCents = rules.startPriceCents ?? initialReserveCents;
         store.init({
           auctionId,
           status:       snap.status,
-          currentCents: snap.currentPriceCents ?? '0',
-          startCents:   snap.startCents ?? rules.reserveCents ?? '0',
+          currentCents: currentPriceCents,
+          startCents:   snap.startCents ?? initialStartCents,
           stepCents:    rules.stepCents ?? snap.stepCents ?? '500000',
           capCents:     hasOwn(rules, 'capCents') ? rules.capCents : (snap.capCents ?? null),
-          reserveCents: rules.reserveCents ?? snap.reserveCents ?? '0',
-          auctionMode:  rules.auctionMode ?? 'first_price',
+          reserveCents: initialReserveCents,
+          auctionMode:  initialAuctionMode,
           endAtMs:      snap.endAtMs ?? null,
           winnerId:     snap.winnerId ?? null,
           yourUserId:   useAuctionStore.getState().yourUserId,
