@@ -139,11 +139,11 @@ larger concurrency tier.
    ```sh
    SERVER_METRICS="${DEPLOY_REHEARSAL_OUT_DIR:-.deploy-rehearsal}/metrics/body.txt" \
    TARGET_CONNS="${DEPLOY_REHEARSAL_100K_TARGET:-${DEPLOY_REHEARSAL_TARGET:-500}}" \
-   CLIENT_SUMMARY="${CLIENT_SUMMARY:-}" \
+   PERF_GATE_CLIENT_SUMMARY="${PERF_GATE_CLIENT_SUMMARY:-}" \
    PERF_GATE_OUT_DIR="${PERF_GATE_OUT_DIR:-${DEPLOY_REHEARSAL_OUT_DIR:-.deploy-rehearsal}/perf-gate}" \
    scripts/remote-perf-gate.sh \
      --server-metrics "$SERVER_METRICS" \
-     ${CLIENT_SUMMARY:+--client-summary "$CLIENT_SUMMARY"} \
+     ${PERF_GATE_CLIENT_SUMMARY:+--client-summary "$PERF_GATE_CLIENT_SUMMARY"} \
      --target "$TARGET_CONNS" \
      --out-dir "${PERF_GATE_OUT_DIR}"
    ```
