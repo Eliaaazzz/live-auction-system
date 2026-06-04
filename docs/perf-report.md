@@ -115,10 +115,10 @@ Super-stretch（100k / 2k / 4-shards）目标：
 LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 ```
 说明：100k 演练默认会做非 P0 自检门槛；仅在明确确认时执行（见 `LOAD_100K_CONFIRM`）。
-如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=second_price`（或 `LOAD_AUCTION_MODE=vickrey`）。
+如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=VICKREY`（或 `LOAD_AUCTION_MODE=second_price` / `LOAD_AUCTION_MODE=second price` / `LOAD_AUCTION_MODE=vickrey`）。
 `load-100k` 也支持该变量，`load-100k-rehearse` 会沿用该变量透传，例如：
 ```bash
-LOAD_AUCTION_MODE=second_price LOAD_100K_CONFIRM=1 make load-100k
+LOAD_AUCTION_MODE=VICKREY LOAD_100K_CONFIRM=1 make load-100k
 make load-second-price
 make load-smoke-second-price
 ```
@@ -130,7 +130,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 ```
 对应脚本写法可直接加参数：
 ```bash
-LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode second_price" \
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
   make load-100k-rehearse
 ```
 如需在低资源上临时放行前置检查，可设置 `LOAD_100K_ALLOW_LOW_ULIMIT=1` / `true` / `yes` / `on`（仅限明确知道风险时）
