@@ -61,8 +61,9 @@ Output:
   .load-100k-rehearsals/<label>/
     manifest.json
     summary.tsv
-    runs/run-01-*.log
-    runs/run-01-*.metrics
+    runs/<run-id>/load.log
+    runs/<run-id>/metrics.txt
+    可选 runs/<run-id>/catchup.log、runs/<run-id>/ws-schema-precheck.log
 EOF
 }
 
@@ -111,7 +112,7 @@ SCRIPT_HOST="$(hostname 2>/dev/null || echo unknown)"
 SCRIPT_UTC_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 is_true() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
     1|true|yes|on)
       return 0
       ;;
@@ -119,6 +120,22 @@ is_true() {
       return 1
       ;;
   esac
+}
+
+is_false() {
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
+    0|false|no|off)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+die() {
+  echo "error: $*" >&2
+  exit 2
 }
 
 normalize_auction_mode() {
@@ -154,12 +171,20 @@ is_supported_auction_mode() {
   esac
 }
 
+is_non_negative_int() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
 as_bool01() {
   if is_true "$1"; then
     echo 1
-  else
-    echo 0
+    return
   fi
+  if is_false "$1"; then
+    echo 0
+    return
+  fi
+  die "invalid boolean value '$1'; expected 0/1/true/false/yes/no/on/off"
 }
 
 is_positive_int() {
@@ -376,29 +401,63 @@ if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]] && ! is_positive_int "$WS_PRECHECK_TIM
   exit 1
 fi
 
-if [[ "$ATTEMPTS" -le 0 ]]; then
-  echo "--attempts must be > 0"
+if ! is_positive_int "$ATTEMPTS"; then
+  echo "--attempts must be a positive integer"
   exit 1
 fi
 
-if [[ "$INTERVAL" -lt 0 ]]; then
-  echo "--interval must be >= 0"
+if ! is_non_negative_int "$INTERVAL"; then
+  echo "--interval must be a non-negative integer"
   exit 1
 fi
 
-if ! [[ "$LOAD_OBSERVERS" =~ ^[0-9]+$ && "$LOAD_BIDDERS" =~ ^[0-9]+$ && "$LOAD_SHARDS" =~ ^[0-9]+$ ]]; then
-  echo "LOAD_* numeric overrides must be integers"
+if ! is_positive_int "$LOAD_OBSERVERS"; then
+  echo "--observers must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_BIDDERS"; then
+  echo "--bidders must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_SHARDS"; then
+  echo "--shards must be a positive integer"
   exit 1
 fi
 
-if ! [[ "$LOAD_DURATION_SEC" =~ ^[0-9]+$ && "$LOAD_AUCTION_DUR_SEC" =~ ^[0-9]+$ && "$LOAD_BID_INTERVAL_MS" =~ ^[0-9]+$ ]]; then
-  echo "duration/interval overrides must be integers"
+if ! is_positive_int "$LOAD_DURATION_SEC"; then
+  echo "--duration must be a positive integer"
   exit 1
 fi
-
-if ! [[ "$LOAD_ACK_P95_MS" =~ ^[0-9]+$ && "$LOAD_BROADCAST_P95_MS" =~ ^[0-9]+$ && "$LOAD_HAMMER_P95_MS" =~ ^[0-9]+$ \
-  && "$LOAD_SCRIPT_P99_MS" =~ ^[0-9]+$ && "$LOAD_CATCHUP_P95_MS" =~ ^[0-9]+$ && "$LOAD_OBSERVER_STAGGER_MS" =~ ^[0-9]+$ ]]; then
-  echo "timing overrides must be integers"
+if ! is_positive_int "$LOAD_AUCTION_DUR_SEC"; then
+  echo "--auction-dur must be a positive integer"
+  exit 1
+fi
+if ! is_non_negative_int "$LOAD_BID_INTERVAL_MS"; then
+  echo "--bid-interval must be a non-negative integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_ACK_P95_MS"; then
+  echo "--ack-p95 must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_BROADCAST_P95_MS"; then
+  echo "--broadcast-p95 must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_HAMMER_P95_MS"; then
+  echo "--hammer-p95 must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_SCRIPT_P99_MS"; then
+  echo "--script-p99 must be a positive integer"
+  exit 1
+fi
+if ! is_positive_int "$LOAD_CATCHUP_P95_MS"; then
+  echo "--catchup-p95 must be a positive integer"
+  exit 1
+fi
+if ! is_non_negative_int "$LOAD_OBSERVER_STAGGER_MS"; then
+  echo "--observer-stagger must be a non-negative integer"
   exit 1
 fi
 
@@ -431,13 +490,13 @@ PACK_DIR="${PACK_DIR_BASE}/${PACK_LABEL}"
 mkdir -p "$PACK_DIR/runs"
 summary_file="$PACK_DIR/summary.tsv"
 manifest_file="$PACK_DIR/manifest.json"
+preflight_report_dir="$PACK_DIR/preflight"
+preflight_status_file="$preflight_report_dir/status.tsv"
+preflight_status_exists=0
 
 auction_mode_label="${LOAD_AUCTION_MODE_NORMALIZED}"
 auction_mode_label="${auction_mode_label:-first_price}"
-echo -n "#run\tstatus\trc\tauction_id\tauction_ids\tauction_mode\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc" > "$summary_file"
-if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
-  echo -n -e "\tws_precheck_status\tws_precheck_rc" >> "$summary_file"
-fi
+echo -n "#run\tstatus\trc\trun_dir\tlog_file\tmetrics_file\tauction_id\tauction_ids\tauction_mode\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc\tcatchup_log\tws_precheck_status\tws_precheck_rc\tws_precheck_log" > "$summary_file"
 echo >> "$summary_file"
 
 HEALTHZ_URL="${BASE_URL}/healthz"
@@ -448,7 +507,9 @@ echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARD
 
 LOAD_100K_CONFIRM=1 \
 LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}" \
+LOAD_100K_PREFLIGHT_OUT_DIR="$preflight_report_dir" \
 make load-100k-preflight
+if [ -f "$preflight_status_file" ]; then preflight_status_exists=1; fi
 
 if [[ "$ENSURE_UP" == "1" ]] && ! curl -sf "$HEALTHZ_URL" >/dev/null 2>&1; then
   echo ">>> bringing stack up before rehearsal"
@@ -689,24 +750,18 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s' \
-      "$run_idx" "$run_status" "$rc" "$auction_id" "${auction_ids:-}" \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
+      "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "$auction_id" "${auction_ids:-}" \
       "$auction_mode_label" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
-    if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
-      printf '\t%s\t%s' "$ws_precheck_status" "$ws_precheck_rc" >> "$summary_file"
-    fi
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s' \
-      "$run_idx" "$run_status" "$rc" "-" "-" \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
+      "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "-" "-" \
       "$auction_mode_label" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
-    if [[ "$RUN_WS_SCHEMA_PRECHECK" == "1" ]]; then
-      printf '\t%s\t%s' "$ws_precheck_status" "$ws_precheck_rc" >> "$summary_file"
-    fi
+      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   fi
 
@@ -722,6 +777,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg run "${run_idx}" \
     --arg status "$run_status" \
     --arg rc "$rc" \
+    --arg run_dir "$run_dir" \
     --arg auction_id "$auction_id" \
     --arg auction_ids "$auction_ids" \
     --arg observer_read_errors "$observer_read_errors" \
@@ -747,7 +803,7 @@ while (( run_idx < ATTEMPTS )); do
     --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
     --arg log "$log_file" \
     --arg metrics "$metrics_file" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), run_dir: $run_dir, auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -823,10 +879,13 @@ jq -cn \
   --arg ws_precheck_token_set "${WS_PRECHECK_TOKEN:+true}" \
   --arg ws_precheck_auction "$ws_precheck_auction_resolved" \
   --arg base_ws_url "$BASE_WS_URL" \
+  --arg preflight_dir "$preflight_report_dir" \
+  --arg preflight_status "$preflight_status_file" \
+  --arg preflight_status_exists "$preflight_status_exists" \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, preflight: {dir: $preflight_dir, status_file: (if $preflight_status_exists == "1" then $preflight_status else "-"), status_exists: (($preflight_status_exists|tonumber) == 1)}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"

@@ -5,6 +5,8 @@ BASE_URL="${BASE_URL:-http://localhost:8080}"
 BASE_URL="${BASE_URL%/}"
 BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}"
 BASE_WS_URL="$(printf '%s' "$BASE_WS_URL" | xargs)"
+BASE_WS_URL="${BASE_WS_URL%/ws/}"
+BASE_WS_URL="${BASE_WS_URL%/ws}"
 BASE_WS_URL="${BASE_WS_URL%/}"
 AID="${AID:-auc_demo}"
 REQUIRE_HTTPS="${REQUIRE_HTTPS:-0}"
@@ -24,8 +26,13 @@ STATUS_FILE="$OUT_DIR/status.tsv"
 MANIFEST_FILE="$OUT_DIR/manifest.txt"
 METRICS_SUMMARY="$OUT_DIR/metrics-summary.json"
 
+die() {
+  echo "error: $*" >&2
+  exit 2
+}
+
 is_true() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
     1|true|yes|on)
       return 0
       ;;
@@ -36,7 +43,7 @@ is_true() {
 }
 
 normalize_bool() {
-  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
+  case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)" in
     1|true|yes|on)
       echo 1
       ;;
@@ -44,13 +51,13 @@ normalize_bool() {
       echo 0
       ;;
     *)
-      echo "$1"
+      die "invalid boolean value '$1'; expected 0/1/true/false/yes/no/on/off"
       ;;
     esac
 }
 
 is_positive_int() {
-  case "$1" in
+  case "$(printf '%s' "$1" | xargs)" in
     ''|*[!0-9]*)
       return 1
       ;;
@@ -66,6 +73,10 @@ REQUIRE_HTTPS="$(normalize_bool "$REQUIRE_HTTPS")"
 ALLOW_FAILURE="$(normalize_bool "$ALLOW_FAILURE")"
 if is_true "$REQUIRE_WS_SCHEMA_CHECK" && ! is_positive_int "$WS_PRECHECK_SCHEMA"; then
   echo "invalid WS_PRECHECK_SCHEMA=$WS_PRECHECK_SCHEMA; must be positive integer when REQUIRE_WS_SCHEMA_CHECK=1"
+  exit 1
+fi
+if ! is_positive_int "$MAX_TIME"; then
+  echo "invalid MAX_TIME=$MAX_TIME; must be positive integer"
   exit 1
 fi
 if [ -z "$WS_PRECHECK_AUCTION" ]; then

@@ -13,11 +13,22 @@ LOAD_100K_REHEARSAL_LABEL ?=
 LOAD_100K_REHEARSAL_GATE_TARGET ?= 100000
 LOAD_100K_REHEARSAL_GATE_OUT_DIR ?=
 LOAD_100K_REHEARSAL_CLIENT_SUMMARY ?=
+LOAD_100K_REHEARSAL_EVAL_REPORT ?=
+LOAD_100K_REHEARSAL_EVAL_PACK_DIR ?= $(LOAD_100K_REHEARSAL_PACK_DIR)
+LOAD_100K_REHEARSAL_EVAL_LABEL ?=
+LOAD_100K_REHEARSAL_EVAL_ARGS ?=
+LOAD_100K_REHEARSAL_SECOND_PRICE_REPORT ?=
+VERIFY_SECOND_PRICE_PAYMENT_TOKEN ?=
+VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE ?=
+LOAD_100K_PREFLIGHT_OUT_DIR ?=
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
 DEPLOY_REHEARSAL_REPORT_ONLY ?= $(REPORT_ONLY)
 DEPLOY_REHEARSAL_SECOND_PRICE_AID ?= $(DEPLOY_REHEARSAL_AID)
 DEPLOY_REHEARSAL_SECOND_PRICE_REPORT_ONLY ?= $(DEPLOY_REHEARSAL_REPORT_ONLY)
+DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY ?= 0
+DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN ?= $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN)
+DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE ?= $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE)
 DEPLOY_REHEARSAL_REQUIRE_HTTPS ?= 0
 DEPLOY_REHEARSAL_100K_TARGET ?= 100000
 DEPLOY_REHEARSAL_100K_AID ?= $(DEPLOY_REHEARSAL_AID)
@@ -39,11 +50,17 @@ DEPLOY_REHEARSAL_100K_WS_SCHEMA ?= $(DEPLOY_REHEARSAL_WS_SCHEMA)
 DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN ?= $(DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN)
 DEPLOY_REHEARSAL_100K_BASE_WS_URL ?= $(DEPLOY_REHEARSAL_BASE_WS_URL)
 DEPLOY_REHEARSAL_METRICS ?=
+DEPLOY_REHEARSAL_CHECK_OUT_DIR ?=
+DEPLOY_REHEARSAL_CHECK_REPORT ?=
+DEPLOY_REHEARSAL_CHECK_FORMAT ?= tsv
+DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse load-100k-rehearsal-gate verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare web-smoke-antisnipe web-smoke-antisnipe-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-single-room load-100k-single-room-vickrey load-100k-single-room-second-price load-100k-single-room-rehearse load-100k-single-room-second-price-rehearse load-100k-single-room-vickrey-rehearse load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearsal load-100k-rehearsal-second-price load-100k-rehearsal-gate load-100k-rehearsal-gate-second-price load-100k-eval deploy-perf-rehearsal-100k-second-price \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
-        demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
+        deploy-rehearsal-check deploy-rehearsal-check-md \
+        demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat load-100k-eval \
+        verify verify-evidence build vet test fmt guard review-scripts-check
 
 WEB_SMOKE_AUTO_UP ?= 0
 WEB_SMOKE_AUTO_SEED ?= 0
@@ -317,33 +334,79 @@ load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSO
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
 
 load-100k-preflight: ## Super-stretch rehearsal preflight (advisory checks before very large-scale run).
-	@confirm="$(printf '%s' "$${LOAD_100K_CONFIRM:-0}" | tr '[:upper:]' '[:lower:]')"; \
-	if [ "$$confirm" != "1" ] && [ "$$confirm" != "true" ] && [ "$$confirm" != "yes" ] && [ "$$confirm" != "on" ]; then \
+	@normalize_bool() { \
+	  v="$$(printf '%s' "$$1" | tr '[:upper:]' '[:lower:]' | xargs)"; \
+	  case "$$v" in \
+	    1|true|yes|on) echo 1 ;; \
+	    0|false|no|off|"") echo 0 ;; \
+	    *) echo "__invalid__" ;; \
+	  esac; \
+	}; \
+	confirm="$$(normalize_bool "$${LOAD_100K_CONFIRM:-0}")"; \
+	if [ "$$confirm" = "__invalid__" ]; then \
+		echo "invalid LOAD_100K_CONFIRM value '$${LOAD_100K_CONFIRM:-0}' (expected 1/true/yes/on/0/false/no/off)"; \
+		exit 1; \
+	fi; \
+	allow_low_ulimit="$$(normalize_bool "$${LOAD_100K_ALLOW_LOW_ULIMIT:-0}")"; \
+	if [ "$$allow_low_ulimit" = "__invalid__" ]; then \
+		echo "invalid LOAD_100K_ALLOW_LOW_ULIMIT value '$${LOAD_100K_ALLOW_LOW_ULIMIT:-0}' (expected 1/true/yes/on/0/false/no/off)"; \
+		exit 1; \
+	fi; \
+	allow_low_ephemeral="$$(normalize_bool "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}")"; \
+	if [ "$$allow_low_ephemeral" = "__invalid__" ]; then \
+		echo "invalid LOAD_100K_ALLOW_LOW_EPHEMERAL value '$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}' (expected 1/true/yes/on/0/false/no/off)"; \
+		exit 1; \
+	fi; \
+	if [ "$$confirm" != "1" ]; then \
 		echo "load-100k is an enterprise-scale rehearsal, not a P0 gate. Set LOAD_100K_CONFIRM=1 (or true/yes/on) to run this target."; \
 		exit 1; \
-	fi
-	@echo "Super-stretch rehearsal preflight (non-P0)."
-	@echo "- file-descriptor hard limit (ulimit -n): $$(ulimit -n)"
-	@ulimit_n=$$(ulimit -n 2>/dev/null || echo 0); \
-	allow_low_ulimit="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_ULIMIT:-0}" | tr '[:upper:]' '[:lower:]')"; \
-	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$$allow_low_ulimit" != "1" ] && [ "$$allow_low_ulimit" != "true" ] && [ "$$allow_low_ulimit" != "yes" ] && [ "$$allow_low_ulimit" != "on" ]; then \
+	fi; \
+	preflight_out_dir="$(strip $(LOAD_100K_PREFLIGHT_OUT_DIR))"; \
+	preflight_report=""; \
+	preflight_fail=0; \
+	ulimit_n="$$(ulimit -n 2>/dev/null || echo 0)"; \
+	ip_local_port_range="<unavailable>"; \
+	ip_local_port_count=""; \
+	\
+	echo "Super-stretch rehearsal preflight (non-P0)."; \
+	echo "- file-descriptor hard limit (ulimit -n): $$ulimit_n"; \
+	if [ "$$ulimit_n" != "unlimited" ] && [ "$$ulimit_n" -lt 131072 ] && [ "$$allow_low_ulimit" != "1" ]; then \
 		echo "FAIL: ulimit -n=$$ulimit_n is below 131072 (super-stretch threshold). Set LOAD_100K_ALLOW_LOW_ULIMIT=1 (or true/yes/on) to proceed anyway."; \
+		preflight_fail=1; \
+	fi; \
+	echo "- backlog/port window:"; \
+	if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then \
+		ip_local_port_range="$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
+		echo "  ip_local_port_range=$$ip_local_port_range"; \
+		port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
+		port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
+		ip_local_port_count=$$((port_high - port_low + 1)); \
+		echo "  ip_local_port_count=$$ip_local_port_count"; \
+		if [ "$$ip_local_port_count" -lt 50000 ] && [ "$$allow_low_ephemeral" != "1" ]; then \
+			echo "FAIL: ephemeral range only $$ip_local_port_count ports, expected >=50000 for 100k rehearsal. Set LOAD_100K_ALLOW_LOW_EPHEMERAL=1 (or true/yes/on) to continue anyway."; \
+			preflight_fail=1; \
+		fi; \
+	else \
+		echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
+	fi; \
+	if [ -n "$$preflight_out_dir" ]; then \
+		preflight_report="$$preflight_out_dir/status.tsv"; \
+		mkdir -p "$$preflight_out_dir"; \
+		{ \
+			echo "timestamp=$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
+			echo "confirm=$$confirm"; \
+			echo "load_100k_confirm=$${LOAD_100K_CONFIRM:-0}"; \
+			echo "ulimit_n=$$ulimit_n"; \
+			echo "allow_low_ulimit=$$allow_low_ulimit"; \
+			echo "allow_low_ephemeral=$$allow_low_ephemeral"; \
+			echo "ip_local_port_range=$$ip_local_port_range"; \
+			echo "ip_local_port_count=$${ip_local_port_count:-}"; \
+			echo "result=$$(if [ $$preflight_fail -eq 0 ]; then echo PASS; else echo FAIL; fi)"; \
+		} > "$$preflight_report"; \
+	fi; \
+	if [ $$preflight_fail -ne 0 ]; then \
 		exit 1; \
 	fi
-	@echo "- backlog/port window:" \
-	&& if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then \
-				echo "  ip_local_port_range=$$(cat /proc/sys/net/ipv4/ip_local_port_range)"; \
-				port_low=$$(awk '{print $$1}' /proc/sys/net/ipv4/ip_local_port_range); \
-				port_high=$$(awk '{print $$2}' /proc/sys/net/ipv4/ip_local_port_range); \
-				port_count=$$((port_high - port_low + 1)); \
-				allow_low_ephemeral="$(printf '%s' "$${LOAD_100K_ALLOW_LOW_EPHEMERAL:-0}" | tr '[:upper:]' '[:lower:]')"; \
-				if [ "$$port_count" -lt 50000 ] && [ "$$allow_low_ephemeral" != "1" ] && [ "$$allow_low_ephemeral" != "true" ] && [ "$$allow_low_ephemeral" != "yes" ] && [ "$$allow_low_ephemeral" != "on" ]; then \
-					echo "FAIL: ephemeral range only $$port_count ports, expected >=50000 for 100k rehearsal. Set LOAD_100K_ALLOW_LOW_EPHEMERAL=1 (or true/yes/on) to continue anyway."; \
-					exit 1; \
-				fi; \
-		else \
-			echo "  ip_local_port_range=unavailable (container/non-Linux host)"; \
-		fi
 
 load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders + 4 shards.
 	@echo "Super-stretch rehearsal for 100k concurrency requires dedicated load sender + high-limits host."
@@ -364,8 +427,44 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 		LOAD_RESET_METRICS=1 \
 		$(MAKE) load
 
+load-100k-single-room: ## Super-stretch single-room rehearsal (non-P0): 100k observer + 2k bidders, 1 room.
+		@echo "Super-stretch rehearsal for 100k single-room concurrency requires dedicated load sender + high-limits host."
+		@$(MAKE) load-100k-preflight
+	@LOAD_OBSERVERS=100000 \
+		LOAD_BIDDERS=2000 \
+		LOAD_SHARDS=1 \
+		LOAD_DURATION_SEC=60 \
+		LOAD_BID_INTERVAL_MS=100 \
+		LOAD_ACK_P95_MS=800 \
+		LOAD_BROADCAST_P95_MS=1000 \
+		LOAD_HAMMER_P95_MS=2000 \
+		LOAD_SCRIPT_P99_MS=20 \
+		LOAD_CATCHUP_P95_MS=3000 \
+		LOAD_AUCTION_DUR_SEC=3600 \
+		LOAD_OBSERVER_STAGGER_MS=0 \
+		LOAD_RESET_METRICS=1 \
+		$(MAKE) load
+
+load-100k-single-room-second-price: ## 10w single-room super-stretch alias in Vickrey / second-price mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-single-room
+
+load-100k-single-room-vickrey: ## 10w single-room super-stretch alias: Vickrey / second-price mode.
+	@$(MAKE) load-100k-single-room-second-price
+
+load-100k-single-room-rehearse: ## 10w single-room super-stretch evidence pack in default-first mode.
+	@$(MAKE) load-100k-rehearse LOAD_100K_REHEARSAL_ARGS="$(strip $(LOAD_100K_REHEARSAL_ARGS)) --shards 1"
+
+load-100k-single-room-second-price-rehearse: ## 10w single-room super-stretch evidence pack in second-price mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-single-room-rehearse
+
+load-100k-single-room-vickrey-rehearse: ## 10w single-room super-stretch evidence pack in Vickrey mode.
+	@$(MAKE) load-100k-single-room-second-price-rehearse
+
 load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
 	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
+
+load-100k-rehearsal-second-price: ## 10w non-P0 rehearsal evidence pack in second-price (Vickrey) mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-rehearse
 
 load-100k-rehearsal-gate: ## #112: run load-100k-rehearsal then gate latest run via remote-perf-gate.sh
 	@label="$(strip $(LOAD_100K_REHEARSAL_LABEL))"; \
@@ -406,6 +505,47 @@ load-100k-rehearsal-gate: ## #112: run load-100k-rehearsal then gate latest run 
 			--target "$(strip $(LOAD_100K_REHEARSAL_GATE_TARGET))" \
 			--out-dir "$$perf_out"; \
 	fi
+	eval_report="$$pack_dir/eval-load-100k-rehearsal-summary.tsv"; \
+	echo "super-stretch evaluation report: $$eval_report"; \
+	$(MAKE) load-100k-eval \
+		LOAD_100K_REHEARSAL_EVAL_LABEL="$$label" \
+		LOAD_100K_REHEARSAL_EVAL_PACK_DIR="$(strip $(LOAD_100K_REHEARSAL_PACK_DIR))" \
+		LOAD_100K_REHEARSAL_EVAL_REPORT="$$eval_report"
+
+load-100k-rehearsal-gate-second-price: ## 10w non-P0 rehearsal + gate in second-price (Vickrey) mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-rehearsal-gate
+
+load-100k-eval: ## Run local summary review (pass/fail) for a load-100k rehearsal pack and emit a fixed summary report.
+	@label="$(strip $(LOAD_100K_REHEARSAL_EVAL_LABEL))"; \
+	pack_dir="$(strip $(LOAD_100K_REHEARSAL_EVAL_PACK_DIR))"; \
+	eval_report="$(strip $(LOAD_100K_REHEARSAL_EVAL_REPORT))"; \
+	if [ -z "$$label" ]; then \
+		pack_dir="$$(ls -1dt "$$pack_dir"/*/ 2>/dev/null | sed -n '1p')"; \
+		if [ -z "$$pack_dir" ]; then \
+			echo "FAIL: no rehearsal packs in $$pack_dir"; \
+			exit 1; \
+		fi; \
+	else \
+		pack_dir="$$pack_dir/$$label"; \
+	fi; \
+	if [ -z "$$eval_report" ]; then \
+		eval_report="$$pack_dir/eval-load-100k-rehearsal-summary.tsv"; \
+	fi; \
+	mkdir -p "$$(dirname "$$eval_report")"; \
+	scripts/eval-load-100k-rehearsal.sh \
+		--pack-dir "$$pack_dir" \
+		--report "$$eval_report" \
+		$(strip $(LOAD_100K_REHEARSAL_EVAL_ARGS)); \
+	second_price_report="$(strip $(LOAD_100K_REHEARSAL_SECOND_PRICE_REPORT))"; \
+	if [ -z "$$second_price_report" ]; then \
+		second_price_report="$$pack_dir/verify-second-price-payment-summary.tsv"; \
+	fi; \
+	scripts/verify-second-price-payment.sh \
+		--pack-dir "$$pack_dir" \
+		--report "$$second_price_report" \
+		$(if $(strip $(BASE_URL)), --base-url "$(strip $(BASE_URL))",) \
+		$(if $(strip $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN)), --token "$(strip $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN))",) \
+		$(if $(strip $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE)), --token-file "$(strip $(VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE))",)
 
 load-100k-vickrey: ## 10w rehearsal load using Vickrey / second-price mode.
 	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k
@@ -465,12 +605,29 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 		REPORT_ONLY="$(DEPLOY_REHEARSAL_REPORT_ONLY)" \
 		scripts/remote-perf-gate.sh --server-metrics "$$server_metrics" --target "$(DEPLOY_REHEARSAL_TARGET)" --out-dir "$$perf_out"; \
 	fi; \
+	if [ "$(DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY)" = "1" ]; then \
+		echo "running second-price settlement verification for $(strip $(DEPLOY_REHEARSAL_SECOND_PRICE_AID))"; \
+		SET_RESULT=0; \
+		set +e; \
+		VERIFY_SECOND_PRICE_PAYMENT_TOKEN="$(strip $(DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN))" \
+		VERIFY_SECOND_PRICE_PAYMENT_TOKEN_FILE="$(strip $(DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE))" \
+		scripts/verify-second-price-payment.sh \
+			--auction-id "$(strip $(DEPLOY_REHEARSAL_SECOND_PRICE_AID))" \
+			--base-url "$(BASE_URL)" \
+			--report "$$out_dir/verify-second-price-payment-summary.tsv"; \
+		SET_RESULT=$$?; \
+		set -e; \
+		if [ "$$SET_RESULT" -ne 0 ]; then \
+			exit "$$SET_RESULT"; \
+		fi; \
+	fi; \
 	echo "rehearsal artifacts: preflight=$$out_dir manifest/status, perf= $$perf_out"
 
 deploy-perf-rehearsal-second-price: ## #112: remote normal target on auction already configured as 2nd-price / Vickrey
 	@$(MAKE) deploy-perf-rehearsal \
 		BASE_URL="$(BASE_URL)" \
 		DEPLOY_REHEARSAL_AID="$(DEPLOY_REHEARSAL_SECOND_PRICE_AID)" \
+		DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
 		DEPLOY_REHEARSAL_REPORT_ONLY="$(DEPLOY_REHEARSAL_SECOND_PRICE_REPORT_ONLY)"
 
 deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with 默认 10万并发门禁参数
@@ -495,7 +652,36 @@ deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with �
 
 deploy-perf-rehearsal-100k-second-price: ## #112: remote super-stretch target on 已配置二价拍卖的 10万并发演练
 	@$(MAKE) deploy-perf-rehearsal-100k \
+		DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
 		DEPLOY_REHEARSAL_100K_AID="$(if $(strip $(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID)),$(DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID),$(DEPLOY_REHEARSAL_100K_AID))"
+
+deploy-rehearsal-check: ## #112: aggregate one rehearsal evidence directory into a single PASS/FAIL closure.
+	@out_dir="$(strip $(DEPLOY_REHEARSAL_CHECK_OUT_DIR))"; \
+	if [ -z "$$out_dir" ]; then \
+		out_dir="$$(ls -1dt .deploy-rehearsal-* 2>/dev/null | head -n 1)"; \
+	fi; \
+	if [ -z "$$out_dir" ] && [ -n "$(strip $(DEPLOY_REHEARSAL_OUT_DIR))" ]; then \
+		out_dir="$(strip $(DEPLOY_REHEARSAL_OUT_DIR))"; \
+	fi; \
+	if [ -z "$$out_dir" ]; then \
+		echo "FAIL: DEPLOY_REHEARSAL_CHECK_OUT_DIR is required (pass latest .deploy-rehearsal-* or DEPLOY_REHEARSAL_OUT_DIR)"; \
+		exit 1; \
+	fi; \
+	if [ ! -d "$$out_dir" ]; then \
+		echo "FAIL: rehearsal output dir not found: $$out_dir"; \
+		exit 1; \
+	fi; \
+	report="$(strip $(DEPLOY_REHEARSAL_CHECK_REPORT))"; \
+	if [ -n "$$report" ]; then \
+		scripts/deploy-rehearsal-closure-check.sh --out-dir "$$out_dir" --report "$$report" --format "$(strip $(DEPLOY_REHEARSAL_CHECK_FORMAT))" $(if $(strip $(DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT)),--second-price-report "$(strip $(DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT))",); \
+	else \
+		scripts/deploy-rehearsal-closure-check.sh --out-dir "$$out_dir" --format "$(strip $(DEPLOY_REHEARSAL_CHECK_FORMAT))" $(if $(strip $(DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT)),--second-price-report "$(strip $(DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT))",); \
+	fi
+
+deploy-rehearsal-check-md: ## #112: markdown-formatted closure report for paste into issues/PRs.
+	@$(MAKE) deploy-rehearsal-check \
+		DEPLOY_REHEARSAL_CHECK_FORMAT=markdown \
+		DEPLOY_REHEARSAL_CHECK_REPORT="$(strip $(DEPLOY_REHEARSAL_CHECK_REPORT))"
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \

@@ -4,6 +4,9 @@ This card turns the deploy, media, and remote performance helpers into one
 operator path for a remote auction rehearsal. It is intended to reduce PR-comment
 hunting during the #112/#121 rehearsal work and keep the evidence boundary clear.
 
+可复用签名模板见：`docs/rehearsal-closure-checklist.md`。
+若直接提审计闭环 issue，可选择 `.github/ISSUE_TEMPLATE/rehearsal-closure.md` 作为模板。
+
 ## Scope
 
 Use this when rehearsing a public or remote Lumen Auction stack before claiming a
@@ -22,6 +25,20 @@ larger concurrency tier.
 > P0 demonstrated tier as the proven 500/50 scenario unless a distributed
 > v100k evidence bundle and verifier pass are attached. Client RTT, WAN latency,
 > video delivery, proxy delay, and runner delay are not backend SLO proof.
+
+Before each run, capture owner/deadline metadata for auditability:
+
+- Owner:
+- Operator deadline:
+- Rehearsal target concurrency:
+- Evidence directory:
+- Hard close conditions (must be satisfied before final close):
+  - preflight: public route checks PASS and manifest/status captured (`manifest.txt`, `status.tsv`, route artifacts)
+  - remote/perf gate: PASS (or explicit FAIL-REPORTED only when report-only)
+  - load/rehearsal pack: `summary.tsv` + `manifest.json` + run `load.log` + `metrics.txt` + health snapshots present
+  - ws schema: schema precheck PASS when required, or explicitly documented as out of scope
+  - replay/consistency: verifier green (`make verify` + `make verify-evidence`) OR documented catchup/ws-precheck pass
+  - evidence: operator note includes exact commit, timestamp, target URL/stack, and hard-fail rationale for skipped gates
 
 ## Preconditions
 
@@ -109,19 +126,27 @@ larger concurrency tier.
    BASE_WS_URL="${BASE_WS_URL:-$BASE_URL}" \
    DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
    make deploy-perf-rehearsal-100k-second-price
+
+   # 二价模式会在演练收尾自动尝试生成核验报告（若提供证据 token）：
+   # ${DEPLOY_REHEARSAL_OUT_DIR}/verify-second-price-payment-summary.tsv
+   # 若脚本 token 与环境不一致，可显式覆盖：
+   DEPLOY_REHEARSAL_SECOND_PRICE_VERIFY=1 \
+   DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN="$TOKEN" \
+   DEPLOY_REHEARSAL_SECOND_PRICE_TOKEN_FILE="$TOKEN_FILE" \
+   make deploy-perf-rehearsal-second-price
    ```
 
    Copy-paste operator form (recommended):
 
    ```sh
    BASE_URL="https://auction.example.com" \
-  BASE_WS_URL="https://ws.auction.example.com" \
+  BASE_WS_URL="wss://ws.auction.example.com" \
      DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
      DEPLOY_REHEARSAL_100K_TARGET=100000 \
      DEPLOY_REHEARSAL_100K_AID=auc_demo \
      DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
-     DEPLOY_REHEARSAL_100K_WS_SCHEMA="2" \
+     DEPLOY_REHEARSAL_100K_WS_SCHEMA="${SCHEMA_VERSION:-2}" \
      DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
      DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
@@ -137,6 +162,21 @@ larger concurrency tier.
    or legacy `auctionMode: second_price` / `auctionMode: vickrey`);
    `deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
    not inject bid mode itself.
+
+   For single-room 100k local rehearsal with second-price mode (for evidence prep
+   before/alongside remote runs), use:
+
+   ```sh
+   LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-single-room-$(date +%Y%m%d) --auction-mode VICKREY --shards 1" \
+     make load-100k-rehearse
+   ```
+
+   or the shorter alias:
+
+   ```sh
+   make load-100k-single-room-second-price-rehearse
+   make load-100k-single-room-vickrey-rehearse
+   ```
 
    Result artifacts are collected in `DEPLOY_REHEARSAL_OUT_DIR` and in `PERF_GATE_OUT_DIR`.
    Keep both paths in the issue/meeting note so evidence is recoverable later.
@@ -187,11 +227,14 @@ larger concurrency tier.
    - preflight `status.tsv`
    - preflight route artifacts
    - server metrics JSON used by the perf gate
+   - local `load-100k-rehearsal` pack 可选项：`preflight/status.tsv`（保存本地门禁检查快照）
    - remote perf gate `summary.md`
    - remote perf gate `gate.tsv`
+   - 若演练为二价（Vickrey / second_price）且有 token：`verify-second-price-payment-summary.tsv`
    - optional `client-summary.json`
    - optional `client-observed.tsv`
    - optional SRS smoke evidence
+   - `summary.tsv` / `manifest.json`（`summary.tsv` 推荐含 `run_dir`、`log_file`、`metrics_file` 便于后续回放路径追踪）
 
 6.1 Run replay/catchup consistency checks when accessible.
 
@@ -207,9 +250,69 @@ larger concurrency tier.
 
    - `catchup` section in `summary.tsv` when `--catchup-smoke` is enabled.
    - `catchup_checks` in `manifest.json` and `runs/<run>/catchup.log` for
-     super-stretch rehearsal packs.
+     super-stretch rehearsal packs（对应 `summary.tsv` 的 `run_dir/catchup_log`）。
    - `ws_precheck` section in `manifest.json` and
-     `runs/<run>/ws-schema-precheck.log` when `--ws-precheck` is enabled.
+     `runs/<run>/ws-schema-precheck.log` when `--ws-precheck` is enabled（对应
+     `summary.tsv` 的 `run_dir/ws_precheck_log`）。
+   - 复盘远程压测建议以 `summary.tsv` 为索引字段：从某行读取 `run_dir` 后直接打开该行的
+     `log_file`、`metrics_file`、`catchup_log`、`ws_precheck_log`，避免按 `run` id 人工拼路径。
+
+   为避免人工逐行核对，可直接用一条脚本或 Make 目标做打点复核：
+
+   ```sh
+   scripts/eval-load-100k-rehearsal.sh \
+     --pack-dir .load-100k-rehearsals/<label> \
+     --report .load-100k-rehearsals/<label>/eval-load-100k-rehearsal-summary.tsv
+
+   # 或
+   LOAD_100K_REHEARSAL_EVAL_LABEL="<label>" \
+   make load-100k-eval
+   ```
+
+   上述 `--report`（或 `LOAD_100K_REHEARSAL_EVAL_REPORT`）会将同样结果固定写入
+   `eval-load-100k-rehearsal-summary.tsv`，便于审阅时直接附证据。
+
+  `make load-100k-eval` 默认也会写入同名文件到目标演练目录，所以只要命令成功就会留下可签名的评估汇总文件。
+   若演练为二价（Vickrey / second_price），建议再产出
+   `scripts/verify-second-price-payment.sh --pack-dir .load-100k-rehearsals/<label>` 的
+   `verify-second-price-payment-summary.tsv`，并与上述 `eval-load-100k-rehearsal-summary.tsv` 一并归档。
+   当 `catchup_checks.enabled=true` 或 `ws_precheck_checks.enabled=true` 时，
+   对应 `catchup_status` / `ws_precheck_status` 会进入硬性 PASS 约束。
+
+6.2 一键闭环汇总（可选）
+
+   演练完成后，如果你只想要一份可复用结论，可运行：
+
+   ```sh
+   DEPLOY_REHEARSAL_CHECK_OUT_DIR="/path/to/.deploy-rehearsal-<timestamp>" \
+   scripts/deploy-rehearsal-closure-check.sh --out-dir "$DEPLOY_REHEARSAL_CHECK_OUT_DIR"
+   ```
+
+   或通过 Make：
+
+   ```sh
+   DEPLOY_REHEARSAL_CHECK_OUT_DIR="/path/to/.deploy-rehearsal-<timestamp>" \
+   DEPLOY_REHEARSAL_CHECK_REPORT=".deploy-rehearsal-<timestamp>/closure-summary.tsv" \
+   make deploy-rehearsal-check
+   # 可选：显式绑定二价结算核对报告路径
+   DEPLOY_REHEARSAL_CHECK_SECOND_PRICE_REPORT=".deploy-rehearsal-<timestamp>/verify-second-price-payment-summary.tsv" \
+   make deploy-rehearsal-check
+
+   # 或直接出可贴 issue 的 Markdown 版：
+   DEPLOY_REHEARSAL_CHECK_OUT_DIR="/path/to/.deploy-rehearsal-<timestamp>" \
+   make deploy-rehearsal-check-md
+   ```
+
+   建议将输出行持久化（示例字段）：`artifact\tstatus\treason\tpath`（TSV）或 Markdown 表格（`make deploy-rehearsal-check-md`），并至少落这几个硬性字段：
+
+   - `deploy_preflight`（必须 `PASS`）
+   - `remote_perf_gate`（`PASS` 或 `PASS-REPORTED`）
+   - `remote_perf_client_observed`（有客户端观测路径时为 `PASS`，否则 `SKIP`）
+   - `load_eval`（存在时必须 `PASS`）
+   - `second_price_payment`（二价场景建议 `PASS`）
+   - `catchup_checks`（如 `manifest.json` 启用时必须 `PASS`）
+   - `ws_precheck`（如 `manifest.json` 启用时必须 `PASS`）
+   - `overall`（最终结论）
 
 7. Run teardown.
 
