@@ -1,0 +1,19 @@
+# Caddy auto-TLS reverse proxy for the Lumen gateway (火山云 prod).
+#
+# $LUMEN_DOMAIN (set in infra/docker-compose.prod.yml from the shell/.env.prod)
+# must be a registered domain whose A record points at this ECS public IP.
+# Caddy then obtains + auto-renews a Let's Encrypt certificate on :443 and
+# transparently forwards the WebSocket Upgrade (so the browser gets wss://).
+#
+# Why Caddy (vs nginx): zero-config ACME/TLS + transparent WS upgrade — fastest
+# path to a valid cert for the demo. Swap for nginx/Volcengine LB if preferred;
+# the only requirement is TLS termination + WS upgrade → lumen:8080.
+
+{$LUMEN_DOMAIN} {
+	encode zstd gzip
+
+	# REST + WebSocket both proxy to lumen; Caddy passes the Upgrade headers
+	# through, so /ws becomes wss:// for free. /healthz + /metrics ride the
+	# same vhost (restrict /metrics at the security-group / firewall if needed).
+	reverse_proxy lumen:8080
+}

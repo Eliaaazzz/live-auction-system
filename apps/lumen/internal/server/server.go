@@ -103,7 +103,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
 	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
+	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
+	mux.HandleFunc("GET /api/auctions/{id}/stream", s.handleGetAuctionStream)
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
@@ -112,6 +114,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
 	mux.HandleFunc("GET /ws", s.handleWS)
 

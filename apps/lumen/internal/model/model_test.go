@@ -53,6 +53,38 @@ func TestHiddenEnvelopeCarriesSchemaVersion(t *testing.T) {
 	}
 }
 
+func FuzzEnvelopeJSONBoundary(f *testing.F) {
+	f.Add(`{"type":"ROOM_JOIN","auctionId":"auc_1","serverTimeMs":1700000000000,"data":{"auctionId":"auc_1","lastSeq":7}}`)
+	f.Add(`{"type":"BID_PLACE","auctionId":"auc_1","requestId":"r1","serverTimeMs":1700000000000,"data":{"clientBidId":"cb1","amountCents":"11000"}}`)
+	f.Add(`{"schemaVersion":1,"type":"BID_ACCEPTED","auctionId":"auc_1","seq":8,"serverTimeMs":1700000000000,"data":{"seq":8,"userId":"u1","displayName":"U","amountCents":"12000","endAtMs":1700000010000,"status":"LIVE","serverTimeMs":1700000000000}}`)
+	f.Add(`{"type":"PING","serverTimeMs":0}`)
+	f.Add(`not-json`)
+
+	f.Fuzz(func(t *testing.T, input string) {
+		var env Envelope
+		if err := json.Unmarshal([]byte(input), &env); err != nil {
+			return // malformed client frames must be rejectable without panics.
+		}
+		out, err := json.Marshal(env)
+		if err != nil {
+			t.Fatalf("marshal decoded envelope: %v", err)
+		}
+		if !json.Valid(out) {
+			t.Fatalf("marshaled envelope is invalid json: %q", out)
+		}
+		if !contains(string(out), `"schemaVersion":1`) {
+			t.Fatalf("marshaled envelope missing schemaVersion: %s", out)
+		}
+		var roundTrip Envelope
+		if err := json.Unmarshal(out, &roundTrip); err != nil {
+			t.Fatalf("round-trip decode: %v\n%s", err, out)
+		}
+		if roundTrip.Type != env.Type || roundTrip.AuctionID != env.AuctionID || roundTrip.RequestID != env.RequestID || roundTrip.Seq != env.Seq {
+			t.Fatalf("round-trip envelope drift: got=%+v want type=%q auction=%q request=%q seq=%d", roundTrip, env.Type, env.AuctionID, env.RequestID, env.Seq)
+		}
+	})
+}
+
 func TestNewEnvelopeMarshalError(t *testing.T) {
 	// a value that cannot be JSON-marshaled surfaces the error.
 	if _, err := NewEnvelope(TypePong, "", 0, make(chan int)); err == nil {
@@ -152,9 +184,9 @@ func TestRulesValidate(t *testing.T) {
 	if err := ok.Validate(); err != nil {
 		t.Fatalf("valid rules rejected: %v", err)
 	}
-	okSecond := Rules{StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000, DurationSec: 60, AuctionMode: AuctionModeSecondPrice}
-	if err := okSecond.Validate(); err != nil {
-		t.Fatalf("second-price rules rejected: %v", err)
+	okVickrey := Rules{Mode: ModeVickrey, StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000, DurationSec: 60}
+	if err := okVickrey.Validate(); err != nil {
+		t.Fatalf("VICKREY rules rejected: %v", err)
 	}
 	// cap==0 means no ceiling — valid.
 	noCap := ok
@@ -175,7 +207,7 @@ func TestRulesValidate(t *testing.T) {
 		"negative cap":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: -1, DurationSec: 60},
 		"cap equals start":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 10000, DurationSec: 60},
 		"cap below start":     {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 9000, DurationSec: 60},
-		"bad auction mode":    {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 12000, DurationSec: 60, AuctionMode: "sealed"},
+		"bad mode":            {Mode: "sealed", StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 12000, DurationSec: 60},
 		"money over max":      {StartPriceCents: MaxMoneyCents + 1, IncrementCents: 1000, DurationSec: 60},
 		"cap over max":        {StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: MaxMoneyCents + 1, DurationSec: 60},
 		"zero duration":       {StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 0},

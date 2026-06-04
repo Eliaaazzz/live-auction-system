@@ -28,6 +28,9 @@ vendor/
 tools/loadtest/.k6-aid
 tools/loadtest/.k6-tokens
 tools/loadtest/.k6-tokens-clean
+.k6-aid-10k
+# Locust bytecode cache (tools/loadtest/locustfile.py)
+__pycache__/
 
 # node / web
 node_modules/

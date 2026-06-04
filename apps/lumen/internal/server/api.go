@@ -119,11 +119,22 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "productId required")
 		return
 	}
+	// Resolve the auction mode's strategy and apply its rule normalization (e.g.
+	// Sudden Death disables anti-snipe) before validation + persistence, so the
+	// stored rules already encode the mode's semantics. A valid-but-not-yet-
+	// enabled mode (e.g. ALL_PAY before its phase lands) is rejected here.
+	mode, ok := modeFor(body.Rules.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "auction mode not available yet: "+model.NormalizeMode(body.Rules.Mode))
+		return
+	}
+	body.Rules = mode.NormalizeRules(body.Rules)
 	if err := body.Rules.Validate(); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	id := "auc_" + newID()
+	s.prepareLiveStreamRules(id, &body.Rules)
 	if err := s.st.CreateAuction(r.Context(), id, body.ProductID, userID, body.Rules, body.FactsConfirmed, string(body.ConfirmedFacts)); err != nil {
 		if err == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "product not found")
@@ -137,6 +148,167 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
+}
+
+// POST /api/auctions/{id}/spawn-formal {rules{}} -> {auctionId, seededStartPriceCents, parentAuctionId}
+// Issue #114 phase 6: a sealed (SEALED_FIRST/VICKREY) PREQUALIFY parent in a
+// terminal state seeds the formal auction's start price from its revealed
+// winning bid. The body's rules.startPriceCents is IGNORED and replaced; every
+// other field comes from the request. The new auction is created in DRAFT for
+// the seller to freeze + start like any other auction.
+func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	parentAID := r.PathValue("id")
+	parent, err := s.st.GetAuction(r.Context(), parentAID)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "parent auction not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if parent.SellerID != userID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
+		return
+	}
+	parentRules, err := s.st.GetRules(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load parent rules: "+err.Error())
+		return
+	}
+	if !model.UsesSealedEngine(parentRules.Mode) || model.NormalizeMode(parentRules.Mode) == model.ModeAllPay {
+		// Pre-qualify expects a sealed REVEAL-style parent (SEALED_FIRST or
+		// VICKREY) whose winning bid is meaningful as a price floor. ALL_PAY's
+		// settlement is in virtual coins and would not seed a real-money floor.
+		writeErr(w, http.StatusBadRequest, "parent must be SEALED_FIRST or VICKREY (got "+model.NormalizeMode(parentRules.Mode)+")")
+		return
+	}
+	// The reveal at close wrote the parent's final price + terminal status to
+	// its Redis state Hash. Read from there — MySQL auctions.status lags the
+	// Lua mutation (the persistence worker projects it asynchronously), so
+	// using GetAuction's status here would race a freshly-hammered parent.
+	snap, err := s.st.Snapshot(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read parent snapshot: "+err.Error())
+		return
+	}
+	if snap.Status != model.StateSold && snap.Status != model.StateOrderCreated {
+		writeErr(w, http.StatusBadRequest, "parent auction is not terminal SOLD (status="+snap.Status+")")
+		return
+	}
+	if snap.CurrentPriceCents == "" || snap.CurrentPriceCents == "0" {
+		writeErr(w, http.StatusBadRequest, "parent has no revealed winning bid to seed from")
+		return
+	}
+	seededStart, perr := strconv.ParseInt(snap.CurrentPriceCents, 10, 64)
+	if perr != nil {
+		writeErr(w, http.StatusInternalServerError, "parse parent price: "+perr.Error())
+		return
+	}
+
+	var body struct {
+		Rules model.Rules `json:"rules"`
+	}
+	if !readJSON(w, r, &body) {
+		return
+	}
+	// Override the start price with the parent's winning bid.
+	body.Rules.StartPriceCents = model.Cents(seededStart)
+	mode, ok := modeFor(body.Rules.Mode)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "auction mode not available yet: "+model.NormalizeMode(body.Rules.Mode))
+		return
+	}
+	body.Rules = mode.NormalizeRules(body.Rules)
+	if err := body.Rules.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	newID := "auc_" + newID()
+	s.prepareLiveStreamRules(newID, &body.Rules)
+	if err := s.st.CreateAuction(r.Context(), newID, parent.ProductID, userID, body.Rules, true, ""); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := s.st.SetParentAuction(r.Context(), newID, parentAID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "link parent: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auctionId":             newID,
+		"parentAuctionId":       parentAID,
+		"seededStartPriceCents": strconv.FormatInt(seededStart, 10),
+	})
+}
+
+// GET /api/auctions/{id}/stream -> seller/admin-only live push material.
+// The public room only receives livePlayUrl from GET /api/auctions/{id}; pushUrl
+// and streamKey stay off public snapshots so video remains display-only and
+// outside the Redis/Lua bid hot path.
+func (s *Server) handleGetAuctionStream(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	if _, ok := s.ownsAuction(w, r, aid, userID); !ok {
+		return
+	}
+	rules, err := s.st.GetRules(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "rules not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	livePlayURL := rules.LivePlayUrl
+	if livePlayURL == "" {
+		livePlayURL = s.livePlayURL(rules.LiveStreamKey)
+	}
+	writeJSON(w, http.StatusOK, struct {
+		AuctionID   string `json:"auctionId"`
+		StreamKey   string `json:"streamKey,omitempty"`
+		PushURL     string `json:"pushUrl,omitempty"`
+		LivePlayURL string `json:"livePlayUrl,omitempty"`
+	}{
+		AuctionID:   aid,
+		StreamKey:   rules.LiveStreamKey,
+		PushURL:     s.livePushURL(rules.LiveStreamKey),
+		LivePlayURL: livePlayURL,
+	})
+}
+
+func (s *Server) prepareLiveStreamRules(aid string, rules *model.Rules) {
+	if rules.LiveStreamKey == "" {
+		rules.LiveStreamKey = "stream_" + newID()
+	}
+	if rules.LivePlayUrl == "" {
+		rules.LivePlayUrl = s.livePlayURL(rules.LiveStreamKey)
+	}
+	_ = aid // keeps the seam explicit if we later switch to deterministic keys.
+}
+
+func (s *Server) livePushURL(streamKey string) string {
+	return joinStreamURL(s.cfg.LivePushURLBase, streamKey, "")
+}
+
+func (s *Server) livePlayURL(streamKey string) string {
+	return joinStreamURL(s.cfg.LivePlayURLBase, streamKey, ".m3u8")
+}
+
+func joinStreamURL(base, streamKey, suffix string) string {
+	if base == "" || streamKey == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(streamKey, "/") + suffix
 }
 
 // GET /api/auctions/{id} -> room snapshot from Redis (404 if unknown).
@@ -159,18 +331,24 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	if snap.Status == "" { // not yet frozen: no Redis state, fall back to MySQL status
 		snap.Status = a.Status
 	}
-	if snap.Rules == nil {
-		rules, err := s.st.GetRules(r.Context(), aid)
-		if err != nil {
-			if err == store.ErrNotFound {
-				writeErr(w, http.StatusNotFound, "rules not found")
-				return
-			}
-			writeErr(w, http.StatusInternalServerError, err.Error())
+	// Rules from MySQL: needed for the pre-freeze snapshot fallback AND for the
+	// live-stream play URL (#121), which rides the REST first-paint — display-only,
+	// deliberately OFF the Redis bid hot path (a frozen snapshot's Rules come from
+	// Redis and don't carry it). One read here (not the hot path) is fine.
+	livePlayURL := ""
+	if rules, rerr := s.st.GetRules(r.Context(), aid); rerr == nil {
+		livePlayURL = rules.LivePlayUrl
+		if snap.Rules == nil {
+			dto := rules.RoomSnapshotRules()
+			snap.Rules = &dto
+		}
+	} else if snap.Rules == nil {
+		if rerr == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "rules not found")
 			return
 		}
-		dto := rules.RoomSnapshotRules()
-		snap.Rules = &dto
+		writeErr(w, http.StatusInternalServerError, rerr.Error())
+		return
 	}
 	// Surface the product (name / image / 介绍) so the room shows the real item
 	// and the VLM page can draft facts from its image. Best-effort: a missing
@@ -182,12 +360,14 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 		ProductName string `json:"productName"`
 		ImageURL    string `json:"imageUrl"`
 		Description string `json:"description"`
+		LivePlayURL string `json:"livePlayUrl,omitempty"`
 	}{
 		RoomSnapshotData: snap,
 		ProductID:        a.ProductID,
 		ProductName:      prod.Name,
 		ImageURL:         prod.ImageURL,
 		Description:      prod.Description,
+		LivePlayURL:      livePlayURL,
 	})
 }
 
@@ -333,6 +513,14 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	var body struct {
+		FactsConfirmed bool            `json:"factsConfirmed"`
+		ConfirmedFacts json.RawMessage `json:"confirmedFacts"`
+	}
+	if err := readJSONOptional(r, &body); err != nil && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "invalid json body")
+		return
+	}
 	aid := r.PathValue("id")
 	a, ok := s.ownsAuction(w, r, aid, userID)
 	if !ok {
@@ -369,6 +557,11 @@ func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
 		if !cur.FactsConfirmed {
 			code = model.CodeErrFacts
 			return nil
+		}
+		if confirmedFacts := strings.TrimSpace(string(body.ConfirmedFacts)); confirmedFacts != "" && confirmedFacts != "null" {
+			if err := s.st.UpdateConfirmedFacts(r.Context(), aid, confirmedFacts); err != nil {
+				return err
+			}
 		}
 		code, err = s.st.FreezeRules(r.Context(), aid, cur.SellerID, rules)
 		if err != nil || code != model.CodeOKFrozen {
@@ -619,6 +812,9 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if timeline == nil {
+		timeline = []store.EvidenceEvent{}
+	}
 	verified, breakAtSeq, err := s.st.VerifyEvidenceChain(r.Context(), aid)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -628,6 +824,7 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	if n := len(timeline); n > 0 {
 		chainHead = timeline[n-1].EventHash
 	}
+	rules, rulesErr := s.st.GetRules(r.Context(), aid)
 	order, orderErr := s.st.GetOrder(r.Context(), aid)
 	summary := evidenceSummary(a.Status, timeline, order, orderErr == nil)
 	resp := map[string]any{
@@ -645,6 +842,9 @@ func (s *Server) handleEvidence(w http.ResponseWriter, r *http.Request) {
 	}
 	if !verified {
 		resp["hashBreakAtSeq"] = breakAtSeq
+	}
+	if rulesErr == nil && model.NormalizeMode(rules.Mode) == model.ModeAllPay {
+		resp["settlement"] = model.SettlementVirtualCoinsOnly
 	}
 	if orderErr == nil {
 		resp["order"] = order

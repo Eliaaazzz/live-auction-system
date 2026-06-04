@@ -20,10 +20,17 @@
 <body>
   <h1>Auction room</h1>
   <div>auction: <code id="aid"></code> · <span id="conn" class="down">connecting…</span></div>
+  <p>mode: <code id="mode">—</code></p>
   <p>current price: <span id="price">—</span> <small>cents</small></p>
+  <p id="sealed-status" style="display:none;font-weight:600;color:#7c3aed">暗拍 · <span id="sealed-count">0</span> sealed bids placed (amounts hidden until reveal)</p>
   <p id="status">—</p>
   <p id="countdown">—</p>
   <p id="sold">SOLD</p>
+  <div id="reveal" style="display:none;background:#f5f3ff;border:1px solid #c4b5fd;padding:10px;border-radius:6px;margin:8px 0">
+    <strong>AUCTION_REVEALED</strong>
+    <p style="margin:4px 0">Winner: <code id="reveal-winner"></code> · Final price: <code id="reveal-price"></code></p>
+    <ol id="reveal-bids" style="font-family:ui-monospace,monospace;font-size:13px"></ol>
+  </div>
   <input id="amount" type="number" value="11000" />
   <button id="bid">Place bid</button>
   <button id="evidence">Show evidence</button>
@@ -58,6 +65,22 @@
 
     let authToken = '';
     let endAtMs = 0, clockOffsetMs = 0, terminal = false;
+    // Auction mode (issue #114). Sealed modes hide the price/leaderboard during
+    // LIVE and emit SEALED_BID_RECEIVED (count only) → AUCTION_REVEALED (sorted
+    // bids public at close). ENGLISH/SUDDEN_DEATH behave as before.
+    let auctionMode = 'ENGLISH', sealedCount = 0;
+    function isSealedMode(m) { return m === 'SEALED_FIRST' || m === 'VICKREY' || m === 'ALL_PAY' || m === 'PREQUALIFY'; }
+    function applyModeUI(m) {
+      auctionMode = m || 'ENGLISH';
+      document.getElementById('mode').textContent = auctionMode;
+      if (isSealedMode(auctionMode)) {
+        document.getElementById('price').textContent = '— (sealed)';
+        document.getElementById('sealed-status').style.display = '';
+        document.getElementById('leaderboard').innerHTML = '<li>— (sealed; revealed at close)</li>';
+      } else {
+        document.getElementById('sealed-status').style.display = 'none';
+      }
+    }
     function syncClock(env) { if (env.serverTimeMs) clockOffsetMs = env.serverTimeMs - Date.now(); }
     setInterval(() => {
       if (!endAtMs || terminal) return;
@@ -67,6 +90,12 @@
 
     async function refreshLeaderboard() {
       if (!authToken) return;
+      if (isSealedMode(auctionMode) && !terminal) {
+        // Sealed-mode leaderboard is hidden during LIVE: the engine doesn't
+        // write to the public lbKey ZSET until the reveal at close.
+        document.getElementById('leaderboard').innerHTML = '<li>— (sealed; revealed at close)</li>';
+        return;
+      }
       try {
         const r = await (await fetch('/api/auctions/' + encodeURIComponent(aid) + '/leaderboard?n=5',
           { headers: { Authorization: 'Bearer ' + authToken } })).json();
@@ -122,6 +151,7 @@
             if ((env.seq || 0) < guard.last()) return; // stale snapshot after a newer event
             guard = makeSeqGuard(env.seq || 0); // prime cursor to snapshot seq
             if (env.data.endAtMs) endAtMs = env.data.endAtMs;
+            applyModeUI(env.data.rules && env.data.rules.mode);
             render(env.data.currentPriceCents, env.data.status, env.seq);
             if (env.data.status === 'SOLD') markTerminal('SOLD', 'status: SOLD · seq: ' + env.seq);
             else if (env.data.status === 'NO_BID') markTerminal('NO BID', 'status: NO_BID · seq: ' + env.seq);
@@ -156,6 +186,32 @@
             markTerminal('CANCELLED by seller', 'status: CANCELLED · seq: ' + env.seq);
             feed('AUCTION_CANCELLED seq=' + env.seq);
             break;
+          case 'SEALED_BID_RECEIVED':
+            // Sealed-mode broadcast (issue #114): proves a bid landed (running
+            // count + display name + a SHA1 commit) WITHOUT the amount.
+            if (!guard.apply(env.seq)) return;
+            sealedCount = env.data.count || (sealedCount + 1);
+            document.getElementById('sealed-count').textContent = sealedCount;
+            feed('SEALED_BID_RECEIVED seq=' + env.seq + ' by ' + env.data.displayName + ' (count=' + sealedCount + ')');
+            break;
+          case 'AUCTION_REVEALED':
+            // The sealed bids become public: render the sorted list, winner,
+            // and final price (own bid for SEALED_FIRST, 2nd-highest for VICKREY).
+            if (!guard.apply(env.seq)) return;
+            document.getElementById('reveal').style.display = '';
+            document.getElementById('reveal-winner').textContent = env.data.winnerId;
+            document.getElementById('reveal-price').textContent = env.data.amountCents;
+            const olR = document.getElementById('reveal-bids');
+            olR.innerHTML = '';
+            (env.data.bids || []).forEach((b, i) => {
+              const li = document.createElement('li');
+              li.textContent = (i+1) + '. ' + (b.displayName || b.userId) + '  —  ' + b.amountCents;
+              olR.appendChild(li);
+            });
+            document.getElementById('price').textContent = env.data.amountCents;
+            document.getElementById('sealed-status').style.display = 'none';
+            feed('AUCTION_REVEALED seq=' + env.seq + ' winner=' + env.data.winnerId + ' @ ' + env.data.amountCents);
+            break;
           case 'BID_REJECTED':
             // ERR_TOO_LOW covers both below-required AND over-cap (proto error-codes.md §3).
             feed('BID_REJECTED: ' + env.data.code); // unordered control frame
@@ -165,7 +221,17 @@
     }
 
     function render(price, status, seq) {
-      if (price) document.getElementById('price').textContent = price;
+      // Sealed modes hide the price during LIVE — the snapshot's currentPriceCents
+      // is the reserve (startPrice), not the leading bid, but we still don't want
+      // to render it as a "current price" since it would suggest bidding activity
+      // that the sealed engine deliberately conceals.
+      if (price) {
+        if (isSealedMode(auctionMode) && (status === 'LIVE' || !status) && !terminal) {
+          document.getElementById('price').textContent = '— (sealed)';
+        } else {
+          document.getElementById('price').textContent = price;
+        }
+      }
       document.getElementById('status').textContent = 'status: ' + (status || '—') + ' · seq: ' + (seq || 0);
     }
 

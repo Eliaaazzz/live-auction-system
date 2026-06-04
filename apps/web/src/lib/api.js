@@ -66,9 +66,8 @@ async function request(path, { method = 'GET', body, signal, auth = true } = {})
 export const api = {
   // ---------- Discovery / read ----------
   /**
-   * NOTE: backend does not yet ship list/filter (P1). The admin Orders page
-   * uses this; gate behind the mock flag (VITE_USE_MOCK_DATA=true) until
-   * the backend lands `GET /api/auctions?status=...`.
+   * Backed by backend `GET /api/auctions`.
+   * `status` can filter exact state (`LIVE`, `SCHEDULED`, `DRAFT`, `SOLD`, ...).
    */
   listAuctions: (params = {}) => {
     const q = new URLSearchParams(params).toString();
@@ -93,18 +92,19 @@ export const api = {
 
   /**
    * Seller: publish auction.
-   *   payload = { productId, rules: { startCents, stepCents, durationMs,
-   *               maxExtensions, antiSnipeWindowMs, capCents?, reserveCents?,
-   *               auctionMode? } // first_price | second_price
+   *   payload = { productId, rules: { mode?, startPriceCents, incrementCents,
+   *               capPriceCents?, durationSec, extendWindowSec, extendSec,
+   *               maxExtensions? } } // mode: ENGLISH default; VICKREY = second-price
    */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),
 
   /**
    * Seller: DRAFT → SCHEDULED.
-   * Backend requires `factsConfirmed=true` (set by VLM flow).
+   * Seller usually submits `{ factsConfirmed: true, confirmedFacts: <json> }`
+   * after VLM核对 so the backend can persist the confirmed snapshot.
    * Returns `{ code: 'OK_FROZEN' | 'ERR_FACTS_NOT_CONFIRMED' | 'ERR_BAD_STATE' }`.
    */
-  freeze: (id) => request(`/auctions/${id}/freeze`, { method: 'POST' }),
+  freeze: (id, body) => request(`/auctions/${id}/freeze`, { method: 'POST', body }),
 
   /**
    * Seller: SCHEDULED → LIVE.

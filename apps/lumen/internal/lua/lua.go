@@ -8,6 +8,33 @@ import _ "embed"
 //go:embed place_bid.lua
 var PlaceBid string
 
+// PlaceBidSealed / CloseSealed implement the sealed modes (issue #114):
+// SEALED_FIRST and VICKREY. Bids are hidden during LIVE; reveal + winner/price
+// at close. The bid script is shared (price rule is chosen at close).
+//
+//go:embed place_bid_sealed.lua
+var PlaceBidSealed string
+
+//go:embed close_auction_sealed.lua
+var CloseSealed string
+
+// CloseAllPay implements ALL_PAY (issue #114) close. Shares place_bid_sealed.lua
+// for the bid path (private storage); at close, winner pays own bid + runner-up
+// forfeits in virtual coins (persistence routes to coin_ledger, not orders).
+//
+//go:embed close_auction_allpay.lua
+var CloseAllPay string
+
+// PlaceBidHybrid implements HYBRID_REVEAL (issue #114). Same ENGLISH adjudication
+// as place_bid.lua, but the Stream/PubSub broadcast carries the PRIOR leader's
+// amount + identity (so the room sees the runner-up while the new leader stays
+// hidden until close). The bidder's direct ack carries their true amount. Close
+// reuses the standard close_auction.lua — state.currentPriceCents still holds
+// the true leading bid at hammer time.
+//
+//go:embed place_bid_hybrid.lua
+var PlaceBidHybrid string
+
 //go:embed freeze_rules.lua
 var FreezeRules string
 

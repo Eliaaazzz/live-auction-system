@@ -27,11 +27,16 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
   "chainVerified":    true,               // server recompute of the whole chain
   "hashBreakAtSeq":   3,                  // present ONLY when chainVerified=false
   "order":            Order,              // present ONLY when an order exists (auction sold)
+  "settlement":        "VIRTUAL_COINS_ONLY", // present ONLY for ALL_PAY
   "note":             "…"
 }
 ```
 
 **Non-sale terminals** (`NO_BID`, `CANCELLED`) carry **no `winnerId` and empty `currentPriceCents`** — they are not sales (T3 TC-T3-013), so a cancelled/passed card can't be misread as a win. Only `SOLD` / `ORDER_CREATED` cards carry a winner + price.
+
+`settlement: "VIRTUAL_COINS_ONLY"` is present only for `ALL_PAY` auctions. It is
+the evidence-card audit anchor that this mode is virtual-coin settlement, not a
+normal payment/order flow.
 
 `EvidenceEvent`:
 
@@ -67,15 +72,21 @@ Gate: `make verify-evidence` (= `lumen verify-evidence --auction <id>`) exits no
 
 ## 3. HMAC key custody + threat model (§6 — honest scope)
 
-- Key from `EVIDENCE_HMAC_KEY` (env / GitHub Secret / KMS). **Outside `APP_ENV=dev` a non-default value is required** (enforced in `config.Load`).
+- Key from `EVIDENCE_HMAC_KEY` through the store `EvidenceKeySource` seam (env/static today; KMS/key-ring ready). **Outside `APP_ENV=dev` a non-default value is required** (enforced in `config.Load`). Each `auction_events` row stores `hmac_key_version`; existing rows default to version 1 and future key-ring sources can verify older rows by version.
 - **What this defends:** post-hoc single-point tampering of stored history — edit any `payload_json` or `event_hash` and the chain breaks at that seq, detectable by anyone holding the key.
 - **What this is NOT:** external notarization / blockchain anchoring. And per §6, **if the HMAC key is readable by the same process/DB that writes the events, the guarantee collapses to a plain integrity/consistency check** (a writer who also has the key can re-chain a forgery). For the demo the key lives in process env, so we describe this as an **integrity/consistency check**, not tamper-proof evidence. Hardening (key in KMS, separate signer, rotation) is post-MVP.
-- **Rotation:** changing the key invalidates recompute of pre-rotation rows; a rotation scheme (versioned key id per row) is deferred — out of scope for v0, noted here so the field set can grow compatibly.
+- **Rotation:** row-level `hmac_key_version` prevents new keys from invalidating pre-rotation rows once a multi-key source is wired. The current env/static source still serves one active version; KMS/key-ring custody remains post-MVP hardening.
 - **Writer concurrency:** v0 still deploys one Persistence Worker. `fillEventHash` uses a transaction and row locks, and it refuses to chain seq N while seq N-1 exists without an `event_hash`; a multi-worker deployment must preserve this retry behavior or add a per-auction lease.
 
 ## 4. Schema
 
-`auction_events(…, event_hash VARCHAR(128) NULL, prev_hash VARCHAR(128) NULL)` — nullable from T1, **filled by the Persistence Worker at T4** (idempotent, self-healing). `orders` UNIQUE(auction_id). See `proto/db-schema.md`.
+`auction_events(…, event_hash VARCHAR(128) NULL, prev_hash VARCHAR(128) NULL, hmac_key_version SMALLINT NOT NULL DEFAULT 1)` — nullable hash columns from T1, **filled by the Persistence Worker at T4** (idempotent, self-healing) with the row's evidence-key version. `orders` UNIQUE(auction_id). See `proto/db-schema.md`.
+
+### `ALL_PAY` compliance framing (mandatory whenever ALL_PAY ships)
+
+If/when the `ALL_PAY` auction mode lands (via #114 / #117), the evidence card and every other ALL_PAY-visible surface (admin labels, room copy, demo material, presentation slides) **MUST** mark the auction as **「虚拟币 · 非真实支付 · 非赌博」** — virtual coins, non-payment, non-gambling. The Dollar-Auction mechanic (winner pays + runner-up forfeits) is a well-known game-theory pattern that reads as gambling without explicit framing, and spec evaluators must be able to tell at-a-glance that this is a virtual-coin demo, not a payment product. On the evidence card itself, the `settlement: "VIRTUAL_COINS_ONLY"` row is the audit anchor; the verifier money-safety assertion (zero `orders` rows for ALL_PAY) is the technical anchor.
+
+This is a **hard product gate**, not stylistic preference — per @Eliaaazzz's review on the superseded #119 contract PR. Pinned here ahead of any ALL_PAY implementation so the constraint isn't rediscovered at merge time.
 
 ## 5. Replay Verifier output contract (T6 — `make verify` / `lumen verify`)
 

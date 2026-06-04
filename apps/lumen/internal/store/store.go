@@ -22,14 +22,20 @@ import (
 )
 
 type Store struct {
-	rdb         *redis.Client
-	db          *sql.DB
-	shaPlaceBid string
-	shaFreeze   string
-	shaStart    string
-	shaClose    string
-	shaCancel   string
-	evidenceKey []byte // HMAC key for the auction_events hash chain (T4)
+	rdb                *redis.Client
+	db                 *sql.DB
+	shaPlaceBid        string
+	shaPlaceBidSealed  string // sealed modes (issue #114)
+	shaPlaceBidHybrid  string // hybrid-reveal mode (issue #114)
+	shaFreeze          string
+	shaStart           string
+	shaClose           string
+	shaCloseSealed     string // sealed reveal + hammer (issue #114)
+	shaCloseAllPay     string // ALL_PAY reveal + winner/runner-up coin settlement (issue #114)
+	shaCancel          string
+	evidenceKeySource  EvidenceKeySource
+	evidenceKeyVersion int
+	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 }
 
 // New connects to Redis + MySQL and loads the Lua scripts. Connections are
@@ -39,6 +45,20 @@ type Store struct {
 // (persistence worker) and any verifier must use the same key, so it is threaded
 // in at construction rather than set later.
 func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, error) {
+	return NewWithEvidenceKeySource(ctx, redisAddr, mysqlDSN, NewStaticEvidenceKeySource(evidenceKey))
+}
+
+// NewWithEvidenceKeySource is the rotation-ready constructor: production still
+// passes an env-backed static source through New, while a future KMS/key-ring
+// source can implement EvidenceKeySource without changing Store callers again.
+func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
+	if evidenceKeys == nil {
+		return nil, errors.New("evidence key source is nil")
+	}
+	evidenceKeyVersion, evidenceKey, err := evidenceKeys.CurrentEvidenceKey()
+	if err != nil {
+		return nil, fmt.Errorf("evidence key source: %w", err)
+	}
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
@@ -50,7 +70,7 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 	if err := pingWithRetry(ctx, "mysql", db.PingContext); err != nil {
 		return nil, err
 	}
-	s := &Store{rdb: rdb, db: db, evidenceKey: []byte(evidenceKey)}
+	s := &Store{rdb: rdb, db: db, evidenceKeySource: evidenceKeys, evidenceKeyVersion: evidenceKeyVersion, evidenceKey: evidenceKey}
 	if err := s.loadScripts(ctx); err != nil {
 		return nil, err
 	}
@@ -65,7 +85,63 @@ func New(ctx context.Context, redisAddr, mysqlDSN, evidenceKey string) (*Store, 
 // runs only on a fresh volume, but `make up` keeps volumes. MySQL 8 has no
 // ADD COLUMN IF NOT EXISTS, so each migration checks information_schema first.
 func (s *Store) migrate(ctx context.Context) error {
-	return s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0")
+	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// Auction mode (issue #114). Existing rows default to ENGLISH so pre-mode
+	// auctions keep behaving exactly as before.
+	if err := s.ensureColumn(ctx, "auction_rules", "mode", "VARCHAR(32) NOT NULL DEFAULT 'ENGLISH'"); err != nil {
+		return err
+	}
+	// Pre-qualifying link (issue #114 phase 6): a formal auction can carry the
+	// id of the sealed PREQUALIFY parent it was seeded from. Nullable; standalone
+	// auctions leave it NULL.
+	if err := s.ensureColumn(ctx, "auctions", "parent_auction_id", "VARCHAR(64) NULL DEFAULT NULL"); err != nil {
+		return err
+	}
+	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
+	// CREATE TABLE IF NOT EXISTS is idempotent — safe on existing volumes.
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (
+		id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+		auction_id  VARCHAR(64) NOT NULL,
+		user_id     VARCHAR(64) NOT NULL,
+		delta_coins BIGINT NOT NULL,
+		reason      VARCHAR(32) NOT NULL,
+		seq         BIGINT NOT NULL,
+		created_at  DATETIME NOT NULL,
+		UNIQUE KEY uq_coin (auction_id, user_id, seq),
+		KEY ix_coin_auction (auction_id)
+	)`); err != nil {
+		return fmt.Errorf("create coin_ledger: %w", err)
+	}
+	if err := s.ensureColumn(ctx, "auction_events", "updated_at", "DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "auction_events", "hmac_key_version", "SMALLINT NOT NULL DEFAULT 1"); err != nil {
+		return err
+	}
+	if err := s.ensureIndex(ctx, "auction_events", "idx_events_auction_updated", "(auction_id, updated_at)"); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS evidence_chain_cache (
+		auction_id           VARCHAR(64) PRIMARY KEY,
+		verified_seq         BIGINT       NOT NULL,
+		events_count         BIGINT       NOT NULL,
+		chain_head           VARCHAR(128) NOT NULL,
+		max_event_updated_at DATETIME(6)  NOT NULL,
+		verified_at          DATETIME(6)  NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create evidence_chain_cache: %w", err)
+	}
+	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
+	if err := s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	// #121 SRS primary path: per-auction stream key for seller/admin push material.
+	if err := s.ensureColumn(ctx, "auction_rules", "live_stream_key", "VARCHAR(128) NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -84,6 +160,25 @@ func (s *Store) ensureColumn(ctx context.Context, table, column, ddl string) err
 	}
 	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, ddl)); err != nil {
 		return fmt.Errorf("add column %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+// ensureIndex creates an index when it is absent. table, indexName, and columns are
+// trusted constants from migrate(), never user input.
+func (s *Store) ensureIndex(ctx context.Context, table, indexName, columns string) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM information_schema.statistics
+		 WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?`,
+		table, indexName).Scan(&n); err != nil {
+		return fmt.Errorf("check index %s.%s: %w", table, indexName, err)
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, fmt.Sprintf("CREATE INDEX %s ON %s %s", indexName, table, columns)); err != nil {
+		return fmt.Errorf("create index %s.%s: %w", table, indexName, err)
 	}
 	return nil
 }
@@ -107,6 +202,18 @@ func (s *Store) loadScripts(ctx context.Context) error {
 	var err error
 	if s.shaPlaceBid, err = s.rdb.ScriptLoad(ctx, lua.PlaceBid).Result(); err != nil {
 		return fmt.Errorf("load place_bid.lua: %w", err)
+	}
+	if s.shaPlaceBidSealed, err = s.rdb.ScriptLoad(ctx, lua.PlaceBidSealed).Result(); err != nil {
+		return fmt.Errorf("load place_bid_sealed.lua: %w", err)
+	}
+	if s.shaPlaceBidHybrid, err = s.rdb.ScriptLoad(ctx, lua.PlaceBidHybrid).Result(); err != nil {
+		return fmt.Errorf("load place_bid_hybrid.lua: %w", err)
+	}
+	if s.shaCloseSealed, err = s.rdb.ScriptLoad(ctx, lua.CloseSealed).Result(); err != nil {
+		return fmt.Errorf("load close_auction_sealed.lua: %w", err)
+	}
+	if s.shaCloseAllPay, err = s.rdb.ScriptLoad(ctx, lua.CloseAllPay).Result(); err != nil {
+		return fmt.Errorf("load close_auction_allpay.lua: %w", err)
 	}
 	if s.shaFreeze, err = s.rdb.ScriptLoad(ctx, lua.FreezeRules).Result(); err != nil {
 		return fmt.Errorf("load freeze_rules.lua: %w", err)
@@ -137,6 +244,11 @@ func stateKey(aid string) string       { return fmt.Sprintf("auction:{%s}:state"
 func lbKey(aid string) string          { return fmt.Sprintf("auction:{%s}:leaderboard", aid) }
 func streamKey(aid string) string      { return fmt.Sprintf("auction:{%s}:events", aid) }
 func dedupeKey(aid, uid string) string { return fmt.Sprintf("auction:{%s}:dedupe:%s", aid, uid) }
+
+// Private sealed-mode keys (issue #114): never read by Snapshot/Leaderboard
+// during LIVE, so bid amounts stay hidden until the reveal at close.
+func sealedKey(aid string) string      { return fmt.Sprintf("auction:{%s}:sealed", aid) }
+func sealedNamesKey(aid string) string { return fmt.Sprintf("auction:{%s}:sealednames", aid) }
 
 // HasDedupe reports whether a clientBidID already has a cached BID_ACCEPTED
 // payload in the per-(auction,user) dedupe Hash. Used by the V10k Tier C
@@ -386,11 +498,43 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 	return t.UnixMilli(), nil
 }
 
-// CloseAuction runs close_auction.lua (Timer hammer). Returns the code and, on
-// ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
-// (anti-snipe may have moved it forward since the scan).
+// CloseAuction runs the Timer hammer. For the sealed modes (issue #114) it
+// dispatches to close_auction_sealed.lua, which reveals the sealed bids and
+// picks the price (first-price vs Vickrey 2nd-price) at close; otherwise it runs
+// the standard close_auction.lua. The mode is read from the state Hash (one HGET
+// — the close path is the Timer's per-auction-once path, not the bid hot path).
+// Returns the code and, on ERR_NOT_DUE, the current endAtMs so the caller can
+// refresh the active score (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
-	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	// Read mode from the state Hash; a Redis error here MUST surface (so the
+	// Timer retries) — silently defaulting to ENGLISH on a transient blip would
+	// run the wrong close script on a sealed auction and lose the sealed bids
+	// (PR #117 review). `redis.Nil` is the "no such field" case: a pre-mode
+	// auction (frozen before issue #114) has no `mode` field — that's ENGLISH.
+	modeRes := s.rdb.HGet(ctx, stateKey(aid), "mode")
+	if rerr := modeRes.Err(); rerr != nil && !errors.Is(rerr, redis.Nil) {
+		if redis.HasErrorPrefix(rerr, "WRONGTYPE") {
+			return model.CodeErrInternal, 0, nil
+		}
+		return "", 0, fmt.Errorf("close: read mode: %w", rerr)
+	}
+	mode := model.NormalizeMode(modeRes.Val())
+	var arr []interface{}
+	var err error
+	switch mode {
+	case model.ModeSealedFirst, model.ModeVickrey:
+		priceMode := "FIRST"
+		if mode == model.ModeVickrey {
+			priceMode = "SECOND"
+		}
+		keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), lbKey(aid), streamKey(aid)}
+		arr, err = s.eval(ctx, s.shaCloseSealed, keys, PubChannel(aid), priceMode)
+	case model.ModeAllPay:
+		keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), lbKey(aid), streamKey(aid)}
+		arr, err = s.eval(ctx, s.shaCloseAllPay, keys, PubChannel(aid))
+	default:
+		arr, err = s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
+	}
 	if err != nil {
 		return "", 0, err
 	}
@@ -437,6 +581,59 @@ func (s *Store) PlaceBid(ctx context.Context, aid, userID, clientBidID, amountCe
 	}
 }
 
+// PlaceBidHybrid runs place_bid_hybrid.lua (HYBRID_REVEAL, issue #114). Same
+// shape as PlaceBid: returns the FULL bidder's ack (their own amount) as
+// payload — the Stream broadcast carries the prior leader's amount + identity
+// (the runner-up). On OK_EXTENDED / OK_SOLD the secondary event flows via
+// Pub/Sub like English, so the gateway only needs the bid ack.
+func (s *Store) PlaceBidHybrid(ctx context.Context, aid, userID, clientBidID, amountCents, displayName string) (string, int64, string, error) {
+	keys := []string{stateKey(aid), lbKey(aid), streamKey(aid), dedupeKey(aid, userID)}
+	arr, err := s.eval(ctx, s.shaPlaceBidHybrid, keys, userID, clientBidID, amountCents, displayName, PubChannel(aid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	switch c := luaStr(arr[0]); c {
+	case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold:
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
+		return c, luaInt(arr[1]), luaStr(arr[2]), nil
+	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
+		return c, 0, luaStr(arr[1]), nil
+	default:
+		return c, 0, "", nil
+	}
+}
+
+// PlaceBidSealed runs place_bid_sealed.lua (sealed modes, issue #114). The bid
+// amount is recorded privately and NOT broadcast; the returned payload is the
+// bidder's own PRIVATE ack (shaped like BID_ACCEPTED), pushed only to their
+// socket. The room sees only the redacted SEALED_BID_RECEIVED stream event.
+func (s *Store) PlaceBidSealed(ctx context.Context, aid, userID, clientBidID, amountCents, displayName string) (string, int64, string, error) {
+	keys := []string{stateKey(aid), sealedKey(aid), sealedNamesKey(aid), streamKey(aid), dedupeKey(aid, userID)}
+	arr, err := s.eval(ctx, s.shaPlaceBidSealed, keys, userID, clientBidID, amountCents, displayName, PubChannel(aid))
+	if err != nil {
+		return "", 0, "", err
+	}
+	switch c := luaStr(arr[0]); c {
+	case model.CodeOKAccepted:
+		if len(arr) < 3 {
+			return "", 0, "", fmt.Errorf("lua: %s short result (len=%d)", c, len(arr))
+		}
+		return c, luaInt(arr[1]), luaStr(arr[2]), nil
+	case model.CodeDuplicate:
+		if len(arr) < 2 {
+			return "", 0, "", fmt.Errorf("lua: DUPLICATE short result (len=%d)", len(arr))
+		}
+		return c, 0, luaStr(arr[1]), nil
+	default:
+		return c, 0, "", nil
+	}
+}
+
 // LeaderEntry is one leaderboard row (highest accepted bid per user).
 type LeaderEntry struct {
 	UserID      string `json:"userId"`
@@ -445,6 +642,17 @@ type LeaderEntry struct {
 
 // Leaderboard returns the top-n bidders by accepted max amount, descending.
 // Money is a string at the boundary (proto/ws-envelope.md money-as-string).
+//
+// Mode-aware gating during LIVE (issue #114):
+//   - SEALED_FIRST / VICKREY / ALL_PAY: returns empty — amounts are private
+//     until AUCTION_REVEALED at close.
+//   - HYBRID_REVEAL: filters out the current leader so the REST surface mirrors
+//     the WS Stream (which broadcasts only the runner-up); without this gate
+//     handleLeaderboard would expose the leader the WS broadcast hides.
+//   - ENGLISH / SUDDEN_DEATH / terminal status: pass through unchanged.
+//
+// The ZSET itself stores all bids (the engine uses state.* fields for
+// adjudication, not the ZSET, so we don't have to change the writer Lua).
 func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEntry, error) {
 	if n <= 0 {
 		n = 10
@@ -458,6 +666,38 @@ func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEnt
 		uid, _ := m.Member.(string)
 		// scores are integer cents stored via ZADD; format without exponent/decimal.
 		out = append(out, LeaderEntry{UserID: uid, AmountCents: strconv.FormatInt(int64(m.Score), 10)})
+	}
+
+	// Mode-aware gating. Read status/mode/winnerId in a single HMGET to keep
+	// the cost flat; on any Redis error fall through to the unfiltered path
+	// (defense-in-depth: never leak more than the current code would, never
+	// less). HGET'ing fields not in the hash returns nil → empty strings; the
+	// switch below treats unknown mode as ENGLISH (no gate), preserving back-
+	// compat for pre-#114 auctions whose state hash has no `mode` field.
+	state, herr := s.rdb.HMGet(ctx, stateKey(aid), "status", "mode", "winnerId").Result()
+	if herr != nil || len(state) < 3 {
+		return out, nil
+	}
+	status, _ := state[0].(string)
+	modeRaw, _ := state[1].(string)
+	winnerID, _ := state[2].(string)
+	if status != model.StateLive {
+		return out, nil
+	}
+	switch model.NormalizeMode(modeRaw) {
+	case model.ModeSealedFirst, model.ModeVickrey, model.ModeAllPay:
+		// Sealed family: hide everything during LIVE; reveal at close.
+		return []LeaderEntry{}, nil
+	case model.ModeHybridReveal:
+		// Hide the current leader; runner-up + below stay visible to mirror
+		// the broadcast surface (place_bid_hybrid.lua broadcasts the 2nd-place).
+		filtered := out[:0]
+		for _, e := range out {
+			if e.UserID != winnerID {
+				filtered = append(filtered, e)
+			}
+		}
+		return filtered, nil
 	}
 	return out, nil
 }
@@ -487,6 +727,7 @@ func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
 		capCents = &cap
 	}
 	return &model.RoomSnapshotRules{
+		Mode:              model.NormalizeMode(m["mode"]),
 		StepCents:         moneyOrZero(m["incrementCents"]),
 		CapCents:          capCents,
 		ReserveCents:      moneyOrZero(m["startPriceCents"]),

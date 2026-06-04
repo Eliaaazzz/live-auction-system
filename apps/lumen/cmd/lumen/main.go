@@ -84,6 +84,60 @@ func main() {
 			log.Fatalf("demo-auction: %v", err)
 		}
 
+	case "demo-sudden-death":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoSuddenDeath(target); err != nil {
+			log.Fatalf("demo-sudden-death: %v", err)
+		}
+
+	case "demo-sealed":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoSealed(target); err != nil {
+			log.Fatalf("demo-sealed: %v", err)
+		}
+
+	case "demo-vickrey":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoVickrey(target); err != nil {
+			log.Fatalf("demo-vickrey: %v", err)
+		}
+
+	case "demo-hybrid":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoHybrid(target); err != nil {
+			log.Fatalf("demo-hybrid: %v", err)
+		}
+
+	case "demo-allpay":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoAllPay(target); err != nil {
+			log.Fatalf("demo-allpay: %v", err)
+		}
+
+	case "demo-prequalify":
+		target := os.Getenv("TARGET")
+		if target == "" {
+			target = "http://localhost:8080"
+		}
+		if err := server.RunDemoPrequalify(target); err != nil {
+			log.Fatalf("demo-prequalify: %v", err)
+		}
+
 	case "perf-smoke":
 		target := os.Getenv("TARGET")
 		if target == "" {

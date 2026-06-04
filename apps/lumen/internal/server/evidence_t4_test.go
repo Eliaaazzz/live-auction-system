@@ -19,6 +19,27 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
+type testVersionedEvidenceKeys struct {
+	current int
+	keys    map[int][]byte
+}
+
+func (k testVersionedEvidenceKeys) CurrentEvidenceKey() (int, []byte, error) {
+	key, ok := k.keys[k.current]
+	if !ok {
+		return 0, nil, fmt.Errorf("test evidence key version %d unavailable", k.current)
+	}
+	return k.current, append([]byte(nil), key...), nil
+}
+
+func (k testVersionedEvidenceKeys) EvidenceKey(version int) ([]byte, error) {
+	key, ok := k.keys[version]
+	if !ok {
+		return nil, fmt.Errorf("test evidence key version %d unavailable", version)
+	}
+	return append([]byte(nil), key...), nil
+}
+
 // TC-T4-01 — genesis prev_hash is empty, each event links to the prior one, and the
 // whole chain verifies.
 func TestT4HashChainGenesisLinkAndVerify(t *testing.T) {
@@ -60,6 +81,7 @@ func TestT4HashChainIdempotentReprojection(t *testing.T) {
 	ctx := context.Background()
 	aid := fmt.Sprintf("test_t4_idem_%d", time.Now().UnixNano())
 	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
 		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
 	})
 
@@ -85,6 +107,106 @@ func TestT4HashChainIdempotentReprojection(t *testing.T) {
 	}
 	if ok, _, _ := st.VerifyEvidenceChain(ctx, aid); !ok {
 		t.Fatal("chain must still verify after re-projection")
+	}
+}
+
+func TestT4VerifyEvidenceChainCacheExtendsAndInvalidatesOnTamper(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_cache_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	if err := st.InsertEvent(ctx, aid, 1, model.TypeBidAccepted, `{"seq":1,"userId":"u1","amountCents":"11000"}`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify seq1: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, st, aid, 1)
+
+	if err := st.InsertEvent(ctx, aid, 2, model.TypeBidAccepted, `{"seq":2,"userId":"u2","amountCents":"12000"}`); err != nil {
+		t.Fatal(err)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify seq2 via cache extension: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, st, aid, 2)
+
+	time.Sleep(2 * time.Millisecond)
+	if _, err := st.DB().ExecContext(ctx,
+		`UPDATE auction_events SET payload_json=? WHERE auction_id=? AND seq=1`,
+		`{"seq":1,"userId":"u1","amountCents":"99999"}`, aid); err != nil {
+		t.Fatal(err)
+	}
+	ok, brk, err := st.VerifyEvidenceChain(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || brk != 1 {
+		t.Fatalf("cached prefix after tamper: ok=%v break=%d want ok=false break_at_seq=1", ok, brk)
+	}
+}
+
+func assertEvidenceCacheSeq(t *testing.T, st *store.Store, aid string, want int64) {
+	t.Helper()
+	var got int64
+	if err := st.DB().QueryRowContext(context.Background(),
+		"SELECT verified_seq FROM evidence_chain_cache WHERE auction_id=?", aid).Scan(&got); err != nil {
+		t.Fatalf("cache seq query: %v", err)
+	}
+	if got != want {
+		t.Fatalf("cache verified_seq=%d want %d", got, want)
+	}
+}
+
+// #37 key-version hardening: writers persist the active HMAC key version, and
+// verifiers select the row's version instead of silently using the current key.
+func TestT4HMACKeyVersionStoredAndVerifiedByRowVersion(t *testing.T) {
+	keys := map[int][]byte{
+		1: []byte("old-evidence-key"),
+		2: []byte("new-evidence-key"),
+	}
+	st := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{current: 2, keys: keys})
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_t4_hmac_version_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+		_, _ = st.DB().ExecContext(context.Background(), "DELETE FROM auction_events WHERE auction_id=?", aid)
+	})
+
+	if err := st.InsertEvent(ctx, aid, 1, model.TypeBidAccepted, `{"seq":1,"userId":"u1","amountCents":"11000"}`); err != nil {
+		t.Fatal(err)
+	}
+	var version int
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT hmac_key_version FROM auction_events WHERE auction_id=? AND seq=1`, aid).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("hmac_key_version=%d want active version 2", version)
+	}
+	if ok, brk, err := st.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify with writer key source: ok=%v break=%d err=%v", ok, brk, err)
+	}
+
+	_, _ = st.DB().ExecContext(ctx, "DELETE FROM evidence_chain_cache WHERE auction_id=?", aid)
+	reader := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{current: 1, keys: keys})
+	if ok, brk, err := reader.VerifyEvidenceChain(ctx, aid); err != nil || !ok || brk != 0 {
+		t.Fatalf("verify with current v1 but row v2 available: ok=%v break=%d err=%v", ok, brk, err)
+	}
+	assertEvidenceCacheSeq(t, reader, aid, 1)
+
+	missingHistoricalKey := fullStoreWithEvidenceKeys(t, testVersionedEvidenceKeys{
+		current: 1,
+		keys: map[int][]byte{
+			1: []byte("old-evidence-key"),
+		},
+	})
+	if ok, brk, err := missingHistoricalKey.VerifyEvidenceChain(ctx, aid); err == nil {
+		t.Fatalf("verify with cached row v2 but missing key: ok=%v break=%d err=nil, want missing-key error", ok, brk)
 	}
 }
 
@@ -399,5 +521,147 @@ func TestT4EvidenceRequiresAuth(t *testing.T) {
 	}
 	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &ev); err != nil {
 		t.Fatalf("authenticated evidence: %v", err)
+	}
+}
+
+func TestT4EvidenceAllPayIncludesVirtualCoinSettlement(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence AllPay Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	rules := persistRules()
+	rules.Mode = model.ModeAllPay
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId":      productID,
+		"rules":          rules,
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]any
+	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &raw); err != nil {
+		t.Fatalf("evidence allpay response: %v", err)
+	}
+	if raw["settlement"] != model.SettlementVirtualCoinsOnly {
+		t.Fatalf("settlement=%v want %s", raw["settlement"], model.SettlementVirtualCoinsOnly)
+	}
+	if _, ok := raw["order"]; ok {
+		t.Fatal("ALL_PAY draft evidence unexpectedly included a normal order")
+	}
+}
+
+func TestT4EvidenceEndpointSchemaMatchesProto(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "T4 Evidence Schema Seller", "seller")
+	if err != nil {
+		t.Fatal(err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId":      productID,
+		"rules":          persistRules(),
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw map[string]any
+	if err := getJSONAuth(hc, target+"/api/auctions/"+created.AuctionID+"/evidence", seller.Token, &raw); err != nil {
+		t.Fatalf("evidence schema response: %v", err)
+	}
+
+	wantKeys := map[string]bool{
+		"auctionId":         true,
+		"status":            true,
+		"currentPriceCents": true,
+		"winnerId":          true,
+		"seq":               true,
+		"eventsCount":       true,
+		"factsConfirmed":    true,
+		"timeline":          true,
+		"eventsHash":        true,
+		"chainVerified":     true,
+		"note":              true,
+	}
+	for k := range wantKeys {
+		if _, ok := raw[k]; !ok {
+			t.Fatalf("evidence schema missing key %q", k)
+		}
+	}
+	for k := range raw {
+		if !wantKeys[k] {
+			t.Fatalf("evidence schema unexpected key %q", k)
+		}
+	}
+
+	assertString := func(k string) {
+		if _, ok := raw[k].(string); !ok {
+			t.Fatalf("evidence schema key %q type=%T want string", k, raw[k])
+		}
+	}
+	assertNumber := func(k string) {
+		if _, ok := raw[k].(float64); !ok {
+			t.Fatalf("evidence schema key %q type=%T want number", k, raw[k])
+		}
+	}
+	assertBool := func(k string) {
+		if _, ok := raw[k].(bool); !ok {
+			t.Fatalf("evidence schema key %q type=%T want bool", k, raw[k])
+		}
+	}
+	assertArray := func(k string) []any {
+		v, ok := raw[k].([]any)
+		if !ok {
+			t.Fatalf("evidence schema key %q type=%T want array", k, raw[k])
+		}
+		return v
+	}
+
+	assertString("auctionId")
+	assertString("status")
+	assertString("currentPriceCents")
+	assertString("winnerId")
+	assertNumber("seq")
+	assertNumber("eventsCount")
+	assertBool("factsConfirmed")
+	timeline := assertArray("timeline")
+	assertString("eventsHash")
+	assertBool("chainVerified")
+	assertString("note")
+
+	if raw["auctionId"] != created.AuctionID {
+		t.Fatalf("auctionId=%v want %s", raw["auctionId"], created.AuctionID)
+	}
+	if raw["factsConfirmed"] != true {
+		t.Fatalf("factsConfirmed=%v want true", raw["factsConfirmed"])
+	}
+	if raw["eventsCount"] != float64(0) {
+		t.Fatalf("eventsCount=%v want 0 for empty chain", raw["eventsCount"])
+	}
+	if len(timeline) != 0 {
+		t.Fatalf("timeline len=%d want 0 for empty chain", len(timeline))
+	}
+	if raw["eventsHash"] != "" {
+		t.Fatalf("eventsHash=%v want empty string for empty chain", raw["eventsHash"])
+	}
+	if raw["chainVerified"] != true {
+		t.Fatalf("chainVerified=%v want true for empty chain", raw["chainVerified"])
 	}
 }

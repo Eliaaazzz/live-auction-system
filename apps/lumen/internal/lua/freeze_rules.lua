@@ -18,6 +18,7 @@ if status and status ~= 'DRAFT' then return {'ERR_BAD_STATE', status} end
 local r = cjson.decode(ARGV[1])
 redis.call('HMSET', state_key,
   'status', 'SCHEDULED',
+  'mode', r.mode or 'ENGLISH',
   'startPriceCents', r.startPriceCents or 0,
   'currentPriceCents', r.startPriceCents or 0,
   'incrementCents', r.incrementCents or 0,
