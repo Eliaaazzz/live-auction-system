@@ -8,7 +8,8 @@ Do not mark the single-room 10k fanout claim production-ready until the live Loc
 
 ## Current Status
 
-- Branch head: `e546164` (`fix(web): keep large-room patch activity hot`).
+- P1 code-fix commit: `e546164` (`fix(web): keep large-room patch activity hot`).
+- Use the current PR head from GitHub for the latest review SHA; this handoff may receive documentation-only follow-up commits.
 - Current PR body explicitly keeps the single-room 10k claim behind a real public Locust gate.
 - Follow-up P1 fixes from strict review are implemented:
   - `ROOM_STATE_PATCH` preserves self-bid UX when it arrives before the same-seq direct `BID_ACCEPTED` ack.
