@@ -341,9 +341,6 @@ func (s *loadStats) observerSnapshot() observerSnapshot {
 }
 
 func (s *loadStats) recordObserverLastSeq(seq int64) {
-	if seq <= 0 {
-		return
-	}
 	s.mu.Lock()
 	s.observerLastSeq = append(s.observerLastSeq, seq)
 	s.mu.Unlock()
@@ -762,8 +759,15 @@ func (r loadReport) breaches() []string {
 		out = append(out, fmt.Sprintf("observer dialErrors=%d (must be 0)", r.ObserverStats.DialErrs))
 	}
 	if r.Config.VerifyObserverCatchup && r.Config.Observers > 0 {
+		connectedObservers := int64(r.Config.Observers) - r.ObserverStats.DialErrs
+		if connectedObservers < 0 {
+			connectedObservers = 0
+		}
 		if r.ObserverStats.SeqSamples == 0 {
 			out = append(out, "no observer seq high-watermark samples")
+		} else if r.ObserverStats.SeqSamples < connectedObservers {
+			out = append(out, fmt.Sprintf("observer seq samples=%d < connected observers=%d",
+				r.ObserverStats.SeqSamples, connectedObservers))
 		} else if r.CatchupProbe.Error != "" {
 			out = append(out, fmt.Sprintf("observer catchup probe failed: %s", r.CatchupProbe.Error))
 		} else if !r.CatchupProbe.OK || r.CatchupProbe.SnapshotSeq < r.FinalSeq {

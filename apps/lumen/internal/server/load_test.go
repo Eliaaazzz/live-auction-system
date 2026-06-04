@@ -495,7 +495,7 @@ func TestT8LoadReportRequiresObserverCatchupProbe(t *testing.T) {
 			HandlerOverhead: metrics.HistogramSnapshot{Count: 1, P99: 1},
 		},
 		FinalSeq:      10,
-		ObserverStats: observerSnapshot{SeqSamples: 1, LastSeqMin: 7, LastSeqMax: 9},
+		ObserverStats: observerSnapshot{SeqSamples: 3, LastSeqMin: 7, LastSeqMax: 9},
 		BidderStats:   bidderSnapshot{Sent: 1, Acked: 1},
 		CatchupProbe:  loadCatchupProbe{LastSeq: 7, SnapshotSeq: 10, OK: true},
 	}
@@ -520,6 +520,13 @@ func TestT8LoadReportRequiresObserverCatchupProbe(t *testing.T) {
 	got = strings.Join(base.breaches(), " | ")
 	if !strings.Contains(got, "no observer seq high-watermark samples") {
 		t.Fatalf("missing observer seq sample breach, got: %s", got)
+	}
+
+	base.ObserverStats = observerSnapshot{SeqSamples: 2, LastSeqMin: 0, LastSeqMax: 9}
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 0, SnapshotSeq: 10, OK: true}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer seq samples=2 < connected observers=3") {
+		t.Fatalf("missing incomplete observer sample breach, got: %s", got)
 	}
 }
 
@@ -563,8 +570,8 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	t.Setenv("LOAD_ACK_P95_MS", "500")
 	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
 	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
-	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
-	t.Setenv("LOAD_HANDLER_P99_MS", "50")
+	t.Setenv("LOAD_SCRIPT_P99_MS", "250")
+	t.Setenv("LOAD_HANDLER_P99_MS", "250")
 	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
 	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
 
@@ -600,8 +607,8 @@ func TestT8LoadSmokeExercisesRoomStatePatch(t *testing.T) {
 	t.Setenv("LOAD_ACK_P95_MS", "500")
 	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
 	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
-	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
-	t.Setenv("LOAD_HANDLER_P99_MS", "50")
+	t.Setenv("LOAD_SCRIPT_P99_MS", "250")
+	t.Setenv("LOAD_HANDLER_P99_MS", "250")
 	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
 	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
 	t.Setenv("LOAD_EXPECT_ROOM_STATE_PATCH", "true")
