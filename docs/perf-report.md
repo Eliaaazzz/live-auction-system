@@ -115,18 +115,28 @@ Super-stretch（100k / 2k / 4-shards）目标：
 LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 ```
 说明：100k 演练默认会做非 P0 自检门槛；仅在明确确认时执行（见 `LOAD_100K_CONFIRM`）。
-如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=VICKREY`（或 `LOAD_AUCTION_MODE=second_price` / `LOAD_AUCTION_MODE=second price` / `LOAD_AUCTION_MODE=vickrey`）。
+如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=VICKREY`（或 `LOAD_AUCTION_MODE=second_price` / `LOAD_AUCTION_MODE=second price` / `LOAD_AUCTION_MODE=second` / `LOAD_AUCTION_MODE=vickrey`）。  
+如需显式一价（English）模式，可设置 `LOAD_AUCTION_MODE=ENGLISH`（或 `LOAD_AUCTION_MODE=first_price` / `LOAD_AUCTION_MODE=first price` / `LOAD_AUCTION_MODE=first` / `LOAD_AUCTION_MODE=firstprice`）。
 `load-100k` 也支持该变量，`load-100k-rehearse` 会沿用该变量透传，例如：
 ```bash
 LOAD_AUCTION_MODE=VICKREY LOAD_100K_CONFIRM=1 make load-100k
 make load-second-price
 make load-smoke-second-price
+make load-smoke-vickrey
 ```
 你也可以直接调用现有 wrapper：
 ```bash
 LOAD_100K_CONFIRM=1 make load-100k-second-price
+LOAD_100K_CONFIRM=1 make load-100k-vickrey
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
   make load-100k-second-price-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-vickrey-rehearse
+```
+日常可直接执行：
+```bash
+make load-vickrey               # P0 lane, Vickrey alias for second-price
+make load-100k-vickrey          # super-stretch, Vickrey alias
 ```
 对应脚本写法可直接加参数：
 ```bash
@@ -160,7 +170,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 - `summary.tsv`
 - `health-start.json` / `health-end.json`
 - 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
-- `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`/`attempt_interval_sec`）以及运行元信息（命令行、仓库 commit、主机）、`auction_mode`（`first_price` / `second_price`）用于后续对账时避免“同参数复用”误差。
+- `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`/`attempt_interval_sec`）以及运行元信息（命令行、仓库 commit、主机）、`auction_mode`（`first_price` / `second_price`，其中别名如 `ENGLISH` / `VICKREY` 会先归一化成对应 canonical 值）用于后续对账时避免“同参数复用”误差。
 
 如需把断线回放校验并入同一套打点，可加 `--catchup-smoke`：
 
@@ -222,11 +232,11 @@ BASE_URL="https://your-domain" \
   make deploy-perf-rehearsal-100k
 ```
 
-Super-stretch Vickrey path（演练前提是 `DEPLOY_REHEARSAL_100K_AID` 已预先创建为二价规则房间）：
+Super-stretch Vickrey path（演练前提是演练房间已按二价规则创建）：
 
 ```sh
 BASE_URL="https://your-domain" \
-  DEPLOY_REHEARSAL_100K_AID=auc_vickrey \
+  DEPLOY_REHEARSAL_100K_SECOND_PRICE_AID=auc_vickrey \
   make deploy-perf-rehearsal-100k-second-price
 ```
 
