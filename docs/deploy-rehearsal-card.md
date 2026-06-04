@@ -69,7 +69,7 @@ larger concurrency tier.
      AID=auc_demo \
      REQUIRE_HTTPS=1 \
      REQUIRE_WS_SCHEMA_CHECK=true \
-     WS_PRECHECK_SCHEMA="1" \
+     WS_PRECHECK_SCHEMA="${SCHEMA_VERSION:-1}" \
      WS_PRECHECK_TOKEN="..." \
      scripts/deploy-preflight.sh
    ```
