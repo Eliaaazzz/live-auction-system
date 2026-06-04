@@ -270,9 +270,9 @@ if [[ "${#POSITIONAL[@]}" -gt 0 ]]; then
 fi
 
 LOAD_AUCTION_MODE_NORMALIZED="$(normalize_auction_mode "${LOAD_AUCTION_MODE:-}")"
-if [ -n "${LOAD_AUCTION_MODE:-}" ] && ! is_supported_auction_mode "$LOAD_AUCTION_MODE_NORMALIZED"; then
+  if [ -n "${LOAD_AUCTION_MODE:-}" ] && ! is_supported_auction_mode "$LOAD_AUCTION_MODE_NORMALIZED"; then
   echo "invalid --auction-mode '${LOAD_AUCTION_MODE}'."
-  echo "supported: first_price (first), firstprice, second_price (second), secondprice, vickrey."
+  echo "supported: first_price (first, firstprice, first price), second_price (second, secondprice, second price, vickrey, VICKREY)."
   exit 2
 fi
 
