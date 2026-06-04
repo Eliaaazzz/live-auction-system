@@ -14,6 +14,7 @@ describe('resolveAuctionMode', () => {
   });
 
   it('normalizes legacy aliases', () => {
+    expect(resolveAuctionMode('ENGLISH')).toBe('first_price');
     expect(resolveAuctionMode({ mode: 'second' })).toBe('second_price');
     expect(resolveAuctionMode({ mode: 'secondprice' })).toBe('second_price');
     expect(resolveAuctionMode({ mode: 'first' })).toBe('first_price');

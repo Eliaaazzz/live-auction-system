@@ -11,6 +11,9 @@ export function resolveAuctionMode(input) {
     .replace(/_+/g, '_');
   if (!normalized) return null;
 
+  if (normalized === 'english') {
+    return 'first_price';
+  }
   if (normalized === 'second' || normalized === 'secondprice' || normalized === 'vickrey') {
     return 'second_price';
   }
