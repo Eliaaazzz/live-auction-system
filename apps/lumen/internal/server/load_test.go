@@ -442,6 +442,104 @@ func TestT8LoadReportBreachesMatrix(t *testing.T) {
 	}
 }
 
+func TestT8LoadReportRequiresExpectedRoomStatePatch(t *testing.T) {
+	cfg := loadConfig{
+		AckP95Budget:         80 * time.Millisecond,
+		BroadcastP95Budget:   150 * time.Millisecond,
+		ScriptP99Budget:      5 * time.Millisecond,
+		HandlerP99Budget:     5 * time.Millisecond,
+		ExpectRoomStatePatch: true,
+	}
+	base := loadReport{
+		Config: cfg,
+		Post: metrics.Snapshot{
+			Ack:             metrics.HistogramSnapshot{Count: 1, P95: 1},
+			RoomStatePatch:  metrics.HistogramSnapshot{Count: 1, P95: 1},
+			ScriptTime:      metrics.HistogramSnapshot{Count: 1, P99: 1},
+			HandlerOverhead: metrics.HistogramSnapshot{Count: 1, P99: 1},
+		},
+		BidderStats: bidderSnapshot{Sent: 1, Acked: 1},
+	}
+	got := strings.Join(base.breaches(), " | ")
+	for _, want := range []string{
+		"roomStatePatches=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true",
+		"roomStatePatchBids=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in breaches: %s", want, got)
+		}
+	}
+
+	base.Post.RoomStatePatches = 1
+	base.Post.RoomStatePatchBids = 3
+	if got := base.breaches(); len(got) != 0 {
+		t.Fatalf("expected clean patch gate, got %v", got)
+	}
+}
+
+func TestT8LoadReportRequiresObserverCatchupProbe(t *testing.T) {
+	cfg := loadConfig{
+		Observers:             3,
+		AckP95Budget:          80 * time.Millisecond,
+		BroadcastP95Budget:    150 * time.Millisecond,
+		ScriptP99Budget:       5 * time.Millisecond,
+		HandlerP99Budget:      5 * time.Millisecond,
+		VerifyObserverCatchup: true,
+	}
+	base := loadReport{
+		Config: cfg,
+		Post: metrics.Snapshot{
+			Ack:             metrics.HistogramSnapshot{Count: 1, P95: 1},
+			Broadcast:       metrics.HistogramSnapshot{Count: 1, P95: 1},
+			ScriptTime:      metrics.HistogramSnapshot{Count: 1, P99: 1},
+			HandlerOverhead: metrics.HistogramSnapshot{Count: 1, P99: 1},
+		},
+		FinalSeq:      10,
+		ObserverStats: observerSnapshot{SeqSamples: 1, LastSeqMin: 7, LastSeqMax: 9},
+		BidderStats:   bidderSnapshot{Sent: 1, Acked: 1},
+		CatchupProbe:  loadCatchupProbe{LastSeq: 7, SnapshotSeq: 10, OK: true},
+	}
+	if got := base.breaches(); len(got) != 0 {
+		t.Fatalf("expected clean catchup gate, got %v", got)
+	}
+
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 7, SnapshotSeq: 9, OK: false}
+	got := strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer catchup snapshot seq=9 < final seq=10 from lastSeq=7") {
+		t.Fatalf("missing catchup breach, got: %s", got)
+	}
+
+	base.CatchupProbe = loadCatchupProbe{LastSeq: 7, Error: "dial failed"}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "observer catchup probe failed: dial failed") {
+		t.Fatalf("missing catchup error breach, got: %s", got)
+	}
+
+	base.ObserverStats = observerSnapshot{}
+	base.CatchupProbe = loadCatchupProbe{}
+	got = strings.Join(base.breaches(), " | ")
+	if !strings.Contains(got, "no observer seq high-watermark samples") {
+		t.Fatalf("missing observer seq sample breach, got: %s", got)
+	}
+}
+
+func TestLoadConfigAutoExpectsPatchForLargeRoom(t *testing.T) {
+	t.Setenv("LOAD_OBSERVERS", "1000")
+	if cfg := loadConfigFromEnv(); !cfg.ExpectRoomStatePatch {
+		t.Fatal("expected patch gate to auto-enable at default large-room threshold")
+	}
+
+	t.Setenv("LOAD_OBSERVERS", "999")
+	if cfg := loadConfigFromEnv(); cfg.ExpectRoomStatePatch {
+		t.Fatal("did not expect patch gate below default large-room threshold")
+	}
+
+	t.Setenv("LOAD_EXPECT_ROOM_STATE_PATCH", "true")
+	if cfg := loadConfigFromEnv(); !cfg.ExpectRoomStatePatch {
+		t.Fatal("explicit LOAD_EXPECT_ROOM_STATE_PATCH=true should override default")
+	}
+}
+
 // TestT8LoadSmokeRunsAndPasses — end-to-end on the in-process harness, scaled
 // down to fit a CI runner: 3 observers + 2 bidders + 1.5s window with relaxed
 // budgets. Asserts:
@@ -466,6 +564,7 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
 	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
 	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
+	t.Setenv("LOAD_HANDLER_P99_MS", "50")
 	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
 	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
 
@@ -502,8 +601,10 @@ func TestT8LoadSmokeExercisesRoomStatePatch(t *testing.T) {
 	t.Setenv("LOAD_BROADCAST_P95_MS", "1000")
 	t.Setenv("LOAD_HAMMER_P95_MS", "5000")
 	t.Setenv("LOAD_SCRIPT_P99_MS", "50")
+	t.Setenv("LOAD_HANDLER_P99_MS", "50")
 	t.Setenv("LOAD_AUCTION_DUR_SEC", "60")
 	t.Setenv("LOAD_OBSERVER_STAGGER_MS", "5")
+	t.Setenv("LOAD_EXPECT_ROOM_STATE_PATCH", "true")
 
 	if err := RunLoad(target); err != nil {
 		t.Fatalf("coalesced load smoke failed: %v", err)

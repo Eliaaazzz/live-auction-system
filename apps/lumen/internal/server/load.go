@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +58,8 @@ import (
 //	LOAD_BIDS_PER_BIDDER   = 0      (0 = unlimited until duration; 1 = each bidder bids once)
 //	LOAD_RETRY_TOO_LOW     = false  (retry ERR_TOO_LOW with a new higher amount until accepted)
 //	LOAD_BID_MAX_ATTEMPTS  = 25     (per logical bid when LOAD_RETRY_TOO_LOW=true)
+//	LOAD_EXPECT_ROOM_STATE_PATCH = auto (true when observers >= default patch threshold)
+//	LOAD_VERIFY_OBSERVER_CATCHUP = true (probe ROOM_JOIN(lastSeq) after the run)
 //
 // Exit conventions: error (exit != 0) on any SLO breach, on any setup failure,
 // and on seq gap > 0. The error message lists every breach so CI fails LOUD.
@@ -75,8 +78,9 @@ func RunLoad(target string) error {
 		fmt.Printf("load setup: reusing existing auction %s (LOAD_AUCTION_ID)\n", aid)
 	}
 	fmt.Printf("LOAD_AUCTION_ID=%s\n", aid) // captured by `make load` for the downstream verifier
-	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v startCents=%d retryTooLow=%t maxAttempts=%d\n",
-		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval, cfg.StartAmountCents, cfg.RetryTooLow, cfg.BidMaxAttempts)
+	fmt.Printf("load config: observers=%d bidders=%d duration=%v bidInterval=%v startCents=%d retryTooLow=%t maxAttempts=%d expectPatch=%t verifyCatchup=%t\n",
+		cfg.Observers, cfg.Bidders, cfg.Duration, cfg.BidInterval, cfg.StartAmountCents, cfg.RetryTooLow, cfg.BidMaxAttempts,
+		cfg.ExpectRoomStatePatch, cfg.VerifyObserverCatchup)
 
 	// Reset the /metrics percentiles for this run by reading the pre-run snapshot
 	// — the percentiles continue to accumulate, but we'll diff counters and
@@ -151,6 +155,15 @@ func RunLoad(target string) error {
 	if err != nil {
 		return fmt.Errorf("scrape post-run /metrics: %w", err)
 	}
+	finalSnap, err := loadAuctionSnapshot(hc, target, aid)
+	if err != nil {
+		return fmt.Errorf("load final auction snapshot: %w", err)
+	}
+	observerStats := stats.observerSnapshot()
+	catchupProbe := loadCatchupProbe{LastSeq: observerStats.LastSeqMin}
+	if cfg.VerifyObserverCatchup && observerStats.SeqSamples > 0 {
+		catchupProbe = probeLoadObserverCatchup(target, observerBuyer.Token, aid, observerStats.LastSeqMin, finalSnap.Seq)
+	}
 
 	// Report — paste-friendly for docs/perf-report.md and for CI log scraping.
 	rep := loadReport{
@@ -159,8 +172,11 @@ func RunLoad(target string) error {
 		Elapsed:       elapsed,
 		Pre:           prerun,
 		Post:          postrun,
-		ObserverStats: stats.observerSnapshot(),
+		FinalSeq:      finalSnap.Seq,
+		FinalStatus:   finalSnap.Status,
+		ObserverStats: observerStats,
 		BidderStats:   stats.bidderSnapshot(),
+		CatchupProbe:  catchupProbe,
 	}
 	rep.print()
 
@@ -174,44 +190,50 @@ func RunLoad(target string) error {
 const loadStartCents = 100_000 // start price; per-bid amount is loadStartCents + amountCounter++
 
 type loadConfig struct {
-	Observers          int
-	Bidders            int
-	Duration           time.Duration
-	BidInterval        time.Duration
-	AckP95Budget       time.Duration
-	BroadcastP95Budget time.Duration
-	CatchupP95Budget   time.Duration
-	HammerP95Budget    time.Duration
-	ScriptP99Budget    time.Duration
-	HandlerP99Budget   time.Duration
-	AuctionDuration    time.Duration
-	ObserverStaggerMs  int
-	AuctionID          string
-	StartAmountCents   int64
-	BidsPerBidder      int
-	RetryTooLow        bool
-	BidMaxAttempts     int
+	Observers             int
+	Bidders               int
+	Duration              time.Duration
+	BidInterval           time.Duration
+	AckP95Budget          time.Duration
+	BroadcastP95Budget    time.Duration
+	CatchupP95Budget      time.Duration
+	HammerP95Budget       time.Duration
+	ScriptP99Budget       time.Duration
+	HandlerP99Budget      time.Duration
+	AuctionDuration       time.Duration
+	ObserverStaggerMs     int
+	AuctionID             string
+	StartAmountCents      int64
+	BidsPerBidder         int
+	RetryTooLow           bool
+	BidMaxAttempts        int
+	ExpectRoomStatePatch  bool
+	VerifyObserverCatchup bool
 }
 
 func loadConfigFromEnv() loadConfig {
+	observers := envIntAllowZero("LOAD_OBSERVERS", 500)
+	expectPatchDefault := defaultRoomStatePatchMinViewers > 0 && observers >= defaultRoomStatePatchMinViewers
 	return loadConfig{
-		Observers:          envIntAllowZero("LOAD_OBSERVERS", 500),
-		Bidders:            envInt("LOAD_BIDDERS", 50),
-		Duration:           time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
-		BidInterval:        time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
-		AckP95Budget:       time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
-		BroadcastP95Budget: time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
-		CatchupP95Budget:   time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
-		HammerP95Budget:    time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
-		ScriptP99Budget:    time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
-		HandlerP99Budget:   time.Duration(envInt("LOAD_HANDLER_P99_MS", 5)) * time.Millisecond,
-		AuctionDuration:    time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
-		ObserverStaggerMs:  envInt("LOAD_OBSERVER_STAGGER_MS", 10),
-		AuctionID:          strings.TrimSpace(os.Getenv("LOAD_AUCTION_ID")),
-		StartAmountCents:   int64(envInt("LOAD_START_CENTS", loadStartCents)),
-		BidsPerBidder:      envInt("LOAD_BIDS_PER_BIDDER", 0),
-		RetryTooLow:        envBool("LOAD_RETRY_TOO_LOW", false),
-		BidMaxAttempts:     envInt("LOAD_BID_MAX_ATTEMPTS", 25),
+		Observers:             observers,
+		Bidders:               envInt("LOAD_BIDDERS", 50),
+		Duration:              time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
+		BidInterval:           time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
+		AckP95Budget:          time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
+		BroadcastP95Budget:    time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
+		CatchupP95Budget:      time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
+		HammerP95Budget:       time.Duration(envInt("LOAD_HAMMER_P95_MS", 500)) * time.Millisecond,
+		ScriptP99Budget:       time.Duration(envInt("LOAD_SCRIPT_P99_MS", 5)) * time.Millisecond,
+		HandlerP99Budget:      time.Duration(envInt("LOAD_HANDLER_P99_MS", 5)) * time.Millisecond,
+		AuctionDuration:       time.Duration(envInt("LOAD_AUCTION_DUR_SEC", 3600)) * time.Second,
+		ObserverStaggerMs:     envInt("LOAD_OBSERVER_STAGGER_MS", 10),
+		AuctionID:             strings.TrimSpace(os.Getenv("LOAD_AUCTION_ID")),
+		StartAmountCents:      int64(envInt("LOAD_START_CENTS", loadStartCents)),
+		BidsPerBidder:         envInt("LOAD_BIDS_PER_BIDDER", 0),
+		RetryTooLow:           envBool("LOAD_RETRY_TOO_LOW", false),
+		BidMaxAttempts:        envInt("LOAD_BID_MAX_ATTEMPTS", 25),
+		ExpectRoomStatePatch:  envBool("LOAD_EXPECT_ROOM_STATE_PATCH", expectPatchDefault),
+		VerifyObserverCatchup: envBool("LOAD_VERIFY_OBSERVER_CATCHUP", true),
 	}
 }
 
@@ -260,8 +282,7 @@ func loadSetupAuction(hc *http.Client, target string, cfg loadConfig) (string, e
 	return aid, nil
 }
 
-// loadStats holds per-run counters. Lock-free; observer/bidder workers update
-// via atomic add and the main goroutine reads at end via the same atomics.
+// loadStats holds per-run counters and sampled observer high-watermarks.
 type loadStats struct {
 	bidsSent      atomic.Int64
 	bidsAcked     atomic.Int64
@@ -270,12 +291,18 @@ type loadStats struct {
 	observerFrame atomic.Int64 // broadcasts observed across all observers
 	observerErr   atomic.Int64
 	dialErr       atomic.Int64
+
+	mu              sync.Mutex
+	observerLastSeq []int64
 }
 
 type observerSnapshot struct {
-	Frames   int64 `json:"observerFramesReceived"`
-	Errors   int64 `json:"observerReadErrors"`
-	DialErrs int64 `json:"observerDialErrors"`
+	Frames     int64 `json:"observerFramesReceived"`
+	Errors     int64 `json:"observerReadErrors"`
+	DialErrs   int64 `json:"observerDialErrors"`
+	SeqSamples int64 `json:"observerSeqSamples"`
+	LastSeqMin int64 `json:"observerLastSeqMin"`
+	LastSeqMax int64 `json:"observerLastSeqMax"`
 }
 
 type bidderSnapshot struct {
@@ -286,9 +313,40 @@ type bidderSnapshot struct {
 }
 
 func (s *loadStats) observerSnapshot() observerSnapshot {
-	return observerSnapshot{
-		Frames: s.observerFrame.Load(), Errors: s.observerErr.Load(), DialErrs: s.dialErr.Load(),
+	s.mu.Lock()
+	lastSeqs := append([]int64(nil), s.observerLastSeq...)
+	s.mu.Unlock()
+	minSeq := int64(0)
+	maxSeq := int64(0)
+	if len(lastSeqs) > 0 {
+		minSeq = lastSeqs[0]
+		maxSeq = lastSeqs[0]
+		for _, seq := range lastSeqs[1:] {
+			if seq < minSeq {
+				minSeq = seq
+			}
+			if seq > maxSeq {
+				maxSeq = seq
+			}
+		}
 	}
+	return observerSnapshot{
+		Frames:     s.observerFrame.Load(),
+		Errors:     s.observerErr.Load(),
+		DialErrs:   s.dialErr.Load(),
+		SeqSamples: int64(len(lastSeqs)),
+		LastSeqMin: minSeq,
+		LastSeqMax: maxSeq,
+	}
+}
+
+func (s *loadStats) recordObserverLastSeq(seq int64) {
+	if seq <= 0 {
+		return
+	}
+	s.mu.Lock()
+	s.observerLastSeq = append(s.observerLastSeq, seq)
+	s.mu.Unlock()
 }
 
 func (s *loadStats) bidderSnapshot() bidderSnapshot {
@@ -320,6 +378,10 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 		return
 	}
 	defer c.Close()
+	lastSeq := int64(0)
+	defer func() {
+		stats.recordObserverLastSeq(lastSeq)
+	}()
 
 	// Cooperative cancel WITHOUT a per-read deadline. A gorilla read-deadline
 	// timeout permanently poisons the conn (it sets c.readErr), so the old
@@ -335,7 +397,7 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 	}()
 
 	for {
-		_, _, err := c.ReadMessage()
+		_, raw, err := c.ReadMessage()
 		if err != nil {
 			// Run over (we closed the conn on ctx.Done) or a normal end-of-run
 			// WS teardown → clean exit, not a lost frame. Anything else is a
@@ -345,6 +407,9 @@ func runObserver(ctx context.Context, target, token, aid string, stats *loadStat
 			}
 			stats.observerErr.Add(1)
 			return
+		}
+		if seq := loadFrameSeq(raw); seq > lastSeq {
+			lastSeq = seq
 		}
 		stats.observerFrame.Add(1)
 	}
@@ -491,6 +556,93 @@ func scrapeMetrics(hc *http.Client, target string) (metrics.Snapshot, error) {
 	return snap, nil
 }
 
+func loadAuctionSnapshot(hc *http.Client, target, aid string) (model.RoomSnapshotData, error) {
+	var snap model.RoomSnapshotData
+	if err := getJSON(hc, target+"/api/auctions/"+aid, &snap); err != nil {
+		return snap, err
+	}
+	return snap, nil
+}
+
+type loadCatchupProbe struct {
+	LastSeq      int64  `json:"lastSeq"`
+	SnapshotSeq  int64  `json:"snapshotSeq"`
+	ReplayFrames int    `json:"replayFrames"`
+	OK           bool   `json:"ok"`
+	Error        string `json:"error,omitempty"`
+}
+
+func probeLoadObserverCatchup(target, token, aid string, lastSeq, finalSeq int64) loadCatchupProbe {
+	out := loadCatchupProbe{LastSeq: lastSeq}
+	snap, replayFrames, err := dialJoinSnapshot(target, token, aid, lastSeq, 10*time.Second)
+	if err != nil {
+		out.Error = err.Error()
+		return out
+	}
+	out.SnapshotSeq = snap.Seq
+	out.ReplayFrames = replayFrames
+	out.OK = snap.Seq >= finalSeq
+	return out
+}
+
+func dialJoinSnapshot(target, token, aid string, lastSeq int64, timeout time.Duration) (model.RoomSnapshotData, int, error) {
+	u, err := url.Parse(target)
+	if err != nil {
+		return model.RoomSnapshotData{}, 0, err
+	}
+	scheme := "ws"
+	if u.Scheme == "https" {
+		scheme = "wss"
+	}
+	wsURL := fmt.Sprintf("%s://%s/ws?token=%s", scheme, u.Host, url.QueryEscape(token))
+	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		return model.RoomSnapshotData{}, 0, err
+	}
+	defer c.Close()
+	join, _ := model.NewEnvelope(model.TypeRoomJoin, aid, 0, model.RoomJoinData{
+		AuctionID: aid,
+		LastSeq:   lastSeq,
+	})
+	if err := c.WriteJSON(join); err != nil {
+		return model.RoomSnapshotData{}, 0, err
+	}
+	_ = c.SetReadDeadline(time.Now().Add(timeout))
+	replayFrames := 0
+	for {
+		var env model.Envelope
+		if err := c.ReadJSON(&env); err != nil {
+			return model.RoomSnapshotData{}, replayFrames, err
+		}
+		if env.Type != model.TypeRoomSnapshot {
+			replayFrames++
+			continue
+		}
+		var snap model.RoomSnapshotData
+		if err := json.Unmarshal(env.Data, &snap); err != nil {
+			return model.RoomSnapshotData{}, replayFrames, err
+		}
+		return snap, replayFrames, nil
+	}
+}
+
+func loadFrameSeq(raw []byte) int64 {
+	var env model.Envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return 0
+	}
+	if env.Seq > 0 {
+		return env.Seq
+	}
+	var data struct {
+		Seq int64 `json:"seq"`
+	}
+	if err := json.Unmarshal(env.Data, &data); err != nil {
+		return 0
+	}
+	return data.Seq
+}
+
 // loadReport is the structured T8 run output. Marshallable so CI / docs can
 // consume the same numbers the human-readable print shows.
 type loadReport struct {
@@ -499,8 +651,11 @@ type loadReport struct {
 	Elapsed       time.Duration
 	Pre           metrics.Snapshot
 	Post          metrics.Snapshot
+	FinalSeq      int64
+	FinalStatus   string
 	ObserverStats observerSnapshot
 	BidderStats   bidderSnapshot
+	CatchupProbe  loadCatchupProbe
 }
 
 func (r loadReport) print() {
@@ -518,6 +673,13 @@ func (r loadReport) print() {
 		r.BidderStats.Sent, r.BidderStats.Acked, r.BidderStats.Rejected, r.BidderStats.Errors)
 	fmt.Printf("observer: frames=%d readErrors=%d dialErrors=%d\n",
 		r.ObserverStats.Frames, r.ObserverStats.Errors, r.ObserverStats.DialErrs)
+	fmt.Printf("observer high-watermark: samples=%d minSeq=%d maxSeq=%d finalSnapshot=%s seq=%d\n",
+		r.ObserverStats.SeqSamples, r.ObserverStats.LastSeqMin, r.ObserverStats.LastSeqMax, r.FinalStatus, r.FinalSeq)
+	if r.Config.VerifyObserverCatchup {
+		fmt.Printf("observer catchup probe: lastSeq=%d replayFrames=%d snapshotSeq=%d ok=%t err=%q\n",
+			r.CatchupProbe.LastSeq, r.CatchupProbe.ReplayFrames, r.CatchupProbe.SnapshotSeq,
+			r.CatchupProbe.OK, r.CatchupProbe.Error)
+	}
 	// Histograms — server-side observation is authoritative (lock-stepped to the
 	// hot path), not the client RTT.
 	fmt.Printf("ack       p50=%.1fms p95=%.1fms p99=%.1fms max=%.1fms (count=%d, budget p95<%v)\n",
@@ -570,6 +732,14 @@ func (r loadReport) breaches() []string {
 	if r.Post.RoomStatePatch.P95 > ms(r.Config.BroadcastP95Budget) {
 		out = append(out, fmt.Sprintf("room-state patch p95 %.1fms > %v", r.Post.RoomStatePatch.P95, r.Config.BroadcastP95Budget))
 	}
+	if r.Config.ExpectRoomStatePatch {
+		if patches := r.Post.RoomStatePatches - r.Pre.RoomStatePatches; patches <= 0 {
+			out = append(out, "roomStatePatches=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true")
+		}
+		if patchBids := r.Post.RoomStatePatchBids - r.Pre.RoomStatePatchBids; patchBids <= 0 {
+			out = append(out, "roomStatePatchBids=0 while LOAD_EXPECT_ROOM_STATE_PATCH=true")
+		}
+	}
 	if r.Post.Hammer.Count > 0 && r.Post.Hammer.P95 > ms(r.Config.HammerP95Budget) {
 		out = append(out, fmt.Sprintf("hammer p95 %.1fms > %v", r.Post.Hammer.P95, r.Config.HammerP95Budget))
 	}
@@ -587,6 +757,19 @@ func (r loadReport) breaches() []string {
 	}
 	if r.ObserverStats.Errors > 0 {
 		out = append(out, fmt.Sprintf("observer readErrors=%d (must be 0)", r.ObserverStats.Errors))
+	}
+	if r.ObserverStats.DialErrs > 0 {
+		out = append(out, fmt.Sprintf("observer dialErrors=%d (must be 0)", r.ObserverStats.DialErrs))
+	}
+	if r.Config.VerifyObserverCatchup && r.Config.Observers > 0 {
+		if r.ObserverStats.SeqSamples == 0 {
+			out = append(out, "no observer seq high-watermark samples")
+		} else if r.CatchupProbe.Error != "" {
+			out = append(out, fmt.Sprintf("observer catchup probe failed: %s", r.CatchupProbe.Error))
+		} else if !r.CatchupProbe.OK || r.CatchupProbe.SnapshotSeq < r.FinalSeq {
+			out = append(out, fmt.Sprintf("observer catchup snapshot seq=%d < final seq=%d from lastSeq=%d",
+				r.CatchupProbe.SnapshotSeq, r.FinalSeq, r.CatchupProbe.LastSeq))
+		}
 	}
 	if gap := r.Post.SeqGap - r.Pre.SeqGap; gap > 0 {
 		// 0-tolerance correctness invariant (V9 §4.1).
