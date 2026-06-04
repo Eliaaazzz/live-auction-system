@@ -91,11 +91,29 @@
     }
 
     let ws;
+    async function login(nickname, role) {
+      const payload = { nickname, role };
+      const headers = { 'Content-Type': 'application/json' };
+      const loginRes = await fetch('/api/login', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      if (loginRes && loginRes.ok) return loginRes.json();
+
+      const fallbackRes = await fetch('/api/dev-login', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      if (!fallbackRes || !fallbackRes.ok) {
+        throw new Error('/api/login ' + (loginRes ? loginRes.status : 'failed') + '; /api/dev-login ' + (fallbackRes ? fallbackRes.status : 'failed'));
+      }
+      return fallbackRes.json();
+    }
+
     async function connect() {
-      const s = await (await fetch('/api/dev-login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname: 'Buyer ' + Math.floor(Math.random() * 1000), role: 'user' }),
-      })).json();
+      const s = await login('Buyer ' + Math.floor(Math.random() * 1000), 'user');
       authToken = s.token;
 
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -165,7 +183,8 @@
     }
 
     function render(price, status, seq) {
-      if (price) document.getElementById('price').textContent = price;
+      if (price == null) return;
+      document.getElementById('price').textContent = String(price);
       document.getElementById('status').textContent = 'status: ' + (status || '—') + ' · seq: ' + (seq || 0);
     }
 

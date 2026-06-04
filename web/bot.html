@@ -62,9 +62,9 @@
         const r = await fetch('/api/auctions/' + aid);
         if (!r.ok) return false;
         const a = await r.json();
-        sharedState.increment = parseInt(a.rules?.incrementCents || '1000', 10);
-        sharedState.cap = parseInt(a.rules?.capPriceCents || '0', 10);
-        sharedState.currentCents = parseInt(a.currentPriceCents || a.rules?.startPriceCents || '10000', 10);
+        sharedState.increment = parseInt(a.rules?.incrementCents ?? '1000', 10);
+        sharedState.cap = parseInt(a.rules?.capPriceCents ?? '0', 10);
+        sharedState.currentCents = parseInt(a.currentPriceCents ?? a.rules?.reserveCents ?? a.rules?.startPriceCents ?? '10000', 10);
         log(`loaded rules: increment=${sharedState.increment} cap=${sharedState.cap} start≈${sharedState.currentCents}`);
         return true;
       } catch (e) {
@@ -74,6 +74,27 @@
     }
 
     async function spawnBot(idx, aid) {
+      async function login(nickname, role) {
+        const payload = { nickname, role };
+        const headers = { 'Content-Type': 'application/json' };
+        const loginRes = await fetch('/api/login', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+        if (loginRes && loginRes.ok) return loginRes.json();
+
+        const fallbackRes = await fetch('/api/dev-login', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+        if (!fallbackRes || !fallbackRes.ok) {
+          throw new Error('/api/login ' + (loginRes ? loginRes.status : 'failed') + '; /api/dev-login ' + (fallbackRes ? fallbackRes.status : 'failed'));
+        }
+        return fallbackRes.json();
+      }
+
       const row = document.createElement('div');
       row.className = 'bot live';
       row.textContent = `bot#${idx}: logging in…`;
@@ -81,10 +102,7 @@
 
       const bot = { idx, row, alive: true, ws: null, token: '', userId: '', timer: null };
 
-      const s = await (await fetch('/api/dev-login', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nickname: 'Bot ' + idx, role: 'user' }),
-      })).json();
+      const s = await login('Bot ' + idx, 'user');
       bot.token = s.token; bot.userId = s.userId;
       row.textContent = `bot#${idx}: ${bot.userId} · connecting…`;
 
@@ -100,7 +118,9 @@
         const env = JSON.parse(ev.data);
         switch (env.type) {
           case 'ROOM_SNAPSHOT':
-            if (env.data.currentPriceCents) sharedState.currentCents = parseInt(env.data.currentPriceCents, 10);
+            if (env.data.currentPriceCents != null) {
+              sharedState.currentCents = parseInt(env.data.currentPriceCents, 10);
+            }
             if (env.data.endAtMs) sharedState.endAtMs = env.data.endAtMs;
             if (['SOLD','NO_BID','CANCELLED'].includes(env.data.status)) terminateAll(env.data.status);
             break;
