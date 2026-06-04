@@ -75,7 +75,7 @@
 - ✅ **117 newly executable as smoke** (本次补充) — `scripts/smoke-vickrey.mjs` 验证二价结算：winner 支付次高价；无 runner-up 时回退保留价
 - 已补: 108（ClockDriftIndicator DOM 组件断言已补）
 
-DOM-heavy browser-DOM 缺口仍在：104-107（均需 Playwright）。**112 已补到 `lib/ws.test.js` 的 resync 重连覆盖。** **100% of P0 gap probes are now under automated coverage.**
+DOM-heavy browser-DOM 缺口仍在：104-107（均需 Playwright）。**112 已补到 `lib/ws.test.js` 的 resync 重连覆盖。** 功能层 P0 gap probes 已全量转为可执行自动化（104/105 视觉断言见 Playwright 待补）。**
 
 ### 自动化测试覆盖一览 · Automated test coverage
 
@@ -109,6 +109,8 @@ cd apps/web && npm run smoke:multitab
 # Also available via Makefile:
 cd <repo-root> && make up && make seed && make web-smoke
 cd <repo-root> && make web-smoke-prepare && make web-smoke
+cd <repo-root> && make up && make seed && make web-smoke-antisnipe
+cd <repo-root> && make web-smoke-antisnipe-prepare
 # Preflight check only:
 cd <repo-root> && make web-smoke-check
 # Full one-command flow (auto-up + auto-seed):
@@ -118,6 +120,8 @@ cd <repo-root> && WEB_SMOKE_AUTO_UP=1 WEB_SMOKE_AUTO_SEED=1 WEB_SMOKE_SCHEMA_VER
 # Focused run:
 cd <repo-root> && make up && make seed && make web-smoke-ratelimit
 cd <repo-root> && make web-smoke-ratelimit-prepare
+cd <repo-root> && make up && make seed && make web-smoke-antisnipe
+cd <repo-root> && make web-smoke-antisnipe-prepare
 cd <repo-root> && make up && make seed && make web-smoke-selfbid
 cd <repo-root> && make web-smoke-selfbid-prepare
 cd <repo-root> && make up && make seed && make web-smoke-multitab
