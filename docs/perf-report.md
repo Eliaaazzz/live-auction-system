@@ -115,7 +115,7 @@ Super-stretch（100k / 2k / 4-shards）目标：
 LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 ```
 说明：100k 演练默认会做非 P0 自检门槛；仅在明确确认时执行（见 `LOAD_100K_CONFIRM`）。
-如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=second_price`（或 `VICKREY`）。
+如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=second_price`（或 `LOAD_AUCTION_MODE=vickrey`）。
 `load-100k` 也支持该变量，`load-100k-rehearse` 会沿用该变量透传，例如：
 ```bash
 LOAD_AUCTION_MODE=second_price LOAD_100K_CONFIRM=1 make load-100k
