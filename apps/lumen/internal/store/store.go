@@ -121,6 +121,9 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "auctions", "parent_auction_id", "VARCHAR(64) NULL DEFAULT NULL"); err != nil {
 		return err
 	}
+	if err := s.ensureIndex(ctx, "auctions", "idx_auctions_parent", "(parent_auction_id)"); err != nil {
+		return err
+	}
 	// coin_ledger (issue #114 ALL_PAY): see init SQL for the canonical schema.
 	// CREATE TABLE IF NOT EXISTS is idempotent — safe on existing volumes.
 	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS coin_ledger (
@@ -812,6 +815,41 @@ func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]Stre
 		newLast = m.ID
 	}
 	return out, newLast, nil
+}
+
+// LastAuctionReveal returns the sealed reveal event for a terminal sealed parent.
+// The private sealed ZSET is scrubbed at close, so formal-auction recommendations
+// must derive from the canonical Stream reveal event rather than private hot keys.
+func (s *Store) LastAuctionReveal(ctx context.Context, aid string) (model.AuctionRevealedData, error) {
+	msgs, err := s.rdb.XRevRangeN(ctx, streamKey(aid), "+", "-", 64).Result()
+	if err != nil {
+		return model.AuctionRevealedData{}, err
+	}
+	for _, m := range msgs {
+		if valStr(m.Values, "type") != model.TypeAuctionRevealed {
+			continue
+		}
+		var out model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(valStr(m.Values, "payload")), &out); err != nil {
+			return model.AuctionRevealedData{}, fmt.Errorf("decode auction reveal: %w", err)
+		}
+		return out, nil
+	}
+	events, _, err := s.ReadEventsAfter(ctx, aid, "")
+	if err != nil {
+		return model.AuctionRevealedData{}, err
+	}
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != model.TypeAuctionRevealed {
+			continue
+		}
+		var out model.AuctionRevealedData
+		if err := json.Unmarshal([]byte(events[i].Payload), &out); err != nil {
+			return model.AuctionRevealedData{}, fmt.Errorf("decode auction reveal: %w", err)
+		}
+		return out, nil
+	}
+	return model.AuctionRevealedData{}, ErrNotFound
 }
 
 func streamRangeStart(lastID string) string {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -177,12 +178,146 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"auctionId": id})
 }
 
+type prequalifySealedSummary struct {
+	Count       int    `json:"count"`
+	MaxCents    string `json:"maxCents"`
+	SecondCents string `json:"secondCents"`
+	MedianCents string `json:"medianCents"`
+}
+
+type prequalifyRecommendation struct {
+	ParentAuctionID            string                  `json:"parentAuctionId"`
+	AdvisoryOnly               bool                    `json:"advisoryOnly"`
+	RecommendedMode            string                  `json:"recommendedMode"`
+	EngineModeHint             string                  `json:"engineModeHint"`
+	RecommendedReserveCents    string                  `json:"recommendedReserveCents"`
+	RecommendedStartPriceCents string                  `json:"recommendedStartPriceCents"`
+	SealedSummary              prequalifySealedSummary `json:"sealedSummary"`
+	Rationale                  string                  `json:"rationale"`
+}
+
+func prequalifyRecommendationFromReveal(parentAID string, reveal model.AuctionRevealedData) (prequalifyRecommendation, error) {
+	amounts := make([]int64, 0, len(reveal.Bids))
+	for _, b := range reveal.Bids {
+		n, err := strconv.ParseInt(strings.TrimSpace(b.AmountCents), 10, 64)
+		if err != nil || n <= 0 || n > int64(model.MaxMoneyCents) {
+			continue
+		}
+		amounts = append(amounts, n)
+	}
+	if len(amounts) == 0 {
+		return prequalifyRecommendation{}, store.ErrNotFound
+	}
+	sort.Slice(amounts, func(i, j int) bool { return amounts[i] > amounts[j] })
+
+	max := amounts[0]
+	var second int64
+	if len(amounts) > 1 {
+		second = amounts[1]
+	}
+	median := amounts[len(amounts)/2]
+
+	reserve := median
+	rationale := "sealed cluster: use the lower median as the formal open-auction floor."
+	if len(amounts) == 1 {
+		reserve = max
+		rationale = "single sealed bid: use the only real demand signal as the formal floor."
+	} else if second > 0 && max >= second*13/10 {
+		reserve = second
+		rationale = "sealed outlier: use second-highest as reserve so the formal auction can still climb."
+	}
+	if reserve <= 0 {
+		reserve = max
+	}
+
+	secondText := ""
+	if second > 0 {
+		secondText = strconv.FormatInt(second, 10)
+	}
+	reserveText := strconv.FormatInt(reserve, 10)
+	return prequalifyRecommendation{
+		ParentAuctionID:            parentAID,
+		AdvisoryOnly:               true,
+		RecommendedMode:            "OPEN",
+		EngineModeHint:             model.ModeEnglish,
+		RecommendedReserveCents:    reserveText,
+		RecommendedStartPriceCents: reserveText,
+		SealedSummary: prequalifySealedSummary{
+			Count:       len(amounts),
+			MaxCents:    strconv.FormatInt(max, 10),
+			SecondCents: secondText,
+			MedianCents: strconv.FormatInt(median, 10),
+		},
+		Rationale: rationale,
+	}, nil
+}
+
+func (s *Server) loadPrequalifyRecommendation(w http.ResponseWriter, r *http.Request, userID, parentAID string) (store.Auction, prequalifyRecommendation, bool) {
+	parent, err := s.st.GetAuction(r.Context(), parentAID)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "parent auction not found")
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	if parent.SellerID != userID {
+		writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	parentRules, err := s.st.GetRules(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "load parent rules: "+err.Error())
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	if !model.UsesSealedEngine(parentRules.Mode) || model.NormalizeMode(parentRules.Mode) == model.ModeAllPay {
+		writeErr(w, http.StatusBadRequest, "parent must be SEALED_FIRST or VICKREY (got "+model.NormalizeMode(parentRules.Mode)+")")
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	snap, err := s.st.Snapshot(r.Context(), parentAID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read parent snapshot: "+err.Error())
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	if snap.Status != model.StateSold && snap.Status != model.StateOrderCreated {
+		writeErr(w, http.StatusBadRequest, "parent auction is not terminal SOLD (status="+snap.Status+")")
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	reveal, err := s.st.LastAuctionReveal(r.Context(), parentAID)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusBadRequest, "parent has no sealed reveal to recommend from")
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read parent reveal: "+err.Error())
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	rec, err := prequalifyRecommendationFromReveal(parentAID, reveal)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "parent has no usable sealed bids to recommend from")
+		return store.Auction{}, prequalifyRecommendation{}, false
+	}
+	return parent, rec, true
+}
+
+func (s *Server) handlePrequalifyRecommendation(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	_, rec, ok := s.loadPrequalifyRecommendation(w, r, userID, r.PathValue("id"))
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
+}
+
 // POST /api/auctions/{id}/spawn-formal {rules{}} -> {auctionId, seededStartPriceCents, parentAuctionId}
-// Issue #114 phase 6: a sealed (SEALED_FIRST/VICKREY) PREQUALIFY parent in a
-// terminal state seeds the formal auction's start price from its revealed
-// winning bid. The body's rules.startPriceCents is IGNORED and replaced; every
-// other field comes from the request. The new auction is created in DRAFT for
-// the seller to freeze + start like any other auction.
+// A terminal SEALED_FIRST/VICKREY parent seeds the formal auction from the
+// sealed reveal aggregate. A positive request rules.startPriceCents is treated
+// as the seller-confirmed override; otherwise the recommendation is used.
 func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
 	if !ok {
@@ -190,51 +325,27 @@ func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parentAID := r.PathValue("id")
-	parent, err := s.st.GetAuction(r.Context(), parentAID)
-	if err == store.ErrNotFound {
-		writeErr(w, http.StatusNotFound, "parent auction not found")
+	parent, rec, ok := s.loadPrequalifyRecommendation(w, r, userID, parentAID)
+	if !ok {
 		return
 	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if existing, err := s.st.ChildAuctionByParent(r.Context(), parentAID); err == nil {
+		seeded := rec.RecommendedReserveCents
+		if rules, rerr := s.st.GetRules(r.Context(), existing.ID); rerr == nil {
+			seeded = strconv.FormatInt(int64(rules.StartPriceCents), 10)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"auctionId":                  existing.ID,
+			"parentAuctionId":            parentAID,
+			"seededStartPriceCents":      seeded,
+			"recommendedReserveCents":    rec.RecommendedReserveCents,
+			"recommendedStartPriceCents": rec.RecommendedStartPriceCents,
+			"sealedSummary":              rec.SealedSummary,
+			"reused":                     true,
+		})
 		return
-	}
-	if parent.SellerID != userID {
-		writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow})
-		return
-	}
-	parentRules, err := s.st.GetRules(r.Context(), parentAID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "load parent rules: "+err.Error())
-		return
-	}
-	if !model.UsesSealedEngine(parentRules.Mode) || model.NormalizeMode(parentRules.Mode) == model.ModeAllPay {
-		// Pre-qualify expects a sealed REVEAL-style parent (SEALED_FIRST or
-		// VICKREY) whose winning bid is meaningful as a price floor. ALL_PAY's
-		// settlement is in virtual coins and would not seed a real-money floor.
-		writeErr(w, http.StatusBadRequest, "parent must be SEALED_FIRST or VICKREY (got "+model.NormalizeMode(parentRules.Mode)+")")
-		return
-	}
-	// The reveal at close wrote the parent's final price + terminal status to
-	// its Redis state Hash. Read from there — MySQL auctions.status lags the
-	// Lua mutation (the persistence worker projects it asynchronously), so
-	// using GetAuction's status here would race a freshly-hammered parent.
-	snap, err := s.st.Snapshot(r.Context(), parentAID)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "read parent snapshot: "+err.Error())
-		return
-	}
-	if snap.Status != model.StateSold && snap.Status != model.StateOrderCreated {
-		writeErr(w, http.StatusBadRequest, "parent auction is not terminal SOLD (status="+snap.Status+")")
-		return
-	}
-	if snap.CurrentPriceCents == "" || snap.CurrentPriceCents == "0" {
-		writeErr(w, http.StatusBadRequest, "parent has no revealed winning bid to seed from")
-		return
-	}
-	seededStart, perr := strconv.ParseInt(snap.CurrentPriceCents, 10, 64)
-	if perr != nil {
-		writeErr(w, http.StatusInternalServerError, "parse parent price: "+perr.Error())
+	} else if err != store.ErrNotFound {
+		writeErr(w, http.StatusInternalServerError, "check existing formal auction: "+err.Error())
 		return
 	}
 
@@ -244,7 +355,14 @@ func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	// Override the start price with the parent's winning bid.
+	seededStart, perr := strconv.ParseInt(rec.RecommendedReserveCents, 10, 64)
+	if perr != nil {
+		writeErr(w, http.StatusInternalServerError, "parse recommended reserve: "+perr.Error())
+		return
+	}
+	if body.Rules.StartPriceCents > 0 {
+		seededStart = int64(body.Rules.StartPriceCents)
+	}
 	body.Rules.StartPriceCents = model.Cents(seededStart)
 	mode, ok := modeFor(body.Rules.Mode)
 	if !ok {
@@ -267,10 +385,15 @@ func (s *Server) handleSpawnFormal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"auctionId":             newID,
-		"parentAuctionId":       parentAID,
-		"seededStartPriceCents": strconv.FormatInt(seededStart, 10),
+		"auctionId":                  newID,
+		"parentAuctionId":            parentAID,
+		"seededStartPriceCents":      strconv.FormatInt(seededStart, 10),
+		"recommendedReserveCents":    rec.RecommendedReserveCents,
+		"recommendedStartPriceCents": rec.RecommendedStartPriceCents,
+		"sealedSummary":              rec.SealedSummary,
+		"reused":                     false,
 	})
+	return
 }
 
 // GET /api/auctions/{id}/stream -> seller/admin-only live push material.
@@ -420,6 +543,8 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 		WinnerID          string `json:"winnerId"`
 		EndAtMs           int64  `json:"endAtMs"`
 		CreatedAtMs       int64  `json:"createdAtMs"`
+		Mode              string `json:"mode"`
+		ParentAuctionID   string `json:"parentAuctionId,omitempty"`
 	}
 	out := make([]dto, 0, len(items))
 	for _, it := range items {
@@ -432,6 +557,8 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 			WinnerID:          it.WinnerID,
 			EndAtMs:           it.EndAtMs,
 			CreatedAtMs:       it.CreatedAtMs,
+			Mode:              model.NormalizeMode(it.Mode),
+			ParentAuctionID:   it.ParentAuctionID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"auctions": out})
