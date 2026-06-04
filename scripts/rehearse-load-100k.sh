@@ -34,6 +34,7 @@ Options:
   --duration N         override LOAD_DURATION_SEC (default: 60)
   --auction-dur N      override LOAD_AUCTION_DUR_SEC (default: 3600)
   --bid-interval N     override LOAD_BID_INTERVAL_MS (default: 100)
+  --auction-mode MODE   override LOAD_AUCTION_MODE (default: first_price if empty)
   --ack-p95 N          override LOAD_ACK_P95_MS (default: 800)
   --broadcast-p95 N    override LOAD_BROADCAST_P95_MS (default: 1000)
   --script-p99 N       override LOAD_SCRIPT_P99_MS (default: 20)
@@ -71,6 +72,7 @@ LOAD_BIDDERS=2000
 LOAD_SHARDS=4
 LOAD_DURATION_SEC=60
 LOAD_AUCTION_DUR_SEC=3600
+LOAD_AUCTION_MODE="${LOAD_AUCTION_MODE:-}"
 LOAD_BID_INTERVAL_MS=100
 LOAD_ACK_P95_MS=800
 LOAD_BROADCAST_P95_MS=1000
@@ -93,6 +95,36 @@ SCRIPT_UTC_NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 is_true() {
   case "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" in
     1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+normalize_auction_mode() {
+  local mode="${1:-}"
+  mode="$(printf '%s' "$mode" | tr '[:upper:]' '[:lower:]')"
+  mode="${mode//-/_}"
+  mode="$(printf '%s' "$mode" | tr -s '[:space:]' '_')"
+  mode="${mode//__/_}"
+  case "$mode" in
+    ""|"first"|"first_price"|"firstprice")
+      echo "first_price"
+      ;;
+    "second"|"second_price"|"secondprice"|"vickrey")
+      echo "second_price"
+      ;;
+    *)
+      echo "$mode"
+      ;;
+  esac
+}
+
+is_supported_auction_mode() {
+  case "$1" in
+    first_price|second_price)
       return 0
       ;;
     *)
@@ -176,6 +208,10 @@ while [[ $# -gt 0 ]]; do
       LOAD_AUCTION_DUR_SEC="$2"
       shift 2
       ;;
+    --auction-mode)
+      LOAD_AUCTION_MODE="$2"
+      shift 2
+      ;;
     --bid-interval)
       LOAD_BID_INTERVAL_MS="$2"
       shift 2
@@ -227,6 +263,13 @@ done
 if [[ "${#POSITIONAL[@]}" -gt 0 ]]; then
   echo "unexpected arg: ${POSITIONAL[*]}"
   usage
+  exit 2
+fi
+
+LOAD_AUCTION_MODE_NORMALIZED="$(normalize_auction_mode "${LOAD_AUCTION_MODE:-}")"
+if [ -n "${LOAD_AUCTION_MODE:-}" ] && ! is_supported_auction_mode "$LOAD_AUCTION_MODE_NORMALIZED"; then
+  echo "invalid --auction-mode '${LOAD_AUCTION_MODE}'."
+  echo "supported: first_price (first), firstprice, second_price (second), secondprice, vickrey."
   exit 2
 fi
 
@@ -312,13 +355,15 @@ mkdir -p "$PACK_DIR/runs"
 summary_file="$PACK_DIR/summary.tsv"
 manifest_file="$PACK_DIR/manifest.json"
 
-echo "#run	status	rc	auction_id	auction_ids	observer_read_errors	observer_dial_errors	bid_sent	bid_acked	bid_rejected	bid_errors	seq_gap_count	backpressure_force_close	panic_present	catchup_status	catchup_rc" > "$summary_file"
+auction_mode_label="${LOAD_AUCTION_MODE_NORMALIZED}"
+auction_mode_label="${auction_mode_label:-first_price}"
+echo "#run\tstatus\trc\tauction_id\tauction_ids\tauction_mode\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc" > "$summary_file"
 
 HEALTHZ_URL="${BASE_URL}/healthz"
 METRICS_URL="${BASE_URL}/metrics"
 
 echo "super-stretch rehearsal pack: $PACK_DIR"
-echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms"
+echo "params: observers=$LOAD_OBSERVERS bidders=$LOAD_BIDDERS shards=$LOAD_SHARDS duration=${LOAD_DURATION_SEC}s bid_interval=${LOAD_BID_INTERVAL_MS}ms auction_mode=$auction_mode_label"
 
 LOAD_100K_CONFIRM=1 \
 LOAD_100K_ALLOW_LOW_ULIMIT="${LOAD_100K_ALLOW_LOW_ULIMIT:-}" \
@@ -412,6 +457,7 @@ while (( run_idx < ATTEMPTS )); do
   LOAD_SHARDS="$LOAD_SHARDS" \
   LOAD_DURATION_SEC="$LOAD_DURATION_SEC" \
   LOAD_BID_INTERVAL_MS="$LOAD_BID_INTERVAL_MS" \
+  LOAD_AUCTION_MODE="$auction_mode_label" \
   LOAD_AUCTION_DUR_SEC="$LOAD_AUCTION_DUR_SEC" \
   LOAD_ACK_P95_MS="$LOAD_ACK_P95_MS" \
   LOAD_BROADCAST_P95_MS="$LOAD_BROADCAST_P95_MS" \
@@ -516,13 +562,15 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
       "$run_idx" "$run_status" "$rc" "$auction_id" "${auction_ids:-}" \
+      "$auction_mode_label" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n' \
       "$run_idx" "$run_status" "$rc" "-" "-" \
+      "$auction_mode_label" \
       "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
       "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" >> "$summary_file"
   fi
@@ -600,6 +648,7 @@ jq -cn \
   --arg load_shards "$LOAD_SHARDS" \
   --arg load_duration "$LOAD_DURATION_SEC" \
   --arg load_bid_interval "$LOAD_BID_INTERVAL_MS" \
+  --arg load_auction_mode "$auction_mode_label" \
   --arg load_auction_dur "$LOAD_AUCTION_DUR_SEC" \
   --arg load_ack_p95 "$LOAD_ACK_P95_MS" \
   --arg load_broadcast_p95 "$LOAD_BROADCAST_P95_MS" \
@@ -627,7 +676,7 @@ jq -cn \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-    '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
+    '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, health: {start_file: $health_start, end_file: $health_end}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"
