@@ -7,7 +7,7 @@
 //                                     for the order block; timeline is public but
 //                                     we send the bearer either way)
 //   2. api.getEvidence(auctionId)   → { timeline[], eventsHash, chainVerified,
-//                                       hashBreakAtSeq?, order?, ... }
+//                                       auctionMode, hashBreakAtSeq?, order?, ... }
 //   3. render <MobileEvidence evidence={response} />
 //
 // Per blueprint §5 and proto/evidence-card.md §1: `hashBreakAtSeq` is

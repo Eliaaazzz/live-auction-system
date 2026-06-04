@@ -20,6 +20,7 @@ order contains buyer/order fields, so v0 does not expose this endpoint anonymous
   "currentPriceCents":"11000",           // money-as-string
   "winnerId":         "user_…",          // from verified timeline/order; "" if none
   "winnerDisplayName":"昵称",            // from verified timeline/order; fallback to bid displayName, else ""
+  "auctionMode":      "second_price",     // settlement rule for this auction: first_price | second_price
   "seq":              2,                  // last seq
   "eventsCount":      2,
   "factsConfirmed":   true,

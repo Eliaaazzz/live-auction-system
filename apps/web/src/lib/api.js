@@ -193,8 +193,8 @@ export const api = {
   /**
    * The design's `verifyChain()` POST does not exist on the backend.
    * `getEvidence()` already includes `chainVerified` (server recomputes
-   * the HMAC chain on read) + `hashBreakAtSeq` when broken. Just read
-   * those fields.
+   * the HMAC chain on read), `auctionMode` (default `first_price`),
+   * and `hashBreakAtSeq` when broken. Just read those fields.
    */
 };
 
