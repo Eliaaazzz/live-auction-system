@@ -21,6 +21,7 @@
 //   cd apps/web && node scripts/smoke-401.mjs
 
 const HOST = 'http://localhost:8080';
+const AUCTION_ID = process.env.VERIFY_AID || process.env.AUCTION_ID || 'auc_demo';
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
@@ -55,7 +56,7 @@ const { token } = await login.json();
 must(token, 'dev-login returned no token');
 
 // ─── 3. Retry with new token → no longer 401 ───────────────
-const retry = await fetch(`${HOST}/api/auctions/auc_demo`, {
+const retry = await fetch(`${HOST}/api/auctions/${AUCTION_ID}`, {
   method: 'GET',
   headers: { authorization: `Bearer ${token}` },
 });
