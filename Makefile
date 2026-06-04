@@ -35,7 +35,7 @@ DEPLOY_REHEARSAL_100K_BASE_WS_URL ?= $(DEPLOY_REHEARSAL_BASE_WS_URL)
 DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-second-price load-smoke load-smoke-second-price load-100k load-100k-second-price load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-second-price deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-vickrey load-second-price load-smoke load-smoke-second-price load-smoke-vickrey load-100k load-100k-vickrey load-100k-second-price load-100k-second-price-rehearse load-100k-vickrey-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -256,8 +256,11 @@ load:             ## T8 P0 gate: 500 connected + 50 active, asserts §4.2 budget
 	@# MAXLEN trim guard: load uses a long auction with bounded events (~6k at default), well
 	@# under the verifier replay budget — see docs/perf-report.md for the trim/replay alignment.
 
-load-second-price: ## T8 P0 lane: second-price (Vickrey) mode on default load defaults.
-	@LOAD_AUCTION_MODE=second_price $(MAKE) load
+load-vickrey: ## T8 P0 lane: Vickrey / second-price mode on default load defaults.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load
+
+load-second-price: ## T8 P0 lane alias: Vickrey / second-price mode on default load defaults.
+	@$(MAKE) load-vickrey
 
 load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets — exercises the load + verify chain so the harness itself stays a regression net.
 	@# Tunables chosen so a GitHub runner (2 vCPU / 7 GiB) finishes in <30 s.
@@ -292,7 +295,10 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	done
 
 load-smoke-second-price: ## CI-cheap smoke in second-price mode.
-	@LOAD_AUCTION_MODE=second_price $(MAKE) load-smoke
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-smoke
+
+load-smoke-vickrey: ## CI-cheap smoke lane alias in Vickrey / second-price mode.
+	@$(MAKE) load-smoke-second-price
 
 load-smoke-repeat: ## repeat load-smoke with aggregate pass/fail summary and JSON output support
 	@./scripts/repeat-load-smoke.sh $(REPEAT_LOAD_SMOKE_ARGS)
@@ -348,11 +354,17 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
 	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
 
-load-100k-second-price: ## 10w rehearsal load using second-price (Vickrey) mode.
-	@LOAD_AUCTION_MODE=second_price $(MAKE) load-100k
+load-100k-vickrey: ## 10w rehearsal load using Vickrey / second-price mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k
 
-load-100k-second-price-rehearse: ## 10w rehearsal evidence pack in second-price mode.
-	@LOAD_AUCTION_MODE=second_price $(MAKE) load-100k-rehearse
+load-100k-second-price: ## 10w rehearsal load alias in second-price (Vickrey) mode.
+	@$(MAKE) load-100k-vickrey
+
+load-100k-second-price-rehearse: ## 10w rehearsal evidence pack in second-price (alias) mode.
+	@LOAD_AUCTION_MODE=VICKREY $(MAKE) load-100k-rehearse
+
+load-100k-vickrey-rehearse: ## 10w rehearsal evidence pack in Vickrey / second-price mode.
+	@$(MAKE) load-100k-second-price-rehearse
 
 deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + optional client observed metrics pack
 	@set -eu; \
