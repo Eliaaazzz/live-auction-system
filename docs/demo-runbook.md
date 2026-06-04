@@ -160,6 +160,7 @@ Pre-record so rung 3 is complete (each is independently playable):
 - [ ] `make demo` green on the presenter laptop (full path) — **2026-06-09**
 - [ ] CI green for the demo atoms (`e2e-ai-offline`, `chaos-smoke`, `load-smoke`, frontend smokes); run `make demo-smoke` locally if wrapper-order confidence is needed
 - [ ] Public deploy health-green + seeded + one manual bid (T-10 min)
+- [ ] Optional coalescing visibility check: set `ROOM_STATE_PATCH_MIN_VIEWERS=10` for a small judge room (or `1` locally), restart lumen, and confirm a `ROOM_STATE_PATCH`; keep the default `1000` for production-scale wording
 - [ ] Backup recording + 5 chaos clips on local disk (not only cloud)
 - [ ] Grafana panel bookmarked + datasource live (`infra/grafana`, `infra/prometheus`)
 - [ ] Two browser tabs pre-opened (admin + room), sound on for AI/auctioneer audio

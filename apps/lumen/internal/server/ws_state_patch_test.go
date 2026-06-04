@@ -152,6 +152,36 @@ func TestRoomStatePatchUsesAuthoritativeBidCount(t *testing.T) {
 	}
 }
 
+func TestRoomStatePatchFallsBackToWinnerIDForEmptyDisplayName(t *testing.T) {
+	h := newHub()
+	const aid = "auc_patch_display_name"
+	c := &Conn{aid: aid, done: make(chan struct{}), crit: make(chan outboundFrame, 4)}
+	h.join(aid, c)
+	patches := newRoomStatePatchCoalescer(roomStatePatchConfig{interval: 50 * time.Millisecond, minViewers: 1})
+
+	if !patches.offer(h, aid, bidAcceptedEvent(1, "u1", "", "101")) {
+		t.Fatal("bid was not coalesced")
+	}
+	patches.flushAll(h, nil)
+
+	select {
+	case f := <-c.crit:
+		var env model.Envelope
+		if err := json.Unmarshal(f.raw, &env); err != nil {
+			t.Fatalf("patch envelope: %v", err)
+		}
+		var data model.RoomStatePatchData
+		if err := json.Unmarshal(env.Data, &data); err != nil {
+			t.Fatalf("patch data: %v", err)
+		}
+		if data.WinnerDisplayName != "u1" {
+			t.Fatalf("winnerDisplayName=%q want fallback winner id", data.WinnerDisplayName)
+		}
+	default:
+		t.Fatal("conn did not receive coalesced patch")
+	}
+}
+
 func TestRoomStatePatchClearsBidTotalOnTerminalEvent(t *testing.T) {
 	h := newHub()
 	const aid = "auc_patch_terminal"

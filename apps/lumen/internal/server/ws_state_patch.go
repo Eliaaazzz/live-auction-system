@@ -103,13 +103,17 @@ func (p *roomStatePatchCoalescer) offerBidAccepted(h *Hub, aid string, e store.S
 	if h.viewerCount(aid) < p.cfg.minViewers {
 		return false
 	}
+	winnerDisplayName := bid.DisplayName
+	if winnerDisplayName == "" {
+		winnerDisplayName = bid.UserID
+	}
 	next := model.RoomStatePatchData{
 		FromSeq:           e.Seq,
 		Seq:               e.Seq,
 		Status:            bid.Status,
 		CurrentPriceCents: bid.AmountCents,
 		WinnerID:          bid.UserID,
-		WinnerDisplayName: bid.DisplayName,
+		WinnerDisplayName: winnerDisplayName,
 		EndAtMs:           bid.EndAtMs,
 		BidCountDelta:     1,
 		BidCountTotal:     p.bidTotals[aid],
