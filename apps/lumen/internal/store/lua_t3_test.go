@@ -6,10 +6,12 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestCloseAuctionSold(t *testing.T) {
@@ -39,6 +41,78 @@ func TestCloseAuctionSold(t *testing.T) {
 	// terminal → further bids rejected ERR_NOT_LIVE.
 	if code, _, _, _ := s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2"); code != model.CodeErrNotLive {
 		t.Fatalf("post-hammer bid code=%s want ERR_NOT_LIVE", code)
+	}
+}
+
+func TestCloseAuctionSoldSecondPricePaysRunnerUp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u1: code=%s err=%v", code, err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "12000", "U2"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u2: code=%s err=%v", code, err)
+	}
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := s.CloseAuction(ctx, aid)
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("close: code=%s err=%v want OK_SOLD", code, err)
+	}
+
+	events, _, _ := s.ReadEventsAfter(ctx, aid, "")
+	if len(events) != 2 || events[1].Type != model.TypeAuctionSold || events[1].ID != "2-0" || events[1].Seq != 2 {
+		t.Fatalf("stream=%+v want [BID_ACCEPTED, AUCTION_SOLD@2-0]", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.AmountCents != "11000" {
+		t.Fatalf("auction sold amount=%s want runner-up 11000", sold.AmountCents)
+	}
+	if sold.WinnerID != "u2" {
+		t.Fatalf("winner=%s want u2", sold.WinnerID)
+	}
+	snap, _ := s.Snapshot(ctx, aid)
+	if snap.Status != model.StateSold || snap.CurrentPriceCents != "12000" {
+		t.Fatalf("snapshot=%+v want SOLD @12000", snap)
+	}
+}
+
+func TestCloseAuctionSecondPriceNoRunnerUpFallsBackToReserve(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.AuctionMode = model.AuctionModeSecondPrice
+	aid := liveAuction(t, s, r, 60_000)
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid: code=%s err=%v", code, err)
+	}
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, _, err := s.CloseAuction(ctx, aid)
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("close: code=%s err=%v", code, err)
+	}
+
+	events, _, _ := s.ReadEventsAfter(ctx, aid, "")
+	if len(events) != 2 || events[1].Type != model.TypeAuctionSold {
+		t.Fatalf("stream=%+v want [BID_ACCEPTED, AUCTION_SOLD@2-0]", events)
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.AmountCents != "10000" {
+		t.Fatalf("auction sold amount=%s want reserve/start 10000", sold.AmountCents)
 	}
 }
 
@@ -75,6 +149,69 @@ func TestCloseAuctionNotDue(t *testing.T) {
 	}
 	if st, _ := s.rdb.HGet(ctx, stateKey(aid), "status").Result(); st != model.StateLive {
 		t.Fatalf("status=%s want LIVE (not closed)", st)
+	}
+}
+
+func TestCloseAuctionWithReasonNotDue(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000) // endAtMs ~60s out
+	code, reason, endAtMs, err := s.CloseAuctionWithReason(ctx, aid)
+	if err != nil || code != model.CodeErrNotDue {
+		t.Fatalf("close: code=%s reason=%s err=%v", code, reason, err)
+	}
+	if reason != "" {
+		t.Fatalf("reason for ERR_NOT_DUE should be empty, got %q", reason)
+	}
+	if endAtMs <= 0 {
+		t.Fatalf("ERR_NOT_DUE should return the current endAtMs, got %d", endAtMs)
+	}
+}
+
+func TestCloseAuctionWithReasonSeqMismatch(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000) // seq=0, stream=empty by default
+	if err := s.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: streamKey(aid),
+		ID:     "1-0",
+		Values: map[string]interface{}{"type": "X", "seq": "1", "payload": "{}"},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rdb.HSet(ctx, stateKey(aid), "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, reason, endAtMs, err := s.CloseAuctionWithReason(ctx, aid)
+	if err != nil || code != model.CodeErrInternal || reason != "seq_stream_mismatch" {
+		t.Fatalf("close: code=%s reason=%q err=%v want ERR_INTERNAL/seq_stream_mismatch", code, reason, err)
+	}
+	if endAtMs != 0 {
+		t.Fatalf("ERR_INTERNAL should return endAtMs=0, got %d", endAtMs)
+	}
+	snap, _ := s.Snapshot(ctx, aid)
+	if snap.Status != model.StateLive {
+		t.Fatalf("status=%s want LIVE", snap.Status)
+	}
+}
+
+func TestCloseAuctionWithReasonKeyType(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000)
+	stateK := stateKey(aid)
+	if err := s.rdb.Del(ctx, stateK).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.rdb.Set(ctx, stateK, "corrupt", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, reason, endAtMs, err := s.CloseAuctionWithReason(ctx, aid)
+	if err != nil || code != model.CodeErrInternal || reason != "key_type" {
+		t.Fatalf("close: code=%s reason=%q err=%v want ERR_INTERNAL/key_type", code, reason, err)
+	}
+	if endAtMs != 0 {
+		t.Fatalf("ERR_INTERNAL should return endAtMs=0, got %d", endAtMs)
 	}
 }
 

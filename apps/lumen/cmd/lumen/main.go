@@ -6,6 +6,7 @@
 //	lumen verify-evidence [--auction <id>]   (T4 hash-chain only; same chain check, no 3-way diff)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
 //	lumen perf-smoke     (drives TARGET; ack/broadcast p95 floor-check)
+//	lumen cleanup-load   (reset hot Redis state for expired load-auction artifacts)
 //	lumen load           (drives TARGET; T8 P0 gate — 500 connected + 50 active, asserts §4.2 budgets)
 //	lumen chaos --phase=<setup|bid-expect|connect-fails|state-expect|catchup-expect|wait-events>
 //	                    (drives TARGET; T9 fault-drill building blocks composed by `make chaos PHASE=...`)
@@ -18,6 +19,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,7 +47,10 @@ func main() {
 		}
 
 	case "seed":
-		if err := server.Seed(ctx, mustConfig()); err != nil {
+		fs := flag.NewFlagSet("seed", flag.ExitOnError)
+		force := fs.Bool("force", false, "reset existing demo auction state for deterministic local smoke")
+		_ = fs.Parse(os.Args[2:])
+		if err := server.Seed(ctx, mustConfig(), *force); err != nil {
 			log.Fatalf("seed: %v", err)
 		}
 
@@ -90,6 +95,23 @@ func main() {
 		}
 		if err := server.RunLoad(target); err != nil {
 			log.Fatalf("load: %v", err)
+		}
+
+	case "cleanup-load":
+		fs := flag.NewFlagSet("cleanup-load", flag.ExitOnError)
+		auctions := fs.String("auction", "", "comma-separated explicit auction ids to clean (e.g. a1,a2)")
+		auctionFile := fs.String("auction-file", "", "file path with auction ids (line separated)")
+		scan := fs.Bool("scan-load-auctions", false, "scan Redis state keys and clean auctions matching load rules")
+		dryRun := fs.Bool("dry-run", false, "report matched ids only; do not delete Redis keys")
+		_ = fs.Parse(os.Args[2:])
+		opts := server.CleanupLoadOptions{
+			AuctionIDs:       parseAuctionIDs(*auctions),
+			AuctionFile:      *auctionFile,
+			ScanLoadAuctions: *scan,
+			DryRun:           *dryRun,
+		}
+		if err := server.RunCleanupLoad(ctx, mustConfig(), opts); err != nil {
+			log.Fatalf("cleanup-load: %v", err)
 		}
 
 	case "chaos":
@@ -146,5 +168,17 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load|chaos> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|perf-smoke|load|cleanup-load|chaos> [flags]")
+}
+
+func parseAuctionIDs(raw string) []string {
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
