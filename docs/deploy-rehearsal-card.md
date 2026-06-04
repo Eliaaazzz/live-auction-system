@@ -114,7 +114,8 @@ larger concurrency tier.
    ```
 
    For 100k/2k/4-shards Vickrey checks, drive the rehearsal itself on auctions
-   that are already configured with second-price rules (`auctionMode: second_price`);
+   that are already configured with second-price rules (`rules.mode: VICKREY`, or
+   legacy `auctionMode: second_price`);
    `deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
    not inject bid mode itself.
 
