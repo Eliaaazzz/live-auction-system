@@ -26,6 +26,7 @@ larger concurrency tier.
 ## Preconditions
 
 - `BASE_URL` points at the remote stack root, for example `https://auction.example.com`.
+- For production remote rehearsal, prefer HTTPS and set `DEPLOY_REHEARSAL_REQUIRE_HTTPS=1` (or `DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1` for 100k lane) so the preflight fails fast on insecure base URLs.
 - No secrets, cookies, cloud tokens, or provider credentials are written into the
   repository or evidence bundle.
 - Backend `/metrics` output can provide the required server-side latency fields
@@ -44,15 +45,31 @@ larger concurrency tier.
 2. Run deploy preflight.
 
    ```sh
-   BASE_URL="$BASE_URL" AID="${AID:-auc_demo}" OUT_DIR="$PREFLIGHT_OUT" scripts/deploy-preflight.sh
+   BASE_URL="$BASE_URL" AID="${AID:-auc_demo}" OUT_DIR="$PREFLIGHT_OUT" REQUIRE_HTTPS=1 scripts/deploy-preflight.sh
    ```
 
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
    `metrics-summary.json`. The helper reads public endpoints:
    `/healthz`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
-  and `/ws`. By default it expects auth-gated response `401/403`; if `WS_PRECHECK_TOKEN=<token>`
-  is set it also accepts a valid upgrade `101` for token-authenticated endpoints. If you want
-  a strict handshake-only check, set `REQUIRE_WS_UPGRADE=true` (or `1`/`yes`/`on`) as well.
+   and `/ws`. By default it expects auth-gated response `401/403`; if `WS_PRECHECK_TOKEN=<token>`
+   is set it also accepts a valid upgrade `101` for token-authenticated endpoints. If you want
+   a strict handshake-only check, set `REQUIRE_WS_UPGRADE=true` (or `1`/`yes`/`on`) as well.
+
+   Optional schema precheck:
+
+   ```sh
+   BASE_URL="$BASE_URL" \
+     AID=auc_demo \
+     REQUIRE_HTTPS=1 \
+     REQUIRE_WS_SCHEMA_CHECK=true \
+     WS_PRECHECK_SCHEMA="1" \
+     WS_PRECHECK_TOKEN="..." \
+     scripts/deploy-preflight.sh
+   ```
+
+   This opens an actual websocket handshake, sends `ROOM_JOIN`, and validates the
+   first schema-bearing server message against `WS_PRECHECK_SCHEMA`. Use this for
+   remote rehearsals where frontend/backend drift is a known risk.
 
 3. Decide whether SRS is in scope.
 
@@ -68,6 +85,8 @@ larger concurrency tier.
 
    ```sh
    BASE_URL="$BASE_URL" make deploy-perf-rehearsal-100k
+   # 若演练房间已是二价（Vickrey）规则，可直接：
+   BASE_URL="$BASE_URL" DEPLOY_REHEARSAL_100K_AID=auc_vickrey make deploy-perf-rehearsal-100k-second-price
    ```
 
    Copy-paste operator form (recommended):
@@ -77,6 +96,10 @@ larger concurrency tier.
      DEPLOY_REHEARSAL_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)" \
      DEPLOY_REHEARSAL_100K_TARGET=100000 \
      DEPLOY_REHEARSAL_100K_AID=auc_demo \
+     DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 \
+     DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1 \
+     DEPLOY_REHEARSAL_100K_WS_SCHEMA=1 \
+     DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN="..." \
      DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER=1 \
      DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP=1 \
      DEPLOY_REHEARSAL_100K_REPORT_ONLY=0 \
@@ -85,6 +108,11 @@ larger concurrency tier.
      PERF_GATE_OUT_DIR=".deploy-rehearsal-100k-$(date -u +%Y%m%dT%H%M%SZ)/perf-gate" \
      make deploy-perf-rehearsal-100k
    ```
+
+   For 100k/2k/4-shards Vickrey checks, drive the rehearsal itself on auctions
+   that are already configured with second-price rules (`auctionMode: second_price`);
+   `deploy-perf-rehearsal-100k` is a remote performance/operator wrapper and does
+   not inject bid mode itself.
 
    Result artifacts are collected in `DEPLOY_REHEARSAL_OUT_DIR` and in `PERF_GATE_OUT_DIR`.
    Keep both paths in the issue/meeting note so evidence is recoverable later.
@@ -151,7 +179,9 @@ larger concurrency tier.
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1`/`true`/`yes`/`on` is intentionally documented |
+| HTTPS boundary | `REQUIRE_HTTPS=1` and `BASE_URL` starts with `https://` | `require_https` row fails when HTTPS is enforced but HTTP URL is passed |
 | WebSocket reachability | `/ws` returns `401/403`, or `101` when token is allowed/provided; strict upgrade-only requires `WS_PRECHECK_TOKEN`+`REQUIRE_WS_UPGRADE=1`/`true`/`yes`/`on` | `/ws` returns unexpected HTTP status, or `101` is broken when upgrade-mode check is enabled |
+| WebSocket schema guard | `ws_schema` precheck passes when `REQUIRE_WS_SCHEMA_CHECK=true`, or row is intentionally skipped when check is off | Schema mismatch, timeout, or websocket handshake error |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier, or `result: FAIL-REPORTED` when evidence-only mode is enabled (`DEPLOY_REHEARSAL_REPORT_ONLY=1` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=1`) | Any required server SLO row fails in strict mode (`DEPLOY_REHEARSAL_REPORT_ONLY=0` or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=0`) or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |

@@ -11,6 +11,7 @@ LOAD_100K_REHEARSAL_ARGS ?= --confirm
 DEPLOY_REHEARSAL_TARGET ?= 500
 DEPLOY_REHEARSAL_AID ?= auc_demo
 DEPLOY_REHEARSAL_REPORT_ONLY ?= $(REPORT_ONLY)
+DEPLOY_REHEARSAL_REQUIRE_HTTPS ?= 0
 DEPLOY_REHEARSAL_100K_TARGET ?= 100000
 DEPLOY_REHEARSAL_100K_AID ?= $(DEPLOY_REHEARSAL_AID)
 DEPLOY_REHEARSAL_100K_ACK_P95_MAX_MS ?= 800
@@ -20,10 +21,17 @@ DEPLOY_REHEARSAL_100K_CATCHUP_P95_MAX_MS ?= 3000
 DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER ?= 1
 DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP ?= 1
 DEPLOY_REHEARSAL_100K_REPORT_ONLY ?= $(DEPLOY_REHEARSAL_REPORT_ONLY)
+DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS ?= $(DEPLOY_REHEARSAL_REQUIRE_HTTPS)
+DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK ?= 0
+DEPLOY_REHEARSAL_WS_SCHEMA ?= 1
+DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN ?=
+DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK ?= $(DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK)
+DEPLOY_REHEARSAL_100K_WS_SCHEMA ?= $(DEPLOY_REHEARSAL_WS_SCHEMA)
+DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN ?= $(DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN)
 DEPLOY_REHEARSAL_METRICS ?=
 REPEAT_LOAD_SMOKE_ARGS ?=
 
-.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-100k load load-smoke load-100k load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
+.PHONY: up down logs seed seed-fresh api-smoke-pr103 web-smoke-check web-smoke-prepare web-smoke web-smoke-ratelimit web-smoke-ratelimit-prepare web-smoke-selfbid web-smoke-selfbid-prepare web-smoke-multitab web-smoke-multitab-prepare web-smoke-vickrey web-smoke-vickrey-prepare e2e-dummy-bid perf-smoke e2e-ai-offline deploy-perf-rehearsal deploy-perf-rehearsal-100k deploy-perf-rehearsal-100k-second-price load load-smoke load-100k load-100k-second-price load-100k-second-price-rehearse load-100k-preflight load-100k-rehearse verify verify-evidence build vet test fmt guard review-scripts-check \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke review-pr-dependency review-pr-dependency-json review-queue-all review-queue-all-strict review-issue-candidates review-smoke review-ops-summary review-ops-summary-json review-issue-ref-audit review-root-cause review-root-cause-json review-blocker-priority review-blocker-priority-json review-rest-audit review-rest-audit-json load-smoke-repeat
 
@@ -95,19 +103,33 @@ web-smoke-check:  ## T6 preflight for web smoke (health + seed presence)
 		echo "Fix: make up"; echo "Hint: make web-smoke-prepare"; exit 1; \
 	fi
 	@echo "Backend healthy."
-	@if [ "$(WEB_SMOKE_AUTO_SEED_FORCE)" = "1" ]; then \
-		echo "INFO: WEB_SMOKE_AUTO_SEED_FORCE=1, refreshing demo auction..."; \
-		$(MAKE) seed-fresh; \
-	elif [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
-		echo "INFO: WEB_SMOKE_AUTO_SEED=1, seeding demo auction..."; \
-		$(MAKE) seed; \
-	fi
-	@if ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$(WEB_SMOKE_AID)" >/dev/null 2>&1; then \
-		echo "WARN: $(WEB_SMOKE_AID) missing or /api/auctions/$(WEB_SMOKE_AID) unavailable; run make seed."; \
-		echo "Hint: make web-smoke-prepare"; \
-		exit 1; \
-	fi
-	@echo "$(WEB_SMOKE_AID) seeded."
+	@{ \
+		check_auction_id="$(WEB_SMOKE_AID)"; \
+		check_auction_id="$${check_auction_id%%,*}"; \
+		check_auction_id="$(printf '%s' "$$check_auction_id" | sed 's/^ *//; s/ *$//')"; \
+		preset_mode="$(printf '%s' "$(WEB_SMOKE_USE_PRESET_AUCTION)" | tr '[:upper:]' '[:lower:]')"; \
+		is_preset="0"; \
+		if [ "$$preset_mode" = "1" ] || [ "$$preset_mode" = "true" ] || [ "$$preset_mode" = "yes" ] || [ "$$preset_mode" = "on" ]; then \
+			is_preset="1"; \
+		fi; \
+		if [ -z "$$check_auction_id" ]; then \
+			echo "WARN: WEB_SMOKE_AID is empty; run make web-smoke-prepare"; \
+			exit 1; \
+		fi; \
+		if [ "$$is_preset" = "0" ] && [ "$(WEB_SMOKE_AUTO_SEED_FORCE)" = "1" ]; then \
+			echo "INFO: WEB_SMOKE_AUTO_SEED_FORCE=1, refreshing demo auction..."; \
+			$(MAKE) seed-fresh; \
+		elif [ "$$is_preset" = "0" ] && [ "$(WEB_SMOKE_AUTO_SEED)" = "1" ] && ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$$check_auction_id" >/dev/null 2>&1; then \
+			echo "INFO: WEB_SMOKE_AUTO_SEED=1, seeding demo auction..."; \
+			$(MAKE) seed; \
+		fi; \
+		if ! curl -sf "$(WEB_SMOKE_BASE_URL)/api/auctions/$$check_auction_id" >/dev/null 2>&1; then \
+			echo "WARN: $$check_auction_id missing or /api/auctions/$$check_auction_id unavailable; run make seed."; \
+			echo "Hint: make web-smoke-prepare"; \
+			exit 1; \
+		fi; \
+		echo "$(WEB_SMOKE_AID) seeded (checked $$check_auction_id)."; \
+	}
 
 web-smoke:        ## T6: run web-side smoke scripts (requires stack up + seed, e.g. make up && make seed)
 	@$(MAKE) web-smoke-check WEB_SMOKE_AUTO_UP=$(WEB_SMOKE_AUTO_UP) WEB_SMOKE_AUTO_SEED_FORCE=1 WEB_SMOKE_AID="$(WEB_SMOKE_AID_EFF)" WEB_SMOKE_SCHEMA_VERSION="$(WEB_SMOKE_SCHEMA_VERSION)"
@@ -302,6 +324,7 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 		LOAD_SHARDS=4 \
 		LOAD_DURATION_SEC=60 \
 		LOAD_BID_INTERVAL_MS=100 \
+		LOAD_AUCTION_MODE="$(LOAD_AUCTION_MODE)" \
 		LOAD_ACK_P95_MS=800 \
 		LOAD_BROADCAST_P95_MS=1000 \
 		LOAD_HAMMER_P95_MS=2000 \
@@ -315,6 +338,12 @@ load-100k:       ## Super-stretch rehearsal (non-P0): 100k observer + 2k bidders
 load-100k-rehearse: ## Non-P0 100k rehearsal evidence pack (explicit --confirm required).
 	@./scripts/rehearse-load-100k.sh $(LOAD_100K_REHEARSAL_ARGS)
 
+load-100k-second-price: ## 10w rehearsal load using second-price (Vickrey) mode.
+	@LOAD_AUCTION_MODE=second_price $(MAKE) load-100k
+
+load-100k-second-price-rehearse: ## 10w rehearsal evidence pack in second-price mode.
+	@LOAD_AUCTION_MODE=second_price $(MAKE) load-100k-rehearse
+
 deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + optional client observed metrics pack
 	@set -eu; \
 	if [ -z "$(BASE_URL)" ]; then \
@@ -324,7 +353,7 @@ deploy-perf-rehearsal: ## #112: deploy + preflight + server-side SLO gate + opti
 	out_dir="$(DEPLOY_REHEARSAL_OUT_DIR)"; \
 	if [ -z "$$out_dir" ]; then out_dir=".deploy-rehearsal-$$(date +%Y%m%dT%H%M%S)"; fi; \
 	echo "deployment rehearsal out_dir=$$out_dir"; \
-	BASE_URL="$(BASE_URL)" AID="$(DEPLOY_REHEARSAL_AID)" OUT_DIR="$$out_dir" scripts/deploy-preflight.sh; \
+	BASE_URL="$(BASE_URL)" AID="$(DEPLOY_REHEARSAL_AID)" WS_PRECHECK_AUCTION="$(DEPLOY_REHEARSAL_AID)" WS_PRECHECK_SCHEMA="$(DEPLOY_REHEARSAL_WS_SCHEMA)" WS_PRECHECK_TOKEN="$(DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN)" REQUIRE_WS_SCHEMA_CHECK="$(DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK)" REQUIRE_HTTPS="$(DEPLOY_REHEARSAL_REQUIRE_HTTPS)" OUT_DIR="$$out_dir" scripts/deploy-preflight.sh; \
 	server_metrics="$(DEPLOY_REHEARSAL_METRICS)"; \
 	if [ -z "$$server_metrics" ]; then server_metrics="$$out_dir/metrics/body.txt"; fi; \
 	if [ ! -s "$$server_metrics" ]; then \
@@ -366,8 +395,15 @@ deploy-perf-rehearsal-100k: ## #112: remote super-stretch target (非 P0) with �
 		REQUIRE_HAMMER="$(DEPLOY_REHEARSAL_100K_REQUIRE_HAMMER)" \
 		REQUIRE_CATCHUP="$(DEPLOY_REHEARSAL_100K_REQUIRE_CATCHUP)" \
 		REPORT_ONLY="$(DEPLOY_REHEARSAL_100K_REPORT_ONLY)" \
+		DEPLOY_REHEARSAL_REQUIRE_HTTPS="$(DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS)" \
+		DEPLOY_REHEARSAL_REQUIRE_WS_SCHEMA_CHECK="$(DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK)" \
+		DEPLOY_REHEARSAL_WS_SCHEMA="$(DEPLOY_REHEARSAL_100K_WS_SCHEMA)" \
+		DEPLOY_REHEARSAL_WS_PRECHECK_TOKEN="$(DEPLOY_REHEARSAL_100K_WS_PRECHECK_TOKEN)" \
 		PERF_GATE_CLIENT_SUMMARY="$(PERF_GATE_CLIENT_SUMMARY)" \
 		PERF_GATE_OUT_DIR="$(PERF_GATE_OUT_DIR)"
+
+deploy-perf-rehearsal-100k-second-price: ## #112: remote super-stretch target on 已配置二价拍卖的 10万并发演练
+	@$(MAKE) deploy-perf-rehearsal-100k
 
 verify:           ## T6 replay-verifier: 3-way diff (stream/mysql/snapshot) + hash chain; exit!=0 on mismatch_at_seq or hash_break_at_seq
 	@aid="$(VERIFY_AID)"; \
