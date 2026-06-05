@@ -14,6 +14,12 @@ import (
 // detection-lag budget feeds the hammer p95).
 const timerScanInterval = 100 * time.Millisecond
 
+// timerErrInternalSuppressionInterval is the backoff window after a corrupted
+// state/stream pair returns ERR_INTERNAL. Reconcile still scans the auction, but
+// it will not re-track it until this window expires, preventing old load-test
+// artifacts from logging the same corruption every 5 seconds indefinitely.
+const timerErrInternalSuppressionInterval = 30 * time.Minute
+
 // reconcileInterval is the slower self-heal cadence: it re-registers any LIVE
 // auction missing from the active index (e.g. a TrackActive that failed right
 // after start_auction committed LIVE), so a transient Redis blip can never
@@ -88,7 +94,7 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 			endAtMs = snap.EndAtMs
 		}
 	}
-	code, endAtMsFromClose, err := st.CloseAuction(ctx, aid)
+	code, reason, endAtMsFromClose, err := st.CloseAuctionDetailed(ctx, aid)
 	if err != nil {
 		log.Printf("timer close %s: %v", aid, err)
 		return
@@ -124,16 +130,45 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 	case model.CodeErrInternal:
 		// data corruption (seq_stream_mismatch / key_type): re-hammering every 100ms
 		// can't fix it and just floods logs with no operator signal. Untrack to break the
-		// tight loop and emit one ERROR; the reconcile re-tracks it (still LIVE in the
-		// authoritative state Hash), so it re-probes at the slow cadence (surfacing the
-		// ERROR) instead of 10x/s — bounded log volume + a human-actionable signal. The
-		// underlying corruption still needs an operator; this just stops the storm.
+		// tight loop and write a suppression deadline into the authoritative state Hash,
+		// so reconcile does not re-track the same corrupt auction every 5 seconds.
+		// The underlying corruption still needs an operator cleanup pass.
 		// (TC-T3-104)
-		log.Printf("ERROR timer close %s: ERR_INTERNAL (state/stream corruption); untracking to stop the 100ms retry loop, reconcile will re-probe in %s", aid, reconcileInterval)
+		recordTimerErrInternal(m, reason)
+		nowMs, nerr := st.RedisNowMs(ctx)
+		if nerr != nil {
+			nowMs = time.Now().UnixMilli()
+			log.Printf("timer suppression clock fallback %s: %v", aid, nerr)
+		}
+		suppressUntil := nowMs + timerErrInternalSuppressionInterval.Milliseconds()
+		log.Printf("ERROR timer close %s: ERR_INTERNAL reason=%s; untracking and suppressing reconcile until %s", aid, timerErrInternalReason(reason), time.UnixMilli(suppressUntil).UTC().Format(time.RFC3339))
+		if err := st.MarkTimerErrInternalSuppression(ctx, aid, reason, nowMs, suppressUntil); err != nil {
+			log.Printf("timer mark ERR_INTERNAL suppression %s: %v", aid, err)
+		}
 		if err := st.UntrackActive(ctx, aid); err != nil {
 			log.Printf("timer untrack %s after ERR_INTERNAL: %v", aid, err)
 		}
 	}
+}
+
+func recordTimerErrInternal(m *metrics.Registry, reason string) {
+	if m == nil {
+		return
+	}
+	m.TimerErrInternal.Inc()
+	switch timerErrInternalReason(reason) {
+	case "key_type":
+		m.TimerErrInternalKeyType.Inc()
+	case "seq_stream_mismatch":
+		m.TimerErrInternalSeqMismatch.Inc()
+	}
+}
+
+func timerErrInternalReason(reason string) string {
+	if reason == "" {
+		return "unknown"
+	}
+	return reason
 }
 
 // reconcileActive walks the authoritative state Hashes and re-registers any LIVE
@@ -149,12 +184,25 @@ func reconcileActive(ctx context.Context, st *store.Store, auctioneer *Auctionee
 		log.Printf("timer reconcile scan: %v", err)
 		return
 	}
+	nowMs, err := st.RedisNowMs(ctx)
+	if err != nil {
+		nowMs = time.Now().UnixMilli()
+		log.Printf("timer reconcile clock fallback: %v", err)
+	}
 	for _, aid := range aids {
 		snap, err := st.Snapshot(ctx, aid)
 		if err != nil {
 			continue
 		}
 		if snap.Status == model.StateLive && snap.EndAtMs > 0 {
+			suppression, err := st.TimerErrInternalSuppression(ctx, aid)
+			if err != nil {
+				log.Printf("timer reconcile suppression %s: %v", aid, err)
+				continue
+			}
+			if suppression.UntilMs > nowMs {
+				continue
+			}
 			if err := st.TrackActive(ctx, aid, snap.EndAtMs); err != nil {
 				log.Printf("timer reconcile track %s: %v", aid, err)
 			}

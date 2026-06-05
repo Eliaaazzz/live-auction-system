@@ -147,6 +147,20 @@ make load-smoke      # 25/5/10s + post-load verify (~25 s)
 curl -s http://localhost:8080/metrics | jq
 ```
 
+Post-load cleanup for temporary load auctions:
+
+```bash
+# dry-run: lists Redis keys and active-index members for auc_load_* only
+make cleanup-load-auctions
+
+# execute after verifier/evidence output has been saved
+LOAD_CLEANUP_EXECUTE=1 make cleanup-load-auctions
+```
+
+The cleanup path refuses prefixes outside `auc_load_`, removes only Redis load
+artifacts plus `auction:active` members, and reports `mysql_rows_deleted=0` /
+`evidence_rows_deleted=0`. Do not use it for demo/evidence auctions.
+
 ---
 
 ## 9. Deployed / WAN re-measurement (#112)

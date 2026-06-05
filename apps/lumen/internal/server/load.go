@@ -699,13 +699,16 @@ func (r loadReport) print() {
 	fmt.Printf("handler   p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v · P8 Go-side, excl. Redis RTT)\n",
 		r.Post.HandlerOverhead.P50, r.Post.HandlerOverhead.P95, r.Post.HandlerOverhead.P99, r.Post.HandlerOverhead.Count,
 		r.Config.HandlerP99Budget)
-	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d roomStatePatches=%d roomStatePatchBids=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
+	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d roomStatePatches=%d roomStatePatchBids=%d backpressureForceClose=%d seqGapCount=%d timerErrInternal=%d timerErrInternalKeyType=%d timerErrInternalSeqMismatch=%d streamLenMax=%d activeConns(end)=%d\n",
 		r.Post.BidsAccepted-r.Pre.BidsAccepted,
 		r.Post.BidsRejected-r.Pre.BidsRejected,
 		r.Post.RoomStatePatches-r.Pre.RoomStatePatches,
 		r.Post.RoomStatePatchBids-r.Pre.RoomStatePatchBids,
 		r.Post.BackpressureDrop-r.Pre.BackpressureDrop,
 		r.Post.SeqGap-r.Pre.SeqGap,
+		r.Post.TimerErrInternal-r.Pre.TimerErrInternal,
+		r.Post.TimerErrInternalKeyType-r.Pre.TimerErrInternalKeyType,
+		r.Post.TimerErrInternalSeqMismatch-r.Pre.TimerErrInternalSeqMismatch,
 		r.Post.StreamLenMax, r.Post.ActiveConns)
 }
 
