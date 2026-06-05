@@ -62,6 +62,17 @@ func NewWithEvidenceKeySource(ctx context.Context, redisAddr, mysqlDSN string, e
 	return NewWithRedisPasswordAndEvidenceKeySource(ctx, redisAddr, "", mysqlDSN, evidenceKeys)
 }
 
+// NewRedisOnly opens only Redis for operator utilities that must not touch MySQL
+// or evidence rows. It intentionally does not load Lua scripts.
+func NewRedisOnly(ctx context.Context, redisAddr, redisPassword string) (*Store, error) {
+	rdb := newRedisClient(redisAddr, redisPassword)
+	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
+		_ = rdb.Close()
+		return nil, err
+	}
+	return &Store{rdb: rdb}, nil
+}
+
 func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, redisPassword, mysqlDSN string, evidenceKeys EvidenceKeySource) (*Store, error) {
 	if evidenceKeys == nil {
 		return nil, errors.New("evidence key source is nil")
@@ -70,16 +81,7 @@ func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, re
 	if err != nil {
 		return nil, fmt.Errorf("evidence key source: %w", err)
 	}
-	rdb := redis.NewClient(&redis.Options{
-		Addr:                  redisAddr,
-		Password:              redisPassword,
-		MaxRetries:            -1,
-		DialTimeout:           redisUnavailableTimeout,
-		ReadTimeout:           redisUnavailableTimeout,
-		WriteTimeout:          redisUnavailableTimeout,
-		PoolTimeout:           redisUnavailableTimeout,
-		ContextTimeoutEnabled: true,
-	})
+	rdb := newRedisClient(redisAddr, redisPassword)
 	if err := pingWithRetry(ctx, "redis", func(c context.Context) error { return rdb.Ping(c).Err() }); err != nil {
 		return nil, err
 	}
@@ -101,6 +103,19 @@ func NewWithRedisPasswordAndEvidenceKeySource(ctx context.Context, redisAddr, re
 		return nil, err
 	}
 	return s, nil
+}
+
+func newRedisClient(redisAddr, redisPassword string) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:                  redisAddr,
+		Password:              redisPassword,
+		MaxRetries:            -1,
+		DialTimeout:           redisUnavailableTimeout,
+		ReadTimeout:           redisUnavailableTimeout,
+		WriteTimeout:          redisUnavailableTimeout,
+		PoolTimeout:           redisUnavailableTimeout,
+		ContextTimeoutEnabled: true,
+	})
 }
 
 // migrate applies idempotent schema migrations that the first-init DDL
@@ -260,8 +275,13 @@ func (s *Store) Redis() *redis.Client { return s.rdb }
 func (s *Store) DB() *sql.DB          { return s.db }
 
 func (s *Store) Close() error {
-	_ = s.rdb.Close()
-	return s.db.Close()
+	if s.rdb != nil {
+		_ = s.rdb.Close()
+	}
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
 }
 
 // --- key helpers (cluster hash tag {<aid>} keeps multi-key Lua in one slot) ---
