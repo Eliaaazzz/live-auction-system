@@ -12,7 +12,7 @@ CHAOS_TOKEN_FILE := .chaos-buyer-token
 .PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-preflight verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid demo-allpay demo-prequalify \
-        k6 k6-setup k6-run up-toxiproxy toxiproxy-reset k6-wan k6-wan-run
+        web-smoke-wire web-smoke-catchup k6 k6-setup k6-run up-toxiproxy toxiproxy-reset k6-wan k6-wan-run
 
 ## --- local stack (needs Docker) ---
 up:               ## build + start full stack (redis, mysql, lumen, ai-sidecar)
@@ -183,6 +183,12 @@ guard:            ## cheap CI guards (git grep scans tracked files incl. binarie
 ## Each phase: inject fault → assert degrade → recover → assert recovery (no seq gap) → optional verify.
 ## Logs are the artifact: every assertion prints `CHAOS_OK phase=... ` (success) or `CHAOS_FAIL phase=... ` (failure)
 ## and the harness exits non-zero on any miss. Recording for the demo is generated separately (out of CI scope).
+
+web-smoke-wire:   ## Run current-schema ROOM_JOIN -> BID_PLACE -> BID_ACCEPTED smoke.
+	cd apps/web && npm run -s smoke:wire
+
+web-smoke-catchup: ## Run reconnect/catchup smoke through apps/web.
+	cd apps/web && npm run -s smoke:catchup
 
 chaos: chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer
 	@echo "✓ T9 PASSED · 5/5 chaos drills (ai/redis/mysql/ws/timer)"
