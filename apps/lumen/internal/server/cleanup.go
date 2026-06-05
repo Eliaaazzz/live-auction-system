@@ -14,7 +14,7 @@ type CleanupLoadArtifactsOptions struct {
 }
 
 func RunCleanupLoadArtifacts(ctx context.Context, cfg config.Config, opts CleanupLoadArtifactsOptions) error {
-	st, err := store.NewWithRedisPassword(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.MySQLDSN, cfg.EvidenceHMACKey)
+	st, err := store.NewRedisOnly(ctx, cfg.RedisAddr, cfg.RedisPassword)
 	if err != nil {
 		return err
 	}
