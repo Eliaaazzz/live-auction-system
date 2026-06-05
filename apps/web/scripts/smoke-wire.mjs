@@ -32,7 +32,7 @@ const HOST_WS = stripTrailingSlash(
 const LOGIN_PATH = normalizePath(process.env.LOGIN_PATH || '/api/dev-login');
 const SMOKE_NICKNAME = process.env.SMOKE_NICKNAME || 'fari-smoke';
 const TIMEOUT_MS = parsePositiveInt(process.env.SMOKE_TIMEOUT_MS, 8000);
-const BID_STEP_CENTS = BigInt(process.env.SMOKE_BID_STEP_CENTS || '5000');
+const BID_STEP_CENTS_OVERRIDE = process.env.SMOKE_BID_STEP_CENTS || '';
 
 const TYPES = {
   ROOM_JOIN: 'ROOM_JOIN',
@@ -64,9 +64,41 @@ function deriveWsBase(httpBase) {
 
 function parsePositiveInt(raw, fallback) {
   if (raw == null || raw === '') return fallback;
-  const n = Number.parseInt(raw, 10);
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`invalid positive integer: ${raw}`);
+  const value = String(raw);
+  if (!/^[1-9][0-9]*$/.test(value)) throw new Error(`invalid positive integer: ${raw}`);
+  const n = Number(value);
+  if (!Number.isSafeInteger(n)) throw new Error(`invalid positive integer: ${raw}`);
   return n;
+}
+
+function centsBigInt(raw, label, { allowZero = true } = {}) {
+  if (raw == null || raw === '') throw new Error(`missing ${label}`);
+  try {
+    const n = BigInt(raw);
+    if (n < 0n || (!allowZero && n === 0n)) throw new Error('out of range');
+    return n;
+  } catch {
+    throw new Error(`invalid ${label}: ${raw}`);
+  }
+}
+
+function optionalCapCents(raw) {
+  return raw == null || raw === '' ? 0n : centsBigInt(raw, 'cap cents');
+}
+
+function nextBidAmount(data) {
+  const current = centsBigInt(data.currentPriceCents, 'current price cents');
+  const step = centsBigInt(
+    BID_STEP_CENTS_OVERRIDE || data.rules?.stepCents || '5000',
+    'bid step cents',
+    { allowZero: false },
+  );
+  const next = current + step;
+  const cap = optionalCapCents(data.rules?.capCents);
+  if (cap > 0n && next >= cap) {
+    throw new Error(`auction too close to cap for non-terminal smoke: current=${current} step=${step} cap=${cap}`);
+  }
+  return next.toString();
 }
 
 async function login() {
@@ -131,7 +163,7 @@ await new Promise((resolve, reject) => {
       if (env.type === TYPES.ROOM_SNAPSHOT && !bidSent) {
         bidSent = true;
         snapshotSeq = env.seq ?? env.data.seq ?? 0;
-        const amount = (BigInt(env.data.currentPriceCents) + BID_STEP_CENTS).toString();
+        const amount = nextBidAmount(env.data);
         send(TYPES.BID_PLACE, { clientBidId: 'cbid-smoke-' + Date.now(), amountCents: amount });
       }
 
