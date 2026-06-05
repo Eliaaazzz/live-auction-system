@@ -30,6 +30,9 @@ services:
       HTTP_ADDR: ":8080"
       APP_ENV: prod
       ENABLE_DEV_LOGIN: "false" # §8 baseline: dev-login OFF in prod (config.go enforces)
+      # ---- deploy identity for /version (prevents stale-binary/schema drift) ----
+      LUMEN_BUILD_SHA: "${LUMEN_BUILD_SHA:-unknown}"
+      LUMEN_BUILD_TIME: "${LUMEN_BUILD_TIME:-unknown}"
       # ---- managed cloud endpoints (intranet addresses from the console) ----
       # MySQL may be supplied as MYSQL_DSN or as MYSQL_HOST + component fields.
       # config.Load fails fast in APP_ENV=prod when neither path is set.
