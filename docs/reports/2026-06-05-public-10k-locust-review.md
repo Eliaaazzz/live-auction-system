@@ -108,6 +108,12 @@ Server-side `/metrics` after the run:
 
 Mid-run server snapshot showed `activeConns` around `3454`, not 10,000. The bid engine stayed fast for the subset that connected, but the public single-entry deployment did not survive a 10k connection ramp.
 
+Sampling and metric interpretation for this report:
+
+- `activeConns≈3454` is from the captured mid-run `/metrics` snapshot; the run did not record a continuous one-second hold series, so this is an observed point-in-time peak, not a sustained hold median.
+- The `/metrics` histogram counts and p95s above are process-lifetime values at scrape time. This run did not reset metrics or compute a pre/post delta, so future public reruns should either reset the process or publish before/after snapshots.
+- Client connection failures are grouped by surfaced Locust/WebSocket exception: socket/connect timeout (`TimeoutError`), WebSocket handshake timeout (`WebSocketTimeoutException`), and connection reset (`ConnectionResetError(10054)`). This run used plain HTTP/WS on port 80, so TLS failure classification was not in scope.
+
 Issue: https://github.com/Eliaaazzz/live-auction-system/issues/210
 
 ## Blocking Finding 3 - Timer Corruption Noise
