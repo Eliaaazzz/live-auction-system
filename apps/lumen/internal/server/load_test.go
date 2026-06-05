@@ -101,7 +101,8 @@ func TestT8MetricsEndpointShapeIsStable(t *testing.T) {
 	for _, k := range []string{
 		"ackLatencyMs", "broadcastLatencyMs", "roomStatePatchLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
 		"placeBidScriptTimeMs", "bidHandlerOverheadMs", "bidsAccepted", "bidsRejected",
-		"roomStatePatches", "roomStatePatchBids", "backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
+		"roomStatePatches", "roomStatePatchBids", "timerErrInternal", "timerErrInternalKeyType",
+		"timerErrInternalSeqMismatch", "backpressureForceClose", "seqGapCount", "streamLenMax", "activeConns",
 	} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("/metrics missing field %q (shape break)", k)

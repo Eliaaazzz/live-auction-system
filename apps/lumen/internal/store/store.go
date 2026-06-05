@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -412,6 +413,19 @@ func aidFromStateKey(k string) string {
 	return k[len(prefix) : len(k)-len(suffix)]
 }
 
+func aidFromAuctionTaggedKey(k string) string {
+	const prefix = "auction:{"
+	if !strings.HasPrefix(k, prefix) {
+		return ""
+	}
+	rest := k[len(prefix):]
+	i := strings.IndexByte(rest, '}')
+	if i <= 0 {
+		return ""
+	}
+	return rest[:i]
+}
+
 // ScanStateAIDs returns every auction id that has a state Hash (frozen/live/terminal)
 // by SCANning the keyspace. The Timer Worker uses this to reconcile the active index —
 // re-tracking any LIVE auction missing from auction:active (e.g. a TrackActive that
@@ -436,6 +450,126 @@ func (s *Store) ScanStateAIDs(ctx context.Context) ([]string, error) {
 			return aids, nil
 		}
 	}
+}
+
+type TimerErrInternalSuppression struct {
+	UntilMs int64
+	Reason  string
+}
+
+const (
+	timerErrInternalSuppressUntilField = "timerErrInternalSuppressUntilMs"
+	timerErrInternalReasonField        = "timerErrInternalReason"
+	timerErrInternalAtField            = "timerErrInternalAtMs"
+)
+
+func (s *Store) MarkTimerErrInternalSuppression(ctx context.Context, aid, reason string, atMs, untilMs int64) error {
+	if untilMs <= 0 {
+		return s.rdb.HDel(ctx, stateKey(aid), timerErrInternalSuppressUntilField, timerErrInternalReasonField, timerErrInternalAtField).Err()
+	}
+	return s.rdb.HSet(ctx, stateKey(aid),
+		timerErrInternalSuppressUntilField, strconv.FormatInt(untilMs, 10),
+		timerErrInternalReasonField, reason,
+		timerErrInternalAtField, strconv.FormatInt(atMs, 10),
+	).Err()
+}
+
+func (s *Store) TimerErrInternalSuppression(ctx context.Context, aid string) (TimerErrInternalSuppression, error) {
+	vals, err := s.rdb.HMGet(ctx, stateKey(aid), timerErrInternalSuppressUntilField, timerErrInternalReasonField).Result()
+	if err != nil {
+		return TimerErrInternalSuppression{}, err
+	}
+	var out TimerErrInternalSuppression
+	if len(vals) > 0 {
+		out.UntilMs = luaInt(vals[0])
+	}
+	if len(vals) > 1 {
+		out.Reason, _ = vals[1].(string)
+	}
+	return out, nil
+}
+
+type CleanupLoadArtifactsResult struct {
+	Prefix      string
+	Execute     bool
+	AuctionIDs  []string
+	Keys        []string
+	DeletedKeys int64
+	Untracked   int64
+}
+
+func (s *Store) CleanupLoadArtifacts(ctx context.Context, prefix string, execute bool) (CleanupLoadArtifactsResult, error) {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "auc_load_"
+	}
+	if !strings.HasPrefix(prefix, "auc_load_") {
+		return CleanupLoadArtifactsResult{}, fmt.Errorf("cleanup prefix %q rejected: must start with auc_load_", prefix)
+	}
+	res := CleanupLoadArtifactsResult{Prefix: prefix, Execute: execute}
+	seenAIDs := map[string]struct{}{}
+	seenKeys := map[string]struct{}{}
+
+	var cursor uint64
+	pattern := fmt.Sprintf("auction:{%s*}:*", prefix)
+	for {
+		keys, cur, err := s.rdb.Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			return res, err
+		}
+		for _, k := range keys {
+			aid := aidFromAuctionTaggedKey(k)
+			if !strings.HasPrefix(aid, prefix) {
+				continue
+			}
+			seenAIDs[aid] = struct{}{}
+			seenKeys[k] = struct{}{}
+		}
+		cursor = cur
+		if cursor == 0 {
+			break
+		}
+	}
+
+	active, err := s.rdb.ZRange(ctx, activeKey, 0, -1).Result()
+	if err != nil {
+		return res, err
+	}
+	for _, aid := range active {
+		if strings.HasPrefix(aid, prefix) {
+			seenAIDs[aid] = struct{}{}
+		}
+	}
+
+	res.AuctionIDs = make([]string, 0, len(seenAIDs))
+	for aid := range seenAIDs {
+		res.AuctionIDs = append(res.AuctionIDs, aid)
+	}
+	sort.Strings(res.AuctionIDs)
+	res.Keys = make([]string, 0, len(seenKeys))
+	for k := range seenKeys {
+		res.Keys = append(res.Keys, k)
+	}
+	sort.Strings(res.Keys)
+
+	if !execute {
+		return res, nil
+	}
+	if len(res.Keys) > 0 {
+		n, err := s.rdb.Del(ctx, res.Keys...).Result()
+		if err != nil {
+			return res, err
+		}
+		res.DeletedKeys = n
+	}
+	for _, aid := range res.AuctionIDs {
+		n, err := s.rdb.ZRem(ctx, activeKey, aid).Result()
+		if err != nil {
+			return res, err
+		}
+		res.Untracked += n
+	}
+	return res, nil
 }
 
 // --- Lua dispatch ---
@@ -531,6 +665,11 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 // Returns the code and, on ERR_NOT_DUE, the current endAtMs so the caller can
 // refresh the active score (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
+	code, _, endAtMs, err := s.CloseAuctionDetailed(ctx, aid)
+	return code, endAtMs, err
+}
+
+func (s *Store) CloseAuctionDetailed(ctx context.Context, aid string) (string, string, int64, error) {
 	// Read mode from the state Hash; a Redis error here MUST surface (so the
 	// Timer retries) — silently defaulting to ENGLISH on a transient blip would
 	// run the wrong close script on a sealed auction and lose the sealed bids
@@ -539,9 +678,9 @@ func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, er
 	modeRes := s.rdb.HGet(ctx, stateKey(aid), "mode")
 	if rerr := modeRes.Err(); rerr != nil && !errors.Is(rerr, redis.Nil) {
 		if redis.HasErrorPrefix(rerr, "WRONGTYPE") {
-			return model.CodeErrInternal, 0, nil
+			return model.CodeErrInternal, "key_type", 0, nil
 		}
-		return "", 0, fmt.Errorf("close: read mode: %w", rerr)
+		return "", "", 0, fmt.Errorf("close: read mode: %w", rerr)
 	}
 	mode := model.NormalizeMode(modeRes.Val())
 	var arr []interface{}
@@ -561,13 +700,16 @@ func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, er
 		arr, err = s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid)}, PubChannel(aid))
 	}
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
 	c := luaStr(arr[0])
 	if c == model.CodeErrNotDue && len(arr) >= 2 {
-		return c, luaInt(arr[1]), nil
+		return c, "", luaInt(arr[1]), nil
 	}
-	return c, 0, nil
+	if c == model.CodeErrInternal && len(arr) >= 2 {
+		return c, luaStr(arr[1]), 0, nil
+	}
+	return c, "", 0, nil
 }
 
 // CancelAuction runs cancel_auction.lua (seller/admin cancel of SCHEDULED/LIVE).

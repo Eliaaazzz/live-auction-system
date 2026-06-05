@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 )
 
@@ -152,5 +153,57 @@ func TestT3CloseDueErrInternalUntracks(t *testing.T) {
 	// the auction is untouched otherwise — still LIVE (no terminal write on ERR_INTERNAL).
 	if snap, _ := st.Snapshot(ctx, aid); snap.Status != model.StateLive {
 		t.Fatalf("status=%s want LIVE (ERR_INTERNAL must not write a terminal)", snap.Status)
+	}
+}
+
+func TestT3CloseDueErrInternalReconcileSuppressed(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_errinternal_suppress_%d", time.Now().UnixNano())
+	stateK := fmt.Sprintf("auction:{%s}:state", aid)
+	t.Cleanup(func() {
+		c := context.Background()
+		st.Redis().Del(c, stateK, fmt.Sprintf("auction:{%s}:events", aid))
+		_ = st.UntrackActive(c, aid)
+	})
+
+	if code, err := st.FreezeRules(ctx, aid, "seller_x", reconcileRules()); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: %s %v", code, err)
+	}
+	if code, _, err := st.StartAuction(ctx, aid, 3600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: %s %v", code, err)
+	}
+	if err := st.Redis().HSet(ctx, stateK, "seq", 5, "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	m := metrics.New()
+	closeDue(ctx, st, aid, m)
+
+	if got := m.TimerErrInternal.Load(); got != 1 {
+		t.Fatalf("timerErrInternal=%d want 1", got)
+	}
+	if got := m.TimerErrInternalSeqMismatch.Load(); got != 1 {
+		t.Fatalf("timerErrInternalSeqMismatch=%d want 1", got)
+	}
+	suppression, err := st.TimerErrInternalSuppression(ctx, aid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if suppression.UntilMs == 0 || suppression.Reason != "seq_stream_mismatch" {
+		t.Fatalf("suppression=%+v", suppression)
+	}
+
+	reconcileActive(ctx, st, nil)
+	if inActive(t, st, aid) {
+		t.Fatal("reconcile must not re-track a known corrupt auction during suppression window")
+	}
+
+	if err := st.MarkTimerErrInternalSuppression(ctx, aid, "seq_stream_mismatch", 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	reconcileActive(ctx, st, nil)
+	if !inActive(t, st, aid) {
+		t.Fatal("reconcile should re-track after ERR_INTERNAL suppression expires")
 	}
 }

@@ -2,6 +2,7 @@
 //
 //	lumen serve --mode=all|api|gateway|bid-engine|timer|pg-writer
 //	lumen seed
+//	lumen cleanup-load-auctions [--prefix auc_load_] [--execute]
 //	lumen verify [--auction <id>]            (T6 unified: 3-way diff + hash chain; exit!=0 on mismatch or break)
 //	lumen verify-evidence [--auction <id>]   (T4 hash-chain only; same chain check, no 3-way diff)
 //	lumen e2e            (drives TARGET, default http://localhost:8080)
@@ -56,6 +57,18 @@ func main() {
 		_ = fs.Parse(os.Args[2:])
 		if err := server.SeedLoad(ctx, mustConfig(), *durationSec); err != nil {
 			log.Fatalf("seed-load: %v", err)
+		}
+
+	case "cleanup-load-auctions":
+		fs := flag.NewFlagSet("cleanup-load-auctions", flag.ExitOnError)
+		prefix := fs.String("prefix", envOr("LOAD_CLEANUP_AUCTION_PREFIX", "auc_load_"), "auction id prefix to clean; must start with auc_load_")
+		execute := fs.Bool("execute", envBool("LOAD_CLEANUP_EXECUTE", false), "delete matched Redis load artifacts; default is dry-run")
+		_ = fs.Parse(os.Args[2:])
+		if err := server.RunCleanupLoadArtifacts(ctx, mustConfig(), server.CleanupLoadArtifactsOptions{
+			Prefix:  *prefix,
+			Execute: *execute,
+		}); err != nil {
+			log.Fatalf("cleanup-load-auctions: %v", err)
 		}
 
 	case "verify":
@@ -209,6 +222,17 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func envBool(key string, fallback bool) bool {
+	switch os.Getenv(key) {
+	case "1", "true", "TRUE", "yes", "YES":
+		return true
+	case "0", "false", "FALSE", "no", "NO":
+		return false
+	default:
+		return fallback
+	}
+}
+
 func mustConfig() config.Config {
 	cfg, err := config.Load()
 	if err != nil {
@@ -218,5 +242,5 @@ func mustConfig() config.Config {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|verify|verify-evidence|e2e|demo-auction|perf-smoke|load|chaos> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: lumen <serve|seed|seed-load|cleanup-load-auctions|verify|verify-evidence|e2e|demo-auction|perf-smoke|load|chaos> [flags]")
 }
