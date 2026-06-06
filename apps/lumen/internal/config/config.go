@@ -12,18 +12,19 @@ import (
 )
 
 type Config struct {
-	HTTPAddr        string
-	MySQLDSN        string
-	RedisAddr       string
-	RedisPassword   string
-	AISidecarURL    string
-	JWTSecret       string
-	FrontendOrigin  string
-	LivePushURLBase string
-	LivePlayURLBase string
-	AppEnv          string
-	EnableDevLogin  bool
-	EvidenceHMACKey string
+	HTTPAddr          string
+	MySQLDSN          string
+	RedisAddr         string
+	RedisPassword     string
+	AISidecarURL      string
+	JWTSecret         string
+	FrontendOrigin    string
+	LivePushURLBase   string
+	LivePlayURLBase   string
+	AppEnv            string
+	EnableDevLogin    bool
+	EvidenceHMACKey   string
+	MetricsResetToken string
 }
 
 const defaultJWTSecret = "change-me-local-only"
@@ -39,18 +40,19 @@ const defaultEvidenceKey = "change-me-evidence-local-only"
 // (so the process exits non-zero) when an unsafe combination is detected.
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		MySQLDSN:        mysqlDSN(),
-		RedisAddr:       env("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:   env("REDIS_PASSWORD", ""),
-		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
-		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
-		FrontendOrigin:  env("FRONTEND_ORIGIN", "http://localhost:8080"),
-		LivePushURLBase: env("LIVE_PUSH_URL_BASE", ""),
-		LivePlayURLBase: env("LIVE_PLAY_URL_BASE", ""),
-		AppEnv:          env("APP_ENV", "dev"),
-		EnableDevLogin:  env("ENABLE_DEV_LOGIN", "true") == "true",
-		EvidenceHMACKey: env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
+		HTTPAddr:          env("HTTP_ADDR", ":8080"),
+		MySQLDSN:          mysqlDSN(),
+		RedisAddr:         env("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:     env("REDIS_PASSWORD", ""),
+		AISidecarURL:      env("AI_SIDECAR_URL", "http://localhost:8090"),
+		JWTSecret:         env("JWT_SECRET", defaultJWTSecret),
+		FrontendOrigin:    env("FRONTEND_ORIGIN", "http://localhost:8080"),
+		LivePushURLBase:   env("LIVE_PUSH_URL_BASE", ""),
+		LivePlayURLBase:   env("LIVE_PLAY_URL_BASE", ""),
+		AppEnv:            env("APP_ENV", "dev"),
+		EnableDevLogin:    env("ENABLE_DEV_LOGIN", "true") == "true",
+		EvidenceHMACKey:   env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
+		MetricsResetToken: os.Getenv("METRICS_RESET_TOKEN"),
 	}
 
 	// §8: outside dev the default signing secret and dev-login must be off.

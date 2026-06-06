@@ -66,6 +66,7 @@ REDIS_ADDR=<redis_intranet>:6379
 REDIS_PASSWORD=<redis_pwd_if_enabled>
 JWT_SECRET=<openssl rand -hex 32>
 EVIDENCE_HMAC_KEY=<openssl rand -hex 32>
+METRICS_RESET_TOKEN=<openssl rand -hex 32>
 FRONTEND_ORIGIN=https://<your-domain>
 LUMEN_DOMAIN=<your-domain>
 # 火山直播 (Part B；没配则直播间退回 sim sheen)

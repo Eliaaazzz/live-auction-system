@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -45,6 +46,100 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"token":    auth.Token(s.cfg.JWTSecret, userID),
 		"nickname": nickname,
 	})
+}
+
+// POST /api/auctions/{id}/bids {clientBidId, amountCents} -> BID_ACCEPTED/BID_REJECTED envelope.
+//
+// This is the command lane for high-fanout rooms: the Redis Lua adjudicator and
+// Stream/PubSub fanout remain unchanged, but the bidder-visible outcome is
+// returned on the HTTP response instead of sharing the room-broadcast WS stream.
+// A single TCP WS stream cannot let a direct ACK overtake already-flushed public
+// patches, so large-room clients should use this endpoint for BID_PLACE and keep
+// /ws for ROOM_JOIN snapshots, patches, replay, and terminal events.
+func (s *Server) handlePlaceBidHTTP(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	var body model.BidPlaceData
+	if !readJSON(w, r, &body) {
+		return
+	}
+
+	handlerStart := time.Now()
+	ackStart := time.Now()
+	amount, validAmount := canonicalAmount(body.AmountCents)
+	if aid == "" || body.ClientBidID == "" || len(body.ClientBidID) > maxClientBidIDLen || !validAmount {
+		writeJSON(w, http.StatusBadRequest, rejected(aid, model.CodeErrBadInput))
+		if s.metrics != nil {
+			s.metrics.AckLatency.Observe(time.Since(ackStart))
+			s.metrics.BidsRejected.Inc()
+			s.metrics.HandlerOverhead.Observe(time.Since(handlerStart))
+		}
+		return
+	}
+
+	display := userID
+	if nick, err := s.st.UserNickname(r.Context(), userID); err == nil && nick != "" {
+		display = nick
+	}
+
+	mode := s.hub.roomStateSnap(aid).mode
+	if mode == "" {
+		if snap, err := s.st.Snapshot(r.Context(), aid); err == nil && snap.Rules != nil {
+			mode = snap.Rules.Mode
+			s.hub.setMode(aid, mode)
+		}
+	}
+	sealed := model.UsesSealedEngine(mode)
+	hybrid := model.UsesHybridEngine(mode)
+
+	scriptStart := time.Now()
+	var code, payload string
+	var err error
+	if sealed {
+		code, _, payload, err = s.st.PlaceBidSealed(r.Context(), aid, userID, body.ClientBidID, amount, display)
+	} else if hybrid {
+		code, _, payload, err = s.st.PlaceBidHybrid(r.Context(), aid, userID, body.ClientBidID, amount, display)
+	} else {
+		code, _, payload, err = s.st.PlaceBid(r.Context(), aid, userID, body.ClientBidID, amount, display)
+	}
+	scriptDur := time.Since(scriptStart)
+	if s.metrics != nil {
+		s.metrics.ScriptTime.Observe(scriptDur)
+	}
+	if err != nil {
+		log.Printf("place_bid_http %s: %v", aid, err)
+		writeJSON(w, http.StatusOK, rejected(aid, bidErrCode(err)))
+		if s.metrics != nil {
+			s.metrics.AckLatency.Observe(time.Since(ackStart))
+			s.metrics.BidsRejected.Inc()
+			s.metrics.HandlerOverhead.Observe(time.Since(handlerStart) - scriptDur)
+		}
+		return
+	}
+
+	switch code {
+	case model.CodeOKAccepted, model.CodeOKExtended, model.CodeOKSold, model.CodeDuplicate:
+		writeJSON(w, http.StatusOK, bidAccepted(aid, payload))
+		if s.metrics != nil {
+			s.metrics.AckLatency.Observe(time.Since(ackStart))
+			if code != model.CodeDuplicate {
+				s.metrics.BidsAccepted.Inc()
+			}
+		}
+	default:
+		writeJSON(w, http.StatusOK, rejected(aid, code))
+		if s.metrics != nil {
+			s.metrics.AckLatency.Observe(time.Since(ackStart))
+			s.metrics.BidsRejected.Inc()
+		}
+	}
+	if s.metrics != nil {
+		s.metrics.HandlerOverhead.Observe(time.Since(handlerStart) - scriptDur)
+	}
 }
 
 // POST /api/dev-login {nickname, role?} -> {userId, token, nickname}. Dev only.
