@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"net/http"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
@@ -27,7 +28,11 @@ func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "metrics reset disabled")
 		return
 	}
-	if got := r.Header.Get("X-Lumen-Metrics-Reset-Token"); got != s.cfg.MetricsResetToken {
+	// Constant-time compare so a remote operator can't probe the token by
+	// observing per-byte timing differences. Token is small and ASCII so the
+	// fixed-cost compare is trivial relative to the request lifecycle.
+	got := r.Header.Get("X-Lumen-Metrics-Reset-Token")
+	if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.MetricsResetToken)) != 1 {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
