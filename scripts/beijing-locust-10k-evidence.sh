@@ -140,7 +140,17 @@ token_manifest() {
 }
 
 require_region
-need python
+python_bin="${PYTHON_BIN:-}"
+if [[ -z "$python_bin" ]]; then
+  if command -v python >/dev/null 2>&1; then
+    python_bin="python"
+  elif command -v python3 >/dev/null 2>&1; then
+    python_bin="python3"
+  else
+    echo "missing required tool: python or python3" >&2
+    exit 2
+  fi
+fi
 
 base_url="${BASE_URL:-http://115.191.76.40}"
 base_url="${base_url%/}"
@@ -241,7 +251,7 @@ case "$role" in
     csv_prefix="$locust_dir/beijing-locust"
     set +e
     LOAD_AUCTION_ID="$aid" TOKENS_FILE="$tokens_file" BID_COMMAND="$bid_command" HTTP_HOST="$http_host" \
-      python -m locust \
+      "$python_bin" -m locust \
         -f "$repo_root/tools/loadtest/locust_bidder_only.py" \
         --master \
         --headless \
@@ -264,7 +274,7 @@ case "$role" in
       echo "locust master failed with exit code $locust_rc" >&2
       exit "$locust_rc"
     fi
-    python "$repo_root/tools/loadtest/locust_gate.py" \
+    "$python_bin" "$repo_root/tools/loadtest/locust_gate.py" \
       --stats "${csv_prefix}_stats.csv" \
       --out-dir "$out_dir/locust-gate" \
       --min-bid-ack "${MIN_BID_ACK:-1}" \
@@ -317,7 +327,7 @@ EOF_SUMMARY
     capture_host "before" "$out_dir"
     set +e
     LOAD_AUCTION_ID="$aid" TOKENS_FILE="$tokens_file" BID_COMMAND="$bid_command" HTTP_HOST="$http_host" \
-      python -m locust \
+      "$python_bin" -m locust \
         -f "$repo_root/tools/loadtest/locust_bidder_only.py" \
         --worker \
         --master-host "$master_host" \
