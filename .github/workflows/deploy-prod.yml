@@ -10,7 +10,7 @@ on:
       remote_dir:
         description: "Source/config directory on ECS"
         required: false
-        default: "/opt/live-auction-system"
+        default: "~/live-auction-system"
       base_url:
         description: "Public base URL for post-deploy smoke"
         required: false
@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 30
     env:
       DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.event.workflow_run.head_sha || 'main' }}
-      REMOTE_DIR: ${{ github.event.inputs.remote_dir || vars.CD_REMOTE_DIR || '/opt/live-auction-system' }}
+      REMOTE_DIR: ${{ github.event.inputs.remote_dir || vars.CD_REMOTE_DIR || '~/live-auction-system' }}
       BASE_URL: ${{ github.event.inputs.base_url || vars.CD_BASE_URL || 'http://115.191.76.40' }}
       SSH_HOST: ${{ secrets.CD_ECS_HOST }}
       SSH_USER: ${{ secrets.CD_ECS_USER }}
@@ -161,9 +161,34 @@ jobs:
             printf '%s\n' "$target"
           }
 
+          as_root() {
+            if [ "$(id -u)" -eq 0 ]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          require_systemd_privilege() {
+            if [ "$(id -u)" -eq 0 ]; then
+              return
+            fi
+            if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; then
+              echo "deploy-prod needs root or passwordless sudo for /opt/lumen-runtime and systemd writes" >&2
+              echo "Set CD_ECS_USER to root or an ECS user with passwordless sudo, e.g. Ubuntu's default ubuntu user." >&2
+              exit 2
+            fi
+          }
+
           target="$(normalize_dir "$REMOTE_DIR")"
           runtime_dir="/opt/lumen-runtime"
+          require_systemd_privilege
           mkdir -p "$target"
+          if [ ! -w "$target" ]; then
+            echo "REMOTE_DIR must be writable by ${USER:-$(id -un)} because infra/.env.prod stays there" >&2
+            echo "Use the default ~/live-auction-system or pre-create a writable source/config directory." >&2
+            exit 2
+          fi
           tar -xzf "$REMOTE_SOURCE_ARCHIVE" -C "$target"
           rm -f "$REMOTE_SOURCE_ARCHIVE"
           cd "$target"
@@ -192,28 +217,29 @@ jobs:
           upsert_env LUMEN_BUILD_TIME "$DEPLOY_BUILD_TIME" infra/.env.prod
 
           release="$runtime_dir/releases/${DEPLOY_SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
-          mkdir -p "$release" "$runtime_dir/bin"
-          tar -xJf "$REMOTE_RUNTIME_ARCHIVE" -C "$release"
+          as_root mkdir -p "$release" "$runtime_dir/bin"
+          as_root tar -xJf "$REMOTE_RUNTIME_ARCHIVE" -C "$release"
           rm -f "$REMOTE_RUNTIME_ARCHIVE"
 
           for bin in lumen sidecar; do
-            if [ -x "$runtime_dir/bin/$bin" ]; then
-              cp -a "$runtime_dir/bin/$bin" "$runtime_dir/bin/$bin.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+            if as_root test -x "$runtime_dir/bin/$bin"; then
+              as_root cp -a "$runtime_dir/bin/$bin" "$runtime_dir/bin/$bin.bak-$(date -u +%Y%m%dT%H%M%SZ)"
             fi
-            install -m 0755 "$release/bin/$bin" "$runtime_dir/bin/$bin"
+            as_root install -m 0755 "$release/bin/$bin" "$runtime_dir/bin/$bin"
           done
 
-          if [ -d "$runtime_dir/web" ]; then
-            rm -rf "$runtime_dir/web.bak"
-            mv "$runtime_dir/web" "$runtime_dir/web.bak"
+          if as_root test -d "$runtime_dir/web"; then
+            as_root rm -rf "$runtime_dir/web.bak"
+            as_root mv "$runtime_dir/web" "$runtime_dir/web.bak"
           fi
-          mkdir -p "$runtime_dir/web"
-          cp -a "$release/web/." "$runtime_dir/web/"
+          as_root mkdir -p "$runtime_dir/web"
+          as_root cp -a "$release/web/." "$runtime_dir/web/"
 
-          cat > "$runtime_dir/run-lumen.sh" <<'EOF_RUN_LUMEN'
+          run_lumen="$(mktemp)"
+          cat > "$run_lumen" <<'EOF_RUN_LUMEN'
           #!/usr/bin/env bash
           set -euo pipefail
-          cd "${LUMEN_SOURCE_DIR:-/opt/live-auction-system}"
+          cd "${LUMEN_SOURCE_DIR:?LUMEN_SOURCE_DIR is required}"
           envfile=$(mktemp /tmp/lumen-runtime-env.XXXXXX)
           trap 'rm -f "$envfile"' EXIT
           python3 - <<'PY' > "$envfile"
@@ -236,16 +262,20 @@ jobs:
           exec /opt/lumen-runtime/bin/lumen "$@"
           EOF_RUN_LUMEN
 
-          cat > "$runtime_dir/run-sidecar.sh" <<'EOF_RUN_SIDECAR'
+          run_sidecar="$(mktemp)"
+          cat > "$run_sidecar" <<'EOF_RUN_SIDECAR'
           #!/usr/bin/env bash
           set -euo pipefail
           export SIDECAR_ADDR=:8090
           exec /opt/lumen-runtime/bin/sidecar "$@"
           EOF_RUN_SIDECAR
 
-          chmod +x "$runtime_dir/run-lumen.sh" "$runtime_dir/run-sidecar.sh"
+          as_root install -m 0755 "$run_lumen" "$runtime_dir/run-lumen.sh"
+          as_root install -m 0755 "$run_sidecar" "$runtime_dir/run-sidecar.sh"
+          rm -f "$run_lumen" "$run_sidecar"
 
-          cat > /etc/systemd/system/lumen-sidecar.service <<'EOF_SIDECAR_UNIT'
+          sidecar_unit="$(mktemp)"
+          cat > "$sidecar_unit" <<'EOF_SIDECAR_UNIT'
           [Unit]
           Description=Lumen AI Sidecar
           After=network-online.target
@@ -262,7 +292,8 @@ jobs:
           WantedBy=multi-user.target
           EOF_SIDECAR_UNIT
 
-          cat > /etc/systemd/system/lumen.service <<EOF_LUMEN_UNIT
+          lumen_unit="$(mktemp)"
+          cat > "$lumen_unit" <<EOF_LUMEN_UNIT
           [Unit]
           Description=Lumen Auction Server
           After=network-online.target lumen-sidecar.service
@@ -284,12 +315,16 @@ jobs:
           WantedBy=multi-user.target
           EOF_LUMEN_UNIT
 
-          systemctl daemon-reload
-          systemctl enable lumen-sidecar.service lumen.service
-          systemctl restart lumen-sidecar.service
-          systemctl restart lumen.service
-          systemctl is-active --quiet lumen-sidecar.service
-          systemctl is-active --quiet lumen.service
+          as_root install -m 0644 "$sidecar_unit" /etc/systemd/system/lumen-sidecar.service
+          as_root install -m 0644 "$lumen_unit" /etc/systemd/system/lumen.service
+          rm -f "$sidecar_unit" "$lumen_unit"
+
+          as_root systemctl daemon-reload
+          as_root systemctl enable lumen-sidecar.service lumen.service
+          as_root systemctl restart lumen-sidecar.service
+          as_root systemctl restart lumen.service
+          as_root systemctl is-active --quiet lumen-sidecar.service
+          as_root systemctl is-active --quiet lumen.service
           curl -fsS http://127.0.0.1/healthz >/dev/null
           REMOTE
 

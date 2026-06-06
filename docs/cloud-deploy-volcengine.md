@@ -45,7 +45,7 @@
 ## A4 — ECS 装环境
 ```bash
 ssh -i <key.pem> ubuntu@<ECS_PUBLIC_IP>
-sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git rsync
 sudo usermod -aG docker $USER && newgrp docker   # 免 sudo
 git clone https://github.com/Eliaaazzz/live-auction-system.git && cd live-auction-system
 ```
@@ -92,16 +92,16 @@ Production CD is wired by `.github/workflows/deploy-prod.yml`.
 
 Required repository secrets:
 - `CD_ECS_HOST`: Volcengine ECS public IP or DNS name.
-- `CD_ECS_USER`: SSH user, for example `ubuntu`.
+- `CD_ECS_USER`: SSH user with root access or passwordless sudo, for example Ubuntu's default `ubuntu` user after `sudo -n true` succeeds.
 - `CD_ECS_SSH_KEY`: private key for that SSH user.
 - `CD_ECS_PORT`: optional SSH port; defaults to `22`.
 
 Optional repository variables:
 - `CD_BASE_URL`: post-deploy smoke base URL; defaults to `http://115.191.76.40`.
-- `CD_REMOTE_DIR`: source/config directory on ECS; defaults to `/opt/live-auction-system`.
+- `CD_REMOTE_DIR`: source/config directory on ECS; defaults to `~/live-auction-system`.
 - `CD_AUTO_DEPLOY`: set to `true` only when main should deploy automatically after CI success.
 
-The workflow keeps runtime secrets in `infra/.env.prod` on ECS, checks out the exact CI-tested commit for auto deploys, builds Linux binaries and the web bundle on the GitHub runner, uploads them to `/opt/lumen-runtime`, updates `LUMEN_BUILD_SHA` and `LUMEN_BUILD_TIME`, then restarts:
+The workflow keeps runtime secrets in `infra/.env.prod` on ECS, checks out the exact CI-tested commit for auto deploys, builds Linux binaries and the web bundle on the GitHub runner, uploads them to `/opt/lumen-runtime`, updates `LUMEN_BUILD_SHA` and `LUMEN_BUILD_TIME`, then restarts. Runtime install and systemd writes use root or passwordless sudo:
 
 ```bash
 systemctl restart lumen-sidecar.service
