@@ -266,7 +266,7 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 		// hand-built without a socket (unit tests inspect the raw envelope; a
 		// PreparedMessage is an opaque pre-encoded frame they can't decode). ws is
 		// set once at creation and never reassigned, so this lock-free read is
-		// race-free (unlike c.aid). Both paths land on the same ordered `crit` lane.
+		// race-free (unlike c.aid). Both paths land on the broadcast lane.
 		if perr == nil && t.c.ws != nil {
 			t.c.trySendPrepared(aid, pm)
 		} else {
@@ -625,24 +625,26 @@ func eventServerTimeMs(payload string) int64 {
 	return probe.ServerTimeMs
 }
 
-// outboundFrame is one queued frame on the critical lane: either raw
-// pre-marshalled bytes (a direct ack / rejection / snapshot / catchup, or a
-// broadcast fallback) OR a gorilla PreparedMessage (a pre-encoded broadcast,
-// shared across recipients). Exactly one field is set. Carrying both on ONE
-// FIFO lane keeps sequenced frames in wire order (see Conn.crit).
+// outboundFrame is one queued must-deliver frame: either raw pre-marshalled
+// bytes (a direct ack / rejection / snapshot / catchup, or a broadcast
+// fallback) OR a gorilla PreparedMessage (a pre-encoded broadcast, shared
+// across recipients). Exactly one field is set.
 type outboundFrame struct {
-	raw []byte
-	pm  *websocket.PreparedMessage
+	raw      []byte
+	pm       *websocket.PreparedMessage
+	typ      string
+	queuedAt time.Time
 }
 
-// Conn is one WS client connection with a serialized write pump and a two-lane
+// Conn is one WS client connection with a serialized write pump and a three-lane
 // backpressure split (T5):
 //   - `crit`  — CRITICAL frames (bid acks, BID_REJECTED, AUCTION_* terminals,
-//     ROOM_SNAPSHOT, catchup, room broadcasts). Must be delivered, IN ORDER; if
+//     ROOM_SNAPSHOT, catchup). Must be delivered before room fan-out; if
 //     the buffer fills, the connection is force-closed so the client reconnects
-//     and re-syncs (never a silent loss). One ordered lane (carrying raw OR
-//     prepared frames) so a fan-out broadcast can't reorder ahead of a queued
-//     ack/snapshot or vice-versa.
+//     and re-syncs (never a silent loss).
+//   - `broadcast`: must-deliver room fan-out frames. Lower priority than
+//     direct/control frames so a large room backlog cannot delay bidder-visible
+//     outcomes or ROOM_JOIN material.
 //   - `lossy` — BEST-EFFORT frames (PONG heartbeat; future presence/chat). Dropped
 //     individually when full, without tearing down the connection.
 //
@@ -657,24 +659,18 @@ type Conn struct {
 	// ws_coalesce.go). nil for hand-built unit-test Conns (no real socket) — all
 	// flush sites are nil-guarded.
 	wbuf *bufferedConn
-	// crit is the SINGLE ordered critical lane: every must-deliver frame —
-	// direct bid acks, BID_REJECTED, ROOM_SNAPSHOT, ROOM_JOIN catchup, AND room
-	// broadcasts — flows through it in FIFO enqueue order, so the wire order is
-	// the correct order (catchup → snapshot → later broadcasts; an ack never
-	// overtakes the older broadcasts queued before it). It carries an
-	// outboundFrame union so a broadcast can ride as a gorilla PreparedMessage
-	// (V10k Tier B: the frame header is pre-encoded ONCE per event and shared by
-	// all recipients — ~30-40% gateway CPU saved at 10k fanout) while one-off
-	// frames ride as raw bytes. Full lane → force-close (client reconnects +
-	// re-syncs). A single lane (vs the old send+prepared split) is what keeps
-	// sequenced frames from reordering across lanes (codex review).
-	crit  chan outboundFrame
-	lossy chan []byte // best-effort lane (PONG heartbeat): drop the frame if full
-	done  chan struct{}
+	// crit is the ordered priority lane for direct/control frames: direct bid
+	// acks, BID_REJECTED, ROOM_SNAPSHOT, and ROOM_JOIN catchup. Full lane means
+	// force-close (client reconnects + re-syncs) rather than silent loss.
+	crit      chan outboundFrame
+	broadcast chan outboundFrame // room fan-out lane; direct/control frames pre-empt it
+	lossy     chan []byte        // best-effort lane (PONG heartbeat): drop the frame if full
+	done      chan struct{}
 	// ROOM_JOIN barrier: while a conn is initializing (catchup + ROOM_SNAPSHOT),
 	// `joining` is true and the fan-out buffers room broadcasts into `pending`
-	// (under pendMu) instead of `crit`; once init is enqueued, spliceAndGoLive
-	// drains pending into crit IN ARRIVAL ORDER and clears joining. This stops a
+	// (under pendMu) instead of `broadcast`; once init is enqueued,
+	// spliceAndGoLive drains pending into broadcast IN ARRIVAL ORDER and clears
+	// joining. This stops a
 	// live broadcast from overtaking the conn's catchup/snapshot on the wire
 	// (which the client would drop, then ROOM_SNAPSHOT would regress lastSeq —
 	// codex review HIGH). The flag is INVERTED (default false = not joining =
@@ -698,6 +694,10 @@ type Conn struct {
 	// metrics is the process-wide T8 registry. Nil-safe (every Observe call
 	// checks for nil) so unit tests can construct a Conn without wiring it.
 	metrics *metrics.Registry
+	// batchOutcomeOldest is writePump-owned state used only to log slow direct
+	// BID_ACCEPTED/BID_REJECTED queue-to-flush latency during load verification.
+	batchOutcomeOldest time.Time
+	batchOutcomeCount  int
 
 	// closeCode / closeReason are set under closeOnce BEFORE close(done) and
 	// then read by writePump's defer (flushClose) AFTER it receives done. The
@@ -761,6 +761,9 @@ func (c *Conn) closeWithCode(code int, reason string) {
 func (c *Conn) enqueueCritical(f outboundFrame, aid string) {
 	select {
 	case <-c.done:
+		if isBidOutcomeFrame(f.typ) {
+			log.Printf("ws outcome drop closed: type=%s room=%s user=%s", f.typ, aid, c.userID)
+		}
 		return
 	default:
 	}
@@ -778,7 +781,30 @@ func (c *Conn) enqueueCritical(f outboundFrame, aid string) {
 	}
 }
 
-// enqueueBroadcast routes a fan-out frame: straight to the critical lane when the
+func (c *Conn) enqueueBroadcastReady(f outboundFrame, aid string) {
+	if c.broadcast == nil {
+		// Hand-built unit-test conns historically only wired crit. Keep those
+		// tests on the old path; real handleWS conns always initialize broadcast.
+		c.enqueueCritical(f, aid)
+		return
+	}
+	select {
+	case <-c.done:
+		return
+	default:
+	}
+	select {
+	case c.broadcast <- f:
+	default:
+		log.Printf("ws backpressure: force-closing slow client (room=%s user=%s, broadcast full)", aid, c.userID)
+		if c.metrics != nil {
+			c.metrics.BackpressureDrop.Inc()
+		}
+		c.closeWithCode(closeCodeBackpressureDrop, "backpressure")
+	}
+}
+
+// enqueueBroadcast routes a fan-out frame: straight to the broadcast lane when the
 // conn is NOT joining, or into the per-conn pending buffer while it IS joining, so
 // a live room event can't overtake the conn's ROOM_JOIN catchup/snapshot on the
 // wire (which the client would drop, then ROOM_SNAPSHOT would regress lastSeq —
@@ -786,11 +812,11 @@ func (c *Conn) enqueueCritical(f outboundFrame, aid string) {
 // enqueue, leaving the lock-free fan-out (#118) unchanged for the steady state.
 // Slow path (mid-join only) takes pendMu and re-checks joining (double-checked
 // locking: spliceAndGoLive may clear it + drain pending while we wait for the
-// lock, so the re-check routes a just-missed broadcast to crit rather than a
+// lock, so the re-check routes a just-missed broadcast to broadcast rather than a
 // pending slice that's already been spliced).
 func (c *Conn) enqueueBroadcast(f outboundFrame, aid string) {
 	if !c.joining.Load() {
-		c.enqueueCritical(f, aid)
+		c.enqueueBroadcastReady(f, aid)
 		return
 	}
 	select {
@@ -801,7 +827,7 @@ func (c *Conn) enqueueBroadcast(f outboundFrame, aid string) {
 	c.pendMu.Lock()
 	if !c.joining.Load() {
 		c.pendMu.Unlock()
-		c.enqueueCritical(f, aid)
+		c.enqueueBroadcastReady(f, aid)
 		return
 	}
 	if len(c.pending) >= sendBufFrames {
@@ -822,7 +848,8 @@ func (c *Conn) enqueueBroadcast(f outboundFrame, aid string) {
 // beginJoinBarrier puts the conn into buffering mode for a (re-)JOIN: subsequent
 // fan-out broadcasts queue into pending until spliceAndGoLive runs. Call BEFORE
 // hub.join so the very first broadcast after membership is buffered, not raced
-// onto crit ahead of the init frames. Resets pending for a re-home re-JOIN.
+// onto the broadcast lane ahead of the priority init frames. Resets pending for
+// a re-home re-JOIN.
 func (c *Conn) beginJoinBarrier() {
 	c.pendMu.Lock()
 	c.joining.Store(true)
@@ -830,17 +857,15 @@ func (c *Conn) beginJoinBarrier() {
 	c.pendMu.Unlock()
 }
 
-// spliceAndGoLive flushes the broadcasts buffered during a join into the critical
-// lane (preserving fan-out arrival order, i.e. seq order) AFTER the init frames
-// already enqueued there, then clears `joining` — all under pendMu so a
-// concurrent enqueueBroadcast can't interleave a newer broadcast between the
-// buffered frames and the live stream. Runs on every ROOM_JOIN exit path (via
-// defer) so the conn never stays stuck buffering, even on a snapshot error.
+// spliceAndGoLive flushes broadcasts buffered during a join into the broadcast
+// lane after priority init frames were enqueued. The pending slice preserves
+// fan-out arrival order, and pendMu prevents newer live broadcasts from
+// interleaving with the buffered join backlog.
 func (c *Conn) spliceAndGoLive() {
 	c.pendMu.Lock()
 	defer c.pendMu.Unlock()
 	for _, f := range c.pending {
-		c.enqueueCritical(f, c.aid)
+		c.enqueueBroadcastReady(f, c.aid)
 	}
 	c.pending = nil
 	c.joining.Store(false)
@@ -850,9 +875,13 @@ func (c *Conn) spliceAndGoLive() {
 // ROOM_SNAPSHOT, ROOM_JOIN catchup). Goes straight to crit (these are init/direct
 // frames, never buffered). Uses the connection's own aid (the direct paths run on
 // the read goroutine, where c.aid is stable).
-func (c *Conn) trySend(b []byte) { c.enqueueCritical(outboundFrame{raw: b}, c.aid) }
+func (c *Conn) trySend(b []byte) { c.trySendTyped("", b) }
 
-// trySendPrepared enqueues a CRITICAL pre-encoded broadcast frame for fan-out.
+func (c *Conn) trySendTyped(typ string, b []byte) {
+	c.enqueueCritical(outboundFrame{raw: b, typ: typ, queuedAt: time.Now()}, c.aid)
+}
+
+// trySendPrepared enqueues a pre-encoded broadcast frame for fan-out.
 // The gorilla PreparedMessage caches the frame header so writePump ships it
 // without re-encoding per recipient — at 10k recipients × 500 bid/s a
 // measurable gateway CPU win (V10k Tier B). `aid` is the broadcast room (not
@@ -863,7 +892,7 @@ func (c *Conn) trySendPrepared(aid string, pm *websocket.PreparedMessage) {
 
 // trySendRaw is the raw-bytes twin of trySendPrepared, used by Hub.broadcast as
 // the (defense-in-depth) fallback when PreparedMessage construction failed or a
-// unit-test conn was hand-built. Same ordered critical lane + backpressure. (#118)
+// unit-test conn was hand-built. Same broadcast lane + backpressure. (#118)
 func (c *Conn) trySendRaw(aid string, b []byte) {
 	c.enqueueBroadcast(outboundFrame{raw: b}, aid)
 }
@@ -900,13 +929,10 @@ func (c *Conn) writePump() {
 	defer ping.Stop()
 	defer c.flushClose() // flush the batch, emit typed CLOSE (if any), close socket
 	for {
-		// Critical-first: a queued critical frame pre-empts lossy/ping. `crit` is
-		// a SINGLE FIFO lane, so acks, BID_REJECTED, ROOM_SNAPSHOT, catchup, and
-		// room broadcasts all leave in enqueue order — no cross-lane reordering
-		// (e.g. a fresh broadcast can't overtake a just-queued snapshot, and the
-		// duplicate direct ack can't overtake the older broadcasts queued before
-		// it). The leading non-blocking poll keeps crit ahead of lossy; the inner
-		// select blocks on everything once crit is momentarily empty.
+		// Critical-first: queued direct/control frames pre-empt broadcast, lossy,
+		// and ping work. The leading non-blocking poll covers the common case;
+		// writeBroadcastAfterPriority closes the blocking-select race by draining
+		// any priority frames that became ready before a selected broadcast writes.
 		ok := true
 		select {
 		case <-c.done:
@@ -919,6 +945,8 @@ func (c *Conn) writePump() {
 				return
 			case f := <-c.crit:
 				ok = c.writeFrame(f)
+			case f := <-c.broadcast:
+				ok = c.writeBroadcastAfterPriority(f)
 			case msg := <-c.lossy:
 				ok = c.write(msg)
 			case <-ping.C:
@@ -938,6 +966,7 @@ func (c *Conn) writePump() {
 		if !c.flush() {
 			return
 		}
+		c.logSlowOutcomeFlush()
 		// Service a DUE keepalive PING even when `crit` is still non-empty. The
 		// critical-first poll above can keep choosing `crit` under a sustained
 		// (not-yet-full) backlog and never reach the blocking select's ping.C, so
@@ -951,6 +980,7 @@ func (c *Conn) writePump() {
 			if !c.writePing() || !c.flush() {
 				return
 			}
+			c.logSlowOutcomeFlush()
 		default:
 		}
 	}
@@ -960,47 +990,101 @@ func (c *Conn) writePump() {
 // when set (the Tier-B broadcast fast path), else raw bytes. Returns false (conn
 // torn down) on a socket error so writePump exits.
 func (c *Conn) writeFrame(f outboundFrame) bool {
+	ok := true
 	if f.pm != nil {
-		return c.writePrepared(f.pm)
+		ok = c.writePrepared(f.pm)
+	} else {
+		ok = c.write(f.raw)
 	}
-	return c.write(f.raw)
+	if ok && isBidOutcomeFrame(f.typ) && !f.queuedAt.IsZero() {
+		if c.batchOutcomeOldest.IsZero() || f.queuedAt.Before(c.batchOutcomeOldest) {
+			c.batchOutcomeOldest = f.queuedAt
+		}
+		c.batchOutcomeCount++
+	}
+	return ok
 }
 
-// maxDrainFrames bounds ONE coalesced batch. Paired with the per-frame done
+func isBidOutcomeFrame(typ string) bool {
+	return typ == model.TypeBidAccepted || typ == model.TypeBidRejected
+}
+
+func (c *Conn) logSlowOutcomeFlush() {
+	if c.batchOutcomeOldest.IsZero() {
+		return
+	}
+	d := time.Since(c.batchOutcomeOldest)
+	if d > 100*time.Millisecond {
+		log.Printf(
+			"ws outcome flush slow: delay_ms=%d frames=%d room=%s user=%s crit_len=%d broadcast_len=%d",
+			d.Milliseconds(), c.batchOutcomeCount, c.aid, c.userID, len(c.crit), len(c.broadcast),
+		)
+	}
+	c.batchOutcomeOldest = time.Time{}
+	c.batchOutcomeCount = 0
+}
+
+func (c *Conn) writeBroadcastAfterPriority(f outboundFrame) bool {
+	for drained := 0; drained < maxDrainFrames; drained++ {
+		select {
+		case <-c.done:
+			return false
+		case pf := <-c.crit:
+			if !c.writeFrame(pf) {
+				return false
+			}
+		default:
+			return c.writeFrame(f)
+		}
+	}
+	return c.writeFrame(f)
+}
+
+// maxDrainFrames bounds one coalesced batch. Paired with the per-frame done
 // check in coalesceDrain, it stops a force-closed slow client from pinning
-// writePump while we keep draining frames into a connection already marked
-// closed: without these bounds a trickle-reader can hold each buffer-full
-// auto-flush just under writeWait, so draining a full ~2000-frame backlog could
-// pin the goroutine for minutes AFTER the backpressure force-close fired (codex
-// review HIGH). 256 frames still collapses a fan-out burst into very few socket
-// writes (the 8 KiB buffer auto-flushes ~every 32 envelopes) — orders of
-// magnitude fewer syscalls than one-per-frame — while returning to writePump's
-// top (done + ping + critical-first poll) promptly.
+// writePump while draining frames into a connection already marked closed.
+// 256 frames still collapses a fan-out burst into very few socket writes while
+// returning promptly to done, ping, and critical-first polling.
 const maxDrainFrames = 256
 
-// coalesceDrain writes frames ALREADY queued into the coalescing buffer without
-// blocking, so a fan-out burst collapses into one flush. writePump is the SOLE
-// receiver of these channels, so len() is a safe lower bound (senders only add)
-// and each `<-` is guaranteed not to block. It drains the single critical lane
-// (crit) — acks, rejections, snapshots, catchup, and broadcasts interleaved
-// EXACTLY as enqueued, so nothing reorders — before the best-effort lossy lane.
-// crit consuming the maxDrainFrames budget before lossy is intended: lossy is
-// best-effort (PONG heartbeat) and must yield to critical traffic; there is no
-// critical-frame starvation because crit is ONE FIFO lane (all critical types
-// share it fairly in arrival order).
-//
-// Two bounds keep a closing/slow conn from pinning writePump (codex review HIGH):
-//   - a per-frame non-blocking `done` check, so a backpressure / schema / read
-//     close stops the drain promptly — flushClose then ships only the already-
-//     buffered tail (≤ one in-flight write), instead of grinding the whole
-//     backlog out to a trickle-reader over many writeWait windows; and
-//   - maxDrainFrames, so even absent a close the loop returns to writePump's top
-//     (done + ping) regularly under a sustained flood.
-//
-// Returns false if a write failed OR the conn is closing → writePump exits to
-// flushClose (which flushes the buffered tail under closeFrameWait).
+// coalesceDrain writes frames already queued into the coalescing buffer without
+// blocking, so a fan-out burst collapses into one flush. writePump is the sole
+// receiver of these channels, so len() is a safe lower bound. It drains
+// priority frames first, then room fan-out broadcasts, then best-effort lossy
+// frames. Returns false if a write failed or the conn is closing.
 func (c *Conn) coalesceDrain() bool {
 	drained := 0
+	for n := len(c.crit); n > 0 && drained < maxDrainFrames; n-- {
+		select {
+		case <-c.done:
+			return false
+		default:
+		}
+		if !c.writeFrame(<-c.crit) {
+			return false
+		}
+		drained++
+	}
+	for n := len(c.broadcast); n > 0 && drained < maxDrainFrames; n-- {
+		select {
+		case <-c.done:
+			return false
+		default:
+		}
+		select {
+		case f := <-c.crit:
+			if !c.writeFrame(f) {
+				return false
+			}
+			drained++
+			continue
+		default:
+		}
+		if !c.writeFrame(<-c.broadcast) {
+			return false
+		}
+		drained++
+	}
 	for n := len(c.crit); n > 0 && drained < maxDrainFrames; n-- {
 		select {
 		case <-c.done:
@@ -1136,7 +1220,7 @@ func (c *Conn) push(env model.Envelope) {
 	if err != nil {
 		return
 	}
-	c.trySend(b)
+	c.trySendTyped(env.Type, b)
 }
 
 // pushLossy marshals + enqueues a best-effort frame (heartbeat).
@@ -1227,12 +1311,13 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		display = nick
 	}
 	c := &Conn{
-		ws:     ws,
-		wbuf:   wbuf,
-		crit:   make(chan outboundFrame, sendBufFrames),
-		lossy:  make(chan []byte, 16),
-		done:   make(chan struct{}),
-		userID: userID, displayName: display,
+		ws:        ws,
+		wbuf:      wbuf,
+		crit:      make(chan outboundFrame, sendBufFrames),
+		broadcast: make(chan outboundFrame, sendBufFrames),
+		lossy:     make(chan []byte, 16),
+		done:      make(chan struct{}),
+		userID:    userID, displayName: display,
 		metrics: s.metrics, pingPeriod: connPingPeriod,
 	}
 	if s.metrics != nil {

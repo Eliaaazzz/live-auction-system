@@ -18,3 +18,41 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, s.metrics.Snapshot())
 }
+
+// handleMetricsReset is an operator-only evidence hygiene hook for public load
+// runs. It is disabled unless METRICS_RESET_TOKEN is configured, and it refuses
+// to reset while clients are connected so the run-window snapshot starts clean.
+func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.MetricsResetToken == "" {
+		writeErr(w, http.StatusNotFound, "metrics reset disabled")
+		return
+	}
+	if got := r.Header.Get("X-Lumen-Metrics-Reset-Token"); got != s.cfg.MetricsResetToken {
+		writeErr(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	if s.metrics == nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "ok",
+			"pre":    metrics.Snapshot{},
+			"post":   metrics.Snapshot{},
+		})
+		return
+	}
+	pre := s.metrics.Snapshot()
+	if pre.ActiveConns != 0 {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"status":      "refused_active_connections",
+			"activeConns": pre.ActiveConns,
+			"pre":         pre,
+		})
+		return
+	}
+	s.metrics.Reset()
+	post := s.metrics.Snapshot()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"pre":    pre,
+		"post":   post,
+	})
+}
