@@ -630,8 +630,10 @@ func eventServerTimeMs(payload string) int64 {
 // fallback) OR a gorilla PreparedMessage (a pre-encoded broadcast, shared
 // across recipients). Exactly one field is set.
 type outboundFrame struct {
-	raw []byte
-	pm  *websocket.PreparedMessage
+	raw      []byte
+	pm       *websocket.PreparedMessage
+	typ      string
+	queuedAt time.Time
 }
 
 // Conn is one WS client connection with a serialized write pump and a three-lane
@@ -692,6 +694,10 @@ type Conn struct {
 	// metrics is the process-wide T8 registry. Nil-safe (every Observe call
 	// checks for nil) so unit tests can construct a Conn without wiring it.
 	metrics *metrics.Registry
+	// batchOutcomeOldest is writePump-owned state used only to log slow direct
+	// BID_ACCEPTED/BID_REJECTED queue-to-flush latency during load verification.
+	batchOutcomeOldest time.Time
+	batchOutcomeCount  int
 
 	// closeCode / closeReason are set under closeOnce BEFORE close(done) and
 	// then read by writePump's defer (flushClose) AFTER it receives done. The
@@ -755,6 +761,9 @@ func (c *Conn) closeWithCode(code int, reason string) {
 func (c *Conn) enqueueCritical(f outboundFrame, aid string) {
 	select {
 	case <-c.done:
+		if isBidOutcomeFrame(f.typ) {
+			log.Printf("ws outcome drop closed: type=%s room=%s user=%s", f.typ, aid, c.userID)
+		}
 		return
 	default:
 	}
@@ -866,7 +875,11 @@ func (c *Conn) spliceAndGoLive() {
 // ROOM_SNAPSHOT, ROOM_JOIN catchup). Goes straight to crit (these are init/direct
 // frames, never buffered). Uses the connection's own aid (the direct paths run on
 // the read goroutine, where c.aid is stable).
-func (c *Conn) trySend(b []byte) { c.enqueueCritical(outboundFrame{raw: b}, c.aid) }
+func (c *Conn) trySend(b []byte) { c.trySendTyped("", b) }
+
+func (c *Conn) trySendTyped(typ string, b []byte) {
+	c.enqueueCritical(outboundFrame{raw: b, typ: typ, queuedAt: time.Now()}, c.aid)
+}
 
 // trySendPrepared enqueues a pre-encoded broadcast frame for fan-out.
 // The gorilla PreparedMessage caches the frame header so writePump ships it
@@ -953,6 +966,7 @@ func (c *Conn) writePump() {
 		if !c.flush() {
 			return
 		}
+		c.logSlowOutcomeFlush()
 		// Service a DUE keepalive PING even when `crit` is still non-empty. The
 		// critical-first poll above can keep choosing `crit` under a sustained
 		// (not-yet-full) backlog and never reach the blocking select's ping.C, so
@@ -966,6 +980,7 @@ func (c *Conn) writePump() {
 			if !c.writePing() || !c.flush() {
 				return
 			}
+			c.logSlowOutcomeFlush()
 		default:
 		}
 	}
@@ -975,10 +990,38 @@ func (c *Conn) writePump() {
 // when set (the Tier-B broadcast fast path), else raw bytes. Returns false (conn
 // torn down) on a socket error so writePump exits.
 func (c *Conn) writeFrame(f outboundFrame) bool {
+	ok := true
 	if f.pm != nil {
-		return c.writePrepared(f.pm)
+		ok = c.writePrepared(f.pm)
+	} else {
+		ok = c.write(f.raw)
 	}
-	return c.write(f.raw)
+	if ok && isBidOutcomeFrame(f.typ) && !f.queuedAt.IsZero() {
+		if c.batchOutcomeOldest.IsZero() || f.queuedAt.Before(c.batchOutcomeOldest) {
+			c.batchOutcomeOldest = f.queuedAt
+		}
+		c.batchOutcomeCount++
+	}
+	return ok
+}
+
+func isBidOutcomeFrame(typ string) bool {
+	return typ == model.TypeBidAccepted || typ == model.TypeBidRejected
+}
+
+func (c *Conn) logSlowOutcomeFlush() {
+	if c.batchOutcomeOldest.IsZero() {
+		return
+	}
+	d := time.Since(c.batchOutcomeOldest)
+	if d > 100*time.Millisecond {
+		log.Printf(
+			"ws outcome flush slow: delay_ms=%d frames=%d room=%s user=%s crit_len=%d broadcast_len=%d",
+			d.Milliseconds(), c.batchOutcomeCount, c.aid, c.userID, len(c.crit), len(c.broadcast),
+		)
+	}
+	c.batchOutcomeOldest = time.Time{}
+	c.batchOutcomeCount = 0
 }
 
 func (c *Conn) writeBroadcastAfterPriority(f outboundFrame) bool {
@@ -1028,7 +1071,27 @@ func (c *Conn) coalesceDrain() bool {
 			return false
 		default:
 		}
+		select {
+		case f := <-c.crit:
+			if !c.writeFrame(f) {
+				return false
+			}
+			drained++
+			continue
+		default:
+		}
 		if !c.writeFrame(<-c.broadcast) {
+			return false
+		}
+		drained++
+	}
+	for n := len(c.crit); n > 0 && drained < maxDrainFrames; n-- {
+		select {
+		case <-c.done:
+			return false
+		default:
+		}
+		if !c.writeFrame(<-c.crit) {
 			return false
 		}
 		drained++
@@ -1157,7 +1220,7 @@ func (c *Conn) push(env model.Envelope) {
 	if err != nil {
 		return
 	}
-	c.trySend(b)
+	c.trySendTyped(env.Type, b)
 }
 
 // pushLossy marshals + enqueues a best-effort frame (heartbeat).

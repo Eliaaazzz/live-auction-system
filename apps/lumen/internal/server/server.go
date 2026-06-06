@@ -130,6 +130,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
+	mux.HandleFunc("POST /api/auctions/{id}/bids", s.handlePlaceBidHTTP)
 	mux.HandleFunc("GET /api/auctions/{id}/evidence", s.handleEvidence)
 	mux.HandleFunc("GET /api/auctions/{id}/order", s.handleGetOrder)
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
