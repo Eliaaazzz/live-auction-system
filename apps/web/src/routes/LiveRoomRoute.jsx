@@ -283,6 +283,7 @@ export function LiveRoomRoute() {
     <MobileRoom
       productImage={productImage}
       videoUrl={livePlayUrl}
+      followScopeId={auctionId}
       viewerCount={store.viewerCount}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
