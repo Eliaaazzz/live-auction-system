@@ -43,6 +43,9 @@ export function LiveRoomRoute() {
   // #121: optional live-stream play URL (火山直播 HLS .m3u8) for the 直播画面.
   // Non-authoritative — null → the room simulates the feed (CSS sheen).
   const [livePlayUrl, setLivePlayUrl] = useState(null);
+  // Follow persistence scopes to the seller when the snapshot exposes it.
+  // Fallback to auctionId so route switches never share the global key.
+  const [sellerId, setSellerId] = useState(null);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -119,6 +122,7 @@ export function LiveRoomRoute() {
   useEffect(() => {
     let alive = true;
     let client;
+    setSellerId(null);
 
     (async () => {
       if (USE_MOCK) {
@@ -166,6 +170,7 @@ export function LiveRoomRoute() {
         });
         if (snap.imageUrl) setProductImage(snap.imageUrl);
         if (snap.livePlayUrl) setLivePlayUrl(snap.livePlayUrl);
+        setSellerId(snapshotSellerId(snap));
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
       }
@@ -261,6 +266,7 @@ export function LiveRoomRoute() {
       serverClockOffsetMs={getDriftMs()}
       lastSeq={store.lastSeq}
       winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
+      sellerId={sellerId || auctionId || 'lumen-house'}
       onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
       // Participation gate: accept terms once per auction before bidding
       // (persisted device-local in lib/prefs). joinKey scopes persistence.
@@ -322,6 +328,10 @@ function rankOfYou(leaders, userId) {
   if (!userId) return null;
   const idx = leaders.findIndex((l) => l.userId === userId);
   return idx >= 0 ? idx + 1 : null;
+}
+
+function snapshotSellerId(snap) {
+  return snap?.sellerId || snap?.sellerID || snap?.seller?.id || snap?.seller?.userId || null;
 }
 
 function hasOwn(obj, key) {
