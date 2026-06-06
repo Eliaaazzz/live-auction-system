@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCentsCNY, addCentsStr } from './primitives.jsx';
+import { formatCentsCNY, formatCentsCompact, addCentsStr } from './primitives.jsx';
 
 // lumen-atmosphere.jsx
 // Visceral feedback layers that sit on top of MobileRoom.
@@ -150,34 +150,42 @@ function MyPositionGap({ rank, gapCents, isYou, isLeading }) {
 }
 
 // ─── BidTickerStream — small pills sliding up on the left ───────
+// Anchored INSIDE the video band (top ≈30%) and width-clamped so the danmaku
+// floats over the stream and fades before it can cover the price card or the
+// leaderboard below (meeting feedback: 弹幕遮挡内容). Names ellipsis so a long
+// handle never spans the screen on a narrow device (动态像素适配).
 function BidTickerStream({ items }) {
   // Show last 3, oldest at top (fading), newest at bottom
   const shown = items.slice(-3);
   return (
     <div style={{
-      position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+      position: 'absolute', left: 12, top: '30%',
       zIndex: 9, display: 'flex', flexDirection: 'column', gap: 6,
-      pointerEvents: 'none',
+      maxWidth: 'min(62%, 230px)', pointerEvents: 'none',
     }}>
       {shown.map((it) => (
         <div key={it.id} className="lumen-ticker-up" style={{
-          display: 'flex', alignItems: 'center', gap: 6,
+          display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%',
           padding: '4px 8px 4px 4px', borderRadius: 999,
           background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(8px)',
           border: '1px solid rgba(255,255,255,.08)',
         }}>
           <span style={{
+            flexShrink: 0,
             width: 18, height: 18, borderRadius: 9,
             background: it.color || 'linear-gradient(135deg,#FE2C55,#cb203f)',
             color: '#fff', fontSize: 9, fontWeight: 700,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: 'var(--font-sans)',
-          }}>{it.name[0]}</span>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,.85)', fontFamily: 'var(--font-sans)' }}>
+          }}>{(it.name || '?')[0]}</span>
+          <span style={{
+            fontSize: 10, color: 'rgba(255,255,255,.85)', fontFamily: 'var(--font-sans)',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+          }}>
             {it.name}
           </span>
-          <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)' }}>
-            {formatCentsCNY(it.cents)}
+          <span className="mono" style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)' }}>
+            {formatCentsCompact(it.cents)}
           </span>
         </div>
       ))}

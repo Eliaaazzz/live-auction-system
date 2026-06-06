@@ -1,5 +1,6 @@
 import React from 'react';
 import { bidRejectCopy } from '../lib/types.js';
+import { formatCentsCompact } from '../lib/format.js';
 
 // lumen-primitives.jsx
 // §7.1 components. Money is string-cents, time is server-corrected.
@@ -8,7 +9,9 @@ import { bidRejectCopy } from '../lib/types.js';
 function formatCentsCNY(cents) {
   const s = String(cents);
   const neg = s.startsWith('-');
-  const abs = neg ? s.slice(1) : s;
+  // Cents are integer-only; strip non-digits so a malformed value degrades
+  // to ¥0.00 instead of "¥undefin.ed" (mirrors lib/format.js).
+  const abs = (neg ? s.slice(1) : s).replace(/[^0-9]/g, '') || '0';
   const padded = abs.padStart(3, '0');
   const yuan = padded.slice(0, -2);
   const fen = padded.slice(-2);
@@ -258,9 +261,10 @@ function Leaderboard({ leaders, mode = 'list' }) {
             position: 'relative',
           }}>
             {isLead && (
-              <div className="lumen-spotlight" style={{
-                position: 'absolute', top: -4, left: 0, right: 0, height: 14,
-                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent)',
+              <div className="lumen-spotlight" aria-hidden style={{
+                position: 'absolute', top: -2, left: 0, right: 0, height: 28,
+                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent 72%)',
+                filter: 'blur(2px)',
                 pointerEvents: 'none', borderTopLeftRadius: 10, borderTopRightRadius: 10,
               }}/>
             )}
@@ -298,10 +302,12 @@ function Leaderboard({ leaders, mode = 'list' }) {
                 }}>YOU</span>
               )}
             </span>
-            <span className="mono" style={{
+            <span className="mono" title={formatCentsCNY(u.cents)} style={{
+              flexShrink: 0, maxWidth: '42%',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               fontSize: 12, fontWeight: 600, color: isLead ? 'var(--solemn-gold)' : 'var(--douyin-ink-text)',
             }}>
-              {formatCentsCNY(u.cents)}
+              {formatCentsCompact(u.cents)}
             </span>
           </div>
         );
@@ -340,10 +346,11 @@ function LeaderboardPodium({ leaders }) {
           }}>
             {isLead && (
               <div className="lumen-spotlight" aria-hidden style={{
-                position: 'absolute', top: -2, left: '50%',
+                position: 'absolute', top: 2, left: '50%',
                 transform: 'translateX(-50%)',
-                width: 64, height: 18,
-                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent)',
+                width: 76, height: 46,
+                background: 'radial-gradient(ellipse 75% 100% at center top, var(--x-rank-1-glow), transparent 70%)',
+                filter: 'blur(4px)',
                 pointerEvents: 'none',
               }}/>
             )}
@@ -374,11 +381,13 @@ function LeaderboardPodium({ leaders }) {
                 }}>YOU</span>
               )}
             </span>
-            <span className="mono" style={{
+            <span className="mono" title={formatCentsCNY(u.cents)} style={{
+              maxWidth: 84,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               fontSize: 12, fontWeight: 600,
               color: isLead ? 'var(--solemn-gold)' : 'var(--douyin-ink-text)',
             }}>
-              {formatCentsCNY(u.cents)}
+              {formatCentsCompact(u.cents)}
             </span>
             <div style={{
               marginTop: 2,
@@ -557,11 +566,11 @@ function QuickBidChips({
   ];
 
   const chipBase = {
-    flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+    flex: 1, minWidth: 0, padding: '10px 8px', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
-    transition: 'transform .12s',
+    transition: 'transform .12s', overflow: 'hidden',
   };
   const chipPress = (e) => { if (!disabled) e.currentTarget.style.transform = 'scale(.96)'; };
   const chipRelease = (e) => { e.currentTarget.style.transform = ''; };
@@ -640,10 +649,13 @@ function QuickBidChips({
                     ? '0 4px 14px rgba(201,169,97,.28)'
                     : '0 4px 14px rgba(254,44,85,.28)',
               }}>
-              <span className="mono" style={{
+              <span className="mono" title={formatCentsCNY(c.cents)} style={{
                 fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
                 fontVariantNumeric: 'tabular-nums',
+                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
+                {/* exact (not compact) — the bid the user pays must be unambiguous;
+                    overflow on 亿-range prices degrades via ellipsis + title. */}
                 {formatCentsCNY(c.cents)}
               </span>
               <span style={{
@@ -681,7 +693,8 @@ function QuickBidChips({
               // Cap raw input at 17 chars (≈ MAX_MONEY_CENTS digit count + 1)
               // so paste of "999..." (60 digits) never reaches state.
               maxLength={17}
-              placeholder="cents（保持字符串)"
+              placeholder="输入出价金额（单位：分）"
+              aria-label="自定义出价金额，单位为分"
               value={custom}
               onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, '').slice(0, 17))}
               style={{
@@ -726,7 +739,7 @@ function QuickBidChips({
                   disabled={disabled}
                   onClick={() => stepNudge(b.mult)}
                   style={{
-                    flex: 1, padding: '6px 4px', borderRadius: 6,
+                    flex: 1, minWidth: 0, padding: '6px 8px', borderRadius: 6,
                     background: 'rgba(255,255,255,.06)',
                     border: '1px solid rgba(255,255,255,.10)',
                     color: 'var(--douyin-ink-text)',
@@ -800,6 +813,7 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
 
 export {
   formatCentsCNY,
+  formatCentsCompact,
   addCentsStr,
   fmtRemaining,
   bidRejectCopy,

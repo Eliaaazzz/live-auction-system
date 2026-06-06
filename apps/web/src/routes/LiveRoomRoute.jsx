@@ -262,10 +262,20 @@ export function LiveRoomRoute() {
       lastSeq={store.lastSeq}
       winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
       onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
+      // Participation gate: accept terms once per auction before bidding
+      // (persisted device-local in lib/prefs). joinKey scopes persistence.
+      joinKey={auctionId}
+      requireJoin
       ticker={store.recentEvents
         .map(tickerItemFromEvent)
         .filter(Boolean)
         .slice(0, 6)}
+      // 出价历史 strip — last 3 accepted bids, newest first (recentEvents is
+      // prepended by the store reducer). Reuses the ticker mapper.
+      recentBids={store.recentEvents
+        .map(tickerItemFromEvent)
+        .filter(Boolean)
+        .slice(0, 3)}
       isYouLeading={top?.isYou ?? false}
       showLeadingToast={store.leadingToast}
       overtakeBanner={store.overtakeBanner}

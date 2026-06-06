@@ -3,7 +3,7 @@
 // Money formatting must work on string-cents (blueprint P1). Never parseFloat.
 
 import { describe, it, expect } from 'vitest';
-import { formatCentsCNY, addCentsStr, fmtRemaining } from './format.js';
+import { formatCentsCNY, formatCentsCompact, addCentsStr, fmtRemaining } from './format.js';
 
 describe('formatCentsCNY', () => {
   it('formats a small amount with leading zero fen', () => {
@@ -32,6 +32,41 @@ describe('formatCentsCNY', () => {
 
   it('handles 0', () => {
     expect(formatCentsCNY('0')).toBe('¥0.00');
+  });
+
+  it('degrades malformed input to ¥0.00 (never renders garbage)', () => {
+    expect(formatCentsCNY(undefined)).toBe('¥0.00');
+    expect(formatCentsCNY(null)).toBe('¥0.00');
+    expect(formatCentsCNY('')).toBe('¥0.00');
+    expect(formatCentsCNY('abc')).toBe('¥0.00');
+  });
+});
+
+describe('formatCentsCompact', () => {
+  it('falls back to the exact format below 1万元', () => {
+    expect(formatCentsCompact('0')).toBe('¥0.00');
+    expect(formatCentsCompact('123456')).toBe('¥1,234.56');
+    expect(formatCentsCompact('999999')).toBe('¥9,999.99'); // just under 1万元
+  });
+
+  it('uses 万 between 1万元 and 1亿元, trimming trailing zeros', () => {
+    expect(formatCentsCompact('1000000')).toBe('¥1万');      // exactly 1万元
+    expect(formatCentsCompact('12500000')).toBe('¥12.5万');  // 12.50万 → 12.5万
+    expect(formatCentsCompact('12880000')).toBe('¥12.88万'); // the demo price
+  });
+
+  it('uses 亿 at or above 1亿元', () => {
+    expect(formatCentsCompact('10000000000')).toBe('¥1亿');   // exactly 1亿元
+    expect(formatCentsCompact('12900000000')).toBe('¥1.29亿');
+  });
+
+  it('preserves the sign and groups the whole part', () => {
+    expect(formatCentsCompact('-12880000')).toBe('-¥12.88万');
+    expect(formatCentsCompact('99990000000')).toBe('¥9.99亿');
+  });
+
+  it('survives BigInt-range cents without precision loss', () => {
+    expect(formatCentsCompact('9007199254740991')).toBe('¥900,719.92亿');
   });
 });
 

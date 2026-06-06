@@ -3,7 +3,7 @@
 // Tests for MobileRoom terminal-state overlays (TC-T6-104/105 added in #54)
 // and the PullToResync gesture component (TC-T6-#51-H2 added in #63).
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
@@ -176,6 +176,105 @@ describe('MobileRoom · LiveVideo fallback (#126)', () => {
 
     expect(hlsMock.instances.length).toBe(1);
     expect(hlsMock.instances[0].destroyed).toBe(false);
+  });
+});
+
+const findBtn = (container, text) =>
+  [...container.querySelectorAll('button')].find((b) => b.textContent.includes(text));
+
+describe('MobileRoom · participation gate (我要参与 + T&C)', () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it('hides the bid chips behind 我要参与 when requireJoin and not yet joined', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" remainingMs={30000} leaders={[]} requireJoin joinKey="auc_gate_1"/>,
+    );
+    expect(container.textContent).toMatch(/我要参与/);
+    expect(findBtn(container, 'MAX')).toBeUndefined(); // chips not rendered yet
+  });
+
+  it('opens terms, requires agreement, then unlocks the chips', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" remainingMs={30000} leaders={[]} requireJoin joinKey="auc_gate_2"/>,
+    );
+    fireEvent.click(findBtn(container, '我要参与'));
+
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    const confirm = [...container.querySelectorAll('button')]
+      .find((b) => b.textContent.trim() === '确认参与');
+    expect(confirm).toBeDisabled();
+
+    fireEvent.click(container.querySelector('input[type="checkbox"]'));
+    expect(confirm).not.toBeDisabled();
+
+    fireEvent.click(confirm);
+    expect(findBtn(container, 'MAX')).toBeDefined(); // chips unlocked
+    expect(window.localStorage.getItem('lumen.joined.auc_gate_2')).toBe('1');
+  });
+
+  it('skips the gate when participation was already persisted', () => {
+    window.localStorage.setItem('lumen.joined.auc_gate_3', '1');
+    const { container } = render(
+      <MobileRoom status="LIVE" remainingMs={30000} leaders={[]} requireJoin joinKey="auc_gate_3"/>,
+    );
+    expect(findBtn(container, 'MAX')).toBeDefined();
+    expect(container.textContent).not.toMatch(/我要参与/);
+  });
+
+  it('shows chips directly when requireJoin is not set (preview/default path)', () => {
+    const { container } = render(<MobileRoom status="LIVE" remainingMs={30000} leaders={[]}/>);
+    expect(findBtn(container, 'MAX')).toBeDefined();
+    expect(container.textContent).not.toMatch(/我要参与/);
+  });
+
+  it('re-applies the gate when joinKey changes without a remount (room→room nav)', () => {
+    window.localStorage.setItem('lumen.joined.aucA', '1'); // A already joined
+    const { container, rerender } = render(
+      <MobileRoom status="LIVE" remainingMs={30000} leaders={[]} requireJoin joinKey="aucA"/>,
+    );
+    expect(findBtn(container, 'MAX')).toBeDefined(); // A → chips unlocked
+
+    // Same component instance, switch to a not-yet-joined auction B.
+    rerender(<MobileRoom status="LIVE" remainingMs={30000} leaders={[]} requireJoin joinKey="aucB"/>);
+    expect(findBtn(container, 'MAX')).toBeUndefined(); // gate re-applied for B
+    expect(container.textContent).toMatch(/我要参与/);
+  });
+});
+
+describe('MobileRoom · follow persistence (关注状态持久化)', () => {
+  beforeEach(() => window.localStorage.clear());
+
+  it('reads initial follow state from storage and persists toggles per seller', () => {
+    const { container, unmount } = render(<MobileRoom status="LIVE" leaders={[]} sellerId="seller-x"/>);
+    const followBtn = findBtn(container, '关注');
+    expect(followBtn.textContent).toContain('+ 关注');
+
+    fireEvent.click(followBtn);
+    expect(followBtn.textContent).toContain('已关注');
+    expect(window.localStorage.getItem('lumen.follow.seller-x')).toBe('1');
+    unmount();
+
+    // Fresh mount must initialise from storage → already following.
+    const { container: c2 } = render(<MobileRoom status="LIVE" leaders={[]} sellerId="seller-x"/>);
+    expect(findBtn(c2, '关注').textContent).toContain('已关注');
+  });
+});
+
+describe('MobileRoom · recent bids strip (出价历史)', () => {
+  it('renders recent bid names when history is present', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} recentBids={[
+        { id: 1, name: '海风_2024', cents: '12880000' },
+        { id: 2, name: '听雨人', cents: '12750000' },
+      ]}/>,
+    );
+    expect(container.textContent).toMatch(/最近出价/);
+    expect(container.textContent).toMatch(/海风_2024/);
+  });
+
+  it('renders no strip when there is no history', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]} recentBids={[]}/>);
+    expect(container.textContent).not.toMatch(/最近出价/);
   });
 });
 

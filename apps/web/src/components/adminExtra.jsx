@@ -1,6 +1,7 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { formatCentsCNY, StatusBadge } from './primitives.jsx';
+import { suggestStepCents } from '../lib/bidrules.js';
 import { api, ApiError } from '../lib/api.js';
 import { ensureSession } from '../lib/auth.js';
 
@@ -41,6 +42,11 @@ function AdminPublish() {
   const startBI = (() => { try { return BigInt(startCents); } catch { return 0n; } })();
   const capBI = (() => { try { return BigInt(capCents); } catch { return 0n; } })();
   const capReachable = stepBI > 0n && capBI > startBI && ((capBI - startBI) % stepBI) === 0n;
+
+  // 加价阶梯 suggestion derived from the start price (~1%, snapped to a nice
+  // 1/2/5 increment). Advisory only — the seller can ignore it and the backend
+  // validates whatever is submitted. Meeting: 后台可根据起拍价动态调整最低加价。
+  const suggestedStep = suggestStepCents(startCents);
 
   const valid = title.length > 4
     && BigInt(startCents) > 0n
@@ -197,6 +203,19 @@ function AdminPublish() {
               <FormRow label="加价阶梯" required>
                 <CurrencyInput cents={stepCents} onChange={setStepCents}/>
                 <Hint>每次出价最小增量</Hint>
+                {suggestedStep !== '0' && suggestedStep !== stepCents && (
+                  <button
+                    type="button"
+                    onClick={() => setStepCents(suggestedStep)}
+                    style={{
+                      alignSelf: 'flex-start', marginTop: 2, padding: '2px 8px',
+                      borderRadius: 6, cursor: 'pointer',
+                      background: 'rgba(37,244,238,.08)', border: '1px solid rgba(37,244,238,.28)',
+                      color: 'var(--douyin-cyan)', fontSize: 10, fontFamily: 'var(--font-sans)',
+                    }}>
+                    建议 {formatCentsCNY(suggestedStep)} · 按起拍价 ≈1% · 采用
+                  </button>
+                )}
               </FormRow>
               <FormRow label="保留价 (≤ 起拍价)" required>
                 <CurrencyInput cents={reserveCents} onChange={setReserveCents}/>

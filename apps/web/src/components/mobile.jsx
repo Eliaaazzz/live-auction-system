@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCentsCNY, addCentsStr, bidRejectCopy,
+import { formatCentsCNY, formatCentsCompact, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
@@ -7,6 +7,9 @@ import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
   BlackHorseBanner, HammerTransition } from './atmosphere.jsx';
+import { isFollowing, setFollowing as persistFollowing,
+  hasJoined, setJoined as persistJoined } from '../lib/prefs.js';
+import { ParticipateGate, RulesTermsModal } from './participate.jsx';
 
 // lumen-mobile.jsx
 // Mobile H5 screens: Room (LIVE + final-10s), Hammer overlay, Evidence.
@@ -129,10 +132,46 @@ function MobileRoom({
                            // fixed loop; absent → simulate the feed (CSS sheen)
   winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
+  sellerId = 'lumen-house',// follow-persistence key (per seller, device-local)
+  joinKey = null,          // participation-persistence key (per auction)
+  requireJoin = false,     // gate bidding behind a "我要参与" T&C confirm.
+                           // Default false preserves the preview rooms + the
+                           // existing bid-locking tests; LiveRoomRoute opts in.
+  recentBids = [],         // [{ id, name, cents }] — last few accepted bids,
+                           // rendered as a compact horizontal 出价历史 strip
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
-  // graph is out of V9 scope). Local state so the button visibly responds.
-  const [following, setFollowing] = React.useState(false);
+  // graph is out of V9 scope). Persisted device-local (lib/prefs) so it
+  // survives a refresh (meeting: 关注状态持久化).
+  const [following, setFollowingState] = React.useState(() => isFollowing(sellerId));
+  const toggleFollow = React.useCallback(() => {
+    setFollowingState((f) => {
+      const next = !f;
+      persistFollowing(sellerId, next);
+      return next;
+    });
+  }, [sellerId]);
+
+  // Participation gate — when requireJoin, the buyer must accept the terms
+  // ("我要参与") once before the bid chips unlock. Persisted per-auction so a
+  // refresh mid-room doesn't re-prompt. requireJoin=false → always joined.
+  const [joined, setJoinedState] = React.useState(() => !requireJoin || hasJoined(joinKey));
+  const [showTerms, setShowTerms] = React.useState(false);
+  const confirmJoin = React.useCallback(() => {
+    setJoinedState(true);
+    persistJoined(joinKey, true);
+    setShowTerms(false);
+  }, [joinKey]);
+
+  // Re-sync follow/join when the room switches seller/auction WITHOUT a remount.
+  // React Router reuses LiveRoomRoute across /room/:id changes, so the lazy
+  // useState initializers above run only once; without this a buyer who joined
+  // auction A would keep the unlocked chips (and skip the terms gate) in B.
+  React.useEffect(() => { setFollowingState(isFollowing(sellerId)); }, [sellerId]);
+  React.useEffect(() => {
+    setJoinedState(!requireJoin || hasJoined(joinKey));
+    setShowTerms(false);
+  }, [joinKey, requireJoin]);
   const [videoBroken, setVideoBroken] = React.useState(false);
   React.useEffect(() => {
     setVideoBroken(false);
@@ -313,7 +352,8 @@ function MobileRoom({
               <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>{viewerCount} 在线</span>
             </div>
             <button
-              onClick={() => setFollowing(f => !f)}
+              onClick={toggleFollow}
+              aria-pressed={following}
               style={{
                 padding: '3px 10px', borderRadius: 999, border: 'none', cursor: 'pointer',
                 background: following ? 'rgba(255,255,255,.15)' : 'var(--douyin-red)',
@@ -428,6 +468,10 @@ function MobileRoom({
           </div>
         </div>
 
+        {/* Recent bids — last few, horizontal scroll (meeting: 出价历史只显示最近
+            2-3 条 + 横向滑动，节省屏幕). Renders nothing when empty. */}
+        <RecentBidsStrip bids={recentBids}/>
+
         {/* AI bubble */}
         <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
         </div>{/* end scrollable middle */}
@@ -437,15 +481,22 @@ function MobileRoom({
             LiveRoomRoute wires it to placeBid. Pinned (flex-shrink:0) so it is
             always visible at the bottom of the panel. */}
         <div style={{ flexShrink: 0, marginTop: 8 }}>
-          <QuickBidChips
-            currentCents={currentCents}
-            stepCents={stepCents}
-            capCents={capCents}
-            disabled={biddingLocked}
-            isLeading={isYouLeading}
-            shake={rejectShake}
-            onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
-          />
+          {requireJoin && !joined ? (
+            <ParticipateGate
+              disabled={biddingLocked}
+              onJoin={() => setShowTerms(true)}
+            />
+          ) : (
+            <QuickBidChips
+              currentCents={currentCents}
+              stepCents={stepCents}
+              capCents={capCents}
+              disabled={biddingLocked}
+              isLeading={isYouLeading}
+              shake={rejectShake}
+              onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
+            />
+          )}
           <div style={{
             display: 'flex', justifyContent: 'space-between',
             padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
@@ -472,11 +523,67 @@ function MobileRoom({
         </div>
       )}
 
+      {/* Participation terms — "我要参与" → accept-once before bidding. Compliance
+          copy (透明单品 · 虚拟币结算 · 非真实支付) kept tight per project policy. */}
+      <RulesTermsModal
+        visible={showTerms}
+        stepCents={stepCents}
+        onConfirm={confirmJoin}
+        onClose={() => setShowTerms(false)}
+      />
+
       {/* Terminal overlay — Elia round-2 H2 (#54). NO_BID and CANCELLED
           previously had no full-screen treatment, so a buyer who's still
           looking at the room when the timer fires saw only the StatusBadge
           flip with no clear "this ended" signal. */}
       <TerminalOverlay status={status}/>
+    </div>
+  );
+}
+
+// ─── RecentBidsStrip — last few accepted bids, horizontal scroll ───
+// Meeting feedback: 出价历史只显示最近 2-3 条，横向滑动节省屏幕。Compact CN
+// money so a long amount never wraps. Renders nothing when there's no history.
+function RecentBidsStrip({ bids = [] }) {
+  const shown = bids.filter(Boolean).slice(0, 3);
+  if (shown.length === 0) return null;
+  return (
+    <div>
+      <div style={{
+        fontSize: 11, fontWeight: 600, color: 'var(--douyin-ink-muted)',
+        letterSpacing: '.04em', padding: '0 4px 6px',
+      }}>
+        最近出价 · RECENT
+      </div>
+      <div className="no-scrollbar" style={{
+        display: 'flex', gap: 8, overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch', padding: '0 4px 2px',
+      }}>
+        {shown.map((b, i) => (
+          <div key={b.id ?? i} style={{
+            flexShrink: 0, display: 'flex', alignItems: 'center', gap: 7,
+            padding: '6px 10px', borderRadius: 999,
+            background: i === 0 ? 'rgba(201,169,97,.10)' : 'rgba(255,255,255,.03)',
+            border: '1px solid ' + (i === 0 ? 'rgba(201,169,97,.32)' : 'rgba(255,255,255,.06)'),
+          }}>
+            <span style={{
+              flexShrink: 0, width: 20, height: 20, borderRadius: 10,
+              background: b.color || 'linear-gradient(135deg,#FE2C55,#cb203f)',
+              color: '#fff', fontSize: 10, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'var(--font-sans)',
+            }}>{(b.name || '?')[0]}</span>
+            <span style={{
+              maxWidth: 88, fontSize: 11, color: 'var(--douyin-ink-text)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>{b.name || '匿名'}</span>
+            <span className="mono" title={formatCentsCNY(b.cents)} style={{
+              flexShrink: 0, fontSize: 11, fontWeight: 600,
+              color: i === 0 ? 'var(--solemn-gold)' : 'var(--douyin-ink-text)',
+            }}>{formatCentsCompact(b.cents)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

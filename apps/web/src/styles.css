@@ -3,6 +3,25 @@
  * Token names match the brief exactly so they're auditable.
  */
 
+/* ─── Global reset — kill the default UA body margin (the "white border"
+ *     around the app) and make box-sizing predictable everywhere. Without
+ *     this the 8px <body> margin framed every screen in a pale gutter. ─── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root {
+  margin: 0;
+  padding: 0;
+}
+html, body {
+  min-height: 100%;
+  background: #06070d;          /* matches the frame backdrop → no flash of white */
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none; /* no rubber-band white at the top on mobile */
+}
+
 :root {
   /* A · Douyin-Native palette */
   --douyin-ink:        #171a28;   /* slightly more blue — bridges visually toward B's deep navy */
@@ -357,3 +376,42 @@
 .hairline-b { box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
 .no-scrollbar::-webkit-scrollbar { display:none; }
 .no-scrollbar { scrollbar-width: none; }
+
+/* ─── Responsive mobile frame (MobileFrame.jsx) ───────────────────
+ * Desktop / tablet: a centered phone-shaped card (rounded, shadowed,
+ * capped) so the H5 reads as a device in the demo. Real phones: drop the
+ * gutter, radius, shadow, and height cap so the room fills the screen
+ * edge-to-edge (the meeting's responsive ask + the white-border fix). */
+.lumen-frame-outer {
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #06070d;
+  padding: 24px 16px;
+}
+.lumen-frame-inner {
+  position: relative;
+  width: 100%;
+  max-width: var(--frame-max-w, 420px);
+  height: 100vh;
+  height: 100dvh;          /* dynamic viewport where supported (tablet toolbars) */
+  max-height: var(--frame-max-h, 892px);
+  border-radius: 28px;
+  overflow: hidden;
+  background: var(--douyin-ink);
+  box-shadow: 0 30px 80px rgba(0,0,0,.5), 0 0 0 1.5px rgba(255,255,255,.04);
+}
+@media (max-width: 480px) {
+  .lumen-frame-outer { padding: 0; align-items: stretch; }
+  .lumen-frame-inner {
+    max-width: none;
+    max-height: none;
+    height: 100vh;
+    height: 100dvh;       /* dynamic viewport: no jump when the URL bar hides */
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
