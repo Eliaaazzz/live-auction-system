@@ -48,43 +48,45 @@ This preserves the frozen design: Redis Lua remains the bid authority, Redis Str
 
 ## Beijing-Near Locust Run Shape
 
-Run from a Beijing-near Linux worker or distributed worker pool. Do not run the 10k claim from this workstation.
+Run from a Beijing-near Linux worker or distributed worker pool. Do not run the 10k claim from this workstation. The strict path is now scripted; manual commands below are for understanding, not for final evidence.
 
-Master:
+First split token shards without printing token values:
 
 ```bash
-export LOAD_AUCTION_ID=<live_load_auction_id>
-export TOKENS_FILE=/opt/lumen-load/tokens.txt
-export BID_COMMAND=http
-export HTTP_HOST=http://115.191.76.40
-export BIDS_PER_BIDDER=1
-export ACK_TIMEOUT_SEC=5
-
-python -m locust \
-  -f tools/loadtest/locust_bidder_only.py \
-  --master \
-  --headless \
-  --expect-workers 8 \
-  --host ws://115.191.76.40 \
-  -u 10000 \
-  -r 500 \
-  -t 180s \
-  --csv beijing-locust-http-bid-10k
+WORKERS=8 USERS=10000 TOKENS=/opt/lumen-load/tokens.txt \
+  AID=<live_load_auction_id> \
+  BASE_URL=http://115.191.76.40 \
+  WS_HOST=ws://115.191.76.40 \
+  tools/loadtest/split-locust-tokens.sh
 ```
 
-Each worker:
+Strict evidence-pack run on the Beijing-near master:
 
 ```bash
-export LOAD_AUCTION_ID=<live_load_auction_id>
-export TOKENS_FILE=/opt/lumen-load/tokens-worker-NN.txt
-export BID_COMMAND=http
-export HTTP_HOST=http://115.191.76.40
+RUNNER_REGION=cn-beijing \
+LOAD_AUCTION_ID=<live_load_auction_id> \
+TOKENS_FILE=/opt/lumen-load/tokens.txt \
+BASE_URL=http://115.191.76.40 \
+WS_HOST=ws://115.191.76.40 \
+EXPECT_WORKERS=8 \
+USERS=10000 \
+SPAWN_RATE=500 \
+RUN_TIME=180s \
+METRICS_RESET_TOKEN=<operator-token> \
+VERIFY_CMD='ssh <ecs> "cd live-auction-system && VERIFY_AID=$LOAD_AUCTION_ID make verify"' \
+scripts/beijing-locust-10k-evidence.sh master
+```
 
-python -m locust \
-  -f - \
-  --worker \
-  --master-host <master_private_ip> \
-  --processes 4
+Each Beijing-near worker runs the command from `workers.tsv`, equivalent to:
+
+```bash
+RUNNER_REGION=cn-beijing \
+LOAD_AUCTION_ID=<live_load_auction_id> \
+TOKENS_FILE=/opt/lumen-load/tokens-worker-NN.txt \
+BASE_URL=http://115.191.76.40 \
+WS_HOST=ws://115.191.76.40 \
+BID_COMMAND=http \
+scripts/beijing-locust-10k-evidence.sh worker --master-host <master_private_ip>
 ```
 
 Pass boundary:
@@ -96,6 +98,25 @@ Pass boundary:
 - `broadcastLatencyMs`/`roomStatePatchLatencyMs` must be read from a clean run window.
 - Post-run Replay Verifier reports consistent evidence for the load auction.
 
+The strict script writes a no-secret evidence directory containing:
+
+- `version.json`, `healthz.json`, metrics reset response, clean pre-run metrics, post-run metrics.
+- `server-metrics-window/metrics.json` selected from the highest active connection sample.
+- Locust CSV/HTML plus `locust-gate/locust-gate.tsv`.
+- `server-gate/gate.tsv` from `scripts/remote-perf-gate.sh`.
+- `host-before/` and `host-after/` snapshots from the master and each worker.
+- `replay-verifier.log`.
+
+The run fails by default if:
+
+- `RUNNER_REGION` is not Beijing-near.
+- `/version` has `buildSha` or `buildTime` equal to `unknown`.
+- Metrics cannot be reset through `POST /admin/metrics/reset`.
+- `connect` failure ratio is above 0.1%.
+- Any `bid_no_ack` appears.
+- Server-side SLO gate fails.
+- Replay Verifier output is missing or non-zero.
+
 ## Research Notes
 
 - Locust supports distributed master/worker runs; the master does not run users, and `--expect-workers` lets a headless master wait until all workers connect before starting. Source: https://docs.locust.io/en/stable/running-distributed.html
@@ -106,10 +127,12 @@ Pass boundary:
 - Redis Pub/Sub is at-most-once; Redis Streams provide persisted, replayable stream semantics. Sources: https://redis.io/docs/latest/develop/pubsub/ and https://redis.io/docs/latest/develop/use-cases/streaming/
 - Volcengine docs list `cn-beijing` / North China 2 as a Beijing region; use this or an equivalent near-Beijing runner for the strict source-location claim. Source: https://www.volcengine.com/docs/6617/87001
 
-## Next Required Evidence
+## Remaining External Prerequisites
 
-1. Deploy a build with non-unknown `/version` identity.
+The repository now contains the command-lane code, metrics reset hook, token sharder, Locust gate, and strict evidence-pack script. The remaining work is external execution:
+
+1. Deploy this branch with non-unknown `/version` identity and `METRICS_RESET_TOKEN` configured.
 2. Seed or pre-create a LIVE load auction without enabling prod dev-login.
-3. Generate token shards without committing or printing tokens.
-4. Run the bidder-only Locust script from Beijing-near workers with `BID_COMMAND=http`.
-5. Archive Locust CSVs, clean `/metrics` pre/post snapshots, host metrics, and verifier output.
+3. Generate buyer tokens through the allowed public login flow, then split them with `tools/loadtest/split-locust-tokens.sh`.
+4. Run `scripts/beijing-locust-10k-evidence.sh` from Beijing-near master/workers.
+5. Attach the resulting no-secret evidence directory to #210.

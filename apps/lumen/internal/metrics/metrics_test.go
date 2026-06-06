@@ -187,6 +187,30 @@ func TestObserveStreamLenConcurrent(t *testing.T) {
 	}
 }
 
+func TestRegistryResetClearsRunWindowButPreservesActiveConns(t *testing.T) {
+	r := New()
+	r.AckLatency.Observe(10 * time.Millisecond)
+	r.BroadcastLatency.Observe(20 * time.Millisecond)
+	r.BidsAccepted.Inc()
+	r.BidsRejectedFastPath.Inc()
+	r.BackpressureDrop.Inc()
+	r.SeqGap.Inc()
+	r.ObserveStreamLen(42)
+	r.ActiveConns.Store(7)
+
+	r.Reset()
+	s := r.Snapshot()
+	if s.Ack.Count != 0 || s.Broadcast.Count != 0 {
+		t.Fatalf("histograms not reset: %+v", s)
+	}
+	if s.BidsAccepted != 0 || s.BidsRejectedFastPath != 0 || s.BackpressureDrop != 0 || s.SeqGap != 0 || s.StreamLenMax != 0 {
+		t.Fatalf("run-window counters not reset: %+v", s)
+	}
+	if s.ActiveConns != 7 {
+		t.Fatalf("active conns changed by reset: got %d want 7", s.ActiveConns)
+	}
+}
+
 // TestSnapshotJSONShape pins the wire shape: /metrics scrapers (curl + jq, CI
 // assertions, Grafana JSON datasource) depend on these field names. A rename
 // would silently break the dashboard without any compile error.

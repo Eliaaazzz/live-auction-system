@@ -147,12 +147,35 @@ func (r *Registry) Snapshot() Snapshot {
 	}
 }
 
+// Reset clears run-window histograms and monotonic counters while preserving the
+// point-in-time ActiveConns gauge. Operators use this immediately before a
+// controlled load run so /metrics percentiles describe that run, not process
+// lifetime history.
+func (r *Registry) Reset() {
+	r.AckLatency.Reset()
+	r.BroadcastLatency.Reset()
+	r.RoomStatePatch.Reset()
+	r.HammerLatency.Reset()
+	r.CatchupLatency.Reset()
+	r.ScriptTime.Reset()
+	r.HandlerOverhead.Reset()
+	r.BidsAccepted.Reset()
+	r.BidsRejected.Reset()
+	r.BidsRejectedFastPath.Reset()
+	r.RoomStatePatches.Reset()
+	r.RoomStatePatchBids.Reset()
+	r.BackpressureDrop.Reset()
+	r.SeqGap.Reset()
+	r.StreamLenMax.Store(0)
+}
+
 // Counter is a monotonic uint64. Inc is allocation-free and lock-free.
 type Counter struct{ n atomic.Int64 }
 
 func (c *Counter) Inc()        { c.n.Add(1) }
 func (c *Counter) Add(n int64) { c.n.Add(n) }
 func (c *Counter) Load() int64 { return c.n.Load() }
+func (c *Counter) Reset()      { c.n.Store(0) }
 
 // Histogram is a fixed-capacity reservoir-sampled latency distribution. Past
 // `cap` observations, each new sample replaces a uniformly-random existing one
@@ -207,6 +230,16 @@ func (h *Histogram) Observe(d time.Duration) {
 			h.samples[idx] = d
 		}
 	}
+	h.mu.Unlock()
+}
+
+// Reset drops all samples and the lifetime count. It is operator-only evidence
+// hygiene, not a hot-path operation.
+func (h *Histogram) Reset() {
+	h.mu.Lock()
+	h.samples = h.samples[:0]
+	h.n = 0
+	h.r = rand.New(rand.NewSource(time.Now().UnixNano()))
 	h.mu.Unlock()
 }
 
