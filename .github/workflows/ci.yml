@@ -189,17 +189,18 @@ jobs:
         # contract surface the browser uses. Wired here because the stack is
         # up; per the team rule "no skipped CI tests" these run on every push.
         # Sequential execution preserves deterministic shared-state behavior
-        # with existing fixtures (each smoke creates its own auction; wall
-        # time is the sum but each is short enough that the total is bounded).
+        # with existing fixtures (smoke-wire uses seeded auc_demo; the other
+        # smoke scripts create their own auctions as needed; wall time is
+        # bounded).
         timeout-minutes: 5
         working-directory: apps/web
         run: |
-          aid="${VERIFY_AID:-$AUCTION_ID}"
-          if [ -n "$aid" ]; then
-            VERIFY_AID="$aid" AUCTION_ID="$aid" npm run -s smoke:all
-          else
-            npm run -s smoke:all
-          fi
+          # VERIFY_AID is the early e2e/verifier auction. After the longer
+          # demo/chaos/load gates it may be SOLD, so do not leak it into
+          # browser-contract smoke tests. smoke-wire falls back to seeded
+          # auc_demo, which Seed keeps LIVE for one hour.
+          unset VERIFY_AID AUCTION_ID
+          npm run -s smoke:all
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs
