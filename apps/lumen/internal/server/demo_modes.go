@@ -525,11 +525,17 @@ func RunDemoHybrid(target string) error {
 	if err := placeDemoBid(connA, aid, "11000"); err != nil {
 		return fmt.Errorf("bid A: %w", err)
 	}
+	if err := observeHybridAccepted(obs, buyerA.UserID, buyerB.UserID, 1, 10*time.Second); err != nil {
+		return err
+	}
 	if err := placeDemoBid(connB, aid, "12000"); err != nil {
 		return fmt.Errorf("bid B: %w", err)
 	}
+	if err := observeHybridAccepted(obs, buyerA.UserID, buyerB.UserID, 2, 10*time.Second); err != nil {
+		return err
+	}
 
-	sold, err := observeHybridBroadcasts(obs, buyerA.UserID, buyerB.UserID, 40*time.Second)
+	sold, err := waitForHybridSold(obs, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -553,55 +559,66 @@ func RunDemoHybrid(target string) error {
 	return nil
 }
 
-// observeHybridBroadcasts reads broadcasts on a non-bidding observer socket and
-// asserts the hybrid-reveal invariants: NO broadcast ever leaks Bob's true
-// 12000; the 1st BID_ACCEPTED broadcast carries the reserve (10000) with an
-// empty userId (no prior leader); the 2nd carries Alice's prior 11000 + Alice's
-// userId (now the runner-up). Returns the eventual AUCTION_SOLD payload.
-func observeHybridBroadcasts(c *websocket.Conn, aliceID, bobID string, d time.Duration) (model.AuctionSoldData, error) {
+// observeHybridAccepted reads one hybrid BID_ACCEPTED from a non-bidding
+// observer socket. The demo stages the two bids around this assertion so the
+// observer has proved the first broadcast before the second bid can race the
+// timer/close path.
+func observeHybridAccepted(c *websocket.Conn, aliceID, bobID string, ordinal int, d time.Duration) error {
 	_ = c.SetReadDeadline(time.Now().Add(d))
-	acceptedCount := 0
 	for {
 		var env model.Envelope
 		if err := c.ReadJSON(&env); err != nil {
-			return model.AuctionSoldData{}, err
+			return err
 		}
 		switch env.Type {
 		case model.TypeBidAccepted:
 			var bd model.BidAcceptedData
 			if err := json.Unmarshal(env.Data, &bd); err != nil {
-				return model.AuctionSoldData{}, fmt.Errorf("parse BID_ACCEPTED: %w", err)
+				return fmt.Errorf("parse BID_ACCEPTED: %w", err)
 			}
 			if bd.AmountCents == "12000" {
-				return model.AuctionSoldData{}, fmt.Errorf("hybrid broadcast LEAKED the true winning bid (seq=%d userId=%q amount=%q)", env.Seq, bd.UserID, bd.AmountCents)
+				return fmt.Errorf("hybrid broadcast LEAKED the true winning bid (seq=%d userId=%q amount=%q)", env.Seq, bd.UserID, bd.AmountCents)
 			}
 			if bd.UserID == bobID {
-				return model.AuctionSoldData{}, fmt.Errorf("hybrid broadcast LEAKED the true winner identity (seq=%d userId=%q)", env.Seq, bd.UserID)
+				return fmt.Errorf("hybrid broadcast LEAKED the true winner identity (seq=%d userId=%q)", env.Seq, bd.UserID)
 			}
-			acceptedCount++
-			switch acceptedCount {
+			switch ordinal {
 			case 1:
 				if bd.AmountCents != "10000" || bd.UserID != "" {
-					return model.AuctionSoldData{}, fmt.Errorf("1st hybrid broadcast = (userId=%q amount=%q), want (\"\", \"10000\") (reserve / no prior leader)", bd.UserID, bd.AmountCents)
+					return fmt.Errorf("1st hybrid broadcast = (userId=%q amount=%q), want (\"\", \"10000\") (reserve / no prior leader)", bd.UserID, bd.AmountCents)
 				}
 			case 2:
 				if bd.AmountCents != "11000" {
-					return model.AuctionSoldData{}, fmt.Errorf("2nd hybrid broadcast amount = %q, want %q (Alice's prior)", bd.AmountCents, "11000")
+					return fmt.Errorf("2nd hybrid broadcast amount = %q, want %q (Alice's prior)", bd.AmountCents, "11000")
 				}
 				if bd.UserID != aliceID {
-					return model.AuctionSoldData{}, fmt.Errorf("2nd hybrid broadcast userId = %q, want Alice %q (now the runner-up)", bd.UserID, aliceID)
+					return fmt.Errorf("2nd hybrid broadcast userId = %q, want Alice %q (now the runner-up)", bd.UserID, aliceID)
 				}
+			default:
+				return fmt.Errorf("unsupported hybrid broadcast ordinal %d", ordinal)
 			}
+			return nil
 		case model.TypeAuctionSold:
-			if acceptedCount < 2 {
-				return model.AuctionSoldData{}, fmt.Errorf("AUCTION_SOLD before both BID_ACCEPTED broadcasts (saw %d)", acceptedCount)
-			}
-			var sd model.AuctionSoldData
-			if err := json.Unmarshal(env.Data, &sd); err != nil {
-				return model.AuctionSoldData{}, fmt.Errorf("parse AUCTION_SOLD: %w", err)
-			}
-			return sd, nil
+			return fmt.Errorf("AUCTION_SOLD before hybrid BID_ACCEPTED #%d", ordinal)
 		}
+	}
+}
+
+func waitForHybridSold(c *websocket.Conn, d time.Duration) (model.AuctionSoldData, error) {
+	_ = c.SetReadDeadline(time.Now().Add(d))
+	for {
+		var env model.Envelope
+		if err := c.ReadJSON(&env); err != nil {
+			return model.AuctionSoldData{}, err
+		}
+		if env.Type != model.TypeAuctionSold {
+			continue
+		}
+		var sd model.AuctionSoldData
+		if err := json.Unmarshal(env.Data, &sd); err != nil {
+			return model.AuctionSoldData{}, fmt.Errorf("parse AUCTION_SOLD: %w", err)
+		}
+		return sd, nil
 	}
 }
 
