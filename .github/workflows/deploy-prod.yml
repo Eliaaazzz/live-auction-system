@@ -325,7 +325,18 @@ jobs:
           as_root systemctl restart lumen.service
           as_root systemctl is-active --quiet lumen-sidecar.service
           as_root systemctl is-active --quiet lumen.service
-          curl -fsS http://127.0.0.1/healthz >/dev/null
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              as_root systemctl status lumen-sidecar.service --no-pager -l || true
+              as_root systemctl status lumen.service --no-pager -l || true
+              as_root journalctl -u lumen.service -n 80 --no-pager || true
+              exit 7
+            fi
+            sleep 2
+          done
           REMOTE
 
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
