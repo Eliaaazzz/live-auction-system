@@ -108,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           git archive --format=tar.gz --output source.tgz HEAD \
-            .dockerignore go.mod go.sum apps infra
+            .dockerignore Makefile go.mod go.sum apps infra scripts tools
 
       - name: configure ssh
         env:
