@@ -2,38 +2,149 @@
 
 ## Verdict
 
-Do **not** claim a Beijing-near 10k Locust pass yet.
+Do **not** claim a public-path Beijing-near 10k Locust pass yet.
+
+Updated on 2026-06-06 after deploying `291ecf31dba1` through CD:
+
+- **CD is now verified**: PR #227 was approved, merged, and deployed by `deploy-prod` run `27064090243`; public `/version` reports `buildSha="291ecf31dba1"` and `schemaVersion=2`.
+- **Locust 10k public path failed** on the Beijing ECS co-located runner: 10,000 WS connect attempts produced 9,360 failures. This is not a 10k pass.
+- **Go `wsload` 10k public path also failed** when the Beijing ECS dialed its own public IP `115.191.76.40:80`: `connect_ok=3378`, `connect_fail=6622`, `peak_concurrent=2958`, server-selected `activeConns=1173`.
+- **Go `wsload` 10k loopback isolation passed** against the same production `lumen` process on `127.0.0.1:80`: `connect_ok=10000`, `connect_fail=0`, `peak_concurrent=10000`, `closed_early=0`, server-selected `activeConns=10000`, `ackLatencyMs.p95=0.511673ms`, `seqGapCount=0`, `backpressureForceClose=0`, and Replay Verifier reported `consistent`.
+- **Go `wsload` 10k private-IP isolation also passed** against `172.31.12.98:80`: `connect_ok=10000`, `connect_fail=0`, server-selected `activeConns=10000`, `ackLatencyMs.p95=0.509134ms`, `seqGapCount=0`, `backpressureForceClose=0`, and Replay Verifier reported `consistent`.
+
+Honest claim boundary:
+
+- The deployed app/gateway process can hold 10,000 live WS sessions with very low server-side latency on the Beijing ECS loopback path.
+- The same production process can also hold 10,000 live WS sessions on the ECS private address; this is the expected path for independent Beijing workers in the same VPC.
+- The public-path 10k claim is still blocked by load topology: self-dialing the ECS public IP causes TCP/WebSocket `i/o timeout` failures and does not represent clean external Beijing-near worker traffic.
+- Final public evidence still needs separate Beijing-near Linux load workers, or a private/LB endpoint that avoids single-host public-IP hairpin.
 
 What is verified today:
 
 - The public endpoint `http://115.191.76.40` is reachable.
-- `/version` reports `schemaVersion=2`, so the schema-drift symptom from the previous failed run is no longer the immediate blocker.
-- The endpoint still reports `buildSha="unknown"` and `buildTime="unknown"`, so the evidence pack cannot prove the exact deployed commit.
-- This workstation is not a Beijing-near load worker. A strict run must execute from a `cn-beijing` or nearby cloud worker, not from the current Australia/Sydney environment.
+- `/version` reports `schemaVersion=2` and a non-unknown deployed build identity.
+- The load runner for the new evidence was the Volcengine Beijing ECS itself (`RUNNER_REGION=cn-beijing`), not the Australia/Sydney workstation.
+- Token values were not copied into evidence; only token count and token file sha256 were recorded.
 
-## Public Preflight Snapshot
+## Current Deployment Snapshot
 
-Captured from the current workstation on 2026-06-06:
+Captured after CD run `27064090243` on 2026-06-06:
 
 | Check | Result |
 |---|---|
-| `python -m locust --version` | `locust 2.44.0` |
 | `GET /healthz` | `{"status":"ok"}` |
-| `GET /version` | `{"status":"ok","schemaVersion":2,"buildSha":"unknown","buildTime":"unknown","appEnv":"prod"}` |
-| `GET /metrics` | reachable |
+| `GET /version` | `{"status":"ok","schemaVersion":2,"buildSha":"291ecf31dba1","buildTime":"2026-06-06T13:52:07Z","appEnv":"prod"}` |
+| ECS listen path | `lumen serve --mode=all` listening on `*:80`; `sidecar` listening on `*:8090` |
+| ECS size | 4 vCPU / 8 GiB class host from host snapshot |
 
-Current `/metrics` is process-lifetime, not run-window scoped. The snapshot showed `ackLatencyMs.p95=17.680865`, `ackLatencyMs.p99=95.285886`, `placeBidScriptTimeMs.p99=6.171203`, `bidHandlerOverheadMs.p99=95.612922`, `seqGapCount=0`, and `backpressureForceClose=0`. The `broadcastLatencyMs` bucket contains stale multi-hour samples, so it must be reset or treated as polluted before any public claim.
+Metrics are reset with `POST /admin/metrics/reset` before each strict evidence run. The reset token is configured on ECS but is intentionally not printed or copied into artifacts.
+
+## 2026-06-06 Runs
+
+### A. Locust 10k Public Path - FAIL
+
+Evidence directory: `/opt/lumen-load/evidence-locust-10k-20260606T134644Z`
+
+| Metric | Value |
+|---|---:|
+| WS connect attempts | 10,000 |
+| WS connect failures | 9,360 |
+| Locust `room_join` | 640 |
+| Locust aggregate failures | 10,298 / 37,611 |
+| selected server `activeConns` | 393 |
+| server `ackLatencyMs.p95` | 1.49653 ms |
+| server `roomStatePatchLatencyMs.p95` | 48.650216 ms |
+| `seqGapCount` | 0 |
+| `backpressureForceClose` | 0 |
+
+Primary failure mode: `websocket.create_connection` timed out during handshake and HTTP bid commands timed out at 5 seconds. This invalidates any 10k Locust pass claim.
+
+### B. Go `wsload` 10k Public IP Hairpin - FAIL
+
+Evidence directory: `/opt/lumen-load/evidence-wsload-10k-20260606T142007Z`
+
+| Metric | Value |
+|---|---:|
+| target connections | 10,000 |
+| connect OK | 3,378 |
+| connect FAIL | 6,622 |
+| peak concurrent client sockets | 2,958 |
+| closed early | 2,917 |
+| server-selected `activeConns` | 1,173 |
+| server `ackLatencyMs.p95` | 0.334363 ms |
+| server `seqGapCount` | 0 |
+| server `backpressureForceClose` | 0 |
+| Replay Verifier | `consistent: stream=8 mysql=8 snapshot_seq=8` |
+
+Primary failure mode: the runner was on the ECS and dialed the ECS public IP (`172.31.12.98 -> 115.191.76.40:80`), producing widespread TCP/WebSocket `i/o timeout`. This is a topology defect in the evidence run, not a Redis Lua latency breach.
+
+### C. Go `wsload` 10k Loopback Isolation - PASS
+
+Evidence directory: `/opt/lumen-load/evidence-wsload-loopback80-10k-20260606T143148Z`
+
+| Metric | Value |
+|---|---:|
+| target connections | 10,000 |
+| connect OK | 10,000 |
+| connect FAIL | 0 |
+| peak concurrent client sockets | 10,000 |
+| closed early | 0 |
+| frames received | 9,455,716 |
+| bids sent / accepted / rejected | 119,646 / 1,199 / 118,447 |
+| client bid-ack RTT p95 | 0.6 ms |
+| server-selected `activeConns` | 10,000 |
+| server `ackLatencyMs.p95` | 0.511673 ms |
+| server `ackLatencyMs.p99` | 5.275259 ms |
+| server `roomStatePatchLatencyMs.p95` | 44.109133 ms |
+| server `catchupLatencyMs.p95` | 1.832162 ms |
+| server `seqGapCount` | 0 |
+| server `backpressureForceClose` | 0 |
+| Replay Verifier | `consistent: stream=1199 mysql=1199 snapshot_seq=1199` |
+
+This isolates the application/gateway hot path: the production process can hold 10k same-host WS sessions with low server-side latency. It is not a substitute for independent Beijing-near public/LB traffic.
+
+### D. Go `wsload` 10k Private-IP Isolation - PASS
+
+Evidence directory: `/opt/lumen-load/evidence-wsload-privateip-10k-20260606T144923Z`
+
+| Metric | Value |
+|---|---:|
+| target connections | 10,000 |
+| connect OK | 10,000 |
+| connect FAIL | 0 |
+| peak concurrent client sockets | 10,000 |
+| closed early | 0 |
+| frames received | 9,458,600 |
+| bids sent / accepted / rejected | 119,646 / 1,199 / 118,447 |
+| client bid-ack RTT p95 | 0.7 ms |
+| server-selected `activeConns` | 10,000 |
+| server `ackLatencyMs.p95` | 0.509134 ms |
+| server `ackLatencyMs.p99` | 5.981908 ms |
+| server `roomStatePatchLatencyMs.p95` | 72.974526 ms |
+| server `catchupLatencyMs.p95` | 1.80242 ms |
+| server `seqGapCount` | 0 |
+| server `backpressureForceClose` | 0 |
+| Replay Verifier | `consistent: stream=1199 mysql=1199 snapshot_seq=1199` |
+
+This proves the private-address path is not the bottleneck. A second ECS in the same VPC should target the gateway's private IP or a private load balancer instead of the gateway host dialing its own public IP.
 
 ## Report Gaps
 
-The existing public 10k report is still insufficient for a Beijing-near latency claim because it lacks:
+The public-path 10k report is still insufficient for a final Beijing-near latency claim because it lacks:
 
-- A Beijing-near runner identity, region, instance type, OS limits, and source IP/network path.
-- A run-window metrics reset or pre/post delta for histograms.
-- A current deployed commit identity (`buildSha`, `buildTime`) tied to the tested binary.
-- A LIVE load auction id and token artifact manifest with secrets omitted.
-- Locust worker topology: master/worker count, users per worker, spawn rate, CPU utilization, file descriptor limits, and connection-failure split.
-- Host metrics during hold: gateway CPU/RAM/GC, `ss -s`, NIC throughput, Redis CPU/latency, MySQL projection lag.
+- Independent Beijing-near Linux load workers. The ECS self-run is Beijing-located but co-located with the gateway.
+- A public or private load-balanced endpoint that avoids self-dialing the ECS public IP from the same host. The private-address isolation run passed, so same-VPC workers should use the gateway private IP or a private LB.
+- Token shards across workers. Current evidence uses one 10k token file on one runner and records only count/sha256.
+- Clean public-path worker host metrics during hold: gateway CPU/RAM/GC, `ss -s`, NIC throughput, Redis CPU/latency, and MySQL projection lag.
+- A public-path Replay Verifier run with enough accepted bids to prove the same stream depth as the loopback pass.
+
+The following former gaps are now closed for the loopback isolation evidence: deployed build identity, clean metrics reset, LIVE load auction id, no-secret token manifest, host snapshots, server gate, wsload gate, and Replay Verifier output.
+
+The repository now includes the final independent-worker wrapper:
+`scripts/beijing-wsload-remote-10k-evidence.sh`. It takes a worker host list,
+splits tokens into shards, launches each worker with `tools/loadtest/wsload/run-remote-workers.sh`,
+captures a clean server metrics window, runs both server/wsload gates, and stores
+Replay Verifier output in one no-secret evidence directory.
 
 ## Architecture Change Under Test
 
@@ -45,6 +156,12 @@ The low-latency direction is to split the bidder command lane from public fanout
 - The existing #219 WS change still matters: when clients continue to use WS `BID_PLACE`, direct/control frames are prioritized ahead of fanout frames.
 
 This preserves the frozen design: Redis Lua remains the bid authority, Redis Stream remains the durable event log, Pub/Sub remains a live fanout hint, and AI/video remain non-authoritative.
+
+The evidence harness also changed after the Locust failure:
+
+- Keep Locust for behavioral mixed-load and HTTP command-lane latency characterization.
+- Use Go `wsload` for the 10k connection/fanout proof, because the repository's `tools/loadtest/README.md` already documents `wsload` as the intended 10k harness and Locust as lower-ceiling behavioral load.
+- Gate on server `/metrics` plus `wsload` connect counts and Replay Verifier. Client RTT is retained as observed evidence, not as the backend SLO boundary.
 
 ## Beijing-Near Locust Run Shape
 
@@ -129,10 +246,10 @@ The run fails by default if:
 
 ## Remaining External Prerequisites
 
-The repository now contains the command-lane code, metrics reset hook, token sharder, Locust gate, and strict evidence-pack script. The remaining work is external execution:
+The repository now contains the command-lane code, metrics reset hook, token sharder, Locust gate, Go `wsload`, and strict evidence-pack scripts. The remaining work is external public-path execution:
 
-1. Deploy this branch with non-unknown `/version` identity and `METRICS_RESET_TOKEN` configured.
-2. Seed or pre-create a LIVE load auction without enabling prod dev-login.
-3. Generate buyer tokens through the allowed public login flow, then split them with `tools/loadtest/split-locust-tokens.sh`.
-4. Run `scripts/beijing-locust-10k-evidence.sh` from Beijing-near master/workers.
-5. Attach the resulting no-secret evidence directory to #210.
+1. Provision one or more Beijing-near Linux load workers that are not the gateway host.
+2. Generate buyer tokens through the allowed public login flow, then split them into disjoint worker shards.
+3. Run `scripts/beijing-wsload-remote-10k-evidence.sh` against the private gateway IP or private LB from those workers; use Locust separately for command-lane behavior sweeps.
+4. Keep `/metrics` reset and Replay Verifier mandatory for every final evidence pack.
+5. Attach the no-secret evidence directories to #210 and name any failed gate instead of claiming a pass.
