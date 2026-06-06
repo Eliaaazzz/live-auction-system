@@ -130,18 +130,76 @@ jobs:
           set -euo pipefail
           remote_source_archive="/tmp/lumen-source-${DEPLOY_SHORT_SHA}.tgz"
           remote_runtime_archive="/tmp/lumen-runtime-${DEPLOY_SHORT_SHA}.tar.xz"
+          ssh_base=(
+            ssh
+            -i ~/.ssh/deploy_key
+            -p "$SSH_PORT"
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          remote_file_ok() {
+            remote_file="$1"
+            want_size="$2"
+            want_sha="$3"
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+              "test -f '$remote_file' && actual_size=\$(wc -c < '$remote_file' | tr -d ' ') && [ \"\$actual_size\" = '$want_size' ] && actual_sha=\$(sha256sum '$remote_file' | awk '{print \$1}') && [ \"\$actual_sha\" = '$want_sha' ]"
+          }
 
           upload_file() {
             local_path="$1"
             remote_path="$2"
-            rsync --partial --inplace --timeout=900 \
-              -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
-              "$local_path" "$SSH_USER@$SSH_HOST:$remote_path"
+            chunk_size="${UPLOAD_CHUNK_SIZE:-524288}"
+            local_size="$(wc -c < "$local_path" | tr -d ' ')"
+            local_sha="$(sha256sum "$local_path" | awk '{print $1}')"
+            chunk_dir="/tmp/lumen-upload-${DEPLOY_SHORT_SHA}-$(basename "$remote_path").parts"
+            part_dir="$(mktemp -d)"
+            split -b "$chunk_size" "$local_path" "$part_dir/part-"
+
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" "rm -rf '$chunk_dir' && mkdir -p '$chunk_dir'"
+            part_count=0
+            for part in "$part_dir"/part-*; do
+              part_count=$((part_count + 1))
+              part_name="$(basename "$part")"
+              remote_part="$chunk_dir/$part_name"
+              part_size="$(wc -c < "$part" | tr -d ' ')"
+              part_sha="$(sha256sum "$part" | awk '{print $1}')"
+              uploaded=0
+
+              for attempt in 1 2 3 4 5; do
+                if remote_file_ok "$remote_part" "$part_size" "$part_sha"; then
+                  uploaded=1
+                  break
+                fi
+                if timeout 120 "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+                  "cat > '$remote_part.tmp' && actual_size=\$(wc -c < '$remote_part.tmp' | tr -d ' ') && [ \"\$actual_size\" = '$part_size' ] && actual_sha=\$(sha256sum '$remote_part.tmp' | awk '{print \$1}') && [ \"\$actual_sha\" = '$part_sha' ] && mv '$remote_part.tmp' '$remote_part'" \
+                  < "$part"; then
+                  uploaded=1
+                  break
+                fi
+                if remote_file_ok "$remote_part" "$part_size" "$part_sha"; then
+                  uploaded=1
+                  break
+                fi
+                sleep $((attempt * 2))
+              done
+
+              if [ "$uploaded" -ne 1 ]; then
+                echo "::error::failed to upload chunk $part_name for $(basename "$local_path")"
+                exit 3
+              fi
+            done
+
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+              "cat '$chunk_dir'/part-* > '$remote_path.tmp' && actual_size=\$(wc -c < '$remote_path.tmp' | tr -d ' ') && [ \"\$actual_size\" = '$local_size' ] && actual_sha=\$(sha256sum '$remote_path.tmp' | awk '{print \$1}') && [ \"\$actual_sha\" = '$local_sha' ] && mv '$remote_path.tmp' '$remote_path' && rm -rf '$chunk_dir'"
+            rm -rf "$part_dir"
+            echo "uploaded $(basename "$local_path") ($local_size bytes, $part_count chunks)"
           }
 
           upload_file source.tgz "$remote_source_archive"
           upload_file runtime.tar.xz "$remote_runtime_archive"
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+          "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
             "tar -tzf '$remote_source_archive' >/dev/null && tar -tJf '$remote_runtime_archive' >/dev/null"
 
           remote_script="$(mktemp)"
@@ -339,7 +397,7 @@ jobs:
           done
           REMOTE
 
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+          "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
             "REMOTE_DIR='$REMOTE_DIR' REMOTE_SOURCE_ARCHIVE='$remote_source_archive' REMOTE_RUNTIME_ARCHIVE='$remote_runtime_archive' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
             < "$remote_script"
 

@@ -45,7 +45,7 @@
 ## A4 — ECS 装环境
 ```bash
 ssh -i <key.pem> ubuntu@<ECS_PUBLIC_IP>
-sudo apt-get update && sudo apt-get install -y git rsync
+sudo apt-get update && sudo apt-get install -y git
 # Only needed for the manual compose+Caddy path in A6/A7:
 sudo apt-get install -y docker.io docker-compose-plugin
 sudo usermod -aG docker $USER && newgrp docker   # manual compose only
@@ -90,7 +90,7 @@ export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 
 ## A5.5 — GitHub Actions CD
-Production CD is wired by `.github/workflows/deploy-prod.yml`.
+Production CD is wired by `.github/workflows/deploy-prod.yml`. The workflow builds Linux binaries and web assets on the runner, then uploads release archives to ECS over checksum-verified chunked SSH before restarting the systemd services.
 
 Required repository secrets:
 - `CD_ECS_HOST`: Volcengine ECS public IP or DNS name.
