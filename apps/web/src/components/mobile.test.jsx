@@ -138,6 +138,22 @@ describe('MobileRoom simplified buyer flow', () => {
     expect(container.textContent).toMatch(/规则/);
     expect(container.textContent).toMatch(/最低加价/);
   });
+
+  it('scopes the follow state by room instead of sharing it globally', () => {
+    window.localStorage.clear();
+    const { rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-a"/>,
+    );
+
+    fireEvent.click(screen.getByText('+ 关注'));
+    expect(screen.getByText('已关注')).toBeInTheDocument();
+    expect(window.localStorage.getItem('lumen:follow:auc-a')).toBe('1');
+
+    rerender(<MobileRoom status="LIVE" leaders={[]} followScopeId="auc-b"/>);
+
+    expect(screen.getByText('+ 关注')).toBeInTheDocument();
+    expect(window.localStorage.getItem('lumen:follow:auc-b')).toBeNull();
+  });
 });
 
 describe('MobileRoom · LiveVideo fallback (#126)', () => {

@@ -209,10 +209,12 @@ function MobileRoom({
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
   onSwitchRoom,            // optional Douyin-style vertical room switching
   switchRoomAvailable = false,
+  followScopeId = 'lumen-auction',
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
-  const [following, setFollowing] = React.useState(() => readLocalFlag('lumen:follow:lumen-auction'));
+  const followKey = `lumen:follow:${followScopeId || 'lumen-auction'}`;
+  const [following, setFollowing] = React.useState(() => readLocalFlag(followKey));
   const [soundOn, setSoundOn] = React.useState(() => readLocalFlag('lumen:sound:enabled'));
   const [videoExpanded, setVideoExpanded] = React.useState(false);
   const [videoBroken, setVideoBroken] = React.useState(false);
@@ -225,15 +227,18 @@ function MobileRoom({
   React.useEffect(() => {
     if (status !== 'LIVE') setVideoExpanded(false);
   }, [status]);
+  React.useEffect(() => {
+    setFollowing(readLocalFlag(followKey));
+  }, [followKey]);
   const effectiveVideoUrl = videoBroken ? null : videoUrl;
 
   const toggleFollow = React.useCallback(() => {
     setFollowing((f) => {
       const next = !f;
-      writeLocalFlag('lumen:follow:lumen-auction', next);
+      writeLocalFlag(followKey, next);
       return next;
     });
-  }, []);
+  }, [followKey]);
 
   const toggleSound = React.useCallback(() => {
     setSoundOn((on) => {
