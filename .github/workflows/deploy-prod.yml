@@ -8,7 +8,7 @@ on:
         required: false
         default: "main"
       remote_dir:
-        description: "Repository directory on ECS"
+        description: "Source/config directory on ECS"
         required: false
         default: "~/live-auction-system"
       base_url:
@@ -68,6 +68,22 @@ jobs:
         with:
           ref: ${{ env.DEPLOY_REF }}
 
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: build frontend
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web install --no-audit --no-fund
+          npm --prefix apps/web run build
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - name: resolve build identity
         id: build
         run: |
@@ -78,6 +94,21 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
           echo "build_time=$build_time" >> "$GITHUB_OUTPUT"
+
+      - name: build linux runtime
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/bin deploy/web
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o deploy/bin/lumen ./apps/lumen/cmd/lumen
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o deploy/bin/sidecar ./apps/ai-sidecar/cmd/sidecar
+          cp -a apps/web/dist/. deploy/web/
+          XZ_OPT=-9 tar -C deploy -cJf runtime.tar.xz bin web
+
+      - name: package checked-out source
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output source.tgz HEAD \
+            .dockerignore Makefile go.mod go.sum apps infra scripts tools
 
       - name: configure ssh
         env:
@@ -90,57 +121,284 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: deploy compose stack
+      - name: deploy systemd runtime
         env:
           DEPLOY_SHA: ${{ steps.build.outputs.sha }}
           DEPLOY_SHORT_SHA: ${{ steps.build.outputs.short_sha }}
           DEPLOY_BUILD_TIME: ${{ steps.build.outputs.build_time }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          remote_source_archive="/tmp/lumen-source-${DEPLOY_SHORT_SHA}.tgz"
+          remote_runtime_archive="/tmp/lumen-runtime-${DEPLOY_SHORT_SHA}.tar.xz"
+          ssh_base=(
+            ssh
+            -i ~/.ssh/deploy_key
+            -p "$SSH_PORT"
+            -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=3
+          )
+
+          remote_file_ok() {
+            remote_file="$1"
+            want_size="$2"
+            want_sha="$3"
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+              "test -f '$remote_file' && actual_size=\$(wc -c < '$remote_file' | tr -d ' ') && [ \"\$actual_size\" = '$want_size' ] && actual_sha=\$(sha256sum '$remote_file' | awk '{print \$1}') && [ \"\$actual_sha\" = '$want_sha' ]"
+          }
+
+          upload_file() {
+            local_path="$1"
+            remote_path="$2"
+            chunk_size="${UPLOAD_CHUNK_SIZE:-131072}"
+            local_size="$(wc -c < "$local_path" | tr -d ' ')"
+            local_sha="$(sha256sum "$local_path" | awk '{print $1}')"
+            chunk_dir="/tmp/lumen-upload-${DEPLOY_SHORT_SHA}-$(basename "$remote_path").parts"
+            part_dir="$(mktemp -d)"
+            split -b "$chunk_size" "$local_path" "$part_dir/part-"
+
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" "rm -rf '$chunk_dir' && mkdir -p '$chunk_dir'"
+            part_count=0
+            for part in "$part_dir"/part-*; do
+              part_count=$((part_count + 1))
+              part_name="$(basename "$part")"
+              remote_part="$chunk_dir/$part_name"
+              part_size="$(wc -c < "$part" | tr -d ' ')"
+              part_sha="$(sha256sum "$part" | awk '{print $1}')"
+              uploaded=0
+
+              for attempt in 1 2 3 4 5; do
+                if remote_file_ok "$remote_part" "$part_size" "$part_sha"; then
+                  uploaded=1
+                  break
+                fi
+                if timeout 120 "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+                  "cat > '$remote_part.tmp' && actual_size=\$(wc -c < '$remote_part.tmp' | tr -d ' ') && [ \"\$actual_size\" = '$part_size' ] && actual_sha=\$(sha256sum '$remote_part.tmp' | awk '{print \$1}') && [ \"\$actual_sha\" = '$part_sha' ] && mv '$remote_part.tmp' '$remote_part'" \
+                  < "$part"; then
+                  uploaded=1
+                  break
+                fi
+                if remote_file_ok "$remote_part" "$part_size" "$part_sha"; then
+                  uploaded=1
+                  break
+                fi
+                sleep $((attempt * 2))
+              done
+
+              if [ "$uploaded" -ne 1 ]; then
+                echo "::error::failed to upload chunk $part_name for $(basename "$local_path")"
+                exit 3
+              fi
+            done
+
+            "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+              "cat '$chunk_dir'/part-* > '$remote_path.tmp' && actual_size=\$(wc -c < '$remote_path.tmp' | tr -d ' ') && [ \"\$actual_size\" = '$local_size' ] && actual_sha=\$(sha256sum '$remote_path.tmp' | awk '{print \$1}') && [ \"\$actual_sha\" = '$local_sha' ] && mv '$remote_path.tmp' '$remote_path' && rm -rf '$chunk_dir'"
+            rm -rf "$part_dir"
+            echo "uploaded $(basename "$local_path") ($local_size bytes, $part_count chunks)"
+          }
+
+          upload_file source.tgz "$remote_source_archive"
+          upload_file runtime.tar.xz "$remote_runtime_archive"
+          "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+            "tar -tzf '$remote_source_archive' >/dev/null && tar -tJf '$remote_runtime_archive' >/dev/null"
+
           remote_script="$(mktemp)"
           cat > "$remote_script" <<'REMOTE'
           set -euo pipefail
 
-          cd_or_clone() {
+          normalize_dir() {
             target="$1"
-            repo="$2"
-            case "$target" in
-              "~"|"~/") target="$HOME" ;;
-              "~/"*) target="$HOME/${target#~/}" ;;
-            esac
-            if [ ! -d "$target/.git" ]; then
-              mkdir -p "$(dirname "$target")"
-              git clone "https://github.com/${repo}.git" "$target"
+            if [ "$target" = "~" ] || [ "$target" = "~/" ]; then
+              printf '%s\n' "$HOME"
+              return
             fi
-            cd "$target"
+            if [ "${target#~/}" != "$target" ]; then
+              printf '%s/%s\n' "$HOME" "${target#~/}"
+              return
+            fi
+            printf '%s\n' "$target"
           }
 
-          cd_or_clone "$REMOTE_DIR" "$GITHUB_REPOSITORY"
-          git fetch origin main --prune
-          git checkout main
-          if ! git cat-file -e "$DEPLOY_SHA^{commit}" 2>/dev/null; then
-            git fetch origin "$DEPLOY_SHA" --depth=1
+          as_root() {
+            if [ "$(id -u)" -eq 0 ]; then
+              "$@"
+            else
+              sudo -n "$@"
+            fi
+          }
+
+          require_systemd_privilege() {
+            if [ "$(id -u)" -eq 0 ]; then
+              return
+            fi
+            if ! command -v sudo >/dev/null 2>&1 || ! sudo -n true >/dev/null 2>&1; then
+              echo "deploy-prod needs root or passwordless sudo for /opt/lumen-runtime and systemd writes" >&2
+              echo "Set CD_ECS_USER to root or an ECS user with passwordless sudo, e.g. Ubuntu's default ubuntu user." >&2
+              exit 2
+            fi
+          }
+
+          target="$(normalize_dir "$REMOTE_DIR")"
+          runtime_dir="/opt/lumen-runtime"
+          require_systemd_privilege
+          mkdir -p "$target"
+          if [ ! -w "$target" ]; then
+            echo "REMOTE_DIR must be writable by ${USER:-$(id -un)} because infra/.env.prod stays there" >&2
+            echo "Use the default ~/live-auction-system or pre-create a writable source/config directory." >&2
+            exit 2
           fi
-          git reset --hard "$DEPLOY_SHA"
+          tar -xzf "$REMOTE_SOURCE_ARCHIVE" -C "$target"
+          rm -f "$REMOTE_SOURCE_ARCHIVE"
+          cd "$target"
 
           if [ ! -f infra/.env.prod ]; then
             echo "infra/.env.prod is missing on ECS; create it from docs/cloud-deploy-volcengine.md" >&2
             exit 2
           fi
 
-          export LUMEN_BUILD_SHA="$DEPLOY_SHORT_SHA"
-          export LUMEN_BUILD_TIME="$DEPLOY_BUILD_TIME"
-          set -a
-          . infra/.env.prod
-          set +a
+          upsert_env() {
+            key="$1"
+            value="$2"
+            file="$3"
+            tmp="$(mktemp)"
+            if grep -q "^${key}=" "$file"; then
+              sed "s|^${key}=.*|${key}=${value}|" "$file" > "$tmp"
+            else
+              cat "$file" > "$tmp"
+              printf '%s=%s\n' "$key" "$value" >> "$tmp"
+            fi
+            cat "$tmp" > "$file"
+            rm -f "$tmp"
+          }
 
-          docker compose -f infra/docker-compose.prod.yml up -d --build --wait --wait-timeout 300
-          docker compose -f infra/docker-compose.prod.yml ps
+          upsert_env LUMEN_BUILD_SHA "$DEPLOY_SHORT_SHA" infra/.env.prod
+          upsert_env LUMEN_BUILD_TIME "$DEPLOY_BUILD_TIME" infra/.env.prod
+
+          release="$runtime_dir/releases/${DEPLOY_SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+          as_root mkdir -p "$release" "$runtime_dir/bin"
+          as_root tar -xJf "$REMOTE_RUNTIME_ARCHIVE" -C "$release"
+          rm -f "$REMOTE_RUNTIME_ARCHIVE"
+
+          for bin in lumen sidecar; do
+            if as_root test -x "$runtime_dir/bin/$bin"; then
+              as_root cp -a "$runtime_dir/bin/$bin" "$runtime_dir/bin/$bin.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+            fi
+            as_root install -m 0755 "$release/bin/$bin" "$runtime_dir/bin/$bin"
+          done
+
+          if as_root test -d "$runtime_dir/web"; then
+            as_root rm -rf "$runtime_dir/web.bak"
+            as_root mv "$runtime_dir/web" "$runtime_dir/web.bak"
+          fi
+          as_root mkdir -p "$runtime_dir/web"
+          as_root cp -a "$release/web/." "$runtime_dir/web/"
+
+          run_lumen="$(mktemp)"
+          cat > "$run_lumen" <<'EOF_RUN_LUMEN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "${LUMEN_SOURCE_DIR:?LUMEN_SOURCE_DIR is required}"
+          envfile=$(mktemp /tmp/lumen-runtime-env.XXXXXX)
+          trap 'rm -f "$envfile"' EXIT
+          python3 - <<'PY' > "$envfile"
+          from pathlib import Path
+          import shlex
+          for line in Path('infra/.env.prod').read_text().splitlines():
+              if not line or line.lstrip().startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              if key.replace('_', '').isalnum():
+                  print(f'export {key}={shlex.quote(value)}')
+          PY
+          . "$envfile"
+          export HTTP_ADDR=:80
+          export WEB_DIR=/opt/lumen-runtime/web
+          export APP_ENV=prod
+          export ENABLE_DEV_LOGIN=false
+          export AI_SIDECAR_URL=http://127.0.0.1:8090
+          export MYSQL_TLS=
+          exec /opt/lumen-runtime/bin/lumen "$@"
+          EOF_RUN_LUMEN
+
+          run_sidecar="$(mktemp)"
+          cat > "$run_sidecar" <<'EOF_RUN_SIDECAR'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export SIDECAR_ADDR=:8090
+          exec /opt/lumen-runtime/bin/sidecar "$@"
+          EOF_RUN_SIDECAR
+
+          as_root install -m 0755 "$run_lumen" "$runtime_dir/run-lumen.sh"
+          as_root install -m 0755 "$run_sidecar" "$runtime_dir/run-sidecar.sh"
+          rm -f "$run_lumen" "$run_sidecar"
+
+          sidecar_unit="$(mktemp)"
+          cat > "$sidecar_unit" <<'EOF_SIDECAR_UNIT'
+          [Unit]
+          Description=Lumen AI Sidecar
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/lumen-runtime
+          ExecStart=/opt/lumen-runtime/run-sidecar.sh
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF_SIDECAR_UNIT
+
+          lumen_unit="$(mktemp)"
+          cat > "$lumen_unit" <<EOF_LUMEN_UNIT
+          [Unit]
+          Description=Lumen Auction Server
+          After=network-online.target lumen-sidecar.service
+          Wants=network-online.target
+          Requires=lumen-sidecar.service
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/lumen-runtime
+          Environment=LUMEN_SOURCE_DIR=$target
+          Environment=ROOM_STATE_PATCH_MIN_VIEWERS=1
+          Environment=ROOM_STATE_PATCH_INTERVAL_MS=50
+          ExecStart=/opt/lumen-runtime/run-lumen.sh serve --mode=all
+          Restart=always
+          RestartSec=3
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF_LUMEN_UNIT
+
+          as_root install -m 0644 "$sidecar_unit" /etc/systemd/system/lumen-sidecar.service
+          as_root install -m 0644 "$lumen_unit" /etc/systemd/system/lumen.service
+          rm -f "$sidecar_unit" "$lumen_unit"
+
+          as_root systemctl daemon-reload
+          as_root systemctl enable lumen-sidecar.service lumen.service
+          as_root systemctl restart lumen-sidecar.service
+          as_root systemctl restart lumen.service
+          as_root systemctl is-active --quiet lumen-sidecar.service
+          as_root systemctl is-active --quiet lumen.service
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1/healthz >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              as_root systemctl status lumen-sidecar.service --no-pager -l || true
+              as_root systemctl status lumen.service --no-pager -l || true
+              as_root journalctl -u lumen.service -n 80 --no-pager || true
+              exit 7
+            fi
+            sleep 2
+          done
           REMOTE
 
-          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "REMOTE_DIR='$REMOTE_DIR' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
+          "${ssh_base[@]}" "$SSH_USER@$SSH_HOST" \
+            "REMOTE_DIR='$REMOTE_DIR' REMOTE_SOURCE_ARCHIVE='$remote_source_archive' REMOTE_RUNTIME_ARCHIVE='$remote_runtime_archive' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
             < "$remote_script"
 
       - name: post-deploy smoke
