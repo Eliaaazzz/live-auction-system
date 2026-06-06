@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
 
@@ -28,11 +29,13 @@ func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "metrics reset disabled")
 		return
 	}
-	// Constant-time compare so a remote operator can't probe the token by
-	// observing per-byte timing differences. Token is small and ASCII so the
-	// fixed-cost compare is trivial relative to the request lifecycle.
-	got := r.Header.Get("X-Lumen-Metrics-Reset-Token")
-	if subtle.ConstantTimeCompare([]byte(got), []byte(s.cfg.MetricsResetToken)) != 1 {
+	// Hash both values first, then compare the fixed-size digests. Go's
+	// ConstantTimeCompare returns early on length mismatch, so comparing raw
+	// strings would still leak token length; digest comparison avoids that while
+	// keeping this operator-only path simple.
+	gotDigest := sha256.Sum256([]byte(r.Header.Get("X-Lumen-Metrics-Reset-Token")))
+	wantDigest := sha256.Sum256([]byte(s.cfg.MetricsResetToken))
+	if subtle.ConstantTimeCompare(gotDigest[:], wantDigest[:]) != 1 {
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return
 	}
