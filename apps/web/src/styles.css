@@ -343,8 +343,23 @@
 .lumen-bid-chip {
   will-change: transform;
 }
-.lumen-bid-chip:active {
-  transform: scale(.94);
+
+/* ─── Material ripple — press feedback for 加价 chips & actions (replaces the
+ *     scale-zoom press; one ripple per pointer-down, clipped to the surface) ─── */
+@keyframes lumen-ripple {
+  /* opacity 1→0 so the caller's color alpha is the single source of the
+   * state-layer intensity (no double-multiply). Brief hold keeps the wave
+   * visible during the grow; MD3-ish standard easing + ~0.4s. */
+  0%   { transform: scale(0);    opacity: 1; }
+  30%  { opacity: 1; }
+  100% { transform: scale(1);    opacity: 0; }
+}
+.lumen-ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  pointer-events: none;
+  animation: lumen-ripple .42s cubic-bezier(.2, 0, 0, 1) forwards;
 }
 
 /* ─── Long-press wheel reveal ─── */
@@ -389,6 +404,7 @@
 .surface-calm .lumen-champion-aura,
 .surface-calm .lumen-champion-ring,
 .surface-calm .lumen-skeleton,
+.surface-calm .lumen-ripple,
 .surface-calm .lumen-wheel-in { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {

@@ -46,6 +46,90 @@ function addCentsStr(a, b) {
   return (an + bn).toString();
 }
 
+// ─── Material ripple — reusable press feedback (加价 chips + actions) ───
+// One ripple per pointer-down, spawned at the press point, scaling out + fading.
+// The host element must be position:relative + overflow:hidden. Exported so
+// the bid-history affordance (atmosphere.jsx) can share it.
+function useRipple() {
+  const [ripples, setRipples] = React.useState([]);
+  const idRef = React.useRef(0);
+  const timersRef = React.useRef(new Set());
+  const drop = React.useCallback((id) => {
+    setRipples((rs) => rs.filter((r) => r.id !== id));
+  }, []);
+  const spawn = React.useCallback((e) => {
+    const el = e.currentTarget;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const rect = el.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 2;
+    const cx = e.clientX ?? rect.left + rect.width / 2;
+    const cy = e.clientY ?? rect.top + rect.height / 2;
+    const id = (idRef.current += 1);
+    setRipples((rs) => [...rs, { id, x: cx - rect.left - size / 2, y: cy - rect.top - size / 2, size }]);
+    // Fallback removal: in P9 surface-calm the ripple has `animation:none`, so
+    // onAnimationEnd never fires. Track the timer so unmount clears it (avoids a
+    // setState-after-unmount when a host unmounts mid-press, e.g. closing the
+    // history affordance or a chip going disabled at SOLD). ~480ms > .42s keyframe.
+    const t = setTimeout(() => { timersRef.current.delete(t); drop(id); }, 480);
+    timersRef.current.add(t);
+  }, [drop]);
+  React.useEffect(() => () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current.clear();
+  }, []);
+  return { ripples, spawn, remove: drop };
+}
+
+function RippleHost({ ripples, remove, color = 'rgba(255,255,255,.28)' }) {
+  return ripples.map((r) => (
+    <span key={r.id} className="lumen-ripple"
+      onAnimationEnd={() => remove(r.id)}
+      style={{ left: r.x, top: r.y, width: r.size, height: r.size, background: color }}/>
+  ));
+}
+
+// ─── BidChip — one 加价 chip with a Material ripple (no scale-zoom) ───
+function BidChip({ chip, disabled, isGold, chipBase, onBid }) {
+  const { ripples, spawn, remove } = useRipple();
+  return (
+    <button
+      disabled={disabled}
+      className="lumen-bid-chip"
+      onPointerDown={(e) => { if (!disabled) spawn(e); }}
+      onClick={() => onBid(chip.cents)}
+      style={{
+        ...chipBase,
+        position: 'relative', overflow: 'hidden',
+        background: disabled ? 'rgba(107,114,128,.25)'
+          : isGold
+            ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
+            : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
+        color: isGold ? 'var(--solemn-ink)' : '#fff',
+        boxShadow: disabled ? 'none'
+          : isGold
+            ? '0 4px 14px rgba(201,169,97,.28)'
+            : '0 4px 14px rgba(254,44,85,.28)',
+      }}>
+      <span className="mono" title={formatCentsCNY(chip.cents)} style={{
+        position: 'relative', zIndex: 1,
+        fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
+        fontVariantNumeric: 'tabular-nums',
+        maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        {formatCentsCNYCompact(chip.cents)}
+      </span>
+      <span style={{
+        position: 'relative', zIndex: 1,
+        fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
+      }}>
+        {chip.label}
+      </span>
+      <RippleHost ripples={ripples} remove={remove}
+        color={isGold ? 'rgba(16,16,16,.18)' : 'rgba(255,255,255,.32)'}/>
+    </button>
+  );
+}
+
 // Canonical CN copy for `BidErrorCode` is defined in lib/types.js and
 // mirrored to the UI through this re-exported identifier.
 
@@ -594,9 +678,6 @@ function QuickBidChips({
     cursor: disabled ? 'not-allowed' : 'pointer',
     transition: 'transform .12s',
   };
-  const chipPress = (e) => { if (!disabled) e.currentTarget.style.transform = 'scale(.96)'; };
-  const chipRelease = (e) => { e.currentTarget.style.transform = ''; };
-
   // ws-envelope.md §Money: MaxMoneyCents = 2^53-1 (server's hard ceiling).
   // Above this the value can't survive Lua/JS/Redis ZSET float64 — the
   // backend rejects with ERR_BAD_INPUT. Validate client-side so the user
@@ -650,43 +731,14 @@ function QuickBidChips({
         </div>
       )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
-        {chips.map((c, i) => {
-          const isGold = c.tone === 'gold' || isLeading;
-          return (
-            <button key={i}
-              disabled={disabled}
-              className="lumen-bid-chip"
-              onClick={() => onBid(c.cents)}
-              onPointerDown={chipPress}
-              onPointerUp={chipRelease}
-              onPointerLeave={chipRelease}
-              style={{
-                ...chipBase,
-                background: disabled ? 'rgba(107,114,128,.25)'
-                  : isGold
-                    ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
-                    : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
-                color: isGold ? 'var(--solemn-ink)' : '#fff',
-                boxShadow: disabled ? 'none'
-                  : isGold
-                    ? '0 4px 14px rgba(201,169,97,.28)'
-                    : '0 4px 14px rgba(254,44,85,.28)',
-              }}>
-              <span className="mono" title={formatCentsCNY(c.cents)} style={{
-                fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
-                fontVariantNumeric: 'tabular-nums',
-                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              }}>
-                {formatCentsCNYCompact(c.cents)}
-              </span>
-              <span style={{
-                fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
-              }}>
-                {c.label}
-              </span>
-            </button>
-          );
-        })}
+        {chips.map((c, i) => (
+          <BidChip key={i}
+            chip={c}
+            disabled={disabled}
+            isGold={c.tone === 'gold' || isLeading}
+            chipBase={chipBase}
+            onBid={onBid}/>
+        ))}
       </div>
       <button
         onClick={() => setShowDrawer((s) => !s)}
@@ -837,6 +889,8 @@ export {
   addCentsStr,
   fmtRemaining,
   bidRejectCopy,
+  useRipple,
+  RippleHost,
   PriceDisplay,
   Countdown,
   StatusBadge,
