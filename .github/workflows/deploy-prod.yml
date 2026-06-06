@@ -8,9 +8,9 @@ on:
         required: false
         default: "main"
       remote_dir:
-        description: "Repository directory on ECS"
+        description: "Source/config directory on ECS"
         required: false
-        default: "~/live-auction-system"
+        default: "/opt/live-auction-system"
       base_url:
         description: "Public base URL for post-deploy smoke"
         required: false
@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 30
     env:
       DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.event.workflow_run.head_sha || 'main' }}
-      REMOTE_DIR: ${{ github.event.inputs.remote_dir || vars.CD_REMOTE_DIR || '~/live-auction-system' }}
+      REMOTE_DIR: ${{ github.event.inputs.remote_dir || vars.CD_REMOTE_DIR || '/opt/live-auction-system' }}
       BASE_URL: ${{ github.event.inputs.base_url || vars.CD_BASE_URL || 'http://115.191.76.40' }}
       SSH_HOST: ${{ secrets.CD_ECS_HOST }}
       SSH_USER: ${{ secrets.CD_ECS_USER }}
@@ -68,6 +68,22 @@ jobs:
         with:
           ref: ${{ env.DEPLOY_REF }}
 
+      - name: setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: build frontend
+        run: |
+          set -euo pipefail
+          npm --prefix apps/web install --no-audit --no-fund
+          npm --prefix apps/web run build
+
+      - name: setup go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
       - name: resolve build identity
         id: build
         run: |
@@ -78,6 +94,21 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
           echo "build_time=$build_time" >> "$GITHUB_OUTPUT"
+
+      - name: build linux runtime
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/bin deploy/web
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o deploy/bin/lumen ./apps/lumen/cmd/lumen
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o deploy/bin/sidecar ./apps/ai-sidecar/cmd/sidecar
+          cp -a apps/web/dist/. deploy/web/
+          XZ_OPT=-9 tar -C deploy -cJf runtime.tar.xz bin web
+
+      - name: package checked-out source
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output source.tgz HEAD \
+            .dockerignore go.mod go.sum apps infra
 
       - name: configure ssh
         env:
@@ -90,57 +121,180 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
 
-      - name: deploy compose stack
+      - name: deploy systemd runtime
         env:
           DEPLOY_SHA: ${{ steps.build.outputs.sha }}
           DEPLOY_SHORT_SHA: ${{ steps.build.outputs.short_sha }}
           DEPLOY_BUILD_TIME: ${{ steps.build.outputs.build_time }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          remote_source_archive="/tmp/lumen-source-${DEPLOY_SHORT_SHA}.tgz"
+          remote_runtime_archive="/tmp/lumen-runtime-${DEPLOY_SHORT_SHA}.tar.xz"
+
+          upload_file() {
+            local_path="$1"
+            remote_path="$2"
+            rsync --partial --inplace --timeout=900 \
+              -e "ssh -i ~/.ssh/deploy_key -p $SSH_PORT" \
+              "$local_path" "$SSH_USER@$SSH_HOST:$remote_path"
+          }
+
+          upload_file source.tgz "$remote_source_archive"
+          upload_file runtime.tar.xz "$remote_runtime_archive"
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "tar -tzf '$remote_source_archive' >/dev/null && tar -tJf '$remote_runtime_archive' >/dev/null"
+
           remote_script="$(mktemp)"
           cat > "$remote_script" <<'REMOTE'
           set -euo pipefail
 
-          cd_or_clone() {
+          normalize_dir() {
             target="$1"
-            repo="$2"
-            case "$target" in
-              "~"|"~/") target="$HOME" ;;
-              "~/"*) target="$HOME/${target#~/}" ;;
-            esac
-            if [ ! -d "$target/.git" ]; then
-              mkdir -p "$(dirname "$target")"
-              git clone "https://github.com/${repo}.git" "$target"
+            if [ "$target" = "~" ] || [ "$target" = "~/" ]; then
+              printf '%s\n' "$HOME"
+              return
             fi
-            cd "$target"
+            if [ "${target#~/}" != "$target" ]; then
+              printf '%s/%s\n' "$HOME" "${target#~/}"
+              return
+            fi
+            printf '%s\n' "$target"
           }
 
-          cd_or_clone "$REMOTE_DIR" "$GITHUB_REPOSITORY"
-          git fetch origin main --prune
-          git checkout main
-          if ! git cat-file -e "$DEPLOY_SHA^{commit}" 2>/dev/null; then
-            git fetch origin "$DEPLOY_SHA" --depth=1
-          fi
-          git reset --hard "$DEPLOY_SHA"
+          target="$(normalize_dir "$REMOTE_DIR")"
+          runtime_dir="/opt/lumen-runtime"
+          mkdir -p "$target"
+          tar -xzf "$REMOTE_SOURCE_ARCHIVE" -C "$target"
+          rm -f "$REMOTE_SOURCE_ARCHIVE"
+          cd "$target"
 
           if [ ! -f infra/.env.prod ]; then
             echo "infra/.env.prod is missing on ECS; create it from docs/cloud-deploy-volcengine.md" >&2
             exit 2
           fi
 
-          export LUMEN_BUILD_SHA="$DEPLOY_SHORT_SHA"
-          export LUMEN_BUILD_TIME="$DEPLOY_BUILD_TIME"
-          set -a
-          . infra/.env.prod
-          set +a
+          upsert_env() {
+            key="$1"
+            value="$2"
+            file="$3"
+            tmp="$(mktemp)"
+            if grep -q "^${key}=" "$file"; then
+              sed "s|^${key}=.*|${key}=${value}|" "$file" > "$tmp"
+            else
+              cat "$file" > "$tmp"
+              printf '%s=%s\n' "$key" "$value" >> "$tmp"
+            fi
+            cat "$tmp" > "$file"
+            rm -f "$tmp"
+          }
 
-          docker compose -f infra/docker-compose.prod.yml up -d --build --wait --wait-timeout 300
-          docker compose -f infra/docker-compose.prod.yml ps
+          upsert_env LUMEN_BUILD_SHA "$DEPLOY_SHORT_SHA" infra/.env.prod
+          upsert_env LUMEN_BUILD_TIME "$DEPLOY_BUILD_TIME" infra/.env.prod
+
+          release="$runtime_dir/releases/${DEPLOY_SHORT_SHA}-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$release" "$runtime_dir/bin"
+          tar -xJf "$REMOTE_RUNTIME_ARCHIVE" -C "$release"
+          rm -f "$REMOTE_RUNTIME_ARCHIVE"
+
+          for bin in lumen sidecar; do
+            if [ -x "$runtime_dir/bin/$bin" ]; then
+              cp -a "$runtime_dir/bin/$bin" "$runtime_dir/bin/$bin.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+            fi
+            install -m 0755 "$release/bin/$bin" "$runtime_dir/bin/$bin"
+          done
+
+          if [ -d "$runtime_dir/web" ]; then
+            rm -rf "$runtime_dir/web.bak"
+            mv "$runtime_dir/web" "$runtime_dir/web.bak"
+          fi
+          mkdir -p "$runtime_dir/web"
+          cp -a "$release/web/." "$runtime_dir/web/"
+
+          cat > "$runtime_dir/run-lumen.sh" <<'EOF_RUN_LUMEN'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          cd "${LUMEN_SOURCE_DIR:-/opt/live-auction-system}"
+          envfile=$(mktemp /tmp/lumen-runtime-env.XXXXXX)
+          trap 'rm -f "$envfile"' EXIT
+          python3 - <<'PY' > "$envfile"
+          from pathlib import Path
+          import shlex
+          for line in Path('infra/.env.prod').read_text().splitlines():
+              if not line or line.lstrip().startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              if key.replace('_', '').isalnum():
+                  print(f'export {key}={shlex.quote(value)}')
+          PY
+          . "$envfile"
+          export HTTP_ADDR=:80
+          export WEB_DIR=/opt/lumen-runtime/web
+          export APP_ENV=prod
+          export ENABLE_DEV_LOGIN=false
+          export AI_SIDECAR_URL=http://127.0.0.1:8090
+          export MYSQL_TLS=
+          exec /opt/lumen-runtime/bin/lumen "$@"
+          EOF_RUN_LUMEN
+
+          cat > "$runtime_dir/run-sidecar.sh" <<'EOF_RUN_SIDECAR'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          export SIDECAR_ADDR=:8090
+          exec /opt/lumen-runtime/bin/sidecar "$@"
+          EOF_RUN_SIDECAR
+
+          chmod +x "$runtime_dir/run-lumen.sh" "$runtime_dir/run-sidecar.sh"
+
+          cat > /etc/systemd/system/lumen-sidecar.service <<'EOF_SIDECAR_UNIT'
+          [Unit]
+          Description=Lumen AI Sidecar
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/lumen-runtime
+          ExecStart=/opt/lumen-runtime/run-sidecar.sh
+          Restart=always
+          RestartSec=3
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF_SIDECAR_UNIT
+
+          cat > /etc/systemd/system/lumen.service <<EOF_LUMEN_UNIT
+          [Unit]
+          Description=Lumen Auction Server
+          After=network-online.target lumen-sidecar.service
+          Wants=network-online.target
+          Requires=lumen-sidecar.service
+
+          [Service]
+          Type=simple
+          WorkingDirectory=/opt/lumen-runtime
+          Environment=LUMEN_SOURCE_DIR=$target
+          Environment=ROOM_STATE_PATCH_MIN_VIEWERS=1
+          Environment=ROOM_STATE_PATCH_INTERVAL_MS=50
+          ExecStart=/opt/lumen-runtime/run-lumen.sh serve --mode=all
+          Restart=always
+          RestartSec=3
+          LimitNOFILE=65536
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF_LUMEN_UNIT
+
+          systemctl daemon-reload
+          systemctl enable lumen-sidecar.service lumen.service
+          systemctl restart lumen-sidecar.service
+          systemctl restart lumen.service
+          systemctl is-active --quiet lumen-sidecar.service
+          systemctl is-active --quiet lumen.service
+          curl -fsS http://127.0.0.1/healthz >/dev/null
           REMOTE
 
           ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            "REMOTE_DIR='$REMOTE_DIR' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
+            "REMOTE_DIR='$REMOTE_DIR' REMOTE_SOURCE_ARCHIVE='$remote_source_archive' REMOTE_RUNTIME_ARCHIVE='$remote_runtime_archive' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
             < "$remote_script"
 
       - name: post-deploy smoke

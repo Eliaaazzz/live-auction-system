@@ -98,13 +98,14 @@ Required repository secrets:
 
 Optional repository variables:
 - `CD_BASE_URL`: post-deploy smoke base URL; defaults to `http://115.191.76.40`.
-- `CD_REMOTE_DIR`: repo directory on ECS; defaults to `~/live-auction-system`.
+- `CD_REMOTE_DIR`: source/config directory on ECS; defaults to `/opt/live-auction-system`.
 - `CD_AUTO_DEPLOY`: set to `true` only when main should deploy automatically after CI success.
 
-The workflow keeps runtime secrets in `infra/.env.prod` on ECS, checks out the exact CI-tested commit for auto deploys, exports `LUMEN_BUILD_SHA` and `LUMEN_BUILD_TIME`, then runs:
+The workflow keeps runtime secrets in `infra/.env.prod` on ECS, checks out the exact CI-tested commit for auto deploys, builds Linux binaries and the web bundle on the GitHub runner, uploads them to `/opt/lumen-runtime`, updates `LUMEN_BUILD_SHA` and `LUMEN_BUILD_TIME`, then restarts:
 
 ```bash
-docker compose -f infra/docker-compose.prod.yml up -d --build --wait --wait-timeout 300
+systemctl restart lumen-sidecar.service
+systemctl restart lumen.service
 ```
 
 It gates the deploy with `/healthz`, `/version`, and `/metrics`. `/version.buildSha` must match the deployed commit or the workflow fails.
