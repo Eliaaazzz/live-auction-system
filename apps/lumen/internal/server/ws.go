@@ -259,14 +259,17 @@ func (h *Hub) broadcast(aid string, msg []byte) {
 		if t.c.roomEpoch.Load() != t.epoch {
 			continue
 		}
-		// critical room events: enqueue or force-close the slow client (it
-		// reconnects + re-snapshots) rather than silently lose the event. Use the
-		// pre-encoded frame when it built AND the conn has a real socket; fall
-		// back to raw bytes if PreparedMessage construction failed OR the conn was
-		// hand-built without a socket (unit tests inspect the raw envelope; a
-		// PreparedMessage is an opaque pre-encoded frame they can't decode). ws is
-		// set once at creation and never reassigned, so this lock-free read is
-		// race-free (unlike c.aid). Both paths land on the broadcast lane.
+		// Room broadcast events. Since #219's lane split, fanout frames land on
+		// the per-conn broadcast lane — NOT the crit lane that carries direct
+		// acks and typed close frames. A slow client whose broadcast lane fills
+		// is force-closed (it reconnects + re-snapshots via lastSeq catchup)
+		// rather than silently losing events. Use the pre-encoded frame when it
+		// built AND the conn has a real socket; fall back to raw bytes if
+		// PreparedMessage construction failed OR the conn was hand-built without
+		// a socket (unit tests inspect the raw envelope; a PreparedMessage is an
+		// opaque pre-encoded frame they can't decode). ws is set once at creation
+		// and never reassigned, so this lock-free read is race-free (unlike
+		// c.aid).
 		if perr == nil && t.c.ws != nil {
 			t.c.trySendPrepared(aid, pm)
 		} else {
