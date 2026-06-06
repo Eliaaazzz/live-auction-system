@@ -222,9 +222,12 @@ func runDemoSealedCore(target, mode, label string) error {
 
 // RunDemoPrequalify proves the PREQUALIFY two-act flow (issue #114 phase 6):
 // run a sealed-first-price PREQUALIFY auction, then `POST /spawn-formal` to
-// create a formal ENGLISH auction whose start price is SEEDED from the
-// prequalify winner's bid. The parent_auction_id links the two; the formal's
-// snapshot confirms the seeded start price persisted into its Rules. Asserted.
+// create a formal ENGLISH auction whose start price is SEEDED from the sealed
+// reveal aggregate via the recommender's reserve heuristic (lower median for a
+// dense cluster, second-highest for an outlier, max for a single bid — see
+// loadPrequalifyRecommendation). The parent_auction_id links the two; the
+// formal's snapshot confirms the seeded start price persisted into its Rules.
+// Asserted.
 func RunDemoPrequalify(target string) error {
 	hc := &http.Client{Timeout: 10 * time.Second}
 
@@ -298,7 +301,7 @@ func RunDemoPrequalify(target string) error {
 	body := map[string]any{
 		"rules": map[string]any{
 			"mode":            model.ModeEnglish,
-			"startPriceCents": "0", // ignored — server overrides from parent
+			"startPriceCents": "0", // 0 → server uses prequalify recommender; >0 = seller override
 			"incrementCents":  "1000",
 			"capPriceCents":   "0",
 			"durationSec":     60,
@@ -310,8 +313,11 @@ func RunDemoPrequalify(target string) error {
 	if err := postJSON(hc, target+"/api/auctions/"+parentAID+"/spawn-formal", seller.Token, body, &spawn); err != nil {
 		return fmt.Errorf("spawn-formal: %w", err)
 	}
-	if spawn.SeededStartPriceCents != "12000" {
-		return fmt.Errorf("seeded start = %q, want %q (parent winner)", spawn.SeededStartPriceCents, "12000")
+	// With bids {11000, 12000} and no outlier (max < second*1.3), the recommender
+	// returns the lower-median (= second-highest, here 11000) as the formal floor.
+	// See loadPrequalifyRecommendation. Single-bid or outlier paths return max.
+	if spawn.SeededStartPriceCents != "11000" {
+		return fmt.Errorf("seeded start = %q, want %q (recommender lower-median for 2-bid dense cluster)", spawn.SeededStartPriceCents, "11000")
 	}
 	if spawn.ParentAuctionID != parentAID {
 		return fmt.Errorf("parent link = %q, want %q", spawn.ParentAuctionID, parentAID)
@@ -325,11 +331,11 @@ func RunDemoPrequalify(target string) error {
 	if err := getJSONAuth(hc, target+"/api/auctions/"+spawn.AuctionID, seller.Token, &formalSnap); err != nil {
 		return fmt.Errorf("formal snapshot: %w", err)
 	}
-	if formalSnap.CurrentPriceCents != "12000" {
-		return fmt.Errorf("formal snapshot price = %q, want %q (seeded from parent)", formalSnap.CurrentPriceCents, "12000")
+	if formalSnap.CurrentPriceCents != "11000" {
+		return fmt.Errorf("formal snapshot price = %q, want %q (recommender-seeded floor persisted into Rules)", formalSnap.CurrentPriceCents, "11000")
 	}
 	fmt.Printf("PARENT_AUCTION_ID=%s\nFORMAL_AUCTION_ID=%s\n", parentAID, spawn.AuctionID)
-	fmt.Printf("demo-prequalify: PASS · sealed parent reveal@12000 → spawn-formal seeded ENGLISH @ %s (parent_auction_id=%s)\n",
+	fmt.Printf("demo-prequalify: PASS · sealed parent reveal@12000 → spawn-formal seeded ENGLISH @ %s (recommender lower-median, parent_auction_id=%s)\n",
 		spawn.SeededStartPriceCents, spawn.ParentAuctionID)
 	return nil
 }
