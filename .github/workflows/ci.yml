@@ -162,18 +162,6 @@ jobs:
         # docs/perf-report.md — at this scale the stream is well under it.
         timeout-minutes: 5
         run: make load-smoke
-      - name: refresh frontend smoke auction
-        # The mode-demo gate above takes long enough for the original
-        # e2e-dummy-bid auction to become terminal. Create a fresh LIVE auction
-        # immediately before the frontend smoke scripts so smoke-wire still
-        # exercises accepted bids instead of timing out after ERR_NOT_LIVE.
-        run: |
-          set -euo pipefail
-          out="$(docker compose -f infra/docker-compose.yml --profile tools run --rm --build e2e)"
-          echo "$out"
-          aid="$(printf '%s\n' "$out" | sed -n 's/^E2E_AUCTION_ID=//p' | tail -n1)"
-          test -n "$aid" || { echo "missing E2E_AUCTION_ID from refresh e2e output"; exit 1; }
-          echo "VERIFY_AID=$aid" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
