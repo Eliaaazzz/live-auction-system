@@ -150,7 +150,7 @@ jobs:
           upload_file() {
             local_path="$1"
             remote_path="$2"
-            chunk_size="${UPLOAD_CHUNK_SIZE:-524288}"
+            chunk_size="${UPLOAD_CHUNK_SIZE:-131072}"
             local_size="$(wc -c < "$local_path" | tr -d ' ')"
             local_sha="$(sha256sum "$local_path" | awk '{print $1}')"
             chunk_dir="/tmp/lumen-upload-${DEPLOY_SHORT_SHA}-$(basename "$remote_path").parts"
