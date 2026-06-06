@@ -69,6 +69,9 @@ EVIDENCE_HMAC_KEY=<openssl rand -hex 32>
 METRICS_RESET_TOKEN=<openssl rand -hex 32>
 FRONTEND_ORIGIN=https://<your-domain>
 LUMEN_DOMAIN=<your-domain>
+# deploy identity for GET /version; set these at deploy time, not manually forever
+LUMEN_BUILD_SHA=unknown
+LUMEN_BUILD_TIME=unknown
 # 火山直播 (Part B；没配则直播间退回 sim sheen)
 VOLCENGINE_LIVE_PUSH_DOMAIN=
 VOLCENGINE_LIVE_PLAY_DOMAIN=
@@ -76,6 +79,13 @@ VOLCENGINE_LIVE_SIGN_KEY=
 EOF
 ```
 `config.go` §8 baseline 会校验: `APP_ENV=prod` 下必须非默认 JWT/evidence + `ENABLE_DEV_LOGIN=false` (compose 已设)。
+
+Before every deploy, export the current build identity so `/version` can catch stale binaries before a public load test:
+
+```bash
+export LUMEN_BUILD_SHA=$(git rev-parse --short HEAD)
+export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
 
 ## A6 — TLS + 反代 (wss)
 - 在域名 DNS 处加 **A 记录**: `<your-domain>` → ECS 公网 IP (生效后 Caddy 才能签证书)。
@@ -85,10 +95,15 @@ EOF
 ## A7 — 起服 + 自检
 ```bash
 set -a; . infra/.env.prod; set +a
+export LUMEN_BUILD_SHA=$(git rev-parse --short HEAD)
+export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker compose -f infra/docker-compose.prod.yml up -d --build --wait
 curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
+curl -sf https://<your-domain>/version               # schemaVersion + buildSha must match current deploy
 # 浏览器打开 https://<your-domain> → 走 wss 进直播间；seed 一个拍卖跑通出价
 ```
+
+Do not start a public 10k run until `/version.buildSha` matches `git rev-parse --short HEAD` and a current-schema WS smoke has proved `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED` on a LIVE auction.
 
 ## A8 — 生产万人并发复测 (the win evidence)
 从**异地机**(非 ECS)打 `wss://<your-domain>`，复用现成 harness:
@@ -99,14 +114,14 @@ curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
   LOGIN_PATH=/api/login TARGET=https://<your-domain> LOAD_AUCTION_ID=<aid> \
     LOAD_RETRY_TOO_LOW=true LOAD_BIDS_PER_BIDDER=1 go run ./apps/lumen/cmd/lumen load
   ```
-- 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
+- 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast-or-roomStatePatch p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
 - ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
 
 ## A9 — 成本收尾
 测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
 
 ## 验证 / 回滚
-- ✅ `https://<domain>/healthz`=200；直播间 wss 可连；出价→ack；`/metrics` 可达。
+- ✅ `https://<domain>/healthz`=200；`/version.schemaVersion` and `/version.buildSha` match the intended deploy; 直播间 wss 可连；出价→ack；`/metrics` 可达。
 - ✅ perf-report §8 填好 (服务端 SLO 在阈值内；e2e 记录真实 RTT)。
 - ✅ **本地兜底不变**: `make up` 仍能离线跑完整 demo (#9/#87) — 生产部署绝不是演示单点。
 - 回滚: `down` 容器 + 控制台关云资源；demo 回退本地。
