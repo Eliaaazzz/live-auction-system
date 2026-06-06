@@ -1,0 +1,170 @@
+name: deploy-prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy"
+        required: false
+        default: "main"
+      remote_dir:
+        description: "Repository directory on ECS"
+        required: false
+        default: "~/live-auction-system"
+      base_url:
+        description: "Public base URL for post-deploy smoke"
+        required: false
+        default: "http://115.191.76.40"
+  workflow_run:
+    workflows: ["ci"]
+    branches: [main]
+    types: [completed]
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: deploy to Volcengine ECS
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && vars.CD_AUTO_DEPLOY == 'true')
+    timeout-minutes: 30
+    env:
+      DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.event.workflow_run.head_sha || 'main' }}
+      REMOTE_DIR: ${{ github.event.inputs.remote_dir || vars.CD_REMOTE_DIR || '~/live-auction-system' }}
+      BASE_URL: ${{ github.event.inputs.base_url || vars.CD_BASE_URL || 'http://115.191.76.40' }}
+      SSH_HOST: ${{ secrets.CD_ECS_HOST }}
+      SSH_USER: ${{ secrets.CD_ECS_USER }}
+      SSH_PORT: ${{ secrets.CD_ECS_PORT || '22' }}
+    steps:
+      - name: validate CD configuration
+        env:
+          SSH_KEY: ${{ secrets.CD_ECS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in SSH_HOST SSH_USER; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is not configured"
+              missing=1
+            fi
+          done
+          if [ -z "$SSH_KEY" ]; then
+            echo "::error::CD_ECS_SSH_KEY is not configured"
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 2
+          fi
+
+      - name: checkout deployed ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.DEPLOY_REF }}
+
+      - name: resolve build identity
+        id: build
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          echo "build_time=$build_time" >> "$GITHUB_OUTPUT"
+
+      - name: configure ssh
+        env:
+          SSH_KEY: ${{ secrets.CD_ECS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: deploy compose stack
+        env:
+          DEPLOY_SHA: ${{ steps.build.outputs.sha }}
+          DEPLOY_SHORT_SHA: ${{ steps.build.outputs.short_sha }}
+          DEPLOY_BUILD_TIME: ${{ steps.build.outputs.build_time }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          remote_script="$(mktemp)"
+          cat > "$remote_script" <<'REMOTE'
+          set -euo pipefail
+
+          cd_or_clone() {
+            target="$1"
+            repo="$2"
+            case "$target" in
+              "~"|"~/") target="$HOME" ;;
+              "~/"*) target="$HOME/${target#~/}" ;;
+            esac
+            if [ ! -d "$target/.git" ]; then
+              mkdir -p "$(dirname "$target")"
+              git clone "https://github.com/${repo}.git" "$target"
+            fi
+            cd "$target"
+          }
+
+          cd_or_clone "$REMOTE_DIR" "$GITHUB_REPOSITORY"
+          git fetch origin main --prune
+          git checkout main
+          if ! git cat-file -e "$DEPLOY_SHA^{commit}" 2>/dev/null; then
+            git fetch origin "$DEPLOY_SHA" --depth=1
+          fi
+          git reset --hard "$DEPLOY_SHA"
+
+          if [ ! -f infra/.env.prod ]; then
+            echo "infra/.env.prod is missing on ECS; create it from docs/cloud-deploy-volcengine.md" >&2
+            exit 2
+          fi
+
+          export LUMEN_BUILD_SHA="$DEPLOY_SHORT_SHA"
+          export LUMEN_BUILD_TIME="$DEPLOY_BUILD_TIME"
+          set -a
+          . infra/.env.prod
+          set +a
+
+          docker compose -f infra/docker-compose.prod.yml up -d --build --wait --wait-timeout 300
+          docker compose -f infra/docker-compose.prod.yml ps
+          REMOTE
+
+          ssh -i ~/.ssh/deploy_key -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            "REMOTE_DIR='$REMOTE_DIR' GITHUB_REPOSITORY='$GITHUB_REPOSITORY' DEPLOY_SHA='${DEPLOY_SHA}' DEPLOY_SHORT_SHA='${DEPLOY_SHORT_SHA}' DEPLOY_BUILD_TIME='${DEPLOY_BUILD_TIME}' bash -se" \
+            < "$remote_script"
+
+      - name: post-deploy smoke
+        env:
+          WANT_SHA: ${{ steps.build.outputs.short_sha }}
+        run: |
+          set -euo pipefail
+          base="${BASE_URL%/}"
+          curl -fsS "$base/healthz" | tee healthz.json
+          curl -fsS "$base/version" | tee version.json
+          curl -fsS "$base/metrics" > metrics.json
+          jq -e --arg sha "$WANT_SHA" '
+            .schemaVersion == 2 and
+            .buildSha == $sha and
+            (.buildTime // "unknown") != "unknown"
+          ' version.json
+
+      - name: upload deploy smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-smoke
+          path: |
+            healthz.json
+            version.json
+            metrics.json
+          if-no-files-found: ignore
