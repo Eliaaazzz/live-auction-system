@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatCentsCNY, formatCentsCNYCompact, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
-  AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
+  AIBubble, QuickBidChips, HeatMeter,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
@@ -213,7 +213,6 @@ function MobileRoom({
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
   const [following, setFollowing] = React.useState(() => readLocalFlag('lumen:follow:lumen-auction'));
-  const [activeTab, setActiveTab] = React.useState('browse');
   const [soundOn, setSoundOn] = React.useState(() => readLocalFlag('lumen:sound:enabled'));
   const [videoExpanded, setVideoExpanded] = React.useState(false);
   const [videoBroken, setVideoBroken] = React.useState(false);
@@ -639,61 +638,33 @@ function MobileRoom({
           </span>
         </div>
 
-        <RoomTabBar active={activeTab} onChange={setActiveTab}/>
-
-        {/* Scrollable middle — tab content squishes/scrolls here so the bid bar
-            below stays pinned and reachable even on short viewports. */}
-        <div
-          id={`room-panel-${activeTab}`}
-          role="tabpanel"
-          aria-labelledby={`room-tab-${activeTab}`}
-          className="no-scrollbar"
-          style={{
+        {/* Buyer focus — no tab switching. Price/countdown are above, bid chips
+            are pinned below; this middle stays focused on leader, my position,
+            recent bids, and a collapsed rules summary. */}
+        <div className="no-scrollbar" style={{
           flex: 1, minHeight: 0, overflowY: 'auto',
           display: 'flex', flexDirection: 'column', gap: 10,
         }}>
-          {activeTab === 'browse' && (
-            <>
-              <PanelHeader title="出价榜" meta="前三名" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
-              <Leaderboard leaders={leaders.slice(0, 3)} mode="podium"/>
-              <MyPositionGap
-                rank={yourRank}
-                gapCents={yourGapCents}
-                isLeading={isYouLeading}
-              />
-              <BidHistoryStrip items={bidHistory}/>
-              <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
-            </>
-          )}
-
-          {activeTab === 'history' && (
-            <HistoryPanel items={bidHistory} lastSeq={lastSeq}/>
-          )}
-
-          {activeTab === 'join' && (
-            <JoinPanel
-              following={following}
-              minBidCents={minBidCents}
-              stepCents={stepCents}
-              soundOn={soundOn}
-            />
-          )}
-
-          {activeTab === 'auction' && (
-            <AuctionPanel
-              firstLeader={firstLeader}
-              secondLeader={secondLeader}
-              yourRank={yourRank}
-              yourGapCents={yourGapCents}
-              minBidCents={minBidCents}
-              extendCount={extendCount}
-              bidsPerSec={bidsPerSec}
-            />
-          )}
-
-          {activeTab === 'rules' && (
-            <RulesPanel stepCents={stepCents} capCents={capCents}/>
-          )}
+          <BuyerFocusPanel
+            leaders={leaders}
+            firstLeader={firstLeader}
+            secondLeader={secondLeader}
+            yourRank={yourRank}
+            yourGapCents={yourGapCents}
+            isYouLeading={isYouLeading}
+            bidHistory={bidHistory}
+            lastSeq={lastSeq}
+            bidsPerSec={bidsPerSec}
+            bidsPerSecPeak={bidsPerSecPeak}
+            minBidCents={minBidCents}
+            stepCents={stepCents}
+            capCents={capCents}
+            extendCount={extendCount}
+            aiStatus={aiStatus}
+            aiTrigger={aiTrigger}
+            aiText={aiText}
+            aiStreaming={aiStreaming}
+          />
         </div>{/* end scrollable middle */}
 
         {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
@@ -801,60 +772,6 @@ function TerminalOverlay({ status }) {
   );
 }
 
-const ROOM_TABS = [
-  { id: 'browse', label: '浏览' },
-  { id: 'history', label: '历史' },
-  { id: 'join', label: '参与' },
-  { id: 'auction', label: '拍卖' },
-  { id: 'rules', label: '规则' },
-];
-
-function RoomTabBar({ active, onChange }) {
-  return (
-    <div
-      role="tablist"
-      aria-label="房间信息"
-      className="no-scrollbar"
-      style={{
-      flexShrink: 0,
-      display: 'flex',
-      gap: 6,
-      overflowX: 'auto',
-      padding: '1px 2px 2px',
-    }}>
-      {ROOM_TABS.map((tab) => {
-        const selected = active === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            id={`room-tab-${tab.id}`}
-            aria-selected={selected}
-            aria-controls={`room-panel-${tab.id}`}
-            onClick={() => onChange(tab.id)}
-            style={{
-              flex: '1 0 auto',
-              minWidth: 52,
-              minHeight: 44,
-              borderRadius: 8,
-              border: selected ? '1px solid rgba(201,169,97,.45)' : '1px solid rgba(255,255,255,.08)',
-              background: selected ? 'rgba(201,169,97,.14)' : 'rgba(255,255,255,.04)',
-              color: selected ? 'var(--solemn-gold)' : 'var(--douyin-ink-muted)',
-              fontSize: 12,
-              fontWeight: 700,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-              backdropFilter: 'blur(10px)',
-            }}>
-            {tab.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 function PanelHeader({ title, meta, right }) {
   return (
     <div style={{
@@ -884,92 +801,196 @@ function PanelHeader({ title, meta, right }) {
   );
 }
 
-function HistoryPanel({ items, lastSeq }) {
+function BuyerFocusPanel({
+  leaders,
+  firstLeader,
+  secondLeader,
+  yourRank,
+  yourGapCents,
+  isYouLeading,
+  bidHistory,
+  lastSeq,
+  bidsPerSec,
+  bidsPerSecPeak,
+  minBidCents,
+  stepCents,
+  capCents,
+  extendCount,
+  aiStatus,
+  aiTrigger,
+  aiText,
+  aiStreaming,
+}) {
   return (
     <>
-      <PanelHeader title="出价历史" meta="横向滑动查看最近真实出价"/>
-      <BidHistoryStrip items={items}/>
-      <InfoSurface>
-        <InfoLine label="最新序列" value={`#${lastSeq ?? '—'}`}/>
-        <InfoLine label="记录来源" value="服务端事件流"/>
-        <InfoLine label="展示方式" value="仅展示真实采纳出价，不影响出价判定"/>
-      </InfoSurface>
-    </>
-  );
-}
+      <PanelHeader title="当前领先" meta="前三名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
+      <CompactLeaderCard
+        firstLeader={firstLeader}
+        secondLeader={secondLeader}
+        leaders={leaders}
+        yourRank={yourRank}
+        yourGapCents={yourGapCents}
+        isYouLeading={isYouLeading}
+      />
 
-function JoinPanel({ following, minBidCents, stepCents, soundOn }) {
-  const depositCents = safeMulCents(stepCents, 2n);
-  return (
-    <>
-      <PanelHeader title="我要参与" meta="参与准备与模拟保证金"/>
-      <InfoSurface>
-        <InfoLine label="关注状态" value={following ? '已关注琉森拍卖行' : '未关注，可继续竞拍'}/>
-        <InfoLine label="最低出价" value={formatCentsCNY(minBidCents)}/>
-        <InfoLine label="提示音" value={soundOn ? '已开启，默认仍可随时关闭' : '默认静音'}/>
-      </InfoSurface>
-      <InfoSurface accent="cyan">
-        <InfoLine label="虚拟保证金" value={`${formatCentsCNY(depositCents)}（演示额度）`}/>
-        <InfoLine label="结算说明" value="仅使用虚拟币与模拟支付，不接入真实资金"/>
-      </InfoSurface>
-      <RequirementList
-        title="参与前需确认"
-        items={[
-          '阅读拍卖规则，出价提交后按后端状态判定。',
-          '延时、成交、取消均以服务端事件为准。',
-          '个人展示名仅用于本场演示，不公开真实身份。',
-        ]}
+      <PanelHeader
+        title="最近出价"
+        meta={`序列 #${lastSeq ?? '—'}`}
+      />
+      <BidHistoryStrip items={bidHistory}/>
+
+      <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
+
+      <RulesSummary
+        minBidCents={minBidCents}
+        stepCents={stepCents}
+        capCents={capCents}
+        extendCount={extendCount}
       />
     </>
   );
 }
 
-function AuctionPanel({ firstLeader, secondLeader, yourRank, yourGapCents, minBidCents, extendCount, bidsPerSec }) {
+function CompactLeaderCard({ firstLeader, secondLeader, leaders, yourRank, yourGapCents, isYouLeading }) {
   return (
-    <>
-      <PanelHeader title="拍卖状态" meta="第一名、第二名与我的位置"/>
-      <InfoSurface>
-        <LeaderSummaryRow rank={1} leader={firstLeader}/>
-        <LeaderSummaryRow rank={2} leader={secondLeader}/>
-        <InfoLine label="我的排名" value={yourRank ? `第 ${yourRank} 名` : '暂无有效出价'}/>
-        <InfoLine label="反超差额" value={formatCentsCNY(yourGapCents || '0')}/>
-      </InfoSurface>
-      <InfoSurface accent="gold">
-        <InfoLine label="下一口最低价" value={formatCentsCNY(minBidCents)}/>
-        <InfoLine label="已触发延时" value={`${extendCount || 0} 次`}/>
-        <InfoLine label="当前热度" value={`${bidsPerSec.toFixed(1)} 口/秒`}/>
-      </InfoSurface>
-    </>
+    <InfoSurface accent="gold">
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+        <CompactLeaderRow rank={1} leader={firstLeader} lead/>
+        {secondLeader && <CompactLeaderRow rank={2} leader={secondLeader}/>}
+      </div>
+      <div style={{
+        display: 'flex',
+        gap: 8,
+        overflowX: 'auto',
+        paddingTop: 2,
+      }} className="no-scrollbar">
+        {leaders.slice(2, 5).map((leader, idx) => (
+          <CompactLeaderPill key={leader.userId || idx} rank={idx + 3} leader={leader}/>
+        ))}
+      </div>
+      <MyPositionGap
+        rank={yourRank}
+        gapCents={yourGapCents}
+        isLeading={isYouLeading}
+      />
+    </InfoSurface>
   );
 }
 
-function RulesPanel({ stepCents, capCents }) {
+function CompactLeaderRow({ rank, leader, lead = false }) {
+  const name = leader?.displayName || leader?.userId || '暂无出价';
+  const cents = leader?.cents ? formatCentsCNY(leader.cents) : '—';
   return (
-    <>
-      <PanelHeader title="规则与条款" meta="按优先级收纳"/>
-      <RequirementList
-        title="必备"
-        items={[
-          `最低加价为 ${formatCentsCNY(stepCents)}。`,
-          '最后 10 秒内有效出价会触发反狙击延时。',
-          '视频画面不参与判定，竞拍只认服务端事件。',
-          '成交后生成订单与证据卡。',
-        ]}
-      />
-      <RequirementList
-        title="加分"
-        items={[
-          '排行榜第一名有冠军光晕和落槌特效。',
-          '出价历史常驻横滑，便于快速回看。',
-          '可选提示音默认关闭，用户主动开启才播放。',
-          capCents ? `封顶价为 ${formatCentsCNY(capCents)}。` : '未设置封顶价，按规则阶梯继续竞拍。',
-        ]}
-      />
-      <InfoSurface>
-        <InfoLine label="隐私条款" value="展示名与出价记录仅用于本场演示"/>
-        <InfoLine label="自定义定价" value="自定义金额必须高于当前价并对齐加价阶梯"/>
-      </InfoSurface>
-    </>
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '30px minmax(0, 1fr) auto',
+      alignItems: 'center',
+      gap: 8,
+      padding: lead ? '9px 10px' : '7px 10px',
+      borderRadius: 8,
+      background: lead ? 'rgba(201,169,97,.13)' : 'rgba(255,255,255,.045)',
+      border: lead ? '1px solid rgba(201,169,97,.34)' : '1px solid rgba(255,255,255,.08)',
+    }}>
+      <span className="mono" style={{
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: lead ? 'var(--solemn-gold)' : 'rgba(255,255,255,.10)',
+        color: lead ? 'var(--solemn-ink)' : 'var(--douyin-ink-muted)',
+        fontSize: 11,
+        fontWeight: 800,
+      }}>
+        {rank}
+      </span>
+      <span style={{
+        minWidth: 0,
+        color: 'var(--douyin-ink-text)',
+        fontSize: lead ? 14 : 12,
+        fontWeight: lead ? 800 : 650,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
+        {name}
+      </span>
+      <span className="mono" style={{
+        color: lead ? 'var(--solemn-gold)' : 'var(--douyin-ink-text)',
+        fontSize: lead ? 14 : 12,
+        fontWeight: 800,
+        whiteSpace: 'nowrap',
+      }}>
+        {cents}
+      </span>
+    </div>
+  );
+}
+
+function CompactLeaderPill({ rank, leader }) {
+  const name = leader?.displayName || leader?.userId || '暂无';
+  const cents = leader?.cents ? formatCentsCNYCompact(leader.cents) : '—';
+  return (
+    <div style={{
+      flex: '0 0 auto',
+      minWidth: 104,
+      padding: '7px 9px',
+      borderRadius: 8,
+      background: 'rgba(255,255,255,.04)',
+      border: '1px solid rgba(255,255,255,.08)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 3,
+    }}>
+      <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>第 {rank} 名</span>
+      <span style={{
+        fontSize: 11,
+        color: 'var(--douyin-ink-text)',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap',
+      }}>
+        {name}
+      </span>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--solemn-gold)', fontWeight: 700 }}>
+        {cents}
+      </span>
+    </div>
+  );
+}
+
+function RulesSummary({ minBidCents, stepCents, capCents, extendCount }) {
+  return (
+    <details style={{
+      borderRadius: 8,
+      border: '1px solid rgba(255,255,255,.08)',
+      background: 'rgba(255,255,255,.035)',
+      padding: '0 10px',
+    }}>
+      <summary style={{
+        minHeight: 44,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        cursor: 'pointer',
+        color: 'var(--douyin-ink-muted)',
+        fontSize: 12,
+        fontWeight: 700,
+      }}>
+        <span>规则</span>
+        <span className="mono" style={{ fontSize: 10, fontWeight: 500 }}>
+          最低 {formatCentsCNYCompact(minBidCents)}
+        </span>
+      </summary>
+      <div style={{ padding: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <InfoLine label="最低加价" value={formatCentsCNY(stepCents)}/>
+        <InfoLine label="封顶价" value={capCents ? formatCentsCNY(capCents) : '未设置'}/>
+        <InfoLine label="延时" value={`末 10 秒出价自动延时，已触发 ${extendCount || 0} 次`}/>
+        <InfoLine label="判定" value="只认服务端事件，视频不参与判定"/>
+      </div>
+    </details>
   );
 }
 
@@ -1008,56 +1029,6 @@ function InfoLine({ label, value }) {
       }}>
         {value}
       </span>
-    </div>
-  );
-}
-
-function LeaderSummaryRow({ rank, leader }) {
-  const name = leader?.displayName || leader?.userId || '暂无';
-  const cents = leader?.cents ? formatCentsCNYCompact(leader.cents) : '—';
-  return <InfoLine label={`第 ${rank} 名`} value={`${name} · ${cents}`}/>;
-}
-
-function RequirementList({ title, items }) {
-  return (
-    <div style={{
-      padding: '10px 11px',
-      borderRadius: 8,
-      background: 'rgba(255,255,255,.04)',
-      border: '1px solid rgba(255,255,255,.08)',
-    }}>
-      <div style={{
-        fontSize: 12,
-        fontWeight: 700,
-        color: 'var(--solemn-gold)',
-        marginBottom: 7,
-      }}>
-        {title}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {items.map((item) => (
-          <div key={item} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
-            <span style={{
-              width: 14,
-              height: 14,
-              borderRadius: 7,
-              background: 'rgba(201,169,97,.16)',
-              color: 'var(--solemn-gold)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 9,
-              flexShrink: 0,
-              marginTop: 1,
-            }}>
-              ·
-            </span>
-            <span style={{ fontSize: 11, color: 'var(--douyin-ink-text)', lineHeight: 1.45 }}>
-              {item}
-            </span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -1659,14 +1630,6 @@ function safeAddCents(a, b) {
     return (BigInt(a) + BigInt(b)).toString();
   } catch {
     return String(a || '0');
-  }
-}
-
-function safeMulCents(a, multiplier) {
-  try {
-    return (BigInt(a) * BigInt(multiplier)).toString();
-  } catch {
-    return '0';
   }
 }
 

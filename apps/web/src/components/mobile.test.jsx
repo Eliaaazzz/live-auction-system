@@ -117,6 +117,29 @@ describe('MobileRoom bid locking', () => {
   });
 });
 
+describe('MobileRoom simplified buyer flow', () => {
+  it('keeps the buyer essentials visible without tab navigation', () => {
+    const { container } = render(
+      <MobileRoom
+        status="LIVE"
+        leaders={[
+          { userId: 'u1', displayName: 'Alice', cents: '13000000' },
+          { userId: 'u2', displayName: 'Bob', cents: '12800000' },
+          { userId: 'u3', displayName: 'You', cents: '12600000', isYou: true },
+        ]}
+        ticker={[{ id: 1, kind: 'bid', name: 'Alice', cents: '13000000' }]}
+      />,
+    );
+
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
+    expect(container.textContent).toMatch(/当前领先/);
+    expect(container.textContent).toMatch(/最近出价/);
+    expect(container.textContent).toMatch(/规则/);
+    expect(container.textContent).toMatch(/最低加价/);
+  });
+});
+
 describe('MobileRoom · LiveVideo fallback (#126)', () => {
   it('falls back to the simulated sheen when a configured video errors at runtime', () => {
     const { container } = render(
