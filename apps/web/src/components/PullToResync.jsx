@@ -85,13 +85,12 @@ export function PullToResync({ onResync, threshold = 64, children }) {
           style={{
             marginTop: 8,
             fontSize: 10,
-            letterSpacing: '0.18em',
-            textTransform: 'uppercase',
+            letterSpacing: 0,
             color: pull >= threshold ? 'var(--douyin-cyan)' : 'var(--douyin-ink-muted)',
             transition: 'color 0.1s ease-out',
           }}
         >
-          {pull >= threshold ? '松开同步 · RELEASE TO SYNC' : '下拉同步 · PULL TO SYNC'}
+          {pull >= threshold ? '松开同步' : '下拉同步'}
         </div>
       </div>
       {children}

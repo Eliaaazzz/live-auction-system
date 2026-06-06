@@ -17,6 +17,7 @@ import {
   PriceDisplay,
   Countdown,
   ClockDriftIndicator,
+  formatCentsCNYCompact,
 } from './primitives.jsx';
 import { bidRejectCopy as canonicalBidRejectCopy } from '../lib/types.js';
 
@@ -155,14 +156,14 @@ describe('Leaderboard · podium mode (TC-T6-230/234)', () => {
     expect(screen.getByText('user-001')).toBeInTheDocument();
   });
 
-  it('falls back to ? when both displayName and userId are missing', () => {
+  it('falls back to anonymous copy when both displayName and userId are missing', () => {
     const { container } = render(
       <Leaderboard
         leaders={[{ cents: '11000000' }]}
         mode="podium"
       />,
     );
-    expect(container.textContent).toContain('?');
+    expect(container.textContent).toContain('匿名买家');
   });
 });
 
@@ -211,6 +212,17 @@ describe('PriceDisplay', () => {
   it('handles BigInt-range cents', () => {
     const { container } = render(<PriceDisplay cents="9000000000000000"/>);
     expect(container.textContent).toMatch(/90,000,000,000,000/);
+  });
+});
+
+describe('formatCentsCNYCompact', () => {
+  it('uses Chinese units for compact room labels', () => {
+    expect(formatCentsCNYCompact('12880000')).toBe('¥12.88万');
+    expect(formatCentsCNYCompact('9000000000000000')).toBe('¥90万亿');
+  });
+
+  it('keeps exact formatting below ten-thousand yuan', () => {
+    expect(formatCentsCNYCompact('123456')).toBe('¥1,234.56');
   });
 });
 

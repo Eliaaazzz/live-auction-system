@@ -1,10 +1,10 @@
 import React from 'react';
-import { formatCentsCNY, addCentsStr, bidRejectCopy,
+import { formatCentsCNY, formatCentsCNYCompact, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
-  BidTickerStream, HeartbeatVignette, SpeakerToggle,
+  BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
   BlackHorseBanner, HammerTransition } from './atmosphere.jsx';
 
@@ -83,6 +83,84 @@ function LiveVideo({ url, poster, onPlayFailed }) {
   );
 }
 
+function MobileRoomSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="正在加载竞拍房间"
+      style={{
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      background: 'var(--douyin-ink)',
+      color: 'var(--douyin-ink-text)',
+      fontFamily: 'var(--font-sans)',
+      overflow: 'hidden',
+    }}>
+      <div className="lumen-skeleton" style={{
+        position: 'absolute',
+        inset: 0,
+        height: '46%',
+        backgroundColor: 'rgba(255,255,255,.05)',
+      }}/>
+      <div style={{ position: 'absolute', top: 56, left: 16, right: 16, display: 'flex', gap: 10, alignItems: 'center' }}>
+        <SkeletonBlock w={128} h={34} r={17}/>
+        <div style={{ flex: 1 }}/>
+        <SkeletonBlock w={66} h={28} r={14}/>
+        <SkeletonBlock w={32} h={32} r={16}/>
+      </div>
+      <div style={{
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        top: '46%',
+        padding: '18px 14px 50px',
+        background: 'linear-gradient(180deg, rgba(23,26,40,.72), rgba(23,26,40,.96))',
+        backdropFilter: 'blur(18px)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 12,
+      }}>
+        <SkeletonBlock w={36} h={4} r={2} align="center"/>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+            <SkeletonBlock w={54} h={10} r={5}/>
+            <SkeletonBlock w={178} h={36} r={8}/>
+          </div>
+          <SkeletonBlock w={92} h={44} r={8}/>
+        </div>
+        <div style={{ display: 'flex', gap: 6 }}>
+          {[0, 1, 2, 3, 4].map((i) => <SkeletonBlock key={i} w={52} h={30} r={8} grow/>)}
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', justifyContent: 'center', minHeight: 118 }}>
+          <SkeletonBlock w={72} h={94} r={8}/>
+          <SkeletonBlock w={84} h={118} r={8}/>
+          <SkeletonBlock w={72} h={84} r={8}/>
+        </div>
+        <SkeletonBlock w="100%" h={48} r={8}/>
+        <div style={{ marginTop: 'auto', display: 'flex', gap: 6 }}>
+          {[0, 1, 2, 3].map((i) => <SkeletonBlock key={i} w={74} h={52} r={10} grow/>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SkeletonBlock({ w, h, r = 8, align, grow = false }) {
+  return (
+    <div className="lumen-skeleton" style={{
+      width: w,
+      height: h,
+      borderRadius: r,
+      flex: grow ? 1 : '0 0 auto',
+      alignSelf: align,
+      backgroundColor: 'rgba(255,255,255,.08)',
+    }}/>
+  );
+}
+
 // ─── Mobile · Room ─────────────────────────────────────────────
 function MobileRoom({
   productImage = null,
@@ -129,15 +207,43 @@ function MobileRoom({
                            // fixed loop; absent → simulate the feed (CSS sheen)
   winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
+  onSwitchRoom,            // optional Douyin-style vertical room switching
+  switchRoomAvailable = false,
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
-  const [following, setFollowing] = React.useState(false);
+  const [following, setFollowing] = React.useState(() => readLocalFlag('lumen:follow:lumen-auction'));
+  const [activeTab, setActiveTab] = React.useState('browse');
+  const [soundOn, setSoundOn] = React.useState(() => readLocalFlag('lumen:sound:enabled'));
+  const [videoExpanded, setVideoExpanded] = React.useState(false);
   const [videoBroken, setVideoBroken] = React.useState(false);
+  const swipeRef = React.useRef(null);
+  const suppressVideoClickUntilRef = React.useRef(0);
+  const audioRef = React.useRef(null);
   React.useEffect(() => {
     setVideoBroken(false);
   }, [videoUrl]);
+  React.useEffect(() => {
+    if (status !== 'LIVE') setVideoExpanded(false);
+  }, [status]);
   const effectiveVideoUrl = videoBroken ? null : videoUrl;
+
+  const toggleFollow = React.useCallback(() => {
+    setFollowing((f) => {
+      const next = !f;
+      writeLocalFlag('lumen:follow:lumen-auction', next);
+      return next;
+    });
+  }, []);
+
+  const toggleSound = React.useCallback(() => {
+    setSoundOn((on) => {
+      const next = !on;
+      writeLocalFlag('lumen:sound:enabled', next);
+      if (next) playTone(audioRef, 'toggle');
+      return next;
+    });
+  }, []);
 
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs > 0 && remainingMs <= 10000 && status === 'LIVE';
@@ -152,6 +258,17 @@ function MobileRoom({
     cents: i === 0 ? currentCents : u.cents,
     combo: combos[u.userId] || 0,
   }));
+  const bidHistory = ticker
+    .filter((it) => it?.kind !== 'projection')
+    .map((it, idx) => ({
+      ...it,
+      id: it?.id ?? idx,
+      name: it?.name || it?.displayName || it?.userId || '匿名买家',
+      cents: it?.cents || currentCents,
+    }));
+  const minBidCents = safeAddCents(currentCents, stepCents);
+  const firstLeader = leaders[0] || null;
+  const secondLeader = leaders[1] || null;
 
   // F23 / Elia round-2 #3: screen-shake on hammer. One-shot — flips back
   // to false ~700ms after status enters SOLD so the keyframe doesn't loop.
@@ -170,6 +287,50 @@ function MobileRoom({
 
   // Bid reject toast — CN copy from bidRejectCopy[code] (§4.3 wire)
   const rejectMsg = rejectCode ? (bidRejectCopy[rejectCode] || rejectCode) : null;
+
+  React.useEffect(() => {
+    if (showLeadingToast) playTone(audioRef, 'lead', soundOn);
+  }, [showLeadingToast, soundOn]);
+
+  React.useEffect(() => {
+    if (overtakeBanner) playTone(audioRef, 'overtake', soundOn);
+  }, [overtakeBanner, soundOn]);
+
+  React.useEffect(() => {
+    if (status === 'SOLD') playTone(audioRef, 'hammer', soundOn);
+  }, [status, soundOn]);
+
+  const handleVideoTouchStart = React.useCallback((e) => {
+    const t = e.touches?.[0];
+    if (!t) return;
+    swipeRef.current = { x: t.clientX, y: t.clientY, at: Date.now(), moved: false };
+  }, []);
+
+  const handleVideoTouchMove = React.useCallback((e) => {
+    const t = e.touches?.[0];
+    if (!t || !swipeRef.current) return;
+    const dy = t.clientY - swipeRef.current.y;
+    const dx = t.clientX - swipeRef.current.x;
+    if (Math.abs(dy) > 18 && Math.abs(dy) > Math.abs(dx)) {
+      swipeRef.current.moved = true;
+    }
+  }, []);
+
+  const handleVideoTouchEnd = React.useCallback((e) => {
+    const t = e.changedTouches?.[0];
+    const start = swipeRef.current;
+    swipeRef.current = null;
+    if (!t || !start) return;
+    const dy = t.clientY - start.y;
+    const dx = t.clientX - start.x;
+    if (start.moved || Math.abs(dy) > 18 || Math.abs(dx) > 18) {
+      suppressVideoClickUntilRef.current = Date.now() + 450;
+    }
+    if (switchRoomAvailable && Math.abs(dy) > 110 && Math.abs(dy) > Math.abs(dx) * 1.4) {
+      e.stopPropagation();
+      onSwitchRoom?.(dy > 0 ? 'prev' : 'next');
+    }
+  }, [onSwitchRoom, switchRoomAvailable]);
 
   return (
     <div className={shakeNow ? 'lumen-screen-shake' : ''} style={{
@@ -225,9 +386,26 @@ function MobileRoom({
       <HammerTransition active={showHammerTransition} amountCents={currentCents}/>
 
       {/* ── Video / streamer area ── */}
-      <div style={{
-        position: 'absolute', inset: 0, height: '46%', overflow: 'hidden',
-      }}>
+      <div
+        onClick={() => {
+          if (Date.now() < suppressVideoClickUntilRef.current) {
+            return;
+          }
+          setVideoExpanded((v) => !v);
+        }}
+        onTouchStart={handleVideoTouchStart}
+        onTouchMove={handleVideoTouchMove}
+        onTouchEnd={handleVideoTouchEnd}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          height: videoExpanded ? '100%' : '46%',
+          overflow: 'hidden',
+          zIndex: videoExpanded && status === 'LIVE' ? 72 : 0,
+          cursor: 'pointer',
+          transition: 'height .28s ease, box-shadow .28s ease',
+          boxShadow: videoExpanded ? '0 0 0 1px rgba(201,169,97,.18), 0 20px 80px rgba(0,0,0,.7)' : 'none',
+        }}>
         {/* placeholder streamer surface — gradient + faux items */}
         <div style={{
           position: 'absolute', inset: 0,
@@ -313,9 +491,9 @@ function MobileRoom({
               <span style={{ fontSize: 9, color: 'var(--douyin-ink-muted)' }}>{viewerCount} 在线</span>
             </div>
             <button
-              onClick={() => setFollowing(f => !f)}
+              onClick={(e) => { e.stopPropagation(); toggleFollow(); }}
               style={{
-                padding: '3px 10px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                minHeight: 44, padding: '0 12px', borderRadius: 999, border: 'none', cursor: 'pointer',
                 background: following ? 'rgba(255,255,255,.15)' : 'var(--douyin-red)',
                 color: '#fff', fontSize: 10, fontWeight: 600, marginLeft: 4,
               }}>{following ? '已关注' : '+ 关注'}</button>
@@ -323,7 +501,7 @@ function MobileRoom({
           <div style={{ flex: 1 }}/>
           <StatusBadge status={status} size="sm" />
           {/* speaker (muted per §12.7.2) — breathing icon */}
-          <SpeakerToggle muted/>
+          <SpeakerToggle muted={!soundOn} onToggle={(e) => { e?.stopPropagation?.(); toggleSound(); }}/>
         </div>
 
         {/* item meta strip */}
@@ -331,10 +509,10 @@ function MobileRoom({
           position: 'absolute', top: 100, left: 16, right: 16, zIndex: 5,
           display: 'flex', flexDirection: 'column', gap: 4,
         }}>
-          <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' }}>
-            LOT 2024-0142 · 二手腕表 · 已认证
+          <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
+            拍品 2024-0142 · 二手腕表 · 已认证
           </div>
-          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-.01em' }}>
+          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0 }}>
             百达翡丽 5711/1A 鹦鹉螺 · 蓝面
           </div>
         </div>
@@ -343,12 +521,71 @@ function MobileRoom({
         {overtakeBanner && (
           <OvertakenSlam visible byName="海风_2024" gapCents="130000"/>
         )}
+
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setVideoExpanded((v) => !v); }}
+          aria-label={videoExpanded ? '收起直播画面' : '展开直播画面'}
+          title={videoExpanded ? '收起直播画面' : '展开直播画面'}
+          style={{
+            position: 'absolute',
+            right: 16,
+            bottom: videoExpanded ? 18 : 14,
+            zIndex: 6,
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            border: '1px solid rgba(255,255,255,.18)',
+            background: 'rgba(0,0,0,.48)',
+            color: '#fff',
+            backdropFilter: 'blur(10px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}>
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.6">
+            {videoExpanded ? (
+              <>
+                <path d="M6 3H3v3M9 3h3v3M6 12H3V9M9 12h3V9" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M3 3l4 4M12 3L8 7M3 12l4-4M12 12L8 8" strokeLinecap="round"/>
+              </>
+            ) : (
+              <>
+                <path d="M6 2H2v4M9 2h4v4M6 13H2V9M9 13h4V9" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M2 2l5 5M13 2L8 7M2 13l5-5M13 13L8 8" strokeLinecap="round"/>
+              </>
+            )}
+          </svg>
+        </button>
+
+        {switchRoomAvailable && (
+          <div style={{
+            position: 'absolute',
+            right: 16,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            zIndex: 6,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 6,
+            color: 'rgba(255,255,255,.78)',
+            fontSize: 10,
+            pointerEvents: 'none',
+          }}>
+            <span style={{ width: 1, height: 30, background: 'linear-gradient(180deg, transparent, rgba(255,255,255,.5))' }}/>
+            <span style={{ writingMode: 'vertical-rl', letterSpacing: 0 }}>上下滑切换直播间</span>
+            <span style={{ width: 1, height: 30, background: 'linear-gradient(180deg, rgba(255,255,255,.5), transparent)' }}/>
+          </div>
+        )}
       </div>
 
       {/* ── Detail sheet — bottom 54% ── */}
       <div style={{
         position: 'absolute', left: 0, right: 0, bottom: 0, top: '46%',
-        background: 'linear-gradient(180deg, transparent 0%, var(--douyin-ink) 8%, var(--douyin-ink) 100%)',
+        background: 'linear-gradient(180deg, rgba(23,26,40,.18) 0%, rgba(23,26,40,.84) 9%, rgba(23,26,40,.94) 100%)',
+        backdropFilter: 'blur(18px) saturate(1.18)',
         display: 'flex', flexDirection: 'column',
         padding: '12px 14px 50px',
         gap: 10, overflow: 'hidden',
@@ -366,14 +603,17 @@ function MobileRoom({
           padding: '6px 4px 0', borderRadius: 8,
         }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em' }}>
-              当前价 · CURRENT
+            <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
+              当前价
             </span>
             <PriceDisplay cents={currentCents} size={36} tone="ink" flash={flashPrice} withUnderline/>
+            <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)', letterSpacing: 0 }}>
+              {formatCentsCNYCompact(currentCents)}
+            </span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 3 }}>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em' }}>
+              <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
                 {warn ? '即将落槌' : '距落槌'}
               </span>
               <ClockDriftIndicator offsetMs={serverClockOffsetMs}/>
@@ -395,41 +635,65 @@ function MobileRoom({
           </span>
           <div style={{ flex: 1 }}/>
           <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-            seq #{lastSeq ?? '—'}
+            序列 #{lastSeq ?? '—'}
           </span>
         </div>
 
-        {/* Scrollable middle — leaderboard + AI bubble squish/scroll here so the
-            bid bar below stays pinned and reachable even when the content is
-            taller than the panel (short viewports / the fixed MobileFrame). */}
-        <div className="no-scrollbar" style={{
+        <RoomTabBar active={activeTab} onChange={setActiveTab}/>
+
+        {/* Scrollable middle — tab content squishes/scrolls here so the bid bar
+            below stays pinned and reachable even on short viewports. */}
+        <div
+          id={`room-panel-${activeTab}`}
+          role="tabpanel"
+          aria-labelledby={`room-tab-${activeTab}`}
+          className="no-scrollbar"
+          style={{
           flex: 1, minHeight: 0, overflowY: 'auto',
           display: 'flex', flexDirection: 'column', gap: 10,
         }}>
-        {/* Leaderboard */}
-        <div style={{ marginTop: 4 }}>
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '0 4px 6px',
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' }}>
-              出价榜 · TOP 3
-            </span>
-            <HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>
-          </div>
-          <Leaderboard leaders={leaders.slice(0, 3)} mode="podium"/>
-          {/* My position gap — always visible to user (anti-disengagement) */}
-          <div style={{ marginTop: 8 }}>
-            <MyPositionGap
-              rank={yourRank}
-              gapCents={yourGapCents}
-              isLeading={isYouLeading}
-            />
-          </div>
-        </div>
+          {activeTab === 'browse' && (
+            <>
+              <PanelHeader title="出价榜" meta="前三名" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
+              <Leaderboard leaders={leaders.slice(0, 3)} mode="podium"/>
+              <MyPositionGap
+                rank={yourRank}
+                gapCents={yourGapCents}
+                isLeading={isYouLeading}
+              />
+              <BidHistoryStrip items={bidHistory}/>
+              <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
+            </>
+          )}
 
-        {/* AI bubble */}
-        <AIBubble status={aiStatus} trigger={aiTrigger} text={aiText} streaming={aiStreaming}/>
+          {activeTab === 'history' && (
+            <HistoryPanel items={bidHistory} lastSeq={lastSeq}/>
+          )}
+
+          {activeTab === 'join' && (
+            <JoinPanel
+              following={following}
+              minBidCents={minBidCents}
+              stepCents={stepCents}
+              soundOn={soundOn}
+            />
+          )}
+
+          {activeTab === 'auction' && (
+            <AuctionPanel
+              firstLeader={firstLeader}
+              secondLeader={secondLeader}
+              yourRank={yourRank}
+              yourGapCents={yourGapCents}
+              minBidCents={minBidCents}
+              extendCount={extendCount}
+              bidsPerSec={bidsPerSec}
+            />
+          )}
+
+          {activeTab === 'rules' && (
+            <RulesPanel stepCents={stepCents} capCents={capCents}/>
+          )}
         </div>{/* end scrollable middle */}
 
         {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
@@ -451,7 +715,7 @@ function MobileRoom({
             padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
           }}>
             <span>最低加价 {formatCentsCNY(stepCents)}</span>
-            <span className="mono">末10s 出价 → +30s 反狙击</span>
+            <span className="mono">末 10 秒出价延时 30 秒</span>
           </div>
         </div>
       </div>
@@ -529,9 +793,270 @@ function TerminalOverlay({ status }) {
           fontSize: 11, color: 'var(--douyin-ink-muted)', lineHeight: 1.5,
         }}>
           {isNoBid
-            ? '流拍 · NO_BID · 序列号已上链 · 可查看证据卡'
-            : '卖家终止 · CANCELLED · 序列号已上链 · 出价记录保留'}
+            ? '流拍 · 序列号已写入证据链 · 可查看证据卡'
+            : '卖家终止 · 序列号已写入证据链 · 出价记录保留'}
         </div>
+      </div>
+    </div>
+  );
+}
+
+const ROOM_TABS = [
+  { id: 'browse', label: '浏览' },
+  { id: 'history', label: '历史' },
+  { id: 'join', label: '参与' },
+  { id: 'auction', label: '拍卖' },
+  { id: 'rules', label: '规则' },
+];
+
+function RoomTabBar({ active, onChange }) {
+  return (
+    <div
+      role="tablist"
+      aria-label="房间信息"
+      className="no-scrollbar"
+      style={{
+      flexShrink: 0,
+      display: 'flex',
+      gap: 6,
+      overflowX: 'auto',
+      padding: '1px 2px 2px',
+    }}>
+      {ROOM_TABS.map((tab) => {
+        const selected = active === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={`room-tab-${tab.id}`}
+            aria-selected={selected}
+            aria-controls={`room-panel-${tab.id}`}
+            onClick={() => onChange(tab.id)}
+            style={{
+              flex: '1 0 auto',
+              minWidth: 52,
+              minHeight: 44,
+              borderRadius: 8,
+              border: selected ? '1px solid rgba(201,169,97,.45)' : '1px solid rgba(255,255,255,.08)',
+              background: selected ? 'rgba(201,169,97,.14)' : 'rgba(255,255,255,.04)',
+              color: selected ? 'var(--solemn-gold)' : 'var(--douyin-ink-muted)',
+              fontSize: 12,
+              fontWeight: 700,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+              backdropFilter: 'blur(10px)',
+            }}>
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PanelHeader({ title, meta, right }) {
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      padding: '0 4px 2px',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+        <span style={{
+          fontSize: 12,
+          fontWeight: 700,
+          color: 'var(--douyin-ink-text)',
+          letterSpacing: 0,
+        }}>
+          {title}
+        </span>
+        {meta && (
+          <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
+            {meta}
+          </span>
+        )}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function HistoryPanel({ items, lastSeq }) {
+  return (
+    <>
+      <PanelHeader title="出价历史" meta="横向滑动查看最近真实出价"/>
+      <BidHistoryStrip items={items}/>
+      <InfoSurface>
+        <InfoLine label="最新序列" value={`#${lastSeq ?? '—'}`}/>
+        <InfoLine label="记录来源" value="服务端事件流"/>
+        <InfoLine label="展示方式" value="仅展示真实采纳出价，不影响出价判定"/>
+      </InfoSurface>
+    </>
+  );
+}
+
+function JoinPanel({ following, minBidCents, stepCents, soundOn }) {
+  const depositCents = safeMulCents(stepCents, 2n);
+  return (
+    <>
+      <PanelHeader title="我要参与" meta="参与准备与模拟保证金"/>
+      <InfoSurface>
+        <InfoLine label="关注状态" value={following ? '已关注琉森拍卖行' : '未关注，可继续竞拍'}/>
+        <InfoLine label="最低出价" value={formatCentsCNY(minBidCents)}/>
+        <InfoLine label="提示音" value={soundOn ? '已开启，默认仍可随时关闭' : '默认静音'}/>
+      </InfoSurface>
+      <InfoSurface accent="cyan">
+        <InfoLine label="虚拟保证金" value={`${formatCentsCNY(depositCents)}（演示额度）`}/>
+        <InfoLine label="结算说明" value="仅使用虚拟币与模拟支付，不接入真实资金"/>
+      </InfoSurface>
+      <RequirementList
+        title="参与前需确认"
+        items={[
+          '阅读拍卖规则，出价提交后按后端状态判定。',
+          '延时、成交、取消均以服务端事件为准。',
+          '个人展示名仅用于本场演示，不公开真实身份。',
+        ]}
+      />
+    </>
+  );
+}
+
+function AuctionPanel({ firstLeader, secondLeader, yourRank, yourGapCents, minBidCents, extendCount, bidsPerSec }) {
+  return (
+    <>
+      <PanelHeader title="拍卖状态" meta="第一名、第二名与我的位置"/>
+      <InfoSurface>
+        <LeaderSummaryRow rank={1} leader={firstLeader}/>
+        <LeaderSummaryRow rank={2} leader={secondLeader}/>
+        <InfoLine label="我的排名" value={yourRank ? `第 ${yourRank} 名` : '暂无有效出价'}/>
+        <InfoLine label="反超差额" value={formatCentsCNY(yourGapCents || '0')}/>
+      </InfoSurface>
+      <InfoSurface accent="gold">
+        <InfoLine label="下一口最低价" value={formatCentsCNY(minBidCents)}/>
+        <InfoLine label="已触发延时" value={`${extendCount || 0} 次`}/>
+        <InfoLine label="当前热度" value={`${bidsPerSec.toFixed(1)} 口/秒`}/>
+      </InfoSurface>
+    </>
+  );
+}
+
+function RulesPanel({ stepCents, capCents }) {
+  return (
+    <>
+      <PanelHeader title="规则与条款" meta="按优先级收纳"/>
+      <RequirementList
+        title="必备"
+        items={[
+          `最低加价为 ${formatCentsCNY(stepCents)}。`,
+          '最后 10 秒内有效出价会触发反狙击延时。',
+          '视频画面不参与判定，竞拍只认服务端事件。',
+          '成交后生成订单与证据卡。',
+        ]}
+      />
+      <RequirementList
+        title="加分"
+        items={[
+          '排行榜第一名有冠军光晕和落槌特效。',
+          '出价历史常驻横滑，便于快速回看。',
+          '可选提示音默认关闭，用户主动开启才播放。',
+          capCents ? `封顶价为 ${formatCentsCNY(capCents)}。` : '未设置封顶价，按规则阶梯继续竞拍。',
+        ]}
+      />
+      <InfoSurface>
+        <InfoLine label="隐私条款" value="展示名与出价记录仅用于本场演示"/>
+        <InfoLine label="自定义定价" value="自定义金额必须高于当前价并对齐加价阶梯"/>
+      </InfoSurface>
+    </>
+  );
+}
+
+function InfoSurface({ children, accent = 'default' }) {
+  const border = accent === 'gold'
+    ? 'rgba(201,169,97,.28)'
+    : accent === 'cyan'
+      ? 'rgba(37,244,238,.26)'
+      : 'rgba(255,255,255,.09)';
+  return (
+    <div style={{
+      padding: '10px 11px',
+      borderRadius: 8,
+      background: 'rgba(255,255,255,.045)',
+      border: `1px solid ${border}`,
+      backdropFilter: 'blur(12px)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 7,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function InfoLine({ label, value }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+      <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', flexShrink: 0 }}>{label}</span>
+      <span style={{
+        fontSize: 12,
+        color: 'var(--douyin-ink-text)',
+        textAlign: 'right',
+        overflowWrap: 'anywhere',
+        lineHeight: 1.35,
+      }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function LeaderSummaryRow({ rank, leader }) {
+  const name = leader?.displayName || leader?.userId || '暂无';
+  const cents = leader?.cents ? formatCentsCNYCompact(leader.cents) : '—';
+  return <InfoLine label={`第 ${rank} 名`} value={`${name} · ${cents}`}/>;
+}
+
+function RequirementList({ title, items }) {
+  return (
+    <div style={{
+      padding: '10px 11px',
+      borderRadius: 8,
+      background: 'rgba(255,255,255,.04)',
+      border: '1px solid rgba(255,255,255,.08)',
+    }}>
+      <div style={{
+        fontSize: 12,
+        fontWeight: 700,
+        color: 'var(--solemn-gold)',
+        marginBottom: 7,
+      }}>
+        {title}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {items.map((item) => (
+          <div key={item} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+            <span style={{
+              width: 14,
+              height: 14,
+              borderRadius: 7,
+              background: 'rgba(201,169,97,.16)',
+              color: 'var(--solemn-gold)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 9,
+              flexShrink: 0,
+              marginTop: 1,
+            }}>
+              ·
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--douyin-ink-text)', lineHeight: 1.45 }}>
+              {item}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -573,10 +1098,10 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           <span className="sans" style={{
             fontSize: 11, fontWeight: 600, color: 'var(--solemn-gold)',
             letterSpacing: '.08em',
-          }}>SOLD · 已成交</span>
+          }}>已成交</span>
         </div>
-        <div className="sans" style={{ fontSize: 11, color: 'var(--solemn-cream-dim)', letterSpacing: '.08em' }}>
-          LOT 2024-0142 · 百达翡丽 5711/1A
+        <div className="sans" style={{ fontSize: 11, color: 'var(--solemn-cream-dim)', letterSpacing: 0 }}>
+          拍品 2024-0142 · 百达翡丽 5711/1A
         </div>
       </div>
 
@@ -587,10 +1112,10 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
       }}>
         <div className="sans" style={{
           fontSize: 11, color: 'var(--solemn-cream-dim)', letterSpacing: '.16em',
-        }}>HAMMER PRICE</div>
+        }}>落槌价</div>
         <div className="mono" style={{
           fontSize: 56, fontWeight: 700, color: 'var(--solemn-gold)',
-          letterSpacing: '-.025em', lineHeight: 1,
+          letterSpacing: 0, lineHeight: 1,
           textShadow: '0 4px 30px rgba(201,169,97,.35)',
         }}>
           {formatCentsCNY(amountCents)}
@@ -604,7 +1129,7 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           letterSpacing: '.02em',
         }}>{winnerName}</div>
         <div className="sans" style={{ fontSize: 11, color: 'var(--solemn-cream-dim)' }}>
-          最终竞得 · WINNING BIDDER
+          最终竞得人
         </div>
       </div>
 
@@ -619,12 +1144,12 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           background: 'rgba(245,237,221,.04)', border: '1px solid rgba(201,169,97,.18)',
         }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-            <span className="sans" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)', letterSpacing: '.08em' }}>HAMMER SEQ</span>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--solemn-cream)' }}>#14998</span>
+            <span className="sans" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)', letterSpacing: 0 }}>证据状态</span>
+            <span style={{ fontSize: 12, color: 'var(--solemn-cream)' }}>待证据卡确认</span>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
-            <span className="sans" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)', letterSpacing: '.08em' }}>CHAIN HEAD</span>
-            <span className="mono" style={{ fontSize: 13, color: 'var(--solemn-gold)' }}>0x9c4f…b318</span>
+            <span className="sans" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)', letterSpacing: 0 }}>链头哈希</span>
+            <span style={{ fontSize: 12, color: 'var(--solemn-gold)' }}>打开证据卡查看</span>
           </div>
         </div>
 
@@ -647,7 +1172,7 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           fontSize: 10, color: 'var(--solemn-cream-dim)', textAlign: 'center',
           letterSpacing: '.04em',
         }}>
-          时间 21:48:33 · 服务器时序已确认 · 证据已上链
+          成交结果已返回 · 服务器时序与链头哈希请以证据卡为准
         </div>
       </div>
     </div>
@@ -745,7 +1270,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
   // Keeping the prop computed so future variants can use it.
   const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
-  const lotId = isWired ? `AID ${(evidence.auctionId || '').slice(0, 12)}` : 'LOT 2024-0142';
+  const lotId = isWired ? `拍卖ID ${(evidence.auctionId || '').slice(0, 12)}` : '拍品 2024-0142';
 
   const showHint = (msg) => {
     if (actionHintTimerRef.current) clearTimeout(actionHintTimerRef.current);
@@ -767,7 +1292,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
       const text = JSON.stringify(payload, null, 2);
       if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(text);
-        showHint('证据 JSON 已复制');
+        showHint('证据数据已复制');
       } else {
         showHint('当前环境不支持剪贴板复制');
       }
@@ -845,7 +1370,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span className="serif" style={{ fontSize: 18, fontWeight: 500 }}>证据卡</span>
           <span style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', letterSpacing: '.04em' }}>
-            EVIDENCE · 哈希链可验证
+            证据链可验证
           </span>
         </div>
         <div style={{ flex: 1 }}/>
@@ -861,7 +1386,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               <path d="M4 4.5L7 7.5M7 4.5L4 7.5" stroke="var(--state-rejected)" strokeWidth="1.2" strokeLinecap="round"/>
             </svg>
             <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--state-rejected)', letterSpacing: '.04em' }}>
-              CHAIN BROKEN
+              链已断裂
             </span>
           </div>
         ) : (
@@ -875,7 +1400,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               <path d="M4 5.5l1.2 1.2L7.5 4.5" stroke="var(--solemn-gold)" strokeWidth="1.2" strokeLinecap="round"/>
             </svg>
             <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)', letterSpacing: '.04em' }}>
-              CHAIN VERIFIED
+              链已验证
             </span>
           </div>
         )}
@@ -892,7 +1417,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
           </svg>
           <div>
             <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--state-rejected)' }}>
-              检测到哈希链断裂 · seq #{effectiveBreakAtSeq}
+              检测到哈希链断裂 · 序列 #{effectiveBreakAtSeq}
             </div>
             <div style={{ fontSize: 11, color: 'var(--solemn-cream-dim)', lineHeight: 1.5, marginTop: 4 }}>
               prev_hash 与上一条 event_hash 不匹配。该记录及之后所有事件不可信，需 Replay Verifier 复核。
@@ -926,7 +1451,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               {formatCentsCNY(headerPrice)}
             </div>
             <div style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 2 }}>
-              落槌价 · HAMMER
+              落槌价
             </div>
           </div>
         </div>
@@ -956,7 +1481,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               lineHeight: 1.35,
               overflowWrap: 'anywhere',
             }}>
-              VIRTUAL COINS · NON-PAYMENT · NON-GAMBLING
+              虚拟币演示 · 无真实支付 · 非博彩
             </span>
           </div>
         )}
@@ -1020,7 +1545,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
                       )}
                     </span>
                     <span className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)' }}>
-                      seq #{ev.seq}
+                      序列 #{ev.seq}
                     </span>
                   </div>
                   <div className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 1 }}>
@@ -1037,10 +1562,10 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
                     background: 'rgba(0,0,0,.25)', display: 'flex',
                     alignItems: 'center', gap: 6, flexWrap: 'wrap',
                   }}>
-                    <span className="mono" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>prev</span>
+                    <span className="mono" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>上个哈希</span>
                     <span className="mono" style={{ fontSize: 10, color: 'var(--solemn-cream-dim)' }}>0x{ev.prev.slice(0,8)}</span>
                     <span style={{ color: 'var(--solemn-gold)', fontSize: 10 }}>→</span>
-                    <span className="mono" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>hash</span>
+                    <span className="mono" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>本条哈希</span>
                     <span className="mono" style={{ fontSize: 10, color: 'var(--solemn-gold)' }}>0x{ev.hash.slice(0,8)}</span>
                   </div>
                 </div>
@@ -1060,9 +1585,9 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             marginBottom: 6,
           }}>
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--solemn-gold)', letterSpacing: '.06em' }}>
-              CHAIN HEAD
+              证据链头
             </span>
-            <span style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>SHA-256</span>
+            <span style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>哈希算法</span>
           </div>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--solemn-cream)', wordBreak: 'break-all',
@@ -1086,7 +1611,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
                 fontSize: 10,
               }}
             >
-              复制证据 JSON
+              复制证据数据
             </button>
             <button
               onClick={shareEvidence}
@@ -1103,7 +1628,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               分享证据链接
             </button>
             <span style={{ opacity: actionHint ? 1 : 0.75 }}>
-              {actionHint || '点击复制 · 长按导出 JSON'}
+              {actionHint || '点击复制 · 长按导出数据'}
             </span>
           </div>
         </div>
@@ -1112,8 +1637,67 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   );
 }
 
+function readLocalFlag(key) {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeLocalFlag(key, value) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value) window.localStorage.setItem(key, '1');
+    else window.localStorage.removeItem(key);
+  } catch {}
+}
+
+function safeAddCents(a, b) {
+  try {
+    return (BigInt(a) + BigInt(b)).toString();
+  } catch {
+    return String(a || '0');
+  }
+}
+
+function safeMulCents(a, multiplier) {
+  try {
+    return (BigInt(a) * BigInt(multiplier)).toString();
+  } catch {
+    return '0';
+  }
+}
+
+function playTone(audioRef, kind, enabled = true) {
+  if (!enabled || typeof window === 'undefined') return;
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return;
+  try {
+    const ctx = audioRef.current || new AudioCtx();
+    audioRef.current = ctx;
+    if (ctx.state === 'suspended') void ctx.resume();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const now = ctx.currentTime;
+    const freq = kind === 'hammer' ? 660 : kind === 'overtake' ? 220 : kind === 'lead' ? 520 : 440;
+    const duration = kind === 'hammer' ? 0.18 : 0.11;
+    osc.type = kind === 'overtake' ? 'sawtooth' : 'sine';
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+  } catch {}
+}
+
 export {
   MobileRoom,
+  MobileRoomSkeleton,
   MobileHammer,
   MobileEvidence,
   DEMO_LEADERS,

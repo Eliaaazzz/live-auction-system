@@ -88,7 +88,7 @@ describe('MobileRoom bid locking', () => {
     );
 
     const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('MAX'));
+      .find((button) => button.textContent.includes('封顶'));
 
     expect(maxButton).toBeDefined();
     expect(maxButton).toBeDisabled();
@@ -105,7 +105,7 @@ describe('MobileRoom bid locking', () => {
     );
 
     const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('MAX'));
+      .find((button) => button.textContent.includes('封顶'));
 
     expect(maxButton).toBeDefined();
     expect(maxButton).not.toBeDisabled();
