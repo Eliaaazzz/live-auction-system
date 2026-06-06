@@ -108,6 +108,49 @@ The runner reads the worker row, invokes `wsload` with that shard's token file,
 and writes `worker-NN.log` under the shard artifact directory. Those logs are the
 input for `summarize-workers.sh`.
 
+To launch shards on separate Linux workers over SSH:
+
+```bash
+cat > /tmp/lumen-wsload-hosts.tsv <<'EOF'
+00 root@10.0.1.21
+01 root@10.0.1.22
+EOF
+
+tools/loadtest/wsload/run-remote-workers.sh \
+  --plan /tmp/lumen-wsload-shards-<timestamp>/workers.tsv \
+  --hosts /tmp/lumen-wsload-hosts.tsv \
+  --bin ./tools/loadtest/wsload/wsload-linux \
+  --host ws://<gateway-private-ip-or-lb>:80 \
+  --aid "$LOAD_AUCTION_ID" \
+  --ssh-key ~/.ssh/load-worker.pem
+```
+
+`run-remote-workers.sh` uploads only each worker's token shard to that worker,
+raises the session fd limit before invoking `wsload`, starts all workers
+concurrently, stores aggregate logs locally, writes per-worker host snapshots,
+and writes `remote-worker-logs/shards.tsv` for `scripts/v100k-evidence-gate.sh`.
+For Beijing ECS runs in the same VPC, prefer the gateway private IP or a private
+LB; do not have the gateway host dial its own public IP for final evidence.
+
+For the full Beijing 10k evidence chain, including clean metrics reset, token
+sharding, remote worker launch, server gate, wsload gate, and Replay Verifier:
+
+```bash
+RUNNER_REGION=cn-beijing \
+BASE_URL=http://115.191.76.40 \
+WS_HOST=ws://<gateway-private-ip-or-lb>:80 \
+TOKENS_FILE=/opt/lumen-load/tokens-current.txt \
+LOAD_AUCTION_ID=<live_load_auction_id> \
+METRICS_RESET_TOKEN=<operator-token> \
+VERIFY_CMD='ssh root@<gateway-public-ip> "LUMEN_SOURCE_DIR=/opt/live-auction-system /opt/lumen-runtime/run-lumen.sh verify --auction \"$LOAD_AUCTION_ID\""' \
+scripts/beijing-wsload-remote-10k-evidence.sh \
+  --hosts /tmp/lumen-wsload-hosts.tsv \
+  --wsload-bin ./tools/loadtest/wsload/wsload-linux
+```
+
+This is the preferred final path for a real Beijing-near 10k proof when the
+load generators are separate ECS workers.
+
 ### Result — 10,000 concurrent, server-side SLO crushed (2026-05-31)
 
 9,900 observers + 100 bidders, driven over the Docker network; server truth from

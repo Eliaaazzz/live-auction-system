@@ -142,6 +142,40 @@ Do not start a public 10k run until `/version.buildSha` matches `git rev-parse -
 - 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast-or-roomStatePatch p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
 - ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
 
+### A8.1 — 北京附近独立 worker 10k 验收
+最终 10k 证据必须从独立 Linux load worker 发起，不能用网关 ECS 自己拨自己的公网 IP。推荐在火山云北京同 VPC 临时开 2 台 2c/4g 或更高规格 ECS，只放开 controller SSH 到 worker；worker 目标优先打网关私网 IP 或私网 LB，例如 `ws://172.31.12.98:80`。这样避开公网 hairpin/NAT 连接失败，客户端 RTT 仍能代表北京附近流量。
+
+Controller 准备项:
+- `/version.buildSha` 已匹配待验收 commit，`/healthz` 正常，当前 LIVE load auction 可 `ROOM_JOIN -> ROOM_SNAPSHOT` 和 `BID_PLACE -> BID_ACCEPTED`。
+- `TOKENS_FILE` 至少 10,000 个生产买家 token；不要把 token 内容写进 issue、PR、shell output。
+- `METRICS_RESET_TOKEN` 只通过环境变量传入，用于取得 clean run-window metrics。
+- `VERIFY_CMD` 指向生产网关上的 Replay Verifier，验收 `stream == mysql == snapshot_seq`。
+
+示例:
+
+```bash
+cat >/tmp/lumen-wsload-hosts.tsv <<'EOF'
+00 root@<beijing-worker-0-private-ip>
+01 root@<beijing-worker-1-private-ip>
+EOF
+
+RUNNER_REGION=cn-beijing \
+BASE_URL=http://<gateway-public-ip> \
+WS_HOST=ws://<gateway-private-ip>:80 \
+TOKENS_FILE=/opt/lumen-load/tokens-current.txt \
+LOAD_AUCTION_ID=<live-load-auction-id> \
+METRICS_RESET_TOKEN="$METRICS_RESET_TOKEN" \
+VERIFY_CMD='ssh root@<gateway-public-ip> "LUMEN_SOURCE_DIR=/opt/live-auction-system /opt/lumen-runtime/run-lumen.sh verify --auction \"$LOAD_AUCTION_ID\""' \
+scripts/beijing-wsload-remote-10k-evidence.sh \
+  --hosts /tmp/lumen-wsload-hosts.tsv \
+  --wsload-bin ./tools/loadtest/wsload/wsload-linux
+```
+
+通过标准:
+- remote worker aggregate: `connect_ok=10000`, `connect_fail=0`, `closed_early=0`。
+- server metrics gate: `activeConns` 达到 10k；`ackLatencyMs.p95 < 80ms`；`roomStatePatchLatencyMs.p95 < 150ms`；`seqGapCount=0`；`backpressureForceClose=0`。
+- Replay Verifier: consistent，并记录 `stream/mysql/snapshot_seq` 三方一致。
+
 ## A9 — 成本收尾
 测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
 
