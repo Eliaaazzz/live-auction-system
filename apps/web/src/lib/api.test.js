@@ -62,6 +62,40 @@ describe('api.getAuction · happy path', () => {
   });
 });
 
+describe('api.placeBid', () => {
+  it('POSTs the buyer bid command with bearer auth and JSON body', async () => {
+    const envelope = {
+      type: 'BID_ACCEPTED',
+      auctionId: 'auc_demo',
+      requestId: 'cbid-1',
+      data: { amountCents: '13000000' },
+    };
+    const payload = { clientBidId: 'cbid-1', amountCents: '13000000' };
+    const controller = new AbortController();
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => envelope,
+    });
+
+    const got = await api.placeBid('auc_demo', payload, { signal: controller.signal });
+
+    expect(got).toEqual(envelope);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auctions/auc_demo/bids',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+        headers: expect.objectContaining({
+          'content-type': 'application/json',
+          Authorization: 'Bearer test-token',
+        }),
+      }),
+    );
+  });
+});
+
 describe('prequalify formal-auction APIs', () => {
   it('GETs seller-only reserve recommendation for a sealed parent', async () => {
     const rec = { recommendedReserveCents: '9000', sealedSummary: { count: 3 } };

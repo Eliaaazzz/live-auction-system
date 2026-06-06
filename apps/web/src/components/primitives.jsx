@@ -8,12 +8,36 @@ import { bidRejectCopy } from '../lib/types.js';
 function formatCentsCNY(cents) {
   const s = String(cents);
   const neg = s.startsWith('-');
-  const abs = neg ? s.slice(1) : s;
+  // Cents are integer-only; strip non-digits so a malformed value
+  // (undefined / null / '' / partial payload) degrades to ¥0.00 instead
+  // of rendering garbage like "¥undefin.ed".
+  const abs = (neg ? s.slice(1) : s).replace(/[^0-9]/g, '') || '0';
   const padded = abs.padStart(3, '0');
   const yuan = padded.slice(0, -2);
   const fen = padded.slice(-2);
   const grouped = yuan.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return (neg ? '-' : '') + '¥' + grouped + '.' + fen;
+}
+
+function formatCentsCNYCompact(cents) {
+  try {
+    const n = BigInt(cents);
+    const neg = n < 0n;
+    const abs = neg ? -n : n;
+    const units = [
+      { centsPerUnit: 1_000_000_000_000_00n, label: '万亿' },
+      { centsPerUnit: 100_000_000_00n, label: '亿' },
+      { centsPerUnit: 10_000_00n, label: '万' },
+    ];
+    const unit = units.find((u) => abs >= u.centsPerUnit);
+    if (!unit) return formatCentsCNY(cents);
+    const scaledHundred = abs * 100n / unit.centsPerUnit;
+    const whole = scaledHundred / 100n;
+    const frac = String(scaledHundred % 100n).padStart(2, '0').replace(/0+$/, '');
+    return `${neg ? '-' : ''}¥${whole}${frac ? `.${frac}` : ''}${unit.label}`;
+  } catch {
+    return formatCentsCNY(cents);
+  }
 }
 
 // Add string cents — for "tap to add ¥X reverse" math
@@ -40,8 +64,9 @@ function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnder
     <span className={'mono' + (flash ? ' lumen-gold-flash' : '')}
       style={{
         position: 'relative',
-        fontSize: size, fontWeight: 700, color, lineHeight: 1, letterSpacing: '-0.025em',
+        fontSize: size, fontWeight: 700, color, lineHeight: 1, letterSpacing: 0,
         display: 'inline-flex', alignItems: 'baseline',
+        maxWidth: '100%', flexWrap: 'wrap',
         transition: 'color .18s ease', willChange: 'transform',
         paddingBottom: withUnderline ? 4 : 0,
         borderBottom: withUnderline ? '1px solid var(--x-gold-thin)' : 'none',
@@ -75,7 +100,7 @@ function Countdown({ remainingMs, warningMs = 10000, tone = 'live', size = 'lg' 
              : 'var(--douyin-ink-text)';
   return (
     <span className={'mono' + (warn ? ' lumen-pulse-warn' : '')}
-      style={{ fontSize, fontWeight: 600, color, lineHeight: 1, letterSpacing: '-0.02em' }}>
+      style={{ fontSize, fontWeight: 600, color, lineHeight: 1, letterSpacing: 0 }}>
       {fmtRemaining(remainingMs)}
     </span>
   );
@@ -166,7 +191,7 @@ const AI_TRIGGER = {
   jump:    { dot: 'var(--state-extended)', bg: 'rgba(255,176,32,.07)',  border: 'rgba(255,176,32,.28)',  label: '黑马',    icon: '⚡' },
   cold:    { dot: 'var(--douyin-ink-muted)', bg: 'rgba(154,160,180,.06)', border: 'rgba(154,160,180,.18)', label: '冷场',    icon: '··' },
   hammer:  { dot: 'var(--solemn-gold)',    bg: 'rgba(201,169,97,.08)',  border: 'rgba(201,169,97,.32)',  label: '落槌',    icon: '✦' },
-  offline: { dot: '#6b7280',               bg: 'rgba(107,114,128,.08)', border: 'rgba(107,114,128,.18)', label: 'OFFLINE', icon: '×' },
+  offline: { dot: '#6b7280',               bg: 'rgba(107,114,128,.08)', border: 'rgba(107,114,128,.18)', label: '离线', icon: '×' },
 };
 
 function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }) {
@@ -197,7 +222,7 @@ function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }
           color: offline ? '#9aa0b4' : trigger === 'hammer' ? 'var(--solemn-ink)' : '#fff',
           fontFamily: 'var(--font-sans)',
         }}>
-          {offline ? '×' : 'AI'}
+          {offline ? '×' : '智'}
         </span>
         {!offline && (
           <span className="lumen-live-dot" style={{
@@ -248,8 +273,9 @@ function Leaderboard({ leaders, mode = 'list' }) {
       {leaders.map((u, i) => {
         const isLead = i === 0;
         const halo = halos[i];
+        const displayName = u.displayName || u.userId || '匿名买家';
         return (
-          <div key={u.userId} style={{
+          <div key={u.userId || `${i}-${displayName}`} style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '8px 10px', borderRadius: 10,
             background: isLead ? 'rgba(201,169,97,.10)' : 'rgba(255,255,255,.02)',
@@ -278,7 +304,7 @@ function Leaderboard({ leaders, mode = 'list' }) {
               boxShadow: halo ? `0 0 0 1.5px ${halo}` : 'none',
               fontFamily: 'var(--font-sans)',
             }}>
-              {(u.displayName || u.userId || '?')[0]}
+              {displayName[0]}
             </div>
             <span style={{
               flex: 1, minWidth: 0, fontSize: 13,
@@ -288,14 +314,14 @@ function Leaderboard({ leaders, mode = 'list' }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 5,
             }}>
-              {u.displayName || u.userId}
+              {displayName}
               {u.combo && u.combo >= 2 && <ComboFlame count={u.combo}/>}
               {u.isYou && (
                 <span style={{
                   fontSize: 9, padding: '1px 5px',
                   background: 'rgba(37,244,238,.2)', color: 'var(--douyin-cyan)',
                   borderRadius: 3, fontWeight: 600,
-                }}>YOU</span>
+                }}>我</span>
               )}
             </span>
             <span className="mono" style={{
@@ -332,18 +358,19 @@ function LeaderboardPodium({ leaders }) {
       {visualOrder.map((u) => {
         const r = visualRank(u);
         const isLead = r === 1;
+        const displayName = u.displayName || u.userId || '匿名买家';
         return (
-          <div key={u.userId} style={{
+          <div key={u.userId || `${r}-${displayName}`} style={{
             flex: '0 0 84px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
             position: 'relative',
           }}>
             {isLead && (
-              <div className="lumen-spotlight" aria-hidden style={{
-                position: 'absolute', top: -2, left: '50%',
+              <div className="lumen-champion-aura" aria-hidden style={{
+                position: 'absolute', top: -10, left: '50%',
                 transform: 'translateX(-50%)',
-                width: 64, height: 18,
-                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent)',
+                width: 86, height: 46,
+                background: 'radial-gradient(ellipse 70% 80% at center, rgba(220,191,127,.46), rgba(201,169,97,.18) 45%, transparent 72%)',
                 pointerEvents: 'none',
               }}/>
             )}
@@ -352,10 +379,14 @@ function LeaderboardPodium({ leaders }) {
               background: u.avatarBg || '#3b4252',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#fff', fontSize: 14, fontWeight: 600,
-              boxShadow: `0 0 0 2px ${medalColor[r]}`,
+              boxShadow: isLead
+                ? '0 0 0 2px var(--solemn-gold), 0 0 22px rgba(220,191,127,.34)'
+                : `0 0 0 2px ${medalColor[r]}`,
               fontFamily: 'var(--font-sans)',
+              position: 'relative',
             }}>
-              {(u.displayName || u.userId || '?')[0]}
+              {isLead && <span className="lumen-champion-ring" aria-hidden/>}
+              {displayName[0]}
             </div>
             <span style={{
               maxWidth: 84,
@@ -365,13 +396,13 @@ function LeaderboardPodium({ leaders }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 3, justifyContent: 'center',
             }}>
-              {u.displayName || u.userId}
+              {displayName}
               {u.isYou && (
                 <span style={{
                   fontSize: 8, padding: '1px 4px',
                   background: 'rgba(37,244,238,.2)', color: 'var(--douyin-cyan)',
                   borderRadius: 3, fontWeight: 600,
-                }}>YOU</span>
+                }}>我</span>
               )}
             </span>
             <span className="mono" style={{
@@ -553,11 +584,11 @@ function QuickBidChips({
     { label: '+1档',  cents: stepBump(1) },
     { label: '+3档',  cents: stepBump(3) },
     { label: '+10档', cents: stepBump(10) },
-    { label: 'MAX',   cents: maxBid(), tone: 'gold' },
+    { label: '封顶',  cents: maxBid(), tone: 'gold' },
   ];
 
   const chipBase = {
-    flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '9px 4px', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
@@ -618,12 +649,13 @@ function QuickBidChips({
           加价阶梯未配置 · 出价请使用自定义金额
         </div>
       )}
-      <div style={{ display: 'flex', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
         {chips.map((c, i) => {
           const isGold = c.tone === 'gold' || isLeading;
           return (
             <button key={i}
               disabled={disabled}
+              className="lumen-bid-chip"
               onClick={() => onBid(c.cents)}
               onPointerDown={chipPress}
               onPointerUp={chipRelease}
@@ -640,11 +672,12 @@ function QuickBidChips({
                     ? '0 4px 14px rgba(201,169,97,.28)'
                     : '0 4px 14px rgba(254,44,85,.28)',
               }}>
-              <span className="mono" style={{
+              <span className="mono" title={formatCentsCNY(c.cents)} style={{
                 fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
                 fontVariantNumeric: 'tabular-nums',
+                maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
-                {formatCentsCNY(c.cents)}
+                {formatCentsCNYCompact(c.cents)}
               </span>
               <span style={{
                 fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
@@ -659,12 +692,12 @@ function QuickBidChips({
         onClick={() => setShowDrawer((s) => !s)}
         disabled={disabled}
         style={{
-          marginTop: 6, width: '100%', padding: '6px 10px', borderRadius: 8,
+          marginTop: 6, width: '100%', minHeight: 44, padding: '8px 10px', borderRadius: 8,
           background: 'transparent', border: '1px dashed rgba(255,255,255,.18)',
           color: 'var(--douyin-ink-muted)', fontSize: 11, fontFamily: 'inherit',
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}>
-        {showDrawer ? '收起' : '自定义金额 · CUSTOM'}
+        {showDrawer ? '收起' : '自定义金额'}
       </button>
       {showDrawer && (
         <div style={{
@@ -681,7 +714,7 @@ function QuickBidChips({
               // Cap raw input at 17 chars (≈ MAX_MONEY_CENTS digit count + 1)
               // so paste of "999..." (60 digits) never reaches state.
               maxLength={17}
-              placeholder="cents（保持字符串)"
+              placeholder="输入金额（分）"
               value={custom}
               onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, '').slice(0, 17))}
               style={{
@@ -701,7 +734,7 @@ function QuickBidChips({
                 setShowDrawer(false);
               }}
               style={{
-                padding: '8px 14px', borderRadius: 6, border: 'none',
+                minHeight: 44, padding: '8px 14px', borderRadius: 6, border: 'none',
                 background: 'var(--douyin-red)', color: '#fff',
                 fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
                 cursor: customSubmittable ? 'pointer' : 'not-allowed',
@@ -726,7 +759,7 @@ function QuickBidChips({
                   disabled={disabled}
                   onClick={() => stepNudge(b.mult)}
                   style={{
-                    flex: 1, padding: '6px 4px', borderRadius: 6,
+                    flex: 1, minHeight: 44, padding: '6px 4px', borderRadius: 6,
                     background: 'rgba(255,255,255,.06)',
                     border: '1px solid rgba(255,255,255,.10)',
                     color: 'var(--douyin-ink-text)',
@@ -744,10 +777,10 @@ function QuickBidChips({
               fontSize: 10, color: 'var(--state-rejected)',
               fontFamily: 'var(--font-sans)',
             }}>
-              {customError === 'max'   && '金额超过单笔上限 · MaxMoneyCents (2^53-1)'}
+              {customError === 'max'   && '金额超过单笔上限'}
               {customError === 'low'   && `必须高于当前价 ${formatCentsCNY(currentCents)}`}
               {customError === 'step'  && `差额必须是 ${formatCentsCNY(stepCents)} 倍数 · 点 ± 档位按钮自动对齐`}
-              {customError === 'parse' && '请输入纯数字 cents 字符串'}
+              {customError === 'parse' && '请输入纯数字金额（分）'}
             </div>
           )}
         </div>
@@ -800,6 +833,7 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
 
 export {
   formatCentsCNY,
+  formatCentsCNYCompact,
   addCentsStr,
   fmtRemaining,
   bidRejectCopy,

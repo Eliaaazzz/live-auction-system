@@ -307,6 +307,46 @@
 }
 .lumen-spotlight { animation: lumen-spotlight 3s ease-in-out infinite; }
 
+@keyframes lumen-champion-aura {
+  0%,100% { opacity: .42; transform: translateX(-50%) translateY(2px) scale(.96); filter: blur(0); }
+  50%     { opacity: .88; transform: translateX(-50%) translateY(0) scale(1.08); filter: blur(1px); }
+}
+.lumen-champion-aura { animation: lumen-champion-aura 2.7s ease-in-out infinite; }
+
+@keyframes lumen-champion-ring {
+  0%   { opacity: .8; transform: translate(-50%,-50%) scale(.78); }
+  72%  { opacity: 0;  transform: translate(-50%,-50%) scale(1.85); }
+  100% { opacity: 0;  transform: translate(-50%,-50%) scale(1.85); }
+}
+.lumen-champion-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(220,191,127,.66);
+  pointer-events: none;
+  animation: lumen-champion-ring 2.4s ease-out infinite;
+}
+
+@keyframes lumen-skeleton-glide {
+  0% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
+}
+.lumen-skeleton {
+  background-image: linear-gradient(90deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.14) 46%, rgba(255,255,255,.05) 92%);
+  background-size: 240% 100%;
+  animation: lumen-skeleton-glide 1.35s ease-in-out infinite;
+}
+
+.lumen-bid-chip {
+  will-change: transform;
+}
+.lumen-bid-chip:active {
+  transform: scale(.94);
+}
+
 /* ─── Long-press wheel reveal ─── */
 @keyframes lumen-wheel-in {
   0%   { transform: scale(.4) rotate(-20deg); opacity: 0; }
@@ -346,6 +386,9 @@
 .surface-calm .lumen-cursor-blink,
 .surface-calm .lumen-shockwave,
 .surface-calm .lumen-spotlight,
+.surface-calm .lumen-champion-aura,
+.surface-calm .lumen-champion-ring,
+.surface-calm .lumen-skeleton,
 .surface-calm .lumen-wheel-in { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {

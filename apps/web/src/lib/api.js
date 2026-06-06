@@ -80,6 +80,10 @@ export const api = {
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
+  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable. */
+  placeBid: (id, payload, { signal } = {}) =>
+    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal }),
+
   /** Stub today (PR #34 fills the timeline + hash chain). */
   getEvidence: (id) => request(`/auctions/${id}/evidence`),
 
