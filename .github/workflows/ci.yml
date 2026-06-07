@@ -113,6 +113,29 @@ jobs:
         run: docker compose -f infra/docker-compose.yml --profile tools run --rm --build -e VERIFY_AID="$VERIFY_AID" verifier
       - name: verify-evidence (T4 hash-chain gate; exit!=0 on hash_break)
         run: docker compose -f infra/docker-compose.yml exec -T lumen /lumen verify-evidence --auction "$VERIFY_AID"
+      - name: demo-auction + 6 mode demos (issue #114 acceptance + anti-snipe/hammer/evidence)
+        # `make demo-smoke` wraps these locally but adds load-smoke + chaos-smoke
+        # which we already run separately below. This step runs only the
+        # asserted demo-* targets — each spins a full auction lifecycle (create
+        # → freeze → start → bid → hammer → evidence) inside the running stack
+        # and exit-codes on its own invariant (sudden-death no-extend, sealed
+        # reveal hides amounts during LIVE, vickrey 2nd-price, hybrid leader
+        # redaction, all-pay forfeit + NO ORDER, prequalify recommender-seeded
+        # spawn-formal). Added 2026-06-06 after demo-prequalify regression was
+        # caught by a local make demo-smoke run on c6701c1 (#225). CI doesn't
+        # need the full demo-smoke wrapper because chaos/load/AI-offline are
+        # already gates in this job; only the asserted scenario demos were
+        # ungated.
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          make demo-auction
+          make demo-sudden-death
+          make demo-sealed
+          make demo-vickrey
+          make demo-hybrid
+          make demo-allpay
+          make demo-prequalify
       - name: e2e-ai-offline (T7-5 chaos gate; V9 P3 — bid path independent of AI)
         # Per issue #70 §4.5. Stops the ai-sidecar container, re-runs
         # e2e-dummy-bid (must exit 0), restarts sidecar, re-runs once
@@ -154,17 +177,18 @@ jobs:
         # contract surface the browser uses. Wired here because the stack is
         # up; per the team rule "no skipped CI tests" these run on every push.
         # Sequential execution preserves deterministic shared-state behavior
-        # with existing fixtures (each smoke creates its own auction; wall
-        # time is the sum but each is short enough that the total is bounded).
+        # with existing fixtures (smoke-wire uses seeded auc_demo; the other
+        # smoke scripts create their own auctions as needed; wall time is
+        # bounded).
         timeout-minutes: 5
         working-directory: apps/web
         run: |
-          aid="${VERIFY_AID:-$AUCTION_ID}"
-          if [ -n "$aid" ]; then
-            VERIFY_AID="$aid" AUCTION_ID="$aid" npm run -s smoke:all
-          else
-            npm run -s smoke:all
-          fi
+          # VERIFY_AID is the early e2e/verifier auction. After the longer
+          # demo/chaos/load gates it may be SOLD, so do not leak it into
+          # browser-contract smoke tests. smoke-wire falls back to seeded
+          # auc_demo, which Seed keeps LIVE for one hour.
+          unset VERIFY_AID AUCTION_ID
+          npm run -s smoke:all
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs

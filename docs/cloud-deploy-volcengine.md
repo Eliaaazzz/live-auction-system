@@ -6,7 +6,7 @@
 > measurement boundary applies here verbatim.
 > 💰 **Cost:** 火山引擎 按量计费 ≈ ¥10–40/day (~¥25 typical) → ~¥350 for the challenge
 > window. **余额可退；测/演示完务必关停 (A9).**
-> 🔒 Secrets via `docs/secrets-workflow.md` — never commit/echo. Configs: `infra/docker-compose.prod.yml` + `infra/Caddyfile`.
+> 🔒 Secrets via `docs/secrets-workflow.md` — never commit/echo. Manual compose configs: `infra/docker-compose.prod.yml` + `infra/Caddyfile`; GitHub Actions CD uses runner-built systemd runtime and does not start Caddy.
 
 ## A0 — 账号 (队长, one-time)
 1. 注册 + 实名认证: `https://console.volcengine.com/auth/login`.
@@ -45,13 +45,15 @@
 ## A4 — ECS 装环境
 ```bash
 ssh -i <key.pem> ubuntu@<ECS_PUBLIC_IP>
-sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin git
-sudo usermod -aG docker $USER && newgrp docker   # 免 sudo
+sudo apt-get update && sudo apt-get install -y git
+# Only needed for the manual compose+Caddy path in A6/A7:
+sudo apt-get install -y docker.io docker-compose-plugin
+sudo usermod -aG docker $USER && newgrp docker   # manual compose only
 git clone https://github.com/Eliaaazzz/live-auction-system.git && cd live-auction-system
 ```
 
 ## A5 — 生产配置 (secrets + 接管理实例)
-`infra/docker-compose.prod.yml` 已是**独立**生产编排 (lumen + ai-sidecar + Caddy；MySQL/Redis 用 A2/A3 的托管实例)。在 ECS 上创建 `infra/.env.prod` (本地，**勿提交**):
+在 ECS 上创建 `infra/.env.prod` (本地，**勿提交**)。GitHub Actions CD keeps this file in `CD_REMOTE_DIR`; the manual compose path also reads it before starting `infra/docker-compose.prod.yml`:
 ```bash
 cat > infra/.env.prod <<'EOF'
 MYSQL_DSN=lumen:<pwd>@tcp(<rds_intranet>:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4
@@ -66,8 +68,12 @@ REDIS_ADDR=<redis_intranet>:6379
 REDIS_PASSWORD=<redis_pwd_if_enabled>
 JWT_SECRET=<openssl rand -hex 32>
 EVIDENCE_HMAC_KEY=<openssl rand -hex 32>
+METRICS_RESET_TOKEN=<openssl rand -hex 32>
 FRONTEND_ORIGIN=https://<your-domain>
 LUMEN_DOMAIN=<your-domain>
+# deploy identity for GET /version; set these at deploy time, not manually forever
+LUMEN_BUILD_SHA=unknown
+LUMEN_BUILD_TIME=unknown
 # 火山直播 (Part B；没配则直播间退回 sim sheen)
 VOLCENGINE_LIVE_PUSH_DOMAIN=
 VOLCENGINE_LIVE_PLAY_DOMAIN=
@@ -76,18 +82,53 @@ EOF
 ```
 `config.go` §8 baseline 会校验: `APP_ENV=prod` 下必须非默认 JWT/evidence + `ENABLE_DEV_LOGIN=false` (compose 已设)。
 
-## A6 — TLS + 反代 (wss)
-- 在域名 DNS 处加 **A 记录**: `<your-domain>` → ECS 公网 IP (生效后 Caddy 才能签证书)。
-- `infra/Caddyfile` 已配 auto-Let's-Encrypt + WS upgrade → `lumen:8080`。
-- (浏览器生产 wss 必须 TLS — Caddy 自动签发/续期。)
+Before every deploy, export the current build identity so `/version` can catch stale binaries before a public load test:
 
-## A7 — 起服 + 自检
+```bash
+export LUMEN_BUILD_SHA=$(git rev-parse --short HEAD)
+export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+```
+
+## A5.5 — GitHub Actions CD
+Production CD is wired by `.github/workflows/deploy-prod.yml`. The workflow builds Linux binaries and web assets on the runner, then uploads release archives to ECS over checksum-verified chunked SSH before restarting the systemd services.
+
+Required repository secrets:
+- `CD_ECS_HOST`: Volcengine ECS public IP or DNS name.
+- `CD_ECS_USER`: SSH user with root access or passwordless sudo, for example Ubuntu's default `ubuntu` user after `sudo -n true` succeeds.
+- `CD_ECS_SSH_KEY`: private key for that SSH user.
+- `CD_ECS_PORT`: optional SSH port; defaults to `22`.
+
+Optional repository variables:
+- `CD_BASE_URL`: post-deploy smoke base URL; defaults to `http://115.191.76.40`.
+- `CD_REMOTE_DIR`: source/config directory on ECS; defaults to `~/live-auction-system`.
+- `CD_AUTO_DEPLOY`: set to `true` only when main should deploy automatically after CI success.
+
+The workflow keeps runtime secrets in `infra/.env.prod` on ECS, checks out the exact CI-tested commit for auto deploys, builds Linux binaries and the web bundle on the GitHub runner, uploads them to `/opt/lumen-runtime`, updates `LUMEN_BUILD_SHA` and `LUMEN_BUILD_TIME`, then restarts. Runtime install and systemd writes use root or passwordless sudo. This Actions path serves the app directly from `lumen.service` on HTTP port 80; it does **not** start `infra/docker-compose.prod.yml` or Caddy. Use `CD_BASE_URL=http://<ECS_PUBLIC_IP>` unless you separately put a TLS reverse proxy in front.
+
+```bash
+systemctl restart lumen-sidecar.service
+systemctl restart lumen.service
+```
+
+It gates the deploy with `/healthz`, `/version`, and `/metrics`. `/version.buildSha` must match the deployed commit or the workflow fails.
+
+## A6 — TLS + 反代 (manual compose/Caddy path)
+- 在域名 DNS 处加 **A 记录**: `<your-domain>` → ECS 公网 IP (生效后 Caddy 才能签证书)。
+- `infra/Caddyfile` belongs to the manual `docker compose -f infra/docker-compose.prod.yml` path and reverse-proxies to the compose service `lumen:8080`. The GitHub Actions systemd CD path above does not start Caddy.
+- (浏览器生产 wss 必须 TLS — use the Caddy compose path or another explicit reverse proxy in front of the systemd service.)
+
+## A7 — manual compose 起服 + 自检
 ```bash
 set -a; . infra/.env.prod; set +a
+export LUMEN_BUILD_SHA=$(git rev-parse --short HEAD)
+export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker compose -f infra/docker-compose.prod.yml up -d --build --wait
 curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
+curl -sf https://<your-domain>/version               # schemaVersion + buildSha must match current deploy
 # 浏览器打开 https://<your-domain> → 走 wss 进直播间；seed 一个拍卖跑通出价
 ```
+
+Do not start a public 10k run until `/version.buildSha` matches `git rev-parse --short HEAD` and a current-schema WS smoke has proved `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED` on a LIVE auction. For Actions CD without TLS, use `http://<ECS_PUBLIC_IP>` / `ws://<ECS_PUBLIC_IP>` targets; for domain HTTPS/wss, use the explicit Caddy/proxy path above.
 
 ## A8 — 生产万人并发复测 (the win evidence)
 从**异地机**(非 ECS)打 `wss://<your-domain>`，复用现成 harness:
@@ -98,14 +139,14 @@ curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
   LOGIN_PATH=/api/login TARGET=https://<your-domain> LOAD_AUCTION_ID=<aid> \
     LOAD_RETRY_TOO_LOW=true LOAD_BIDS_PER_BIDDER=1 go run ./apps/lumen/cmd/lumen load
   ```
-- 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
+- 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast-or-roomStatePatch p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
 - ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
 
 ## A9 — 成本收尾
 测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
 
 ## 验证 / 回滚
-- ✅ `https://<domain>/healthz`=200；直播间 wss 可连；出价→ack；`/metrics` 可达。
+- ✅ Actions CD: `http://<ECS_PUBLIC_IP>/healthz`=200 and `/version.schemaVersion` + `/version.buildSha` match the intended deploy. Manual Caddy path: `https://<domain>/healthz`=200, wss 可连, 出价→ack。`/metrics` 可达。
 - ✅ perf-report §8 填好 (服务端 SLO 在阈值内；e2e 记录真实 RTT)。
 - ✅ **本地兜底不变**: `make up` 仍能离线跑完整 demo (#9/#87) — 生产部署绝不是演示单点。
 - 回滚: `down` 容器 + 控制台关云资源；demo 回退本地。
