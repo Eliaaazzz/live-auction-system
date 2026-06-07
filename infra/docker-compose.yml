@@ -59,6 +59,10 @@ services:
       # lumen` so the Timer Worker goroutine is skipped at startup. See
       # apps/lumen/internal/server/server.go for the fail-closed check.
       LUMEN_CHAOS_DISABLE_TIMER: ${LUMEN_CHAOS_DISABLE_TIMER:-}
+      # Surfaced by GET /version so "what's deployed?" is answerable. Set at
+      # up time: LUMEN_BUILD_SHA=$(git rev-parse --short HEAD) docker compose ... up -d
+      LUMEN_BUILD_SHA: ${LUMEN_BUILD_SHA:-}
+      LUMEN_BUILD_TIME: ${LUMEN_BUILD_TIME:-}
     depends_on:
       redis: {condition: service_healthy}
       mysql: {condition: service_healthy}
@@ -251,6 +255,8 @@ services:
       MYSQL_DSN: "lumen:lumen@tcp(mysql:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4"
       REDIS_ADDR: redis:6379
       AI_SIDECAR_URL: http://ai-sidecar:8090
+      LUMEN_BUILD_SHA: ${LUMEN_BUILD_SHA:-}
+      LUMEN_BUILD_TIME: ${LUMEN_BUILD_TIME:-}
     ports: ["8081:8080"]
     # Depends on `lumen` healthy so the mode=all process (timer + pg-writer)
     # is already running before this pure-gateway instance accepts clients.
