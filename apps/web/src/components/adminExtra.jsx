@@ -117,7 +117,7 @@ function ImageDropZone({ imageUrl, onChange }) {
 // ───────────────────────────────────────────────────────────────
 function AdminPublish() {
   const navigate = useNavigate();
-  const [title, setTitle] = React.useState('百达翡丽 5711/1A · 蓝面');
+  const [title, setTitle] = React.useState('劳力士 Explorer 114270 · 黑面');
   const [startCents, setStartCents] = React.useState('12000000');
   const [stepCents,  setStepCents]  = React.useState('500000');
   const [reserveCents, setReserveCents] = React.useState('10000000');
@@ -132,8 +132,8 @@ function AdminPublish() {
   // drafts facts from. Defaults to a sample so the demo has a real image;
   // sellers can paste their own. (No binary upload endpoint — a URL is the
   // spec-allowed input; the room degrades to a styled placeholder if it fails.)
-  const [imageUrl, setImageUrl] = React.useState('https://images.unsplash.com/photo-1547996160-81dfa63595aa?w=900&q=80');
-  const [description, setDescription] = React.useState('稀世腕表,蓝面,盘面完好,附原厂证书。');
+  const [imageUrl, setImageUrl] = React.useState('/demo/watch-explorer.jpg');
+  const [description, setDescription] = React.useState('经典运动腕表,黑面,盘面完好,附原厂证书。');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
 
@@ -738,7 +738,7 @@ function AdminCancelModal({
               display: 'flex', justifyContent: 'space-between', padding: '10px 12px',
               borderRadius: 8, background: 'rgba(255,255,255,.03)',
             }}>
-              <div style={{ fontSize: 12, color: 'var(--douyin-ink-text)' }}>百达翡丽 5711/1A · 蓝面</div>
+              <div style={{ fontSize: 12, color: 'var(--douyin-ink-text)' }}>劳力士 Explorer 114270 · 黑面</div>
               <div className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--douyin-red)' }}>
                 {formatCentsCNY(currentCents)}
               </div>
@@ -815,31 +815,34 @@ const USE_MOCK_DATA = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 
 // accidentally deleted in ede64e9 while its five usages stayed — the page
 // crashed on render whenever the fallback path was hit. Restored with the
 // extended column set (起拍价/固定加价/封顶价/出价次数).
+// Titles deliberately match the bundled photos (public/demo, Unsplash
+// License) — a watch judge reading「鹦鹉螺」over a non-Nautilus shot would
+// flag the mismatch instantly.
 const ORDER_ROWS = [
-  { lot: 'auc-demo-0142', title: '百达翡丽 5711/1A 鹦鹉螺 · 蓝面', status: 'LIVE',
+  { lot: 'auc-demo-0142', title: '劳力士 Explorer 114270 · 黑面', status: 'LIVE',
     winner: '—', hammer: '0', currentCents: '12880000', startCents: '12000000',
     stepCents: '500000', capCents: '30000000', bidCount: 13, endAtMs: 0,
-    imageUrl: '', settle: '—', t: '直播中', mode: 'ENGLISH', parentAuctionId: '' },
-  { lot: 'auc-demo-0141', title: '劳力士 GMT-Master II 116710', status: 'ORDER_CREATED',
+    imageUrl: '/demo/watch-explorer.jpg', settle: '—', t: '直播中', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0141', title: '劳力士 Air-King 114210 · 黑面', status: 'ORDER_CREATED',
     winner: '海风_2024', hammer: '6850000', currentCents: '6850000', startCents: '5000000',
     stepCents: '100000', capCents: '9000000', bidCount: 30, endAtMs: 0,
-    imageUrl: '', settle: '已结算', t: '2026-06-05 21:48', mode: 'ENGLISH', parentAuctionId: '' },
-  { lot: 'auc-demo-0140', title: '清代翡翠手镯 · A货', status: 'SOLD',
+    imageUrl: '/demo/watch-airking.jpg', settle: '已结算', t: '2026-06-05 21:48', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0140', title: '天然珍珠项链 · 18K 镶钻花扣', status: 'SOLD',
     winner: '听雨人', hammer: '4200000', currentCents: '4200000', startCents: '3000000',
     stepCents: '100000', capCents: '6000000', bidCount: 18, endAtMs: 0,
-    imageUrl: '', settle: '待结算', t: '2026-06-05 20:14', mode: 'ENGLISH', parentAuctionId: '' },
-  { lot: 'auc-demo-0139', title: '欧米茄 Speedmaster Moonwatch', status: 'SCHEDULED',
+    imageUrl: '/demo/jewelry-pearl.jpg', settle: '待结算', t: '2026-06-05 20:14', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0139', title: '精工 SARB033 自动机械 · 黑面', status: 'SCHEDULED',
     winner: '—', hammer: '0', currentCents: '0', startCents: '4500000',
     stepCents: '100000', capCents: '8000000', bidCount: 0, endAtMs: 0,
-    imageUrl: '', settle: '—', t: '2026-06-08 21:00', mode: 'ENGLISH', parentAuctionId: '' },
-  { lot: 'auc-demo-0138', title: '宋瓷青瓷莲花碗', status: 'NO_BID',
+    imageUrl: '/demo/watch-seiko.jpg', settle: '—', t: '2026-06-08 21:00', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0138', title: '博朗 BN0032 经典石英 · 黑面', status: 'NO_BID',
     winner: '—', hammer: '0', currentCents: '0', startCents: '8000000',
     stepCents: '200000', capCents: '12000000', bidCount: 0, endAtMs: 0,
-    imageUrl: '', settle: '—', t: '2026-06-04 22:30', mode: 'ENGLISH', parentAuctionId: '' },
-  { lot: 'auc-demo-0137', title: '田黄石印章 · 清乾隆 (暗拍)', status: 'SOLD',
+    imageUrl: '/demo/watch-braun.jpg', settle: '—', t: '2026-06-04 22:30', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0137', title: '简约玫瑰金腕表 · 白面 (暗拍)', status: 'SOLD',
     winner: '盐渍生活', hammer: '1850000', currentCents: '1850000', startCents: '1000000',
     stepCents: '50000', capCents: '0', bidCount: 9, endAtMs: 0,
-    imageUrl: '', settle: '待结算', t: '2026-06-03 19:48', mode: 'SEALED_FIRST', parentAuctionId: '' },
+    imageUrl: '/demo/watch-minimal.jpg', settle: '待结算', t: '2026-06-03 19:48', mode: 'SEALED_FIRST', parentAuctionId: '' },
 ];
 
 const normalizeCents = (raw) => {
