@@ -33,3 +33,35 @@ func TestTimerChaosDisableIgnoredForNonTimerModes(t *testing.T) {
 		t.Fatal("non-timer mode should not report timer disabled")
 	}
 }
+
+func TestSafePprofListenAddrAllowsLoopbackOnly(t *testing.T) {
+	for _, raw := range []string{
+		"127.0.0.1:6060",
+		"localhost:6060",
+		"[::1]:6060",
+		" 127.0.0.1:6060 ",
+	} {
+		t.Run("allow_"+raw, func(t *testing.T) {
+			if got, ok := safePprofListenAddr(raw); !ok || got == "" {
+				t.Fatalf("safePprofListenAddr(%q)=(%q,%v), want allowed", raw, got, ok)
+			}
+		})
+	}
+
+	for _, raw := range []string{
+		"",
+		":6060",
+		"0.0.0.0:6060",
+		"[::]:6060",
+		"115.191.76.40:6060",
+		"example.com:6060",
+		"127.0.0.1",
+		"not-a-host-port",
+	} {
+		t.Run("reject_"+raw, func(t *testing.T) {
+			if got, ok := safePprofListenAddr(raw); ok || got != "" {
+				t.Fatalf("safePprofListenAddr(%q)=(%q,%v), want rejected", raw, got, ok)
+			}
+		})
+	}
+}
