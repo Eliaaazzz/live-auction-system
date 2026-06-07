@@ -175,7 +175,7 @@ function DemoRoom() {
     remainingMs={28400}
     currentCents="12880000"
     extendCount={2}
-    yourRank={3} yourGapCents="380000"
+    yourRank={3} yourGapCents="380000" yourCents="12500000"
     aiText="¥128,800 · 距落槌 28 秒，海风_2024 领先 · 蓝面鹦鹉螺竞价进行中。"
     aiTrigger="open"
     expressive/>;
@@ -188,7 +188,7 @@ function DemoRoomFinal10() {
     currentCents="13380000"
     extendCount={3}
     showColorRamp showHourglass showBlackHorse
-    yourRank={4} yourGapCents="630000"
+    yourRank={4} yourGapCents="630000" yourCents="12750000"
     aiText="夜航星 +10× 阶梯 直接拉到 ¥133,800 — 这是一匹真正的黑马。"
     aiTrigger="surge" aiStreaming
     expressive/>;
@@ -209,7 +209,7 @@ function DemoRoomLeading() {
     ]}
     isYouLeading rejectShake rejectCode="ERR_TOO_LOW"
     showLeadingToast showOwnFlash
-    yourRank={1} yourGapCents="0"
+    yourRank={1} yourGapCents="0" yourCents="12500000"
     aiText="陆_LU ¥125,000 领先 · 当前已是新纪录。"
     aiTrigger="hammer"
     expressive/>;

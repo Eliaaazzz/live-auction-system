@@ -89,42 +89,41 @@ describe('MobileRoom bid locking', () => {
     window.localStorage.setItem('lumen:joined:lumen-auction', '1');
   });
 
-  it('does not submit chip bids after the local countdown reaches zero', () => {
+  it('does not submit bids after the local countdown reaches zero', () => {
     const onBid = vi.fn();
     const { container } = render(
       <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid} capCents="15000000"/>,
     );
 
-    const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('封顶'));
+    const bidButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('竞拍已结束'));
 
-    expect(maxButton).toBeDefined();
-    expect(maxButton).toBeDisabled();
+    expect(bidButton).toBeDefined();
+    expect(bidButton).toBeDisabled();
 
-    fireEvent.click(maxButton);
+    fireEvent.click(bidButton);
 
     expect(onBid).not.toHaveBeenCalled();
   });
 
-  it('still submits chip bids while LIVE and time remains', () => {
+  it('submits the staged stepper amount while LIVE and time remains', () => {
     const onBid = vi.fn();
     const { container } = render(
-      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid} capCents="15000000"/>,
+      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid}
+        currentCents="12880000" stepCents="500000" capCents="15000000"/>,
     );
 
-    const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('封顶'));
+    const bidButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('立即出价'));
 
-    expect(maxButton).toBeDefined();
-    expect(maxButton).not.toBeDisabled();
+    expect(bidButton).toBeDefined();
+    expect(bidButton).not.toBeDisabled();
 
-    // 封顶 is a jump amount: first tap arms the confirm, second tap submits.
-    fireEvent.click(maxButton);
-    expect(onBid).not.toHaveBeenCalled();
-    fireEvent.click(maxButton);
+    fireEvent.click(bidButton);
 
     expect(onBid).toHaveBeenCalledTimes(1);
-    expect(onBid).toHaveBeenCalledWith(expect.any(String));
+    // default staged amount = current + one step (always on the grid)
+    expect(onBid).toHaveBeenCalledWith('13380000');
   });
 });
 
@@ -133,11 +132,9 @@ describe('MobileRoom · join gate (拍卖参与流程)', () => {
     window.localStorage.clear();
   });
 
-  // Detect the bid chips via the +1档 button (the 封顶 chip only renders
-  // when a real capCents exists, and the rules summary mentions 封顶价 as
-  // copy — raw-text matching would false-positive).
+  // Detect the unlocked bid console via the 立即出价 CTA.
   const hasBidChips = (container) =>
-    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('+1档'));
+    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('立即出价'));
 
   it('locks the bid chips behind 我要参与竞拍 until the 须知 is accepted', () => {
     const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
