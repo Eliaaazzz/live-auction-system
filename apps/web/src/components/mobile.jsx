@@ -1560,7 +1560,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   // Top-level winner display is currently not shown in the evidence card;
   // per-row winner comes from the AUCTION_SOLD event's payload.displayName.
   // Keeping the prop computed so future variants can use it.
-  const lotTitle = isWired ? (evidence.auctionId || '—') : '百达翡丽 5711/1A · 蓝面';
+  const lotTitle = isWired ? (evidence.auctionId || '—') : '劳力士 Explorer 114270 · 黑面';
   const lotId = isWired ? `拍卖ID ${(evidence.auctionId || '').slice(0, 12)}` : '拍品 2024-0142';
 
   const showHint = (msg) => {

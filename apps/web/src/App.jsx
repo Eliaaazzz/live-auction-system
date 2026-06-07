@@ -44,7 +44,7 @@ export default function App() {
       <Route path="/preview/room"          element={<MobileFrame><DemoRoom/></MobileFrame>}/>
       <Route path="/preview/room/final10"  element={<MobileFrame><DemoRoomFinal10/></MobileFrame>}/>
       <Route path="/preview/room/leading"  element={<MobileFrame><DemoRoomLeading/></MobileFrame>}/>
-      <Route path="/preview/hammer"        element={<MobileFrame><MobileHammer amountCents="12880000" winnerName="海风_2024" productName="百达翡丽 5711/1A 鹦鹉螺 · 蓝面" lotNo="2024-0142" expressive/></MobileFrame>}/>
+      <Route path="/preview/hammer"        element={<MobileFrame><MobileHammer amountCents="12880000" winnerName="海风_2024" productName="劳力士 Explorer 114270 · 黑面" lotNo="2024-0142" expressive/></MobileFrame>}/>
       <Route path="/preview/evidence"      element={<MobileFrame><MobileEvidence/></MobileFrame>}/>
       <Route path="/preview/evidence/broken" element={<MobileFrame><MobileEvidence chainBreak breakAtSeq={14834}/></MobileFrame>}/>
       <Route path="/preview/mp"            element={<MobileFrame><MiniProgramStub/></MobileFrame>}/>
@@ -164,9 +164,12 @@ function CancelOverlay() {
 // 封顶 chip (two-tap confirm) shows in previews — without a real cap it is
 // intentionally hidden.
 const DEMO_ITEM = {
-  productName: '百达翡丽 5711/1A 鹦鹉螺 · 蓝面',
+  productName: '劳力士 Explorer 114270 · 黑面',
   lotNo: '2024-0142',
   capCents: '30000000',
+  // Real bundled photo (apps/web/public/demo, Unsplash License) — the copy
+  // matches the actual watch in the shot so nothing reads as a mismatch.
+  productImage: '/demo/watch-explorer.jpg',
 };
 function DemoRoom() {
   return <MobileRoom
@@ -176,7 +179,7 @@ function DemoRoom() {
     currentCents="12880000"
     extendCount={2}
     yourRank={3} yourGapCents="380000" yourCents="12500000"
-    aiText="¥128,800 · 距落槌 28 秒，海风_2024 领先 · 蓝面鹦鹉螺竞价进行中。"
+    aiText="¥128,800 · 距落槌 28 秒，海风_2024 领先 · 黑面 Explorer 竞价进行中。"
     aiTrigger="open"
     expressive/>;
 }

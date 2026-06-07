@@ -462,11 +462,11 @@ describe('applyEvent · AI_COMMENTARY (T7-2 / proto/ai-events.md §POST /llm/auc
       serverTimeMs: Date.now(),
       // spec: seq is null for non-authoritative observability events
       seq: null,
-      data: { trigger: 'open', commentary: '蓝面 5711 起拍价 ¥120,000', fallback: false },
+      data: { trigger: 'open', commentary: '黑面 Explorer 起拍价 ¥120,000', fallback: false },
     });
     const s = useAuctionStore.getState();
     expect(s.auctioneerTrigger).toBe('open');
-    expect(s.auctioneerText).toBe('蓝面 5711 起拍价 ¥120,000');
+    expect(s.auctioneerText).toBe('黑面 Explorer 起拍价 ¥120,000');
     expect(s.auctioneerFallback).toBe(false);
   });
 
