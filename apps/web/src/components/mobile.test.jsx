@@ -228,6 +228,31 @@ describe('MobileRoom simplified buyer flow', () => {
     expect(container.textContent).toMatch(/最低加价/);
   });
 
+  it('expands the full standings behind the 全部排行 toggle (collapsed by default)', () => {
+    const { container } = render(
+      <MobileRoom
+        status="LIVE"
+        leaders={[
+          { userId: 'u1', displayName: 'Alice', cents: '13000000' },
+          { userId: 'u2', displayName: 'Bob', cents: '12800000' },
+          { userId: 'u3', displayName: 'Carol', cents: '12600000', isYou: true },
+          { userId: 'u4', displayName: 'Dave', cents: '12400000' },
+        ]}
+      />,
+    );
+
+    // Collapsed: ranks 3+ hidden, toggle shows the total count.
+    expect(container.textContent).not.toMatch(/Carol|Dave/);
+    const toggle = screen.getByText(/全部排行（4）/);
+
+    fireEvent.click(toggle);
+    expect(container.textContent).toMatch(/Carol/);
+    expect(container.textContent).toMatch(/Dave/);
+
+    fireEvent.click(screen.getByText(/收起完整排行/));
+    expect(container.textContent).not.toMatch(/Carol|Dave/);
+  });
+
   it('scopes the follow state by room instead of sharing it globally', () => {
     window.localStorage.clear();
     const { rerender } = render(
