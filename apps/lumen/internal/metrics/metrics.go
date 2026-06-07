@@ -15,6 +15,7 @@ package metrics
 
 import (
 	"math/rand"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -64,6 +65,13 @@ type Registry struct {
 	TimerErrInternalKeyType     *Counter
 	TimerErrInternalSeqMismatch *Counter
 
+	// AdmissionRejected counts WS upgrades shed by the front-door admission gate
+	// (handleWS, when ActiveConns >= MAX_WS_CONNS). A non-zero value means the
+	// gateway is at its connection watermark and degrading gracefully (503 +
+	// Retry-After) instead of climbing toward the OOM/crash cliff. Pairs with
+	// ActiveConns to read "held N, shed the rest, process survives".
+	AdmissionRejected *Counter
+
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
 	StreamLenMax atomic.Int64 // peak observed stream length since start
@@ -91,6 +99,7 @@ func New() *Registry {
 		TimerErrInternalSeqMismatch: &Counter{},
 		BackpressureDrop:            &Counter{},
 		SeqGap:                      &Counter{},
+		AdmissionRejected:           &Counter{},
 	}
 }
 
@@ -131,11 +140,21 @@ type Snapshot struct {
 	SeqGap                      int64             `json:"seqGapCount"`
 	StreamLenMax                int64             `json:"streamLenMax"`
 	ActiveConns                 int64             `json:"activeConns"`
+	AdmissionRejected           int64             `json:"admissionRejected"`
+	// Runtime gauges sampled at scrape time (runtime.ReadMemStats does a brief
+	// STW pause; /metrics is scraped infrequently so this is acceptable, and it
+	// turns "process died, cause unknown, metrics zeroed" into a pre-alertable
+	// approach-to-cliff signal: HeapInuse/NumGoroutine trending up under load.
+	HeapInuseBytes uint64 `json:"heapInuseBytes"`
+	HeapSysBytes   uint64 `json:"heapSysBytes"`
+	NumGoroutine   int    `json:"numGoroutine"`
 }
 
 // Snapshot is non-blocking from the writer side: each histogram takes its own
 // mutex briefly to copy + sort a sample slice; counters/gauges are atomic.
 func (r *Registry) Snapshot() Snapshot {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
 	return Snapshot{
 		Ack:                         r.AckLatency.Snapshot(),
 		Broadcast:                   r.BroadcastLatency.Snapshot(),
@@ -156,7 +175,37 @@ func (r *Registry) Snapshot() Snapshot {
 		SeqGap:                      r.SeqGap.Load(),
 		StreamLenMax:                r.StreamLenMax.Load(),
 		ActiveConns:                 r.ActiveConns.Load(),
+		AdmissionRejected:           r.AdmissionRejected.Load(),
+		HeapInuseBytes:              ms.HeapInuse,
+		HeapSysBytes:                ms.HeapSys,
+		NumGoroutine:                runtime.NumGoroutine(),
 	}
+}
+
+// Reset clears run-window histograms and monotonic counters while preserving the
+// point-in-time ActiveConns gauge. Operators use this immediately before a
+// controlled load run so /metrics percentiles describe that run, not process
+// lifetime history.
+func (r *Registry) Reset() {
+	r.AckLatency.Reset()
+	r.BroadcastLatency.Reset()
+	r.RoomStatePatch.Reset()
+	r.HammerLatency.Reset()
+	r.CatchupLatency.Reset()
+	r.ScriptTime.Reset()
+	r.HandlerOverhead.Reset()
+	r.BidsAccepted.Reset()
+	r.BidsRejected.Reset()
+	r.BidsRejectedFastPath.Reset()
+	r.RoomStatePatches.Reset()
+	r.RoomStatePatchBids.Reset()
+	r.TimerErrInternal.Reset()
+	r.TimerErrInternalKeyType.Reset()
+	r.TimerErrInternalSeqMismatch.Reset()
+	r.BackpressureDrop.Reset()
+	r.SeqGap.Reset()
+	r.AdmissionRejected.Reset()
+	r.StreamLenMax.Store(0)
 }
 
 // Counter is a monotonic uint64. Inc is allocation-free and lock-free.
@@ -165,6 +214,7 @@ type Counter struct{ n atomic.Int64 }
 func (c *Counter) Inc()        { c.n.Add(1) }
 func (c *Counter) Add(n int64) { c.n.Add(n) }
 func (c *Counter) Load() int64 { return c.n.Load() }
+func (c *Counter) Reset()      { c.n.Store(0) }
 
 // Histogram is a fixed-capacity reservoir-sampled latency distribution. Past
 // `cap` observations, each new sample replaces a uniformly-random existing one
@@ -222,14 +272,31 @@ func (h *Histogram) Observe(d time.Duration) {
 	h.mu.Unlock()
 }
 
+// Reset drops all samples and the lifetime count. It is operator-only evidence
+// hygiene, not a hot-path operation.
+func (h *Histogram) Reset() {
+	h.mu.Lock()
+	h.samples = h.samples[:0]
+	h.n = 0
+	h.r = rand.New(rand.NewSource(time.Now().UnixNano()))
+	h.mu.Unlock()
+}
+
 // HistogramSnapshot is the JSON shape per histogram. Durations are milliseconds
 // (float for sub-ms resolution at low traffic).
 type HistogramSnapshot struct {
 	Count int64   `json:"count"`
+	Min   float64 `json:"min"`
 	P50   float64 `json:"p50"`
 	P95   float64 `json:"p95"`
 	P99   float64 `json:"p99"`
-	Max   float64 `json:"max"`
+	// P999 (99.9th) surfaces the deep tail: with thousands of concurrent users a
+	// problem that hits "only" 0.1% still hits dozens of real bidders, and it can
+	// be invisible at p99. min/p999/max bracket the full distribution alongside
+	// the p50/p95/p99 body (per-bid percentiles are the reliable signal — a mean
+	// would hide exactly the tail we care about under high concurrency).
+	P999 float64 `json:"p999"`
+	Max  float64 `json:"max"`
 }
 
 // Snapshot returns the current p50/p95/p99 + max + lifetime count. Cheap: one
@@ -245,11 +312,26 @@ func (h *Histogram) Snapshot() HistogramSnapshot {
 	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
 	return HistogramSnapshot{
 		Count: n,
+		Min:   ms(cp[0]),
 		P50:   ms(cp[rankN(len(cp), 50)]),
 		P95:   ms(cp[rankN(len(cp), 95)]),
 		P99:   ms(cp[rankN(len(cp), 99)]),
+		P999:  ms(cp[rankPerMille(len(cp), 999)]),
 		Max:   ms(cp[len(cp)-1]),
 	}
+}
+
+// rankPerMille is rankN at per-mille resolution, for sub-percent tails (p99.9).
+// Mirrors rankN's nearest-rank, clamped semantics.
+func rankPerMille(n, pm int) int {
+	idx := (pm*n + 999) / 1000 // ceil(pm/1000 * n)
+	if idx < 1 {
+		idx = 1
+	}
+	if idx > n {
+		idx = n
+	}
+	return idx - 1
 }
 
 // rankN maps a percentile to a 0-based index (nearest-rank, clamped) over a

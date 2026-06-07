@@ -391,7 +391,10 @@ describe('applyEvent · ROOM_SNAPSHOT', () => {
 describe('setLeaders · REST normalization', () => {
   beforeEach(RESET);
 
-  it('normalizes displayName and cents from REST /leaderboard payload', () => {
+  it('normalizes displayName and cents and sorts desc by cents (merge-max reconcile)', () => {
+    // Fed ascending on purpose: the reconcile now sorts desc by BigInt cents, so
+    // bob (13M) ranks above alice (12M) regardless of input order — a leaderboard
+    // must never show a lower bid above a higher one (排名一致).
     useAuctionStore.getState().setLeaders([
       { userId: 'alice', amountCents: '12000000' },
       { userId: 'bob', cents: '13000000', displayName: 'BobName' },
@@ -400,15 +403,15 @@ describe('setLeaders · REST normalization', () => {
     const s = useAuctionStore.getState();
     expect(s.leaders).toHaveLength(2);
     expect(s.leaders[0]).toMatchObject({
-      userId: 'alice',
-      displayName: 'alice',
-      cents: '12000000',
-      isYou: false,
-    });
-    expect(s.leaders[1]).toMatchObject({
       userId: 'bob',
       displayName: 'BobName',
       cents: '13000000',
+      isYou: false,
+    });
+    expect(s.leaders[1]).toMatchObject({
+      userId: 'alice',
+      displayName: 'alice',
+      cents: '12000000',
       isYou: false,
     });
   });
