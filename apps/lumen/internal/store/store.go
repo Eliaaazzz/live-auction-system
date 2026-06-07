@@ -802,27 +802,76 @@ func (s *Store) StreamLen(ctx context.Context, aid string) (int64, error) {
 
 // ReadEventsAfter returns Stream events after lastID (exclusive). lastID==""
 // reads from the beginning.
+// readEventsChunk bounds a single XRANGE response. The broadcast sweep backstop
+// re-reads from the gateway's last-broadcast seq to "+"; on a cold start
+// (lastSeq=0) that is the auction's entire history, and one unbounded XRANGE on
+// a long/hot auction is a latent multi-MB allocation (a second OOM vector beside
+// the per-conn rings). Paging in bounded chunks keeps each Redis response (and
+// its decode) bounded; the accumulated result is unchanged. catchup is already
+// caller-bounded by catchupMaxGap(200), so the common path stays one chunk.
+const readEventsChunk = 1000
+
+// ReadEventsAfter returns every Stream event with seq > the seq encoded in
+// lastID, in order, paged in bounded chunks. Pure paging logic lives in
+// collectStreamEvents (hidden-test covered without Redis).
 func (s *Store) ReadEventsAfter(ctx context.Context, aid, lastID string) ([]StreamEvent, string, error) {
-	start := streamRangeStart(lastID)
-	lastSeq := streamIDSeq(lastID)
-	msgs, err := s.rdb.XRange(ctx, streamKey(aid), start, "+").Result()
-	if err != nil {
-		return nil, lastID, err
+	key := streamKey(aid)
+	return collectStreamEvents(lastID, readEventsChunk, func(start string, count int64) ([]redis.XMessage, error) {
+		return s.rdb.XRangeN(ctx, key, start, "+", count).Result()
+	})
+}
+
+// collectStreamEvents pages a stream from lastID (exclusive by encoded seq) in
+// chunks of `chunk`, threading the cursor across chunk seams. It deliberately
+// AVOIDS Redis 6.2's "(" exclusive lower bound (the place_bid.lua Redis<6.2
+// compat decision): each chunk's lower bound re-includes the previous chunk's
+// last id inclusively, and the `seq <= lastSeq` skip (with lastSeq advanced as
+// events are emitted) drops that single duplicate. The `emitted == 0` guard
+// makes a non-advancing cursor terminate rather than spin (defensive; with
+// chunk > 1 and monotonic stream seqs only the 1 boundary dup is ever skipped).
+func collectStreamEvents(lastID string, chunk int, fetch func(start string, count int64) ([]redis.XMessage, error)) ([]StreamEvent, string, error) {
+	// Each chunk re-includes the previous chunk's last id (inclusive lower bound,
+	// since we avoid Redis 6.2 "(") and skips it, so a chunk advances by at most
+	// chunk-1 new events — chunk MUST be >= 2 or the cursor can't move forward.
+	if chunk < 2 {
+		chunk = 2
 	}
-	out := make([]StreamEvent, 0, len(msgs))
+	lastSeq := streamIDSeq(lastID)
+	out := make([]StreamEvent, 0, chunk)
 	newLast := lastID
-	for _, m := range msgs {
-		seq := parseInt(valStr(m.Values, "seq"))
-		if lastSeq > 0 && seq <= lastSeq {
-			continue
+	cursor := streamRangeStart(lastID)
+	for {
+		msgs, err := fetch(cursor, int64(chunk))
+		if err != nil {
+			return nil, lastID, err
 		}
-		out = append(out, StreamEvent{
-			ID:      m.ID,
-			Seq:     seq,
-			Type:    valStr(m.Values, "type"),
-			Payload: valStr(m.Values, "payload"),
-		})
-		newLast = m.ID
+		if len(msgs) == 0 {
+			break
+		}
+		emitted := 0
+		for _, m := range msgs {
+			seq := parseInt(valStr(m.Values, "seq"))
+			if lastSeq > 0 && seq <= lastSeq {
+				continue
+			}
+			out = append(out, StreamEvent{
+				ID:      m.ID,
+				Seq:     seq,
+				Type:    valStr(m.Values, "type"),
+				Payload: valStr(m.Values, "payload"),
+			})
+			newLast = m.ID
+			if seq > lastSeq {
+				lastSeq = seq
+			}
+			emitted++
+		}
+		// Stop when the stream is drained (short read) or no progress is possible
+		// (a full chunk that yielded only the re-included boundary dup).
+		if len(msgs) < chunk || emitted == 0 {
+			break
+		}
+		cursor = streamRangeStart(msgs[len(msgs)-1].ID)
 	}
 	return out, newLast, nil
 }
