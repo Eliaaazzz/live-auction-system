@@ -101,7 +101,9 @@ def eval_gate(snap: dict, spec: GateSpec) -> GateRow:
         ok = value == budget
         budget_text = f"== {budget:.0f}"
     else:
-        # A latency gate with no samples yet is "not failing" — show n/a, pass.
+        # A latency gate with no samples yet is "not failing" — show n/a and do
+        # not paint it red. The final READY headline still requires evidence
+        # samples for the mandatory bid/fanout lanes via `readiness()`.
         ok = (value < budget) if has_data else True
         budget_text = f"< {budget:.0f}{unit}"
 
@@ -132,9 +134,24 @@ def all_gate_rows(snap: dict, target_conns: int) -> list[GateRow]:
     return rows
 
 
-def readiness(rows: list[GateRow]) -> bool:
-    """All gates (incl. the activeConns target) must hold for 10k-ready."""
-    return all(r.ok for r in rows)
+def has_required_evidence_samples(snap: dict) -> bool:
+    """READY requires real bid and fanout samples, not just empty histograms.
+
+    Optional lanes such as catchup can stay n/a during a clean steady-state hold,
+    but a 10k demo should never turn green before at least one bid outcome sample
+    and one public fanout/projection sample exist.
+    """
+    has_ack = histogram_count(snap, ("ackLatencyMs", "p95")) > 0
+    has_fanout = (
+        histogram_count(snap, ("broadcastLatencyMs", "p95")) > 0
+        or histogram_count(snap, ("roomStatePatchLatencyMs", "p95")) > 0
+    )
+    return has_ack and has_fanout
+
+
+def readiness(rows: list[GateRow], snap: dict) -> bool:
+    """All gates and the required evidence sample lanes must hold for READY."""
+    return all(r.ok for r in rows) and has_required_evidence_samples(snap)
 
 
 def paint(text: str, color: str, enabled: bool) -> str:
@@ -143,7 +160,7 @@ def paint(text: str, color: str, enabled: bool) -> str:
 
 def render(snap: dict, target_conns: int, color: bool, ts: str) -> str:
     rows = all_gate_rows(snap, target_conns)
-    ready = readiness(rows)
+    ready = readiness(rows, snap)
     lines: list[str] = []
     head = f" LUMEN /metrics - {target_conns}-conn readiness "
     lines.append(paint(head, BOLD, color))
@@ -161,6 +178,8 @@ def render(snap: dict, target_conns: int, color: bool, ts: str) -> str:
         f"{label}={dig(snap, path)}" for label, path in INFO_FIELDS
     )
     lines.append(paint("  " + info, GREY, color))
+    if not has_required_evidence_samples(snap):
+        lines.append(paint("  waiting for bid outcome + fanout samples before READY", GREY, color))
     lines.append("")
     verdict = f" {target_conns} READY [PASS] " if ready else f" NOT READY [FAIL] (target {target_conns}) "
     lines.append(paint(verdict, (GREEN if ready else RED) + BOLD, color))
@@ -209,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
             return False
         if args.json:
             rows = all_gate_rows(snap, args.target_conns)
-            print(json.dumps({"ts": now_iso(), "ready": readiness(rows), "metrics": snap}))
+            print(json.dumps({"ts": now_iso(), "ready": readiness(rows, snap), "metrics": snap}))
         else:
             if color:
                 sys.stdout.write("\033[2J\033[H")  # clear + home
