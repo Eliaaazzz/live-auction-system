@@ -77,6 +77,32 @@ var maxWSConns = envInt("MAX_WS_CONNS", 0)
 // resident at scale with no behavior change).
 var wsWriteBufferPool = &sync.Pool{}
 
+// gatewayRoomAffinity enables multi-gateway room-level routing isolation: a
+// gateway only reads + fans out the Stream for rooms it has LOCAL members for,
+// instead of every gateway reading every room (today's fleet-wide PSubscribe,
+// which is anti-scale-out). DEFAULT OFF — single-process `mode=all` (the demo)
+// keeps the exact current behaviour, so this is inert and zero-risk until a
+// multi-gateway deploy sets GATEWAY_ROOM_AFFINITY=1 (paired with a consistent
+// room->gateway shard at the load balancer; see gatewayHostsRoom). The
+// matching cursor-seed (resume from current state, not replay history) is in the
+// subscribe fanout — both MUST move together (a filter without the seed would
+// replay an entire stream the first time a gateway hosts a room).
+var gatewayRoomAffinity = envBool("GATEWAY_ROOM_AFFINITY", false)
+
+// gatewayHostsRoom decides, for the room-affinity path, whether THIS gateway
+// should process a woken room's Stream and whether it must first seed its
+// broadcast cursor. With no local members the room is hosted elsewhere → skip
+// the read entirely (the scale-out win). The first time this gateway hosts a
+// room (no prior cursor) it must seed from current state seq so it broadcasts
+// only NEW events; the joining client independently catches up the prior history
+// via its ROOM_JOIN snapshot/replay. Pure + hidden-tested.
+func gatewayHostsRoom(localViewers int, seeded bool) (process, seed bool) {
+	if localViewers == 0 {
+		return false, false
+	}
+	return true, !seeded
+}
+
 // fastRejectExpiryMarginMs is the safety margin between the gateway's wall
 // clock and the cached endAtMs below which the V10k Tier C fast-reject defers
 // to Lua (codex pass-2 Q2). Lua's Redis TIME is authoritative; if the gateway
@@ -463,6 +489,22 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 	lastSeq := make(map[string]int64)
 	patches := newRoomStatePatchCoalescer(roomStatePatchConfigFromEnv())
 	fanout := func(aid string) {
+		// Multi-gateway room affinity (default off → block skipped, behaviour
+		// unchanged). When on: skip rooms with no local members (hosted on another
+		// gateway), and on first hosting seed the cursor from current state seq so
+		// we resume from "now" instead of replaying the whole stream.
+		if gatewayRoomAffinity {
+			_, seeded := lastSeq[aid]
+			process, seed := gatewayHostsRoom(h.viewerCount(aid), seeded)
+			if !process {
+				return
+			}
+			if seed {
+				if snap, err := st.Snapshot(ctx, aid); err == nil {
+					lastSeq[aid] = snap.Seq
+				}
+			}
+		}
 		events, _, err := st.ReadEventsAfter(ctx, aid, streamIDForSeq(lastSeq[aid]))
 		if err != nil {
 			log.Printf("fanout read %s: %v", aid, err)
