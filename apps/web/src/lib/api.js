@@ -80,6 +80,10 @@ export const api = {
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
+  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable. */
+  placeBid: (id, payload, { signal } = {}) =>
+    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal }),
+
   /** Stub today (PR #34 fills the timeline + hash chain). */
   getEvidence: (id) => request(`/auctions/${id}/evidence`),
 
@@ -89,6 +93,33 @@ export const api = {
   // ---------- Admin lifecycle ----------
   /** Seller: create product (used by Publish form step 1). */
   createProduct: (payload) => request('/products', { method: 'POST', body: payload }),
+
+  /**
+   * Seller: upload a product image (multipart, ≤5MB, png/jpg/webp/gif).
+   * Returns { url: "/uploads/<name>" } — same-origin, store it as imageUrl.
+   * Not routed through request(): multipart must NOT carry a JSON
+   * content-type header (the browser sets the boundary itself).
+   */
+  uploadImage: async (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers = {};
+    const tok = currentToken();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/upload`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthFailure();
+      let code, message;
+      try {
+        const j = await res.json();
+        code = j.code; message = j.error || j.message;
+      } catch {
+        message = res.statusText;
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res.json();
+  },
 
   /**
    * Seller: publish auction.

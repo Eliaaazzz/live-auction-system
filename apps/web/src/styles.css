@@ -52,6 +52,58 @@
   --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, "SFMono-Regular", monospace;
 }
 
+/* ─── Global reset — kill the default white margin/padding (meeting: 去除
+ *     页面外部白色边框) and lock the page to the dark surface so there is no
+ *     flash of white on any browser / phone home-screen webapp. ─── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { margin: 0; padding: 0; }
+html, body { height: 100%; background: #06070d; }
+body {
+  color: var(--douyin-ink-text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* Stop the rubber-band white gap when over-scrolling the room on iOS. */
+  overscroll-behavior: none;
+}
+#root { min-height: 100%; }
+
+/* Mobile-first responsive frame (meeting: responsive design / 手机端全出血).
+ * Phones: full-bleed, no rounded corners, fills the dynamic viewport (100dvh
+ * accounts for the collapsing URL bar). ≥480px (tablet/desktop preview): the
+ * phone-shaped centred card returns. maxWidth/maxHeight come through as CSS
+ * vars so callers can still tune the card without losing the media query. */
+.lumen-frame-outer {
+  width: 100%;
+  min-height: 100dvh;
+  /* Soft radial stage light so the phone card separates from the page on
+   * projector-grade contrast (review P1-8: black-on-black card vanished). */
+  background: radial-gradient(820px 560px at 50% 42%, #0d1019 0%, #06070d 72%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.lumen-frame-inner {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  background: var(--douyin-ink);
+  overflow: hidden;
+}
+@media (min-width: 480px) {
+  .lumen-frame-outer { padding: 24px 16px; }
+  .lumen-frame-inner {
+    max-width: var(--frame-max-w, 420px);
+    height: min(calc(100dvh - 48px), var(--frame-max-h, 892px));
+    border-radius: 28px;
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, .6),
+      0 30px 80px rgba(0, 0, 0, .5),
+      0 0 0 1px rgba(255, 255, 255, .09);
+  }
+}
+
 /* Tabular numerics everywhere we use mono — locks columns */
 .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
 .serif { font-family: var(--font-serif); }
@@ -307,6 +359,80 @@
 }
 .lumen-spotlight { animation: lumen-spotlight 3s ease-in-out infinite; }
 
+@keyframes lumen-champion-aura {
+  0%,100% { opacity: .42; transform: translateX(-50%) translateY(2px) scale(.96); filter: blur(0); }
+  50%     { opacity: .88; transform: translateX(-50%) translateY(0) scale(1.08); filter: blur(1px); }
+}
+.lumen-champion-aura { animation: lumen-champion-aura 2.7s ease-in-out infinite; }
+
+@keyframes lumen-champion-ring {
+  0%   { opacity: .8; transform: translate(-50%,-50%) scale(.78); }
+  72%  { opacity: 0;  transform: translate(-50%,-50%) scale(1.85); }
+  100% { opacity: 0;  transform: translate(-50%,-50%) scale(1.85); }
+}
+.lumen-champion-ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(220,191,127,.66);
+  pointer-events: none;
+  animation: lumen-champion-ring 2.4s ease-out infinite;
+}
+
+@keyframes lumen-skeleton-glide {
+  0% { background-position: 160% 0; }
+  100% { background-position: -60% 0; }
+}
+.lumen-skeleton {
+  background-image: linear-gradient(90deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.14) 46%, rgba(255,255,255,.05) 92%);
+  background-size: 240% 100%;
+  animation: lumen-skeleton-glide 1.35s ease-in-out infinite;
+}
+
+.lumen-bid-chip {
+  will-change: transform;
+}
+
+/* ─── Material ripple — press feedback for 加价 chips & actions (replaces the
+ *     scale-zoom press; one ripple per pointer-down, clipped to the surface) ─── */
+@keyframes lumen-ripple {
+  /* opacity 1→0 so the caller's color alpha is the single source of the
+   * state-layer intensity (no double-multiply). Brief hold keeps the wave
+   * visible during the grow; MD3-ish standard easing + ~0.4s. */
+  0%   { transform: scale(0);    opacity: 1; }
+  30%  { opacity: 1; }
+  100% { transform: scale(1);    opacity: 0; }
+}
+.lumen-ripple {
+  position: absolute;
+  border-radius: 50%;
+  transform: scale(0);
+  pointer-events: none;
+  animation: lumen-ripple .42s cubic-bezier(.2, 0, 0, 1) forwards;
+}
+
+/* ─── Price odometer digit tick — scale-only, no urgency drop-shadow ─── */
+@keyframes lumen-digit-tick {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+.lumen-digit-tick { animation: lumen-digit-tick .2s ease-out 1; }
+
+/* ─── Rules summary disclosure chevron ─── */
+.lumen-rules-chev { display: inline-block; transition: transform .2s ease; }
+details[open] > summary .lumen-rules-chev { transform: rotate(180deg); }
+
+/* ─── Terms sheet — bottom slide-up (参与流程 join gate) ─── */
+@keyframes lumen-sheet-up {
+  0%   { transform: translateY(28px); opacity: 0; }
+  100% { transform: translateY(0);    opacity: 1; }
+}
+.lumen-sheet-up { animation: lumen-sheet-up .26s cubic-bezier(.22,1,.36,1) 1 both; }
+
 /* ─── Long-press wheel reveal ─── */
 @keyframes lumen-wheel-in {
   0%   { transform: scale(.4) rotate(-20deg); opacity: 0; }
@@ -340,12 +466,19 @@
 .surface-calm .lumen-black-horse-in,
 .surface-calm .lumen-flame-flicker,
 .surface-calm .lumen-veil-drop,
-.surface-calm .lumen-veil-bridge-fade,  /* P9 self-spotted gap — TerminalOverlay also uses this keyframe */
+.surface-calm .lumen-veil-bridge,  /* class name, not keyframe — TerminalOverlay carries it too */
+.surface-calm .lumen-livefeed::after,
+.surface-calm .lumen-digit-tick,
 .surface-calm .lumen-room-blur-out,
 .surface-calm .lumen-hammer-reveal-up,
 .surface-calm .lumen-cursor-blink,
 .surface-calm .lumen-shockwave,
 .surface-calm .lumen-spotlight,
+.surface-calm .lumen-champion-aura,
+.surface-calm .lumen-champion-ring,
+.surface-calm .lumen-skeleton,
+.surface-calm .lumen-ripple,
+.surface-calm .lumen-sheet-up,
 .surface-calm .lumen-wheel-in { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {

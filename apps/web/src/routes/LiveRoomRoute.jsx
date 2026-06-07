@@ -14,19 +14,22 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { MobileRoom } from '../components/mobile.jsx';
+import { MobileRoom, MobileRoomSkeleton } from '../components/mobile.jsx';
 import { PullToResync } from '../components/PullToResync.jsx';
 import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
 import { msRemaining, serverNow, getDriftMs } from '../lib/clock.js';
 import { api } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
+import { BidErrorCode, EventType } from '../lib/types.js';
 
 // Default OFF: real backend unless a dev explicitly opts into demo data with
 // VITE_USE_MOCK_DATA=true. The old 'true' default shipped the production build
 // in mock mode (frozen room). #106.
 const USE_MOCK = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 'true';
 const WS_BASE  = import.meta.env.VITE_WS_BASE || undefined;
+const BID_HTTP_TIMEOUT_MS = 1_200;
+const BID_REJECT_CODE_SET = new Set(Object.values(BidErrorCode));
 
 export function LiveRoomRoute() {
   const { auctionId } = useParams();
@@ -40,9 +43,14 @@ export function LiveRoomRoute() {
   // Item 3: the real product image, rendered as the "live" feed in the room
   // (V9: video is non-authoritative — purely the ambiance; never gates bids).
   const [productImage, setProductImage] = useState(null);
+  // P0-6: real item title from the snapshot — the room no longer hardcodes
+  // the demo watch name.
+  const [productName, setProductName] = useState(null);
   // #121: optional live-stream play URL (火山直播 HLS .m3u8) for the 直播画面.
   // Non-authoritative — null → the room simulates the feed (CSS sheen).
   const [livePlayUrl, setLivePlayUrl] = useState(null);
+  const [booting, setBooting] = useState(!USE_MOCK);
+  const [roomIds, setRoomIds] = useState([]);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -50,22 +58,14 @@ export function LiveRoomRoute() {
     clientRef.current?.resync();
   }, []);
 
-  // QuickBidChips emits absolute cents strings. We wrap placeBid with a
-  // freshly minted clientBidId so the backend's dedupe cache (Hash) keyed
-  // by (auctionId, userId, clientBidId) doesn't collapse two legit
-  // sequential bids. Generated client-side; opaque to the server.
-  const handleBid = useCallback((amountCents) => {
-    const s = useAuctionStore.getState();
-    if (s.status !== 'LIVE') return;
-    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return;
-
-    const client = clientRef.current;
-    if (!client) return;
-    const clientBidId = (typeof crypto !== 'undefined' && crypto.randomUUID)
-      ? crypto.randomUUID()
-      : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    client.placeBid({ clientBidId, amountCents });
-  }, []);
+  const handleSwitchRoom = useCallback((direction) => {
+    if (!auctionId || roomIds.length < 2) return;
+    const idx = roomIds.indexOf(auctionId);
+    if (idx < 0) return;
+    const delta = direction === 'prev' ? -1 : 1;
+    const next = roomIds[(idx + delta + roomIds.length) % roomIds.length];
+    if (next && next !== auctionId) navigate(`/room/${next}`);
+  }, [auctionId, navigate, roomIds]);
 
   const maybeRefreshLeaders = useCallback(async (opts) => {
     if (!auctionId) return;
@@ -115,10 +115,32 @@ export function LiveRoomRoute() {
     }
   }, [maybeRefreshLeaders]);
 
+  // QuickBidChips emits absolute cents strings. Use the HTTP command lane
+  // when present; older backends fall back to the established WS BID_PLACE.
+  const handleBid = useCallback((amountCents) => {
+    const s = useAuctionStore.getState();
+    if (s.status !== 'LIVE') return;
+    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return;
+
+    const clientBidId = makeClientBidId();
+    void submitBidCommand({
+      auctionId,
+      amountCents,
+      clientBidId,
+      client: clientRef.current,
+      onEvent: handleEvent,
+      onReject: (env) => useAuctionStore.getState().applyReject(env),
+    });
+  }, [auctionId, handleEvent]);
+
   // ── Bootstrap: session → snapshot → leaderboard → WS ──
   useEffect(() => {
     let alive = true;
     let client;
+    setBooting(!USE_MOCK);
+    setProductImage(null);
+    setProductName(null);
+    setLivePlayUrl(null);
 
     (async () => {
       if (USE_MOCK) {
@@ -133,6 +155,8 @@ export function LiveRoomRoute() {
           yourCents:    '12500000',
           leaders:      DEMO_LEADERS,
         });
+        setRoomIds([auctionId].filter(Boolean));
+        setBooting(false);
         return;
       }
 
@@ -144,8 +168,22 @@ export function LiveRoomRoute() {
       } catch (e) {
         console.error('[LiveRoom] dev-login failed', e);
         useAuctionStore.getState().setConn('reconnecting', { reason: 'login-failed' });
+        if (alive) setBooting(false);
         return;
       }
+
+      api.listAuctions()
+        .then(({ auctions = [] }) => {
+          if (!alive) return;
+          const ids = auctions
+            .filter((a) => a.status === 'LIVE')
+            .map((a) => a.auctionId)
+            .filter(Boolean);
+          setRoomIds(ids.includes(auctionId) ? ids : [auctionId, ...ids].filter(Boolean));
+        })
+        .catch(() => {
+          if (alive) setRoomIds([auctionId].filter(Boolean));
+        });
 
       try {
         // 2. Snapshot — gives us status/price/endAtMs before WS opens.
@@ -165,6 +203,7 @@ export function LiveRoomRoute() {
           yourUserId:   useAuctionStore.getState().yourUserId,
         });
         if (snap.imageUrl) setProductImage(snap.imageUrl);
+        if (snap.productName) setProductName(snap.productName);
         if (snap.livePlayUrl) setLivePlayUrl(snap.livePlayUrl);
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
@@ -178,6 +217,7 @@ export function LiveRoomRoute() {
         // Non-fatal — leaderboard will fill from BID_ACCEPTED events.
         console.warn('[LiveRoom] leaderboard seed failed', e);
       }
+      if (alive) setBooting(false);
 
       // 4. Open WS
       const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
@@ -239,11 +279,17 @@ export function LiveRoomRoute() {
   }
   const bidsPerSecPeak = observedPeakRef.current;
 
+  if (booting) {
+    return <MobileRoomSkeleton/>;
+  }
+
   return (
     <PullToResync onResync={handleResync}>
     <MobileRoom
       productImage={productImage}
+      productName={productName}
       videoUrl={livePlayUrl}
+      followScopeId={auctionId}
       viewerCount={store.viewerCount}
       remainingMs={store.remainingMs}
       currentCents={store.currentCents}
@@ -254,6 +300,7 @@ export function LiveRoomRoute() {
       connStatus={store.connStatus}
       yourRank={rankOfYou(store.leaders, store.yourUserId)}
       yourGapCents={youGap}
+      yourCents={store.yourCents}
       leaders={store.leaders}
       onBid={handleBid}
       bidsPerSec={bidsPerSec}
@@ -261,7 +308,9 @@ export function LiveRoomRoute() {
       serverClockOffsetMs={getDriftMs()}
       lastSeq={store.lastSeq}
       winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
+      isYouWinner={!!store.winnerId && store.winnerId === store.yourUserId}
       onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
+      onBackToHall={() => navigate('/')}
       ticker={store.recentEvents
         .map(tickerItemFromEvent)
         .filter(Boolean)
@@ -275,7 +324,11 @@ export function LiveRoomRoute() {
       rejectShake={!!store.lastRejectCode}
       showColorRamp={inFinal10}
       showHourglass={inFinal10}
-      showPulseWaves={inFinal10}
+      // P1-1 (design review): pulse waves OFF — final-10s already runs the
+      // heartbeat vignette + countdown pulse; a third concentric animation
+      // was noise at the exact moment attention peaks.
+      onSwitchRoom={handleSwitchRoom}
+      switchRoomAvailable={roomIds.length > 1}
       // T7-2: aiTrigger / aiText prefer the AI_COMMENTARY broadcast
       // (store.auctioneerTrigger / store.auctioneerText) when available;
       // fall back to the heuristic derived from status / blackHorse /
@@ -299,7 +352,7 @@ export function LiveRoomRoute() {
       aiStatus={store.aiSidecarHealth === 'offline' ? 'offline' : 'live'}
       aiText={
         store.auctioneerText
-        || '正在等待出价 · AI 文本由 sidecar 流式生成'
+        || '正在等待出价 · AI 文本由侧车服务流式生成'
       }
       expressive
     />
@@ -308,6 +361,95 @@ export function LiveRoomRoute() {
 }
 
 // ─── helpers ────────────────────────────────────────────────────
+function makeClientBidId() {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function submitBidCommand({ auctionId, amountCents, clientBidId, client, onEvent, onReject }) {
+  const payload = { clientBidId, amountCents };
+
+  try {
+    const env = await placeBidHttpWithTimeout(auctionId, payload);
+    applyBidCommandEnvelope(env, { auctionId, requestId: clientBidId, onEvent, onReject });
+    return;
+  } catch (e) {
+    if (shouldFallbackBidCommand(e)) {
+      fallbackBidViaWs(client, payload, { auctionId, requestId: clientBidId, onReject });
+      return;
+    }
+    onReject(bidRejectEnvelopeFromCommandError(auctionId, clientBidId, e));
+  }
+}
+
+async function placeBidHttpWithTimeout(auctionId, payload) {
+  if (typeof AbortController === 'undefined') {
+    return api.placeBid(auctionId, payload);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), BID_HTTP_TIMEOUT_MS);
+  try {
+    return await api.placeBid(auctionId, payload, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function fallbackBidViaWs(client, payload, { auctionId, requestId, onReject }) {
+  if (client) {
+    client.placeBid(payload);
+    return;
+  }
+  onReject({
+    type: EventType.BID_REJECTED,
+    auctionId,
+    requestId,
+    data: { code: BidErrorCode.ERR_INTERNAL },
+  });
+}
+
+function applyBidCommandEnvelope(env, { auctionId, requestId, onEvent, onReject }) {
+  if (env?.type === EventType.BID_REJECTED) {
+    onReject(env);
+    return;
+  }
+  if (env?.type) {
+    onEvent(env);
+    return;
+  }
+  onReject({
+    type: EventType.BID_REJECTED,
+    auctionId,
+    requestId,
+    data: { code: BidErrorCode.ERR_INTERNAL },
+  });
+}
+
+export function shouldFallbackBidCommand(error) {
+  if (error?.name === 'AbortError') return true;
+  if (error?.name === 'TypeError') return true;
+
+  const status = Number(error?.status);
+  return status === 404 || status === 405 || status === 501;
+}
+
+export function bidRejectCodeFromCommandError(error) {
+  if (error?.status === 401 || error?.status === 403) return BidErrorCode.ERR_NOT_ALLOWED;
+  if (BID_REJECT_CODE_SET.has(error?.code)) return error.code;
+  return BidErrorCode.ERR_INTERNAL;
+}
+
+function bidRejectEnvelopeFromCommandError(auctionId, requestId, error) {
+  return {
+    type: EventType.BID_REJECTED,
+    auctionId,
+    requestId,
+    data: { code: bidRejectCodeFromCommandError(error) },
+  };
+}
+
 function rankOfYou(leaders, userId) {
   if (!userId) return null;
   const idx = leaders.findIndex((l) => l.userId === userId);
@@ -344,13 +486,19 @@ export function nextLeaderRefreshBump(current, env) {
 
 export function tickerItemFromEvent(e) {
   if (e?.type === 'BID_ACCEPTED') {
-    return { id: e.seq, name: e.data?.displayName, cents: e.data?.amountCents };
+    return {
+      id: e.seq,
+      kind: 'bid',
+      name: e.data?.displayName || e.data?.userId || '匿名买家',
+      cents: e.data?.amountCents ?? '0',
+    };
   }
   if (e?.type === 'ROOM_STATE_PATCH') {
     return {
       id: e.seq,
-      name: e.data?.winnerDisplayName || e.data?.winnerId,
-      cents: e.data?.currentPriceCents,
+      kind: 'projection',
+      name: '价格同步',
+      cents: e.data?.currentPriceCents ?? '0',
     };
   }
   return null;

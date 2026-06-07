@@ -186,13 +186,27 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auctions/{id}/prequalify-recommendation", s.handlePrequalifyRecommendation)
 	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
+	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /ws", s.handleWS)
+
+	// Uploaded product media (see upload.go). Immutable names → long cache.
+	mux.Handle("GET /uploads/", cacheImmutable(
+		http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir())))))
 
 	webDir := os.Getenv("WEB_DIR")
 	if webDir == "" {
 		webDir = "./web"
 	}
 	mux.Handle("/", spaFileServer(webDir))
+}
+
+// cacheImmutable marks responses as long-lived: upload names embed a
+// timestamp + random token, so a URL's content never changes.
+func cacheImmutable(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // spaFileServer serves static assets from webDir, falling back to index.html

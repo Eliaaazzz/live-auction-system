@@ -643,6 +643,12 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 		CreatedAtMs       int64  `json:"createdAtMs"`
 		Mode              string `json:"mode"`
 		ParentAuctionID   string `json:"parentAuctionId,omitempty"`
+		// 商品管理 table columns (起拍价/固定加价/封顶价/出价次数). Money as
+		// string at the JS boundary (P1); bidCount is a plain counter.
+		StartPriceCents string `json:"startPriceCents"`
+		IncrementCents  string `json:"incrementCents"`
+		CapPriceCents   string `json:"capPriceCents"`
+		BidCount        int64  `json:"bidCount"`
 	}
 	out := make([]dto, 0, len(items))
 	for _, it := range items {
@@ -657,6 +663,10 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 			CreatedAtMs:       it.CreatedAtMs,
 			Mode:              model.NormalizeMode(it.Mode),
 			ParentAuctionID:   it.ParentAuctionID,
+			StartPriceCents:   strconv.FormatInt(it.StartPriceCents, 10),
+			IncrementCents:    strconv.FormatInt(it.IncrementCents, 10),
+			CapPriceCents:     strconv.FormatInt(it.CapPriceCents, 10),
+			BidCount:          it.BidCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"auctions": out})
