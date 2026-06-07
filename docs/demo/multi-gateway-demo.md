@@ -49,9 +49,17 @@ cd apps/web && npm run smoke:multigw
 通过时输出 `✓ PASS — ... seq=N`,失败退出码非 0 并列出断言。
 环境变量 `GW1` / `GW2` 可改指向(默认 `http://localhost:8080` / `http://localhost:8081`)。
 
-> 说明:本手册编写时脚本已通过 `node --check` 语法校验、compose 文件已通过
-> `docker compose --profile multigw config -q` 校验;端到端跑通需要本机起容器
-> (`docker compose ... --profile multigw up -d --build`,即 `make up` 的 multigw 版)。
+> ✅ **已端到端实跑通过(2026-06-07,Docker 29.1.3)**:6 容器全 healthy,
+> 直连双网关与全程走 LB(:8088)两种形态各跑一遍,均 `✓ PASS`。实测输出:
+>
+> ```
+> [A@gw1] ← BID_ACCEPTED seq=1 amount=15000   ← 直接 ack + 房间广播(同 seq)
+> [B@gw2] ← BID_ACCEPTED seq=1 amount=15000   ← 跨网关扇出,seq 一致
+> [dup] A re-sends SAME clientBidId
+> [A@gw1] ← BID_ACCEPTED seq=1 amount=15000   ← 幂等回放原 ack
+> ✓ PASS — one bid via GW1 fanned out on both gateways at seq=1;
+>          duplicate retry replayed the original ack and minted no new seq
+> ```
 
 ### 3. 两台手机互动版(最直观)
 
