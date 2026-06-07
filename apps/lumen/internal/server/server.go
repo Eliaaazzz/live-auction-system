@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux only — served on the loopback PPROF_ADDR below, never the public mux
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,6 +34,26 @@ type Server struct {
 	// instruments). One per process; the load harness scrapes /metrics, the
 	// bid hot path Observes.
 	metrics *metrics.Registry
+}
+
+// isLoopbackHostPort reports whether addr ("host:port") binds ONLY the loopback
+// interface. An empty host (":6060"), "0.0.0.0", "::", or any routable IP binds a
+// public interface, so pprof on such an addr is refused — it can never be exposed
+// by a deploy typo (PDGGK review #235). A non-IP host other than "localhost" (a
+// DNS name that could resolve routably) is also treated as non-loopback.
+func isLoopbackHostPort(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return ip.IsLoopback()
 }
 
 // Serve connects datastores, starts the selected mode's background workers, and
@@ -90,13 +112,21 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// serves http.DefaultServeMux (where net/http/pprof registered) on a PRIVATE
 	// addr so it is never reachable from the public mux/EIP. Opt-in: empty
 	// PPROF_ADDR (the default outside the prod compose) leaves it off entirely.
+	// CODE-ENFORCED loopback (PDGGK review #235): a misconfigured PPROF_ADDR
+	// (":6060", "0.0.0.0:6060", a public IP) would expose /debug/pprof — info
+	// disclosure + DoS — so a non-loopback bind is REFUSED here, not just
+	// discouraged by deploy convention.
 	if addr := strings.TrimSpace(os.Getenv("PPROF_ADDR")); addr != "" {
-		go func() {
-			log.Printf("lumen: pprof (loopback forensics) on %s", addr)
-			if err := http.ListenAndServe(addr, nil); err != nil {
-				log.Printf("lumen: pprof listener on %s: %v", addr, err)
-			}
-		}()
+		if !isLoopbackHostPort(addr) {
+			log.Printf("lumen: PPROF_ADDR=%q is NOT loopback — pprof DISABLED (refusing to expose /debug/pprof on a routable interface)", addr)
+		} else {
+			go func() {
+				log.Printf("lumen: pprof (loopback forensics) on %s", addr)
+				if err := http.ListenAndServe(addr, nil); err != nil {
+					log.Printf("lumen: pprof listener on %s: %v", addr, err)
+				}
+			}()
+		}
 	}
 
 	mux := http.NewServeMux()
