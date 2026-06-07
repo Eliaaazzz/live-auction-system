@@ -26,6 +26,10 @@ services:
       dockerfile: apps/lumen/Dockerfile
     command: ["serve", "--mode=all"]
     restart: unless-stopped
+    # Hard cgroup cap so a real OOM is an observable oom_kill (exit 137), not a
+    # silent host kill, and so GOMEMLIMIT below stays BOUNDED — it can never grow
+    # the heap toward the host and starve ai-sidecar+caddy on the 8 GiB box.
+    mem_limit: 5g
     environment:
       HTTP_ADDR: ":8080"
       APP_ENV: prod
@@ -44,9 +48,37 @@ services:
       EVIDENCE_HMAC_KEY: "${EVIDENCE_HMAC_KEY:?set a strong non-default evidence key}"
       FRONTEND_ORIGIN: "${FRONTEND_ORIGIN:?set to https://<your-domain>}"
       AI_SIDECAR_URL: http://ai-sidecar:8090
-      # ---- V10k Tier A: GC tuning under sustained 10k-conn allocation ----
+      # ---- V10k Tier A: GC + memory governance (2026-06-07 load-test tuned) ----
+      # GOMEMLIMIT raised 2GiB→3750MiB (~75% of mem_limit) to relieve the GC
+      # death-spiral seen at ~15k conns (ack p95 ramp to 110ms while CPU only 0.65
+      # and bandwidth unsaturated — a GC-thrash signature, not a panic), but BOUNDED
+      # by mem_limit so it can never starve the co-tenants. gctrace + GOTRACEBACK=crash
+      # capture OOM-vs-panic on the next cliff (the 2026-06-07 crash zeroed /metrics
+      # with no captured cause).
       GOGC: "200"
-      GOMEMLIMIT: "2GiB"
+      GOMEMLIMIT: "3750MiB"
+      GODEBUG: "gctrace=1"
+      GOTRACEBACK: "crash"
+      # ---- front-door admission + per-conn memory knobs (see apps/lumen/internal/server/ws.go) ----
+      # MAX_WS_CONNS: shed new WS upgrades with 503 + Retry-After past this watermark
+      # (graceful degradation instead of the OOM crash proven at ~15.7k). 0 = disabled.
+      # ~12000 fits a 4 vCPU/8 GiB box; re-baseline with the wsload 14k-overload run.
+      MAX_WS_CONNS: "${MAX_WS_CONNS:-12000}"
+      # WS_CRIT_FRAMES: per-conn crit+broadcast lane depth (default 512; must stay
+      # > catchupMaxGap=200). 1024→512 reclaims ~72 KiB/conn (~1 GiB at 15k).
+      WS_CRIT_FRAMES: "${WS_CRIT_FRAMES:-512}"
+      # ROOM_STATE_PATCH_MIN_VIEWERS: coalesce per-bid broadcasts into ≤20/s patches
+      # for rooms ≥ this size (1000→200 so 200-viewer rooms also coalesce, closing
+      # the only burst exposure of the smaller crit lane).
+      ROOM_STATE_PATCH_MIN_VIEWERS: "${ROOM_STATE_PATCH_MIN_VIEWERS:-200}"
+      # PPROF_ADDR: loopback-only pprof for crash forensics; NEVER bind a public iface.
+      PPROF_ADDR: "${PPROF_ADDR:-127.0.0.1:6060}"
+      # GATEWAY_ROOM_AFFINITY: multi-gateway room-level routing isolation — a gateway
+      # only reads/fans out rooms it has local members for (vs every gateway reading
+      # every room). DEFAULT OFF; enable ONLY in a multi-gateway deploy that also
+      # pins a consistent room->gateway shard at the LB. Single-process mode=all
+      # ignores it (inert).
+      GATEWAY_ROOM_AFFINITY: "${GATEWAY_ROOM_AFFINITY:-}"
       MYSQL_HOST: "${MYSQL_HOST:-}"
       MYSQL_PORT: "${MYSQL_PORT:-3306}"
       MYSQL_USER: "${MYSQL_USER:-lumen}"

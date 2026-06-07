@@ -252,6 +252,10 @@ describe('RoomClient', () => {
 
   it('reconnects with latest lastSeq after resync', () => {
     vi.useFakeTimers()
+    // Backoff is full-jitter (delay = round(random() * cap)); pin random so the
+    // asserted backoff is deterministic. attempts=1 -> cap=min(8000,500*2)=1000,
+    // delay=round(0.5*1000)=500.
+    const randSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
 
     let lastSeq = 0
     const states = []
@@ -271,7 +275,7 @@ describe('RoomClient', () => {
 
       lastSeq = 42
       client.resync()
-      expect(states).toContainEqual({ status: ConnStatus.RECONNECTING, attempts: 1, backoff: 1000 })
+      expect(states).toContainEqual({ status: ConnStatus.RECONNECTING, attempts: 1, backoff: 500 })
 
       vi.advanceTimersByTime(1100)
       const ws2 = latestSocket()
@@ -283,7 +287,40 @@ describe('RoomClient', () => {
       expect(env.data).toEqual({ auctionId: 'auc1', lastSeq: 42 })
       expect(states).toContainEqual({ status: ConnStatus.SYNCING, lastSeq: 42 })
     } finally {
+      randSpy.mockRestore()
       client.leave()
+      vi.useRealTimers()
+    }
+  })
+
+  it('full-jitter backoff stays within [0, cap] and spreads (anti thundering-herd)', () => {
+    vi.useFakeTimers()
+    try {
+      // attempts=1 -> cap=1000. Random at the extremes must clamp to [0, cap];
+      // distinct random draws must yield distinct delays (i.e. it is jittered,
+      // not a constant) so a mass reconnect does not arrive in one lockstep wave.
+      const delays = new Set()
+      for (const r of [0, 0.25, 0.5, 0.75, 0.999]) {
+        const randSpy = vi.spyOn(Math, 'random').mockReturnValue(r)
+        const states = []
+        const client = new RoomClient({
+          url: 'ws://localhost:8080/ws',
+          auctionId: 'aucJ',
+          getLastSeq: () => 0,
+          onState: (s) => states.push(s),
+        })
+        client.connect()
+        latestSocket().onopen()
+        client.resync()
+        const rc = states.find((s) => s.status === ConnStatus.RECONNECTING)
+        expect(rc.backoff).toBeGreaterThanOrEqual(0)
+        expect(rc.backoff).toBeLessThanOrEqual(1000)
+        delays.add(rc.backoff)
+        client.leave()
+        randSpy.mockRestore()
+      }
+      expect(delays.size).toBeGreaterThan(1) // jittered, not a fixed value
+    } finally {
       vi.useRealTimers()
     }
   })

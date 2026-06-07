@@ -1037,7 +1037,17 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb})
+	// Stamp the response with the auction's current state seq so the client can
+	// reconcile by seq: it merge-MAXes the REST rows into its live board and never
+	// lets a late/stale REST response regress a row a ROOM_STATE_PATCH already
+	// advanced (跨端排名一致). Advisory — read via the (single-flighted) Snapshot;
+	// the tiny race vs the ZREVRANGE is harmless because the client uses seq only
+	// to order REST applies, never as authoritative leaderboard data.
+	var seq int64
+	if snap, serr := s.st.Snapshot(r.Context(), aid); serr == nil {
+		seq = snap.Seq
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"auctionId": aid, "leaderboard": lb, "seq": seq})
 }
 
 // GET /api/auctions/{id}/evidence -> T4 evidence card v0: authenticated access to
