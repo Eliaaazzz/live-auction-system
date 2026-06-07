@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { ensureSession, currentUser, clearSession } from '../lib/auth.js';
 import { msRemaining } from '../lib/clock.js';
-import { formatCentsCNY, StatusBadge, Countdown } from '../components/primitives.jsx';
+import { formatCentsCNYShort, StatusBadge, Countdown } from '../components/primitives.jsx';
 
 const LIVE = 'LIVE';
 const SCHEDULED = 'SCHEDULED';
@@ -170,7 +170,7 @@ function Section({ title, accent, children }) {
 function AuctionCard({ a, onEnter, ended = false }) {
   const remaining = a.endAtMs ? msRemaining(a.endAtMs) : 0;
   const price = a.currentPriceCents && a.currentPriceCents !== '0'
-    ? formatCentsCNY(a.currentPriceCents) : '—';
+    ? formatCentsCNYShort(a.currentPriceCents) : '—';
   return (
     <div style={{ ...S.card, opacity: ended ? 0.72 : 1 }}>
       <div style={S.thumb}>

@@ -3,7 +3,7 @@
 // Tests for MobileRoom terminal-state overlays (TC-T6-104/105 added in #54)
 // and the PullToResync gesture component (TC-T6-#51-H2 added in #63).
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
@@ -81,6 +81,12 @@ describe('MobileRoom · reject toast copy', () => {
 });
 
 describe('MobileRoom bid locking', () => {
+  // The join gate (拍卖须知) sits in front of the chips — pre-seed acceptance
+  // so these tests exercise the chips themselves.
+  beforeEach(() => {
+    window.localStorage.setItem('lumen:joined:lumen-auction', '1');
+  });
+
   it('does not submit chip bids after the local countdown reaches zero', () => {
     const onBid = vi.fn();
     const { container } = render(
@@ -110,10 +116,85 @@ describe('MobileRoom bid locking', () => {
     expect(maxButton).toBeDefined();
     expect(maxButton).not.toBeDisabled();
 
+    // 封顶 is a jump amount: first tap arms the confirm, second tap submits.
+    fireEvent.click(maxButton);
+    expect(onBid).not.toHaveBeenCalled();
     fireEvent.click(maxButton);
 
     expect(onBid).toHaveBeenCalledTimes(1);
     expect(onBid).toHaveBeenCalledWith(expect.any(String));
+  });
+});
+
+describe('MobileRoom · join gate (拍卖参与流程)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  // The rules summary mentions 封顶价 as copy, so "is the cap CHIP there"
+  // must look at buttons, not raw text.
+  const hasCapChip = (container) =>
+    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('封顶'));
+
+  it('locks the bid chips behind 我要参与竞拍 until the 须知 is accepted', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasCapChip(container)).toBe(false);
+  });
+
+  it('我要参与 → 须知 sheet → 勾选同意 → chips unlock + persisted', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-join"/>,
+    );
+
+    fireEvent.click(screen.getByText('我要参与竞拍'));
+    expect(screen.getByRole('dialog', { name: '拍卖须知' })).toBeInTheDocument();
+    expect(container.textContent).toMatch(/透明单品竞拍/);
+    expect(container.textContent).toMatch(/虚拟币演示/);
+
+    // Agree button stays locked until the checkbox is ticked.
+    const agreeBtn = screen.getByText('同意并参与');
+    expect(agreeBtn).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(agreeBtn).not.toBeDisabled();
+    fireEvent.click(agreeBtn);
+
+    // Sheet closes, chips unlock, acceptance persists per room.
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
+    expect(hasCapChip(container)).toBe(true);
+    expect(window.localStorage.getItem('lumen:joined:auc-join')).toBe('1');
+  });
+
+  it('暂不参与 closes the sheet without unlocking', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
+    fireEvent.click(screen.getByText('我要参与竞拍'));
+    fireEvent.click(screen.getByText('暂不参与'));
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasCapChip(container)).toBe(false);
+  });
+
+  it('scopes acceptance by room — joining auc-a leaves auc-b gated', () => {
+    window.localStorage.setItem('lumen:joined:auc-a', '1');
+    const { container, rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-a"/>,
+    );
+    expect(hasCapChip(container)).toBe(true);
+
+    rerender(<MobileRoom status="LIVE" leaders={[]} followScopeId="auc-b"/>);
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasCapChip(container)).toBe(false);
+  });
+
+  it('re-opens the 须知 read-only from the rules summary after joining', () => {
+    window.localStorage.setItem('lumen:joined:lumen-auction', '1');
+    render(<MobileRoom status="LIVE" leaders={[]}/>);
+    fireEvent.click(screen.getByText(/查看完整《拍卖须知》/));
+    expect(screen.getByRole('dialog', { name: '拍卖须知' })).toBeInTheDocument();
+    // Already joined → no re-consent dance, just an acknowledge button.
+    expect(screen.queryByText('同意并参与')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('我知道了'));
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
   });
 });
 

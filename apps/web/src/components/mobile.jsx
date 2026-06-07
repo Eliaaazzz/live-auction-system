@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCentsCNY, formatCentsCNYCompact, addCentsStr, bidRejectCopy,
+import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, QuickBidChips, HeatMeter,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
@@ -116,7 +116,7 @@ function MobileRoomSkeleton() {
         right: 0,
         bottom: 0,
         top: '46%',
-        padding: '18px 14px 50px',
+        padding: '18px 14px calc(34px + env(safe-area-inset-bottom, 0px))',
         background: 'linear-gradient(180deg, rgba(23,26,40,.72), rgba(23,26,40,.96))',
         backdropFilter: 'blur(18px)',
         display: 'flex',
@@ -215,6 +215,12 @@ function MobileRoom({
   // graph is out of V9 scope). Local state so the button visibly responds.
   const followKey = `lumen:follow:${followScopeId || 'lumen-auction'}`;
   const [following, setFollowing] = React.useState(() => readLocalFlag(followKey));
+  // 参与流程 (meeting: 拍卖参与流程): the bid chips stay locked behind a
+  // one-time 拍卖须知 acceptance — 阿里拍卖's 实名/保证金 gate collapsed to a
+  // single confirm sheet for the demo env. Persisted per room, like follow.
+  const joinKey = `lumen:joined:${followScopeId || 'lumen-auction'}`;
+  const [joined, setJoined] = React.useState(() => readLocalFlag(joinKey));
+  const [showTerms, setShowTerms] = React.useState(false);
   const [soundOn, setSoundOn] = React.useState(() => readLocalFlag('lumen:sound:enabled'));
   const [videoExpanded, setVideoExpanded] = React.useState(false);
   const [videoBroken, setVideoBroken] = React.useState(false);
@@ -230,7 +236,17 @@ function MobileRoom({
   React.useEffect(() => {
     setFollowing(readLocalFlag(followKey));
   }, [followKey]);
+  React.useEffect(() => {
+    setJoined(readLocalFlag(joinKey));
+    setShowTerms(false);
+  }, [joinKey]);
   const effectiveVideoUrl = videoBroken ? null : videoUrl;
+
+  const acceptTerms = React.useCallback(() => {
+    writeLocalFlag(joinKey, true);
+    setJoined(true);
+    setShowTerms(false);
+  }, [joinKey]);
 
   const toggleFollow = React.useCallback(() => {
     setFollowing((f) => {
@@ -272,7 +288,6 @@ function MobileRoom({
     }));
   const minBidCents = safeAddCents(currentCents, stepCents);
   const firstLeader = leaders[0] || null;
-  const secondLeader = leaders[1] || null;
 
   // F23 / Elia round-2 #3: screen-shake on hammer. One-shot — flips back
   // to false ~700ms after status enters SOLD so the keyframe doesn't loop.
@@ -585,13 +600,31 @@ function MobileRoom({
         )}
       </div>
 
+      {/* ── Ambient item glow behind the detail sheet ──
+          The sheet's translucent gradient + backdrop blur frost whatever sits
+          behind it, so feeding it the product image makes the bottom panel
+          pick up the item's own palette (meeting: 根据拍品调整背景渲染 /
+          毛玻璃) — no canvas color extraction needed. zIndex 0 keeps it under
+          the sheet; the expanded video (zIndex 72) covers it entirely. */}
+      {productImage && (
+        <div aria-hidden style={{
+          position: 'absolute', left: 0, right: 0, top: '46%', bottom: 0, zIndex: 0,
+          backgroundImage: `url(${productImage})`,
+          backgroundSize: 'cover', backgroundPosition: 'center 30%',
+          opacity: .45,
+          pointerEvents: 'none',
+        }}/>
+      )}
+
       {/* ── Detail sheet — bottom 54% ── */}
       <div style={{
         position: 'absolute', left: 0, right: 0, bottom: 0, top: '46%',
         background: 'linear-gradient(180deg, rgba(23,26,40,.18) 0%, rgba(23,26,40,.84) 9%, rgba(23,26,40,.94) 100%)',
         backdropFilter: 'blur(18px) saturate(1.18)',
         display: 'flex', flexDirection: 'column',
-        padding: '12px 14px 50px',
+        // Bottom pad clears the iOS home indicator on a full-bleed phone
+        // (meeting: safe-area). env() is 0 inside the desktop preview card.
+        padding: '12px 14px calc(34px + env(safe-area-inset-bottom, 0px))',
         gap: 10, overflow: 'hidden',
       }}>
         {/* Drag handle */}
@@ -651,9 +684,7 @@ function MobileRoom({
           display: 'flex', flexDirection: 'column', gap: 10,
         }}>
           <BuyerFocusPanel
-            leaders={leaders}
             firstLeader={firstLeader}
-            secondLeader={secondLeader}
             yourRank={yourRank}
             yourGapCents={yourGapCents}
             isYouLeading={isYouLeading}
@@ -669,30 +700,37 @@ function MobileRoom({
             aiTrigger={aiTrigger}
             aiText={aiText}
             aiStreaming={aiStreaming}
+            onShowTerms={() => setShowTerms(true)}
           />
         </div>{/* end scrollable middle */}
 
-        {/* Bid CTA — chips replacing the single number-input (Elia #49 round-2 #2).
-            onBid is called with the absolute cents string the chip computed;
-            LiveRoomRoute wires it to placeBid. Pinned (flex-shrink:0) so it is
-            always visible at the bottom of the panel. */}
+        {/* Bid CTA — join gate first (meeting: 拍卖参与流程 — 我要参与 +
+            确认弹窗 + 须知), then the 加价 chips. onBid is called with the
+            absolute cents string the chip computed; LiveRoomRoute wires it to
+            placeBid. Pinned (flex-shrink:0) so it is always visible. */}
         <div style={{ flexShrink: 0, marginTop: 8 }}>
-          <QuickBidChips
-            currentCents={currentCents}
-            stepCents={stepCents}
-            capCents={capCents}
-            disabled={biddingLocked}
-            isLeading={isYouLeading}
-            shake={rejectShake}
-            onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
-          />
-          <div style={{
-            display: 'flex', justifyContent: 'space-between',
-            padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
-          }}>
-            <span>最低加价 {formatCentsCNY(stepCents)}</span>
-            <span className="mono">末 10 秒出价延时 30 秒</span>
-          </div>
+          {joined ? (
+            <>
+              <QuickBidChips
+                currentCents={currentCents}
+                stepCents={stepCents}
+                capCents={capCents}
+                disabled={biddingLocked}
+                isLeading={isYouLeading}
+                shake={rejectShake}
+                onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
+              />
+              <div style={{
+                display: 'flex', justifyContent: 'space-between',
+                padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
+              }}>
+                <span>最低加价 {formatCentsCNYShort(stepCents)}</span>
+                <span className="mono">末 10 秒出价延时 30 秒</span>
+              </div>
+            </>
+          ) : (
+            <JoinGate onShowTerms={() => setShowTerms(true)}/>
+          )}
         </div>
       </div>
 
@@ -710,6 +748,16 @@ function MobileRoom({
             expressive={expressive}
           />
         </div>
+      )}
+
+      {/* 拍卖须知 sheet — entered from the join gate or the rules summary. */}
+      {showTerms && (
+        <TermsSheet
+          stepCents={stepCents}
+          joined={joined}
+          onAccept={acceptTerms}
+          onClose={() => setShowTerms(false)}
+        />
       )}
 
       {/* Terminal overlay — Elia round-2 H2 (#54). NO_BID and CANCELLED
@@ -806,10 +854,179 @@ function PanelHeader({ title, meta, right }) {
   );
 }
 
+// ─── JoinGate — 我要参与竞拍 CTA shown until the 须知 is accepted ────
+function JoinGate({ onShowTerms }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <button
+        onClick={onShowTerms}
+        style={{
+          width: '100%', minHeight: 54, padding: '14px 18px', borderRadius: 12,
+          border: 'none', cursor: 'pointer',
+          background: 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
+          color: '#fff', fontFamily: 'var(--font-sans)', fontSize: 16, fontWeight: 700,
+          letterSpacing: '.02em',
+          boxShadow: '0 4px 14px rgba(254,44,85,.28)',
+        }}>
+        我要参与竞拍
+      </button>
+      <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
+        参与前请阅读并同意《拍卖须知》
+      </div>
+    </div>
+  );
+}
+
+// ─── TermsSheet — 拍卖须知 bottom sheet (meeting: terms and conditions) ──
+// Copy keeps the compliance framing tight (CLAUDE.md): transparent single-item
+// auction, no mystery box, no authenticity guarantee, virtual-coin demo with
+// no real payment/logistics commitment.
+const AUCTION_TERMS = [
+  { title: '透明单品竞拍', text: '明牌出价、单一拍品，无盲盒、无随机开箱玩法。' },
+  { title: '出价即承诺', text: '出价须高于当前价且为最低加价的整数倍；正式环境需实名认证并缴纳保证金，竞得后弃标将按平台规则处理。' },
+  { title: '延时保护', text: '最后 10 秒内的有效出价自动延长 30 秒，防止狙击出价。' },
+  { title: '成交判定', text: '以服务端事件序列与证据链为准；直播画面仅供参考，不参与判定。' },
+  { title: '演示环境', text: '当前为虚拟币演示，不涉及真实支付、物流与保真承诺。' },
+];
+
+function TermsSheet({ stepCents, joined = false, onAccept, onClose }) {
+  const [agreed, setAgreed] = React.useState(false);
+  // a11y: move focus into the dialog on open (screen readers / keyboard) and
+  // let Escape dismiss it — review finding on the join-gate round.
+  const panelRef = React.useRef(null);
+  React.useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'absolute', inset: 0, zIndex: 75,
+        background: 'rgba(10,10,16,.66)', backdropFilter: 'blur(6px)',
+        display: 'flex', alignItems: 'flex-end',
+        fontFamily: 'var(--font-sans)',
+      }}>
+      <div
+        ref={panelRef}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+        className="lumen-sheet-up"
+        role="dialog"
+        aria-modal="true"
+        aria-label="拍卖须知"
+        style={{
+          width: '100%', maxHeight: '80%', overflowY: 'auto',
+          borderRadius: '18px 18px 0 0',
+          background: 'var(--douyin-ink-soft)',
+          border: '1px solid rgba(255,255,255,.08)', borderBottom: 'none',
+          padding: '14px 16px calc(20px + env(safe-area-inset-bottom, 0px))',
+          display: 'flex', flexDirection: 'column', gap: 12,
+        }}>
+        <div style={{
+          alignSelf: 'center', width: 36, height: 4, borderRadius: 2,
+          background: 'rgba(255,255,255,.18)',
+        }}/>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span className="serif" style={{ fontSize: 18, fontWeight: 600 }}>拍卖须知</span>
+          <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
+            参与竞拍前请确认以下规则
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+          {AUCTION_TERMS.map((t, i) => (
+            <div key={i} style={{
+              display: 'flex', gap: 10, alignItems: 'flex-start',
+              padding: '9px 11px', borderRadius: 8,
+              background: 'rgba(255,255,255,.035)',
+              border: '1px solid rgba(255,255,255,.07)',
+            }}>
+              <span className="mono" style={{
+                flexShrink: 0, width: 18, height: 18, borderRadius: 9, marginTop: 1,
+                background: 'rgba(201,169,97,.16)', color: 'var(--solemn-gold)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700,
+              }}>{i + 1}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--douyin-ink-text)' }}>
+                  {t.title}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', lineHeight: 1.55, marginTop: 2 }}>
+                  {t.text}
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className="mono" style={{
+            fontSize: 10, color: 'var(--douyin-ink-dim)', padding: '0 2px',
+            display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 6,
+          }}>
+            <span>本场最低加价 {formatCentsCNYShort(stepCents)}</span>
+            <span>末 10 秒出价延时 30 秒</span>
+          </div>
+        </div>
+
+        {joined ? (
+          <button
+            onClick={onClose}
+            style={{
+              width: '100%', minHeight: 48, borderRadius: 10, border: 'none',
+              background: 'rgba(255,255,255,.08)', color: 'var(--douyin-ink-text)',
+              fontFamily: 'inherit', fontSize: 14, fontWeight: 600, cursor: 'pointer',
+            }}>
+            我知道了
+          </button>
+        ) : (
+          <>
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: 8, minHeight: 44,
+              padding: '0 2px', cursor: 'pointer', userSelect: 'none',
+              fontSize: 12, color: 'var(--douyin-ink-text)',
+            }}>
+              <input
+                type="checkbox"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                style={{ width: 16, height: 16, accentColor: 'var(--douyin-red)' }}
+              />
+              我已阅读并同意《拍卖须知》
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={onClose}
+                style={{
+                  flex: 1, minHeight: 48, borderRadius: 10,
+                  border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
+                  color: 'var(--douyin-ink-muted)', fontFamily: 'inherit',
+                  fontSize: 14, fontWeight: 600, cursor: 'pointer',
+                }}>
+                暂不参与
+              </button>
+              <button
+                onClick={onAccept}
+                disabled={!agreed}
+                style={{
+                  flex: 2, minHeight: 48, borderRadius: 10, border: 'none',
+                  background: agreed
+                    ? 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))'
+                    : 'rgba(107,114,128,.3)',
+                  color: '#fff', fontFamily: 'inherit', fontSize: 14, fontWeight: 700,
+                  cursor: agreed ? 'pointer' : 'not-allowed',
+                  boxShadow: agreed ? '0 4px 14px rgba(254,44,85,.28)' : 'none',
+                }}>
+                同意并参与
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function BuyerFocusPanel({
-  leaders,
   firstLeader,
-  secondLeader,
   yourRank,
   yourGapCents,
   isYouLeading,
@@ -825,14 +1042,13 @@ function BuyerFocusPanel({
   aiTrigger,
   aiText,
   aiStreaming,
+  onShowTerms,
 }) {
   return (
     <>
-      <PanelHeader title="当前领先" meta="前三名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
+      <PanelHeader title="当前领先" meta="第一名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
       <CompactLeaderCard
         firstLeader={firstLeader}
-        secondLeader={secondLeader}
-        leaders={leaders}
         yourRank={yourRank}
         yourGapCents={yourGapCents}
         isYouLeading={isYouLeading}
@@ -851,28 +1067,19 @@ function BuyerFocusPanel({
         stepCents={stepCents}
         capCents={capCents}
         extendCount={extendCount}
+        onShowTerms={onShowTerms}
       />
     </>
   );
 }
 
-function CompactLeaderCard({ firstLeader, secondLeader, leaders, yourRank, yourGapCents, isYouLeading }) {
+// Meeting decision (Yifan/Zhenyu 2026-06): deep rank lists carry little
+// meaning in a live room — show the champion and where *you* stand, drop
+// ranks 2-5 entirely. Less to scan, nothing occluded on small phones.
+function CompactLeaderCard({ firstLeader, yourRank, yourGapCents, isYouLeading }) {
   return (
     <InfoSurface accent="gold">
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
-        <CompactLeaderRow rank={1} leader={firstLeader} lead/>
-        {secondLeader && <CompactLeaderRow rank={2} leader={secondLeader}/>}
-      </div>
-      <div style={{
-        display: 'flex',
-        gap: 8,
-        overflowX: 'auto',
-        paddingTop: 2,
-      }} className="no-scrollbar">
-        {leaders.slice(2, 5).map((leader, idx) => (
-          <CompactLeaderPill key={leader.userId || idx} rank={idx + 3} leader={leader}/>
-        ))}
-      </div>
+      <CompactLeaderRow rank={1} leader={firstLeader} lead/>
       <MyPositionGap
         rank={yourRank}
         gapCents={yourGapCents}
@@ -884,7 +1091,7 @@ function CompactLeaderCard({ firstLeader, secondLeader, leaders, yourRank, yourG
 
 function CompactLeaderRow({ rank, leader, lead = false }) {
   const name = leader?.displayName || leader?.userId || '暂无出价';
-  const cents = leader?.cents ? formatCentsCNY(leader.cents) : '—';
+  const cents = leader?.cents ? formatCentsCNYShort(leader.cents) : '—';
   return (
     <div style={{
       display: 'grid',
@@ -933,39 +1140,7 @@ function CompactLeaderRow({ rank, leader, lead = false }) {
   );
 }
 
-function CompactLeaderPill({ rank, leader }) {
-  const name = leader?.displayName || leader?.userId || '暂无';
-  const cents = leader?.cents ? formatCentsCNYCompact(leader.cents) : '—';
-  return (
-    <div style={{
-      flex: '0 0 auto',
-      minWidth: 104,
-      padding: '7px 9px',
-      borderRadius: 8,
-      background: 'rgba(255,255,255,.04)',
-      border: '1px solid rgba(255,255,255,.08)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 3,
-    }}>
-      <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>第 {rank} 名</span>
-      <span style={{
-        fontSize: 11,
-        color: 'var(--douyin-ink-text)',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        whiteSpace: 'nowrap',
-      }}>
-        {name}
-      </span>
-      <span className="mono" style={{ fontSize: 11, color: 'var(--solemn-gold)', fontWeight: 700 }}>
-        {cents}
-      </span>
-    </div>
-  );
-}
-
-function RulesSummary({ minBidCents, stepCents, capCents, extendCount }) {
+function RulesSummary({ minBidCents, stepCents, capCents, extendCount, onShowTerms }) {
   return (
     <details style={{
       borderRadius: 8,
@@ -990,10 +1165,22 @@ function RulesSummary({ minBidCents, stepCents, capCents, extendCount }) {
         </span>
       </summary>
       <div style={{ padding: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 7 }}>
-        <InfoLine label="最低加价" value={formatCentsCNY(stepCents)}/>
-        <InfoLine label="封顶价" value={capCents ? formatCentsCNY(capCents) : '未设置'}/>
+        <InfoLine label="最低加价" value={formatCentsCNYShort(stepCents)}/>
+        <InfoLine label="封顶价" value={capCents ? formatCentsCNYShort(capCents) : '未设置'}/>
         <InfoLine label="延时" value={`末 10 秒出价自动延时，已触发 ${extendCount || 0} 次`}/>
         <InfoLine label="判定" value="只认服务端事件，视频不参与判定"/>
+        {onShowTerms && (
+          <button
+            onClick={onShowTerms}
+            style={{
+              alignSelf: 'flex-start', minHeight: 32, padding: '4px 0',
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: 'var(--douyin-cyan)', fontFamily: 'inherit',
+              fontSize: 11, fontWeight: 600,
+            }}>
+            查看完整《拍卖须知》→
+          </button>
+        )}
       </div>
     </details>
   );
@@ -1094,7 +1281,7 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           letterSpacing: 0, lineHeight: 1,
           textShadow: '0 4px 30px rgba(201,169,97,.35)',
         }}>
-          {formatCentsCNY(amountCents)}
+          {formatCentsCNYShort(amountCents)}
         </div>
         <div style={{
           width: 80, height: 1, marginTop: 14,
@@ -1613,10 +1800,16 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
   );
 }
 
+// localStorage with a sessionStorage fallback: iOS Safari private mode throws
+// on setItem, which would loop the buyer back into the join gate every reload.
+// The fallback keeps acceptance/follow alive for at least the session.
 function readLocalFlag(key) {
   if (typeof window === 'undefined') return false;
   try {
-    return window.localStorage.getItem(key) === '1';
+    if (window.localStorage.getItem(key) === '1') return true;
+  } catch {}
+  try {
+    return window.sessionStorage.getItem(key) === '1';
   } catch {
     return false;
   }
@@ -1627,6 +1820,11 @@ function writeLocalFlag(key, value) {
   try {
     if (value) window.localStorage.setItem(key, '1');
     else window.localStorage.removeItem(key);
+    return;
+  } catch {}
+  try {
+    if (value) window.sessionStorage.setItem(key, '1');
+    else window.sessionStorage.removeItem(key);
   } catch {}
 }
 

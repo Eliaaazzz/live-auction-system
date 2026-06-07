@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCentsCNY, formatCentsCNYCompact, addCentsStr } from './primitives.jsx';
+import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr } from './primitives.jsx';
 
 // lumen-atmosphere.jsx
 // Visceral feedback layers that sit on top of MobileRoom.
@@ -51,7 +51,7 @@ function LeadingToast({ visible, gainCents }) {
             fontSize: 11, color: 'var(--solemn-gold)', fontWeight: 600,
             textShadow: '0 2px 8px rgba(0,0,0,.6)',
           }}>
-            +{formatCentsCNY(gainCents).replace('¥','¥')}
+            +{formatCentsCNYShort(gainCents)}
           </span>
         )}
       </div>
@@ -90,7 +90,7 @@ function OvertakenSlam({ visible, byName, gapCents, onReverse }) {
           <span>⚡</span><span>被超越!</span>
         </div>
         <div className="mono" style={{ fontSize: 11, color: 'rgba(255,255,255,.85)', marginTop: 2 }}>
-          {byName} 反超 · 差 {formatCentsCNY(gapCents)}
+          {byName} 反超 · 差 {formatCentsCNYShort(gapCents)}
         </div>
       </div>
       <button onClick={onReverse} style={{
@@ -142,7 +142,7 @@ function MyPositionGap({ rank, gapCents, isYou, isLeading }) {
         你 · 差
       </span>
       <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--douyin-cyan)' }}>
-        {formatCentsCNY(gapCents)}
+        {formatCentsCNYShort(gapCents)}
       </span>
       <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', fontFamily: 'var(--font-sans)' }}>反超</span>
     </div>
@@ -187,7 +187,7 @@ function BidTickerStream({ items }) {
               {name}
             </span>
             <span className="mono" style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)' }}>
-              {formatCentsCNY(cents)}
+              {formatCentsCNYShort(cents)}
             </span>
           </div>
         );
@@ -480,7 +480,7 @@ function BlackHorseBanner({ visible, name = '夜航星', jumpCents = '5000000', 
             <span style={{ fontSize: 13 }}>⚡</span>
             <span>黑马出价</span>
             <span>· {name}</span>
-            <span className="mono">+{formatCentsCNY(jumpCents)} · {byMultiple}× 阶梯</span>
+            <span className="mono">+{formatCentsCNYShort(jumpCents)} · {byMultiple}× 阶梯</span>
             <span>·</span>
           </span>
         ))}
@@ -553,7 +553,7 @@ function HammerTransition({ active, amountCents = '12880000' }) {
           fontSize: 42, fontWeight: 700, letterSpacing: '-.025em',
           textShadow: '0 4px 30px rgba(201,169,97,.5)',
         }}>
-          {formatCentsCNY(amountCents)}
+          {formatCentsCNYShort(amountCents)}
         </div>
       </div>
     </div>

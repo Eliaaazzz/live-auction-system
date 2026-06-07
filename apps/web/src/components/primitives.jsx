@@ -19,6 +19,34 @@ function formatCentsCNY(cents) {
   return (neg ? '-' : '') + '¥' + grouped + '.' + fen;
 }
 
+// Display variant for big price surfaces (room price, hammer, leader rows):
+// drops the ".00" fen tail when it carries no information. Meeting 数字展示
+// 规范 + 阿里拍卖 convention — whole-yuan prices read as ¥128,800, not
+// ¥128,800.00. Non-zero fen is always preserved (it's money).
+function formatCentsCNYShort(cents) {
+  const full = formatCentsCNY(cents);
+  return full.endsWith('.00') ? full.slice(0, -3) : full;
+}
+
+// 「元」input string → string-cents. Accepts integer or ≤2-decimal yuan
+// ("1338" / "1338.5" / "1338.50"); returns null on anything else. BigInt all
+// the way — never round-trips through Number (§4 P1).
+function yuanToCents(yuan) {
+  const s = String(yuan ?? '').trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const [whole, frac = ''] = s.split('.');
+  return (BigInt(whole) * 100n + BigInt(frac.padEnd(2, '0') || '0')).toString();
+}
+
+// BigInt cents → editable yuan string ("1338" / "1338.5") for the custom
+// drawer's ± nudges. Inverse of yuanToCents for display purposes.
+function centsToYuanInput(centsBig) {
+  const whole = centsBig / 100n;
+  const fen = centsBig % 100n;
+  if (fen === 0n) return whole.toString();
+  return `${whole}.${fen.toString().padStart(2, '0').replace(/0$/, '')}`;
+}
+
 function formatCentsCNYCompact(cents) {
   try {
     const n = BigInt(cents);
@@ -89,14 +117,37 @@ function RippleHost({ ripples, remove, color = 'rgba(255,255,255,.28)' }) {
 }
 
 // ─── BidChip — one 加价 chip with a Material ripple (no scale-zoom) ───
-function BidChip({ chip, disabled, isGold, chipBase, onBid }) {
+// requireConfirm (the 封顶 jump chip): big amounts get a two-tap confirm —
+// first tap arms ("再点一次确认"), second tap within 2.6s submits. Auction-house
+// research (Sotheby's Quick Bid / eBay confirm step): one-tap for small steps,
+// an explicit confirm for jump amounts. Arming resets whenever the chip's
+// amount moves (price changed → re-read before you commit).
+function BidChip({ chip, disabled, isGold, chipBase, onBid, requireConfirm = false }) {
   const { ripples, spawn, remove } = useRipple();
+  const [armed, setArmed] = React.useState(false);
+  const armTimerRef = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(armTimerRef.current), []);
+  React.useEffect(() => {
+    setArmed(false);
+    clearTimeout(armTimerRef.current);
+  }, [chip.cents]);
+  const handleClick = () => {
+    if (!requireConfirm || armed) {
+      setArmed(false);
+      clearTimeout(armTimerRef.current);
+      onBid(chip.cents);
+      return;
+    }
+    setArmed(true);
+    clearTimeout(armTimerRef.current);
+    armTimerRef.current = setTimeout(() => setArmed(false), 2600);
+  };
   return (
     <button
       disabled={disabled}
       className="lumen-bid-chip"
       onPointerDown={(e) => { if (!disabled) spawn(e); }}
-      onClick={() => onBid(chip.cents)}
+      onClick={handleClick}
       style={{
         ...chipBase,
         position: 'relative', overflow: 'hidden',
@@ -106,9 +157,11 @@ function BidChip({ chip, disabled, isGold, chipBase, onBid }) {
             : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
         color: isGold ? 'var(--solemn-ink)' : '#fff',
         boxShadow: disabled ? 'none'
-          : isGold
-            ? '0 4px 14px rgba(201,169,97,.28)'
-            : '0 4px 14px rgba(254,44,85,.28)',
+          : armed
+            ? '0 0 0 2px rgba(255,255,255,.85), 0 4px 14px rgba(201,169,97,.4)'
+            : isGold
+              ? '0 4px 14px rgba(201,169,97,.28)'
+              : '0 4px 14px rgba(254,44,85,.28)',
       }}>
       <span className="mono" title={formatCentsCNY(chip.cents)} style={{
         position: 'relative', zIndex: 1,
@@ -120,9 +173,9 @@ function BidChip({ chip, disabled, isGold, chipBase, onBid }) {
       </span>
       <span style={{
         position: 'relative', zIndex: 1,
-        fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
+        fontSize: 10, fontWeight: armed ? 700 : 500, opacity: armed ? 1 : .85, letterSpacing: '.04em',
       }}>
-        {chip.label}
+        {armed ? '再点一次确认' : chip.label}
       </span>
       <RippleHost ripples={ripples} remove={remove}
         color={isGold ? 'rgba(16,16,16,.18)' : 'rgba(255,255,255,.32)'}/>
@@ -135,7 +188,7 @@ function BidChip({ chip, disabled, isGold, chipBase, onBid }) {
 
 // ─── PriceDisplay — F09 odometer flip ───
 function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnderline = false }) {
-  const txt = formatCentsCNY(cents);
+  const txt = formatCentsCNYShort(cents);
   const color = tone === 'gold' ? 'var(--solemn-gold)'
               : tone === 'cream' ? 'var(--solemn-cream)'
               : tone === 'red'  ? 'var(--douyin-red)'
@@ -640,6 +693,8 @@ function QuickBidChips({
   onBid = () => {},
 }) {
   const [showDrawer, setShowDrawer] = React.useState(false);
+  // Custom amount is typed in 元 (meeting: 自定义金额本地化 — buyers think in
+  // yuan, not cents). Converted to string-cents at the submit boundary.
   const [custom, setCustom] = React.useState('');
 
   // Defense-in-depth: stepCents=='0' would still bypass the early disabling
@@ -671,8 +726,10 @@ function QuickBidChips({
     { label: '封顶',  cents: maxBid(), tone: 'gold' },
   ];
 
+  // Inner padding ≥8px horizontal so the amount never sits flush against the
+  // chip edge (meeting: 按钮内部 padding).
   const chipBase = {
-    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '9px 4px', borderRadius: 10, border: 'none',
+    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '10px 8px', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
@@ -686,17 +743,21 @@ function QuickBidChips({
   let customBig = null;
   let customError = null;
   if (custom) {
-    try {
-      customBig = BigInt(custom);
-      if (customBig > MAX_MONEY_CENTS) customError = 'max';
-      else if (customBig <= BigInt(currentCents)) customError = 'low';
-      // v2: step-boundary check. place_bid.lua requires the bid to land on
-      // a stepCents multiple above currentCents; chips already snap, custom
-      // input does not, so an off-grid bid would round-trip to ERR_BAD_INPUT.
-      else if (stepUsable && (customBig - BigInt(currentCents)) % stepBig !== 0n) {
-        customError = 'step';
-      }
-    } catch { customError = 'parse'; }
+    const centsStr = yuanToCents(custom);
+    if (centsStr == null) customError = 'parse';
+    else {
+      try {
+        customBig = BigInt(centsStr);
+        if (customBig > MAX_MONEY_CENTS) customError = 'max';
+        else if (customBig <= BigInt(currentCents)) customError = 'low';
+        // v2: step-boundary check. place_bid.lua requires the bid to land on
+        // a stepCents multiple above currentCents; chips already snap, custom
+        // input does not, so an off-grid bid would round-trip to ERR_BAD_INPUT.
+        else if (stepUsable && (customBig - BigInt(currentCents)) % stepBig !== 0n) {
+          customError = 'step';
+        }
+      } catch { customError = 'parse'; }
+    }
   }
   const customSubmittable = !disabled && custom && customError == null;
 
@@ -710,12 +771,17 @@ function QuickBidChips({
     try {
       const c = BigInt(currentCents);
       const s = stepBig;
-      const base = (customBig != null && customError !== 'parse') ? customBig : c + s;
+      let base = (customBig != null) ? customBig : c + s;
+      if (base < c) base = c;
+      // Snap onto the step grid first (BigInt division floors), so a ± tap
+      // from an off-grid typed value lands valid — the error copy promises
+      // "点 ± 自动对齐" and this is what delivers it.
+      base = c + ((base - c) / s) * s;
       let next = base + BigInt(multiplier) * s;
       const min = c + s;
       if (next < min) next = min;
       if (next > MAX_MONEY_CENTS) next = MAX_MONEY_CENTS;
-      setCustom(next.toString());
+      setCustom(centsToYuanInput(next));
     } catch {}
   };
 
@@ -737,6 +803,7 @@ function QuickBidChips({
             disabled={disabled}
             isGold={c.tone === 'gold' || isLeading}
             chipBase={chipBase}
+            requireConfirm={c.tone === 'gold'}
             onBid={onBid}/>
         ))}
       </div>
@@ -757,26 +824,42 @@ function QuickBidChips({
           background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          {/* Row 1 — typed input + Submit button (Whatnot Custom pattern). */}
+          {/* Row 1 — typed input + Submit button (Whatnot Custom pattern).
+              Typed in 元 with a ¥ prefix; decimal keyboard on phones. */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              // Cap raw input at 17 chars (≈ MAX_MONEY_CENTS digit count + 1)
-              // so paste of "999..." (60 digits) never reaches state.
-              maxLength={17}
-              placeholder="输入金额（分）"
-              value={custom}
-              onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, '').slice(0, 17))}
-              style={{
-                flex: 1, padding: '8px 10px', borderRadius: 6,
-                background: 'rgba(0,0,0,.3)',
-                border: `1px solid ${customError ? 'rgba(254,44,85,.4)' : 'rgba(255,255,255,.1)'}`,
-                color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
-                outline: 'none',
-              }}
-            />
+            <div style={{
+              flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+              padding: '0 10px', borderRadius: 6,
+              background: 'rgba(0,0,0,.3)',
+              border: `1px solid ${customError ? 'rgba(254,44,85,.4)' : 'rgba(255,255,255,.1)'}`,
+            }}>
+              <span className="mono" style={{ fontSize: 13, color: 'var(--douyin-ink-muted)' }}>¥</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                aria-label="自定义出价金额（元）"
+                // Cap raw input at 15 chars (MAX_MONEY_CENTS is 14 yuan digits
+                // + dot) so a 60-digit paste never reaches state.
+                maxLength={15}
+                placeholder="出价金额（元）"
+                value={custom}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.]/g, '');
+                  const dot = raw.indexOf('.');
+                  // keep a single dot + at most 2 decimals (元 has 100 分)
+                  const clean = dot < 0
+                    ? raw
+                    : raw.slice(0, dot + 1) + raw.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+                  setCustom(clean.slice(0, 15));
+                }}
+                style={{
+                  flex: 1, minWidth: 0, padding: '8px 0', border: 'none',
+                  background: 'transparent',
+                  color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
+                  outline: 'none',
+                }}
+              />
+            </div>
             <button
               disabled={!customSubmittable}
               onClick={() => {
@@ -830,9 +913,9 @@ function QuickBidChips({
               fontFamily: 'var(--font-sans)',
             }}>
               {customError === 'max'   && '金额超过单笔上限'}
-              {customError === 'low'   && `必须高于当前价 ${formatCentsCNY(currentCents)}`}
-              {customError === 'step'  && `差额必须是 ${formatCentsCNY(stepCents)} 倍数 · 点 ± 档位按钮自动对齐`}
-              {customError === 'parse' && '请输入纯数字金额（分）'}
+              {customError === 'low'   && `须高于当前价 ${formatCentsCNYShort(currentCents)}`}
+              {customError === 'step'  && `加价需为 ${formatCentsCNYShort(stepCents)} 的整数倍 · 点 ± 自动对齐`}
+              {customError === 'parse' && '请输入有效金额（元，最多两位小数）'}
             </div>
           )}
         </div>
@@ -886,6 +969,9 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
 export {
   formatCentsCNY,
   formatCentsCNYCompact,
+  formatCentsCNYShort,
+  yuanToCents,
+  centsToYuanInput,
   addCentsStr,
   fmtRemaining,
   bidRejectCopy,
