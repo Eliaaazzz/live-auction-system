@@ -24,18 +24,27 @@ func TestMetricsResetEndpointIsDisabledWithoutToken(t *testing.T) {
 }
 
 func TestMetricsResetEndpointRejectsBadToken(t *testing.T) {
-	s := &Server{
-		cfg:     config.Config{MetricsResetToken: "secret"},
-		metrics: metrics.New(),
-	}
-	req := httptest.NewRequest(http.MethodPost, "/admin/metrics/reset", nil)
-	req.Header.Set("X-Lumen-Metrics-Reset-Token", "wrong")
-	rr := httptest.NewRecorder()
+	for _, gotToken := range []string{"wrong1", "x"} {
+		t.Run(gotToken, func(t *testing.T) {
+			m := metrics.New()
+			m.AckLatency.Observe(10 * time.Millisecond)
+			s := &Server{
+				cfg:     config.Config{MetricsResetToken: "secret"},
+				metrics: m,
+			}
+			req := httptest.NewRequest(http.MethodPost, "/admin/metrics/reset", nil)
+			req.Header.Set("X-Lumen-Metrics-Reset-Token", gotToken)
+			rr := httptest.NewRecorder()
 
-	s.handleMetricsReset(rr, req)
+			s.handleMetricsReset(rr, req)
 
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("status=%d want 403", rr.Code)
+			if rr.Code != http.StatusForbidden {
+				t.Fatalf("status=%d want 403", rr.Code)
+			}
+			if snap := m.Snapshot(); snap.Ack.Count != 1 {
+				t.Fatalf("bad token reset metrics: %+v", snap)
+			}
+		})
 	}
 }
 
