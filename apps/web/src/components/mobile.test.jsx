@@ -3,7 +3,7 @@
 // Tests for MobileRoom terminal-state overlays (TC-T6-104/105 added in #54)
 // and the PullToResync gesture component (TC-T6-#51-H2 added in #63).
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
@@ -75,45 +75,195 @@ describe('MobileRoom · reject toast copy', () => {
   });
 
   it('falls back to raw code when copy is unavailable', () => {
+    // The raw code shows once as the message fallback; the machine code
+    // otherwise lives in the toast's title attribute (design review P0-1).
     render(<MobileRoom rejectCode={'ERR_UNKNOWN_REJECTION'} leaders={[]}/>);
-    expect(screen.getAllByText('ERR_UNKNOWN_REJECTION')).toHaveLength(2);
+    expect(screen.getByText('ERR_UNKNOWN_REJECTION')).toBeInTheDocument();
   });
 });
 
 describe('MobileRoom bid locking', () => {
-  it('does not submit chip bids after the local countdown reaches zero', () => {
+  // The join gate (拍卖须知) sits in front of the chips — pre-seed acceptance
+  // so these tests exercise the chips themselves.
+  beforeEach(() => {
+    window.localStorage.setItem('lumen:joined:lumen-auction', '1');
+  });
+
+  it('does not submit bids after the local countdown reaches zero', () => {
     const onBid = vi.fn();
     const { container } = render(
-      <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid}/>,
+      <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid} capCents="15000000"/>,
     );
 
-    const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('MAX'));
+    const bidButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('竞拍已结束'));
 
-    expect(maxButton).toBeDefined();
-    expect(maxButton).toBeDisabled();
+    expect(bidButton).toBeDefined();
+    expect(bidButton).toBeDisabled();
 
-    fireEvent.click(maxButton);
+    fireEvent.click(bidButton);
 
     expect(onBid).not.toHaveBeenCalled();
   });
 
-  it('still submits chip bids while LIVE and time remains', () => {
+  it('submits the staged stepper amount while LIVE and time remains', () => {
     const onBid = vi.fn();
     const { container } = render(
-      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid}/>,
+      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid}
+        currentCents="12880000" stepCents="500000" capCents="15000000"/>,
     );
 
-    const maxButton = [...container.querySelectorAll('button')]
-      .find((button) => button.textContent.includes('MAX'));
+    const bidButton = [...container.querySelectorAll('button')]
+      .find((button) => button.textContent.includes('立即出价'));
 
-    expect(maxButton).toBeDefined();
-    expect(maxButton).not.toBeDisabled();
+    expect(bidButton).toBeDefined();
+    expect(bidButton).not.toBeDisabled();
 
-    fireEvent.click(maxButton);
+    fireEvent.click(bidButton);
 
     expect(onBid).toHaveBeenCalledTimes(1);
-    expect(onBid).toHaveBeenCalledWith(expect.any(String));
+    // default staged amount = current + one step (always on the grid)
+    expect(onBid).toHaveBeenCalledWith('13380000');
+  });
+});
+
+describe('MobileRoom · join gate (拍卖参与流程)', () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  // Detect the unlocked bid console via the 立即出价 CTA.
+  const hasBidChips = (container) =>
+    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('立即出价'));
+
+  it('locks the bid chips behind 我要参与竞拍 until the 须知 is accepted', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasBidChips(container)).toBe(false);
+  });
+
+  it('我要参与 → 须知 sheet → 勾选同意 → chips unlock + persisted', () => {
+    const { container } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-join"/>,
+    );
+
+    fireEvent.click(screen.getByText('我要参与竞拍'));
+    expect(screen.getByRole('dialog', { name: '拍卖须知' })).toBeInTheDocument();
+    expect(container.textContent).toMatch(/透明单品竞拍/);
+    expect(container.textContent).toMatch(/虚拟币演示/);
+
+    // Agree button stays locked until the checkbox is ticked.
+    const agreeBtn = screen.getByText('同意并参与');
+    expect(agreeBtn).toBeDisabled();
+    fireEvent.click(screen.getByRole('checkbox'));
+    expect(agreeBtn).not.toBeDisabled();
+    fireEvent.click(agreeBtn);
+
+    // Sheet closes, chips unlock, acceptance persists per room.
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
+    expect(hasBidChips(container)).toBe(true);
+    expect(window.localStorage.getItem('lumen:joined:auc-join')).toBe('1');
+  });
+
+  it('暂不参与 closes the sheet without unlocking', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
+    fireEvent.click(screen.getByText('我要参与竞拍'));
+    fireEvent.click(screen.getByText('暂不参与'));
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasBidChips(container)).toBe(false);
+  });
+
+  it('scopes acceptance by room — joining auc-a leaves auc-b gated', () => {
+    window.localStorage.setItem('lumen:joined:auc-a', '1');
+    const { container, rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-a"/>,
+    );
+    expect(hasBidChips(container)).toBe(true);
+
+    rerender(<MobileRoom status="LIVE" leaders={[]} followScopeId="auc-b"/>);
+    expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
+    expect(hasBidChips(container)).toBe(false);
+  });
+
+  it('re-opens the 须知 read-only from the rules summary after joining', () => {
+    window.localStorage.setItem('lumen:joined:lumen-auction', '1');
+    render(<MobileRoom status="LIVE" leaders={[]}/>);
+    fireEvent.click(screen.getByText(/查看完整《拍卖须知》/));
+    expect(screen.getByRole('dialog', { name: '拍卖须知' })).toBeInTheDocument();
+    // Already joined → no re-consent dance, just an acknowledge button.
+    expect(screen.queryByText('同意并参与')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('我知道了'));
+    expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
+  });
+});
+
+describe('MobileRoom simplified buyer flow', () => {
+  it('keeps the buyer essentials visible without tab navigation', () => {
+    const { container } = render(
+      <MobileRoom
+        status="LIVE"
+        leaders={[
+          { userId: 'u1', displayName: 'Alice', cents: '13000000' },
+          { userId: 'u2', displayName: 'Bob', cents: '12800000' },
+          { userId: 'u3', displayName: 'You', cents: '12600000', isYou: true },
+        ]}
+        ticker={[{ id: 1, kind: 'bid', name: 'Alice', cents: '13000000' }]}
+      />,
+    );
+
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
+    expect(container.textContent).toMatch(/当前领先/);
+    // Champion + runner-up render; ranks 3+ stay dropped (化繁为简) — the
+    // rank-3 bidder ("You") only surfaces through the my-position pill.
+    expect(container.textContent).toMatch(/Alice/);
+    expect(container.textContent).toMatch(/Bob/);
+    expect(container.textContent).not.toMatch(/\bYou\b/);
+    expect(container.textContent).toMatch(/最近出价/);
+    expect(container.textContent).toMatch(/规则/);
+    expect(container.textContent).toMatch(/最低加价/);
+  });
+
+  it('expands the full standings behind the 全部排行 toggle (collapsed by default)', () => {
+    const { container } = render(
+      <MobileRoom
+        status="LIVE"
+        leaders={[
+          { userId: 'u1', displayName: 'Alice', cents: '13000000' },
+          { userId: 'u2', displayName: 'Bob', cents: '12800000' },
+          { userId: 'u3', displayName: 'Carol', cents: '12600000', isYou: true },
+          { userId: 'u4', displayName: 'Dave', cents: '12400000' },
+        ]}
+      />,
+    );
+
+    // Collapsed: ranks 3+ hidden, toggle shows the total count.
+    expect(container.textContent).not.toMatch(/Carol|Dave/);
+    const toggle = screen.getByText(/全部排行（4）/);
+
+    fireEvent.click(toggle);
+    expect(container.textContent).toMatch(/Carol/);
+    expect(container.textContent).toMatch(/Dave/);
+
+    fireEvent.click(screen.getByText(/收起完整排行/));
+    expect(container.textContent).not.toMatch(/Carol|Dave/);
+  });
+
+  it('scopes the follow state by room instead of sharing it globally', () => {
+    window.localStorage.clear();
+    const { rerender } = render(
+      <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-a"/>,
+    );
+
+    fireEvent.click(screen.getByText('+ 关注'));
+    expect(screen.getByText('已关注')).toBeInTheDocument();
+    expect(window.localStorage.getItem('lumen:follow:auc-a')).toBe('1');
+
+    rerender(<MobileRoom status="LIVE" leaders={[]} followScopeId="auc-b"/>);
+
+    expect(screen.getByText('+ 关注')).toBeInTheDocument();
+    expect(window.localStorage.getItem('lumen:follow:auc-b')).toBeNull();
   });
 });
 

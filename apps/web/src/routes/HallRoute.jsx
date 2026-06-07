@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import { ensureSession, currentUser, clearSession } from '../lib/auth.js';
 import { msRemaining } from '../lib/clock.js';
-import { formatCentsCNY, StatusBadge, Countdown } from '../components/primitives.jsx';
+import { formatCentsCNYShort, StatusBadge, Countdown } from '../components/primitives.jsx';
 
 const LIVE = 'LIVE';
 const SCHEDULED = 'SCHEDULED';
@@ -90,7 +90,7 @@ export function HallRoute() {
         <div style={S.brandRow}>
           <div style={S.logo}>琉</div>
           <div>
-            <div style={S.brandTitle}>琉森拍卖</div>
+            <div style={S.brandTitle}>琉森拍卖行</div>
             <div style={S.brandSub}>实时竞拍 · LIVE AUCTION</div>
           </div>
         </div>
@@ -121,13 +121,19 @@ export function HallRoute() {
       {/* Body */}
       <div style={S.body} className="no-scrollbar">
         {auctions === null && <div style={S.muted}>正在加载竞拍场次…</div>}
-        {error && <div style={S.error}>加载失败：{error}</div>}
+        {error && (
+          <div style={S.error}>
+            <div>连接服务器失败 · 每 10 秒自动重试</div>
+            <button onClick={load} style={S.retryBtn}>立即重试</button>
+            <div style={{ fontSize: 10, opacity: .6, marginTop: 6 }}>{error}</div>
+          </div>
+        )}
         {auctions !== null && auctions.length === 0 && !error && (
           <div style={S.empty}>
             <div style={{ fontSize: 32, marginBottom: 8 }}>🛎️</div>
             暂无竞拍场次<br/>
             <span style={{ fontSize: 12, color: 'var(--douyin-ink-muted)' }}>
-              商家可在管理后台「新建拍品」发布
+              卖家可在管理后台「新建拍品」发布
             </span>
           </div>
         )}
@@ -170,7 +176,7 @@ function Section({ title, accent, children }) {
 function AuctionCard({ a, onEnter, ended = false }) {
   const remaining = a.endAtMs ? msRemaining(a.endAtMs) : 0;
   const price = a.currentPriceCents && a.currentPriceCents !== '0'
-    ? formatCentsCNY(a.currentPriceCents) : '—';
+    ? formatCentsCNYShort(a.currentPriceCents) : '—';
   return (
     <div style={{ ...S.card, opacity: ended ? 0.72 : 1 }}>
       <div style={S.thumb}>
@@ -188,7 +194,7 @@ function AuctionCard({ a, onEnter, ended = false }) {
         </div>
         <div style={S.cardTitle}>{a.productName || a.auctionId}</div>
         <div style={S.cardPrice}>
-          {a.status === LIVE ? '当前价 ' : ended ? '成交价 ' : '起拍 '}
+          {a.status === LIVE ? '当前价 ' : ended ? '成交价 ' : '起拍价 '}
           <b style={{ color: 'var(--solemn-gold)', fontSize: 15 }}>{price}</b>
         </div>
       </div>
@@ -236,6 +242,11 @@ const S = {
   body: { flex: 1, overflow: 'auto', padding: '16px 16px 60px', minHeight: 0 },
   muted: { color: 'var(--douyin-ink-muted,#9aa0b4)', fontSize: 13, textAlign: 'center', padding: 40 },
   error: { color: 'var(--state-rejected,#FE2C55)', fontSize: 13, padding: 16, textAlign: 'center' },
+  retryBtn: {
+    marginTop: 10, minHeight: 36, padding: '0 18px', borderRadius: 8, cursor: 'pointer',
+    background: 'transparent', border: '1px solid rgba(254,44,85,.45)',
+    color: 'var(--state-rejected,#FE2C55)', fontSize: 12, fontWeight: 600,
+  },
   empty: { color: 'rgba(245,237,221,.7)', fontSize: 14, textAlign: 'center', padding: '56px 20px', lineHeight: 1.7 },
   card: {
     display: 'flex', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12,

@@ -44,7 +44,7 @@ export default function App() {
       <Route path="/preview/room"          element={<MobileFrame><DemoRoom/></MobileFrame>}/>
       <Route path="/preview/room/final10"  element={<MobileFrame><DemoRoomFinal10/></MobileFrame>}/>
       <Route path="/preview/room/leading"  element={<MobileFrame><DemoRoomLeading/></MobileFrame>}/>
-      <Route path="/preview/hammer"        element={<MobileFrame><MobileHammer amountCents="12880000" winnerName="海风_2024" expressive/></MobileFrame>}/>
+      <Route path="/preview/hammer"        element={<MobileFrame><MobileHammer amountCents="12880000" winnerName="海风_2024" productName="劳力士 Explorer 114270 · 黑面" lotNo="2024-0142" expressive/></MobileFrame>}/>
       <Route path="/preview/evidence"      element={<MobileFrame><MobileEvidence/></MobileFrame>}/>
       <Route path="/preview/evidence/broken" element={<MobileFrame><MobileEvidence chainBreak breakAtSeq={14834}/></MobileFrame>}/>
       <Route path="/preview/mp"            element={<MobileFrame><MiniProgramStub/></MobileFrame>}/>
@@ -159,35 +159,60 @@ function CancelOverlay() {
 }
 
 // ─── Demo room variants (used by /preview/room*) ────────────────
+// Distinct followScopeId per variant so the join-gate (拍卖须知) can be
+// demoed independently on each preview route. capCents is set so the gold
+// 封顶 chip (two-tap confirm) shows in previews — without a real cap it is
+// intentionally hidden.
+const DEMO_ITEM = {
+  productName: '劳力士 Explorer 114270 · 黑面',
+  lotNo: '2024-0142',
+  capCents: '30000000',
+  // Real bundled photo (apps/web/public/demo, Unsplash License) — the copy
+  // matches the actual watch in the shot so nothing reads as a mismatch.
+  productImage: '/demo/watch-explorer.jpg',
+};
 function DemoRoom() {
   return <MobileRoom
+    {...DEMO_ITEM}
+    followScopeId="preview-room"
     remainingMs={28400}
     currentCents="12880000"
     extendCount={2}
-    yourRank={3} yourGapCents="380000"
-    aiText="¥128,800 · 28 秒，海风_2024 领先 · 这只蓝面鹦鹉螺等的就是你。"
+    yourRank={3} yourGapCents="380000" yourCents="12500000"
+    aiText="¥128,800 · 距落槌 28 秒，海风_2024 领先 · 黑面 Explorer 竞价进行中。"
     aiTrigger="open"
     expressive/>;
 }
 function DemoRoomFinal10() {
   return <MobileRoom
+    {...DEMO_ITEM}
+    followScopeId="preview-room-final10"
     remainingMs={5400}
     currentCents="13380000"
     extendCount={3}
-    showColorRamp showHourglass showPulseWaves showBlackHorse
-    yourRank={4} yourGapCents="630000"
+    showColorRamp showHourglass showBlackHorse
+    yourRank={4} yourGapCents="630000" yourCents="12750000"
     aiText="夜航星 +10× 阶梯 直接拉到 ¥133,800 — 这是一匹真正的黑马。"
     aiTrigger="surge" aiStreaming
     expressive/>;
 }
 function DemoRoomLeading() {
+  // Leaders place 我 (陆_LU) first so the preview is self-consistent with
+  // isYouLeading/yourRank=1 — the default demo list had 海风_2024 on top.
   return <MobileRoom
+    {...DEMO_ITEM}
+    followScopeId="preview-room-leading"
     remainingMs={28400}
     currentCents="12500000"
     extendCount={2}
+    leaders={[
+      { userId: 'u3', displayName: '陆_LU',     cents: '12500000', avatarBg: 'linear-gradient(135deg,#a855f7,#7c3aed)', isYou: true },
+      { userId: 'u1', displayName: '海风_2024', cents: '12480000', avatarBg: 'linear-gradient(135deg,#FE2C55,#cb203f)' },
+      { userId: 'u2', displayName: '听雨人',    cents: '12300000', avatarBg: 'linear-gradient(135deg,#25F4EE,#0ea5e9)' },
+    ]}
     isYouLeading rejectShake rejectCode="ERR_TOO_LOW"
     showLeadingToast showOwnFlash
-    yourRank={1} yourGapCents="0"
+    yourRank={1} yourGapCents="0" yourCents="12500000"
     aiText="陆_LU ¥125,000 领先 · 当前已是新纪录。"
     aiTrigger="hammer"
     expressive/>;

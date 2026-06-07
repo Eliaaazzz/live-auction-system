@@ -359,7 +359,9 @@ function scheduleClear(key, ms) {
   setTimeout(() => useAuctionStore.setState({ [key]: false }), ms);
 }
 
-function scheduleRejectClear(seq, ms = 1800) {
+// 3s: the reject bar sits right above the bid chips now; 1.8s was gone
+// before a mid-tap buyer even looked down (design review P0-1).
+function scheduleRejectClear(seq, ms = 3000) {
   setTimeout(() => {
     const current = useAuctionStore.getState();
     if (current.lastRejectSeq === seq) {

@@ -1,5 +1,5 @@
 import React from 'react';
-import { formatCentsCNY, addCentsStr } from './primitives.jsx';
+import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr } from './primitives.jsx';
 
 // lumen-atmosphere.jsx
 // Visceral feedback layers that sit on top of MobileRoom.
@@ -51,7 +51,7 @@ function LeadingToast({ visible, gainCents }) {
             fontSize: 11, color: 'var(--solemn-gold)', fontWeight: 600,
             textShadow: '0 2px 8px rgba(0,0,0,.6)',
           }}>
-            +{formatCentsCNY(gainCents).replace('¥','¥')}
+            +{formatCentsCNYShort(gainCents)}
           </span>
         )}
       </div>
@@ -90,7 +90,7 @@ function OvertakenSlam({ visible, byName, gapCents, onReverse }) {
           <span>⚡</span><span>被超越!</span>
         </div>
         <div className="mono" style={{ fontSize: 11, color: 'rgba(255,255,255,.85)', marginTop: 2 }}>
-          {byName} 反超 · 差 {formatCentsCNY(gapCents)}
+          {byName} 反超 · 差 {formatCentsCNYShort(gapCents)}
         </div>
       </div>
       <button onClick={onReverse} style={{
@@ -142,7 +142,7 @@ function MyPositionGap({ rank, gapCents, isYou, isLeading }) {
         你 · 差
       </span>
       <span className="mono" style={{ fontSize: 13, fontWeight: 700, color: 'var(--douyin-cyan)' }}>
-        {formatCentsCNY(gapCents)}
+        {formatCentsCNYShort(gapCents)}
       </span>
       <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', fontFamily: 'var(--font-sans)' }}>反超</span>
     </div>
@@ -150,48 +150,147 @@ function MyPositionGap({ rank, gapCents, isYou, isLeading }) {
 }
 
 // ─── BidTickerStream — small pills sliding up on the left ───────
+// Anchored INSIDE the video band (top ≈30%) and width-clamped so the danmaku
+// floats over the stream and fades before it can cover the price card / tabs
+// below (meeting feedback: 弹幕遮挡内容). Long handles ellipsis on narrow phones.
 function BidTickerStream({ items }) {
   // Show last 3, oldest at top (fading), newest at bottom
   const shown = items.slice(-3);
   return (
     <div style={{
-      position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+      position: 'absolute', left: 12, top: '30%',
       zIndex: 9, display: 'flex', flexDirection: 'column', gap: 6,
-      pointerEvents: 'none',
+      maxWidth: 'min(62%, 230px)', pointerEvents: 'none',
     }}>
-      {shown.map((it) => (
-        <div key={it.id} className="lumen-ticker-up" style={{
-          display: 'flex', alignItems: 'center', gap: 6,
-          padding: '4px 8px 4px 4px', borderRadius: 999,
-          background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(255,255,255,.08)',
-        }}>
-          <span style={{
-            width: 18, height: 18, borderRadius: 9,
-            background: it.color || 'linear-gradient(135deg,#FE2C55,#cb203f)',
-            color: '#fff', fontSize: 9, fontWeight: 700,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: 'var(--font-sans)',
-          }}>{it.name[0]}</span>
-          <span style={{ fontSize: 10, color: 'rgba(255,255,255,.85)', fontFamily: 'var(--font-sans)' }}>
-            {it.name}
-          </span>
-          <span className="mono" style={{ fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)' }}>
-            {formatCentsCNY(it.cents)}
-          </span>
-        </div>
-      ))}
+      {shown.map((it, idx) => {
+        const name = displayBidderName(it);
+        const cents = it.cents || '0';
+        return (
+          <div key={it.id ?? idx} className="lumen-ticker-up" style={{
+            display: 'flex', alignItems: 'center', gap: 6, maxWidth: '100%',
+            padding: '4px 8px 4px 4px', borderRadius: 999,
+            background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(255,255,255,.08)',
+          }}>
+            <span style={{
+              flexShrink: 0,
+              width: 18, height: 18, borderRadius: 9,
+              background: it.color || 'linear-gradient(135deg,#FE2C55,#cb203f)',
+              color: '#fff', fontSize: 9, fontWeight: 700,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontFamily: 'var(--font-sans)',
+            }}>{name[0]}</span>
+            <span style={{
+              fontSize: 10, color: 'rgba(255,255,255,.85)', fontFamily: 'var(--font-sans)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+            }}>
+              {name}
+            </span>
+            <span className="mono" style={{ flexShrink: 0, fontSize: 10, fontWeight: 600, color: 'var(--solemn-gold)' }}>
+              {formatCentsCNYShort(cents)}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
+function BidHistoryStrip({ items = [], emptyText = '暂无出价记录' }) {
+  const shown = items.filter(Boolean).slice(0, 12);
+  if (shown.length === 0) {
+    return (
+      <div style={{
+        padding: '9px 10px',
+        borderRadius: 8,
+        background: 'rgba(255,255,255,.04)',
+        border: '1px solid rgba(255,255,255,.08)',
+        color: 'var(--douyin-ink-muted)',
+        fontSize: 11,
+      }}>
+        {emptyText}
+      </div>
+    );
+  }
+  return (
+    <div className="no-scrollbar" style={{
+      display: 'flex',
+      gap: 8,
+      overflowX: 'auto',
+      padding: '2px 2px 8px',
+      scrollSnapType: 'x proximity',
+    }}>
+      {shown.map((it, idx) => {
+        const name = displayBidderName(it);
+        const cents = it.cents || '0';
+        return (
+          <div key={it.id ?? idx} style={{
+            flex: '0 0 auto',
+            minWidth: 118,
+            scrollSnapAlign: 'start',
+            padding: '8px 10px',
+            borderRadius: 8,
+            background: idx === 0 ? 'rgba(201,169,97,.12)' : 'rgba(255,255,255,.05)',
+            border: idx === 0 ? '1px solid rgba(201,169,97,.32)' : '1px solid rgba(255,255,255,.08)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+              <span style={{
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                background: it.color || 'linear-gradient(135deg,#FE2C55,#cb203f)',
+                color: '#fff',
+                fontSize: 9,
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}>
+                {name[0]}
+              </span>
+              <span style={{
+                minWidth: 0,
+                color: 'var(--douyin-ink-text)',
+                fontSize: 11,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}>
+                {name}
+              </span>
+            </div>
+            <span className="mono" style={{ color: 'var(--solemn-gold)', fontSize: 12, fontWeight: 700 }}>
+              {formatCentsCNYCompact(cents)}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function displayBidderName(item) {
+  return item?.name || item?.displayName || item?.userId || '匿名买家';
+}
+
 // ─── HeartbeatVignette — red glow on device edges in final-10s ─
+// Biased to the bottom + sides: the old symmetric glow washed over the item
+// title / host chrome at the top and crushed its contrast exactly at the
+// attention peak (design review P1-1).
 function HeartbeatVignette({ active }) {
   if (!active) return null;
   return (
     <div className="lumen-heartbeat" style={{
       position: 'absolute', inset: 0, zIndex: 5, pointerEvents: 'none',
-      boxShadow: 'inset 0 0 60px 12px rgba(254,44,85,.35), inset 0 0 18px 4px rgba(254,44,85,.5)',
+      boxShadow: [
+        'inset 0 -60px 60px -8px rgba(254,44,85,.4)',
+        'inset 40px 0 60px -36px rgba(254,44,85,.28)',
+        'inset -40px 0 60px -36px rgba(254,44,85,.28)',
+      ].join(', '),
     }}/>
   );
 }
@@ -199,8 +298,13 @@ function HeartbeatVignette({ active }) {
 // ─── SpeakerToggle — breathing icon (sound is muted by default §12.7.2) ─
 function SpeakerToggle({ muted = true, onToggle }) {
   return (
-    <button onClick={onToggle} style={{
-      width: 32, height: 32, borderRadius: 16, border: 'none',
+    <button
+      type="button"
+      aria-label={muted ? '开启提示音' : '关闭提示音'}
+      title={muted ? '开启提示音' : '关闭提示音'}
+      onClick={onToggle}
+      style={{
+      width: 44, height: 44, borderRadius: 22, border: 'none',
       background: 'rgba(0,0,0,.55)', backdropFilter: 'blur(8px)',
       color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
       cursor: 'pointer', position: 'relative',
@@ -221,7 +325,7 @@ function SpeakerToggle({ muted = true, onToggle }) {
       </svg>
       {muted && (
         <span className="lumen-speaker-breath" style={{
-          position: 'absolute', inset: -2, borderRadius: 18,
+          position: 'absolute', inset: -2, borderRadius: 24,
           border: '1.5px solid var(--douyin-cyan)',
           pointerEvents: 'none',
         }}/>
@@ -322,7 +426,7 @@ function LongPressBidWheel({ visible, currentCents, stepCents = '500000', onPick
         <div style={{
           textAlign: 'center', fontSize: 10, color: 'var(--douyin-ink-muted)',
           letterSpacing: '.1em', marginBottom: 4,
-        }}>长按选择加价阶梯 · BID TIER</div>
+        }}>长按选择加价阶梯</div>
         <div className="mono" style={{
           textAlign: 'center', fontSize: 12, color: 'var(--solemn-gold)', marginBottom: 14,
         }}>
@@ -353,7 +457,7 @@ function LongPressBidWheel({ visible, currentCents, stepCents = '500000', onPick
           })}
         </div>
         <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--douyin-ink-dim)', marginTop: 12 }}>
-          松手 = 出价 · 上滑取消
+          松手出价 · 上滑取消
         </div>
       </div>
     </div>
@@ -383,7 +487,7 @@ function BlackHorseBanner({ visible, name = '夜航星', jumpCents = '5000000', 
             <span style={{ fontSize: 13 }}>⚡</span>
             <span>黑马出价</span>
             <span>· {name}</span>
-            <span className="mono">+{formatCentsCNY(jumpCents)} · {byMultiple}× 阶梯</span>
+            <span className="mono">+{formatCentsCNYShort(jumpCents)} · {byMultiple}× 阶梯</span>
             <span>·</span>
           </span>
         ))}
@@ -450,13 +554,13 @@ function HammerTransition({ active, amountCents = '12880000' }) {
         fontFamily: 'var(--font-serif)',
       }}>
         <div style={{ fontSize: 11, letterSpacing: '.2em', color: 'var(--solemn-cream-dim)', marginBottom: 4 }}>
-          HAMMER · 落槌
+          落槌成交
         </div>
         <div className="mono" style={{
           fontSize: 42, fontWeight: 700, letterSpacing: '-.025em',
           textShadow: '0 4px 30px rgba(201,169,97,.5)',
         }}>
-          {formatCentsCNY(amountCents)}
+          {formatCentsCNYShort(amountCents)}
         </div>
       </div>
     </div>
@@ -490,6 +594,7 @@ export {
   OvertakenSlam,
   MyPositionGap,
   BidTickerStream,
+  BidHistoryStrip,
   HeartbeatVignette,
   SpeakerToggle,
   SandHourglass,

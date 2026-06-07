@@ -8,12 +8,64 @@ import { bidRejectCopy } from '../lib/types.js';
 function formatCentsCNY(cents) {
   const s = String(cents);
   const neg = s.startsWith('-');
-  const abs = neg ? s.slice(1) : s;
+  // Cents are integer-only; strip non-digits so a malformed value
+  // (undefined / null / '' / partial payload) degrades to ¥0.00 instead
+  // of rendering garbage like "¥undefin.ed".
+  const abs = (neg ? s.slice(1) : s).replace(/[^0-9]/g, '') || '0';
   const padded = abs.padStart(3, '0');
   const yuan = padded.slice(0, -2);
   const fen = padded.slice(-2);
   const grouped = yuan.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
   return (neg ? '-' : '') + '¥' + grouped + '.' + fen;
+}
+
+// Display variant for big price surfaces (room price, hammer, leader rows):
+// drops the ".00" fen tail when it carries no information. Meeting 数字展示
+// 规范 + 阿里拍卖 convention — whole-yuan prices read as ¥128,800, not
+// ¥128,800.00. Non-zero fen is always preserved (it's money).
+function formatCentsCNYShort(cents) {
+  const full = formatCentsCNY(cents);
+  return full.endsWith('.00') ? full.slice(0, -3) : full;
+}
+
+// 「元」input string → string-cents. Accepts integer or ≤2-decimal yuan
+// ("1338" / "1338.5" / "1338.50"); returns null on anything else. BigInt all
+// the way — never round-trips through Number (§4 P1).
+function yuanToCents(yuan) {
+  const s = String(yuan ?? '').trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  const [whole, frac = ''] = s.split('.');
+  return (BigInt(whole) * 100n + BigInt(frac.padEnd(2, '0') || '0')).toString();
+}
+
+// BigInt cents → editable yuan string ("1338" / "1338.5") for the custom
+// drawer's ± nudges. Inverse of yuanToCents for display purposes.
+function centsToYuanInput(centsBig) {
+  const whole = centsBig / 100n;
+  const fen = centsBig % 100n;
+  if (fen === 0n) return whole.toString();
+  return `${whole}.${fen.toString().padStart(2, '0').replace(/0$/, '')}`;
+}
+
+function formatCentsCNYCompact(cents) {
+  try {
+    const n = BigInt(cents);
+    const neg = n < 0n;
+    const abs = neg ? -n : n;
+    const units = [
+      { centsPerUnit: 1_000_000_000_000_00n, label: '万亿' },
+      { centsPerUnit: 100_000_000_00n, label: '亿' },
+      { centsPerUnit: 10_000_00n, label: '万' },
+    ];
+    const unit = units.find((u) => abs >= u.centsPerUnit);
+    if (!unit) return formatCentsCNY(cents);
+    const scaledHundred = abs * 100n / unit.centsPerUnit;
+    const whole = scaledHundred / 100n;
+    const frac = String(scaledHundred % 100n).padStart(2, '0').replace(/0+$/, '');
+    return `${neg ? '-' : ''}¥${whole}${frac ? `.${frac}` : ''}${unit.label}`;
+  } catch {
+    return formatCentsCNY(cents);
+  }
 }
 
 // Add string cents — for "tap to add ¥X reverse" math
@@ -22,12 +74,127 @@ function addCentsStr(a, b) {
   return (an + bn).toString();
 }
 
+// ─── Material ripple — reusable press feedback (加价 chips + actions) ───
+// One ripple per pointer-down, spawned at the press point, scaling out + fading.
+// The host element must be position:relative + overflow:hidden. Exported so
+// the bid-history affordance (atmosphere.jsx) can share it.
+function useRipple() {
+  const [ripples, setRipples] = React.useState([]);
+  const idRef = React.useRef(0);
+  const timersRef = React.useRef(new Set());
+  const drop = React.useCallback((id) => {
+    setRipples((rs) => rs.filter((r) => r.id !== id));
+  }, []);
+  const spawn = React.useCallback((e) => {
+    const el = e.currentTarget;
+    if (!el || typeof el.getBoundingClientRect !== 'function') return;
+    const rect = el.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height) * 2;
+    const cx = e.clientX ?? rect.left + rect.width / 2;
+    const cy = e.clientY ?? rect.top + rect.height / 2;
+    const id = (idRef.current += 1);
+    setRipples((rs) => [...rs, { id, x: cx - rect.left - size / 2, y: cy - rect.top - size / 2, size }]);
+    // Fallback removal: in P9 surface-calm the ripple has `animation:none`, so
+    // onAnimationEnd never fires. Track the timer so unmount clears it (avoids a
+    // setState-after-unmount when a host unmounts mid-press, e.g. closing the
+    // history affordance or a chip going disabled at SOLD). ~480ms > .42s keyframe.
+    const t = setTimeout(() => { timersRef.current.delete(t); drop(id); }, 480);
+    timersRef.current.add(t);
+  }, [drop]);
+  React.useEffect(() => () => {
+    timersRef.current.forEach(clearTimeout);
+    timersRef.current.clear();
+  }, []);
+  return { ripples, spawn, remove: drop };
+}
+
+function RippleHost({ ripples, remove, color = 'rgba(255,255,255,.28)' }) {
+  return ripples.map((r) => (
+    <span key={r.id} className="lumen-ripple"
+      onAnimationEnd={() => remove(r.id)}
+      style={{ left: r.x, top: r.y, width: r.size, height: r.size, background: color }}/>
+  ));
+}
+
+// ─── BidChip — one 加价 chip with a Material ripple (no scale-zoom) ───
+// requireConfirm (the 封顶 jump chip): big amounts get a two-tap confirm —
+// first tap arms ("再点一次确认"), second tap within 2.6s submits. Auction-house
+// research (Sotheby's Quick Bid / eBay confirm step): one-tap for small steps,
+// an explicit confirm for jump amounts. Arming resets whenever the chip's
+// amount moves (price changed → re-read before you commit).
+function BidChip({ chip, disabled, isGold, chipBase, onBid, requireConfirm = false }) {
+  const { ripples, spawn, remove } = useRipple();
+  const [armed, setArmed] = React.useState(false);
+  const armTimerRef = React.useRef(null);
+  React.useEffect(() => () => clearTimeout(armTimerRef.current), []);
+  React.useEffect(() => {
+    setArmed(false);
+    clearTimeout(armTimerRef.current);
+  }, [chip.cents]);
+  const handleClick = () => {
+    if (!requireConfirm || armed) {
+      setArmed(false);
+      clearTimeout(armTimerRef.current);
+      onBid(chip.cents);
+      return;
+    }
+    setArmed(true);
+    clearTimeout(armTimerRef.current);
+    armTimerRef.current = setTimeout(() => setArmed(false), 2600);
+  };
+  return (
+    <button
+      disabled={disabled}
+      className="lumen-bid-chip"
+      onPointerDown={(e) => { if (!disabled) spawn(e); }}
+      onClick={handleClick}
+      style={{
+        ...chipBase,
+        position: 'relative', overflow: 'hidden',
+        background: disabled ? 'rgba(107,114,128,.25)'
+          : isGold
+            ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
+            : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
+        color: isGold ? 'var(--solemn-ink)' : '#fff',
+        boxShadow: disabled ? 'none'
+          : armed
+            ? '0 0 0 2px rgba(255,255,255,.85), 0 4px 14px rgba(201,169,97,.4)'
+            : isGold
+              ? '0 4px 14px rgba(201,169,97,.28)'
+              : '0 4px 14px rgba(254,44,85,.28)',
+      }}>
+      {/* P0-3: a bid amount must never ellipsize (¥13.38万 → ¥13.38… loses
+          the magnitude). clamp() shrinks the type on 360px-class phones
+          instead of truncating. */}
+      <span className="mono" title={formatCentsCNY(chip.cents)} style={{
+        position: 'relative', zIndex: 1,
+        fontSize: 'clamp(12px, 3.6vw, 14px)', fontWeight: 700, letterSpacing: '-.01em',
+        fontVariantNumeric: 'tabular-nums',
+        maxWidth: '100%', whiteSpace: 'nowrap',
+      }}>
+        {formatCentsCNYCompact(chip.cents)}
+      </span>
+      <span style={{
+        position: 'relative', zIndex: 1,
+        fontSize: 10, fontWeight: 600, letterSpacing: '.04em',
+        // full opacity + a hint of shadow: the sublabel carries the action
+        // semantics (+1档/封顶) — it was the lowest-contrast text on the page.
+        textShadow: '0 1px 2px rgba(0,0,0,.4)',
+      }}>
+        {armed ? '再点一次确认' : chip.label}
+      </span>
+      <RippleHost ripples={ripples} remove={remove}
+        color={isGold ? 'rgba(16,16,16,.18)' : 'rgba(255,255,255,.32)'}/>
+    </button>
+  );
+}
+
 // Canonical CN copy for `BidErrorCode` is defined in lib/types.js and
 // mirrored to the UI through this re-exported identifier.
 
 // ─── PriceDisplay — F09 odometer flip ───
 function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnderline = false }) {
-  const txt = formatCentsCNY(cents);
+  const txt = formatCentsCNYShort(cents);
   const color = tone === 'gold' ? 'var(--solemn-gold)'
               : tone === 'cream' ? 'var(--solemn-cream)'
               : tone === 'red'  ? 'var(--douyin-red)'
@@ -40,18 +207,28 @@ function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnder
     <span className={'mono' + (flash ? ' lumen-gold-flash' : '')}
       style={{
         position: 'relative',
-        fontSize: size, fontWeight: 700, color, lineHeight: 1, letterSpacing: '-0.025em',
+        // P0-2 (design review): never wrap a money readout — a 36px price
+        // that drops its last digit to a second line misreads by 10×. size
+        // may be a CSS length string (e.g. 'min(36px, 9.2vw)') so narrow
+        // phones scale instead of wrapping; per-char minWidth is em-based
+        // and follows along.
+        fontSize: size, fontWeight: 700, color, lineHeight: 1, letterSpacing: 0,
         display: 'inline-flex', alignItems: 'baseline',
+        maxWidth: '100%', whiteSpace: 'nowrap',
         transition: 'color .18s ease', willChange: 'transform',
         paddingBottom: withUnderline ? 4 : 0,
         borderBottom: withUnderline ? '1px solid var(--x-gold-thin)' : 'none',
       }}>
       {[...txt].map((ch, i) => (
-        <span key={i + ch} style={{
-          display: 'inline-block', minWidth: ch === '.' || ch === ',' ? undefined : '0.62em',
-          textAlign: 'center',
-          animation: changed && /[0-9]/.test(ch) ? 'lumen-pulse-warn .2s' : undefined,
-        }}>{ch}</span>
+        <span key={i + ch}
+          // .lumen-digit-tick is a scale-only tick (calm-mode aware). The old
+          // inline lumen-pulse-warn added a red drop-shadow — urgency
+          // semantics leaking onto a neutral price update.
+          className={changed && /[0-9]/.test(ch) ? 'lumen-digit-tick' : undefined}
+          style={{
+            display: 'inline-block', minWidth: ch === '.' || ch === ',' ? undefined : '0.62em',
+            textAlign: 'center',
+          }}>{ch}</span>
       ))}
     </span>
   );
@@ -75,7 +252,7 @@ function Countdown({ remainingMs, warningMs = 10000, tone = 'live', size = 'lg' 
              : 'var(--douyin-ink-text)';
   return (
     <span className={'mono' + (warn ? ' lumen-pulse-warn' : '')}
-      style={{ fontSize, fontWeight: 600, color, lineHeight: 1, letterSpacing: '-0.02em' }}>
+      style={{ fontSize, fontWeight: 600, color, lineHeight: 1, letterSpacing: 0 }}>
       {fmtRemaining(remainingMs)}
     </span>
   );
@@ -166,7 +343,7 @@ const AI_TRIGGER = {
   jump:    { dot: 'var(--state-extended)', bg: 'rgba(255,176,32,.07)',  border: 'rgba(255,176,32,.28)',  label: '黑马',    icon: '⚡' },
   cold:    { dot: 'var(--douyin-ink-muted)', bg: 'rgba(154,160,180,.06)', border: 'rgba(154,160,180,.18)', label: '冷场',    icon: '··' },
   hammer:  { dot: 'var(--solemn-gold)',    bg: 'rgba(201,169,97,.08)',  border: 'rgba(201,169,97,.32)',  label: '落槌',    icon: '✦' },
-  offline: { dot: '#6b7280',               bg: 'rgba(107,114,128,.08)', border: 'rgba(107,114,128,.18)', label: 'OFFLINE', icon: '×' },
+  offline: { dot: '#6b7280',               bg: 'rgba(107,114,128,.08)', border: 'rgba(107,114,128,.18)', label: '离线', icon: '×' },
 };
 
 function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }) {
@@ -197,7 +374,7 @@ function AIBubble({ status = 'open', trigger = 'open', text, streaming = false }
           color: offline ? '#9aa0b4' : trigger === 'hammer' ? 'var(--solemn-ink)' : '#fff',
           fontFamily: 'var(--font-sans)',
         }}>
-          {offline ? '×' : 'AI'}
+          {offline ? '×' : '智'}
         </span>
         {!offline && (
           <span className="lumen-live-dot" style={{
@@ -248,8 +425,9 @@ function Leaderboard({ leaders, mode = 'list' }) {
       {leaders.map((u, i) => {
         const isLead = i === 0;
         const halo = halos[i];
+        const displayName = u.displayName || u.userId || '匿名买家';
         return (
-          <div key={u.userId} style={{
+          <div key={u.userId || `${i}-${displayName}`} style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '8px 10px', borderRadius: 10,
             background: isLead ? 'rgba(201,169,97,.10)' : 'rgba(255,255,255,.02)',
@@ -278,7 +456,7 @@ function Leaderboard({ leaders, mode = 'list' }) {
               boxShadow: halo ? `0 0 0 1.5px ${halo}` : 'none',
               fontFamily: 'var(--font-sans)',
             }}>
-              {(u.displayName || u.userId || '?')[0]}
+              {displayName[0]}
             </div>
             <span style={{
               flex: 1, minWidth: 0, fontSize: 13,
@@ -288,14 +466,14 @@ function Leaderboard({ leaders, mode = 'list' }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 5,
             }}>
-              {u.displayName || u.userId}
+              {displayName}
               {u.combo && u.combo >= 2 && <ComboFlame count={u.combo}/>}
               {u.isYou && (
                 <span style={{
                   fontSize: 9, padding: '1px 5px',
                   background: 'rgba(37,244,238,.2)', color: 'var(--douyin-cyan)',
                   borderRadius: 3, fontWeight: 600,
-                }}>YOU</span>
+                }}>我</span>
               )}
             </span>
             <span className="mono" style={{
@@ -332,18 +510,19 @@ function LeaderboardPodium({ leaders }) {
       {visualOrder.map((u) => {
         const r = visualRank(u);
         const isLead = r === 1;
+        const displayName = u.displayName || u.userId || '匿名买家';
         return (
-          <div key={u.userId} style={{
+          <div key={u.userId || `${r}-${displayName}`} style={{
             flex: '0 0 84px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
             position: 'relative',
           }}>
             {isLead && (
-              <div className="lumen-spotlight" aria-hidden style={{
-                position: 'absolute', top: -2, left: '50%',
+              <div className="lumen-champion-aura" aria-hidden style={{
+                position: 'absolute', top: -10, left: '50%',
                 transform: 'translateX(-50%)',
-                width: 64, height: 18,
-                background: 'radial-gradient(ellipse 80% 100% at center top, var(--x-rank-1-glow), transparent)',
+                width: 86, height: 46,
+                background: 'radial-gradient(ellipse 70% 80% at center, rgba(220,191,127,.46), rgba(201,169,97,.18) 45%, transparent 72%)',
                 pointerEvents: 'none',
               }}/>
             )}
@@ -352,10 +531,14 @@ function LeaderboardPodium({ leaders }) {
               background: u.avatarBg || '#3b4252',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               color: '#fff', fontSize: 14, fontWeight: 600,
-              boxShadow: `0 0 0 2px ${medalColor[r]}`,
+              boxShadow: isLead
+                ? '0 0 0 2px var(--solemn-gold), 0 0 22px rgba(220,191,127,.34)'
+                : `0 0 0 2px ${medalColor[r]}`,
               fontFamily: 'var(--font-sans)',
+              position: 'relative',
             }}>
-              {(u.displayName || u.userId || '?')[0]}
+              {isLead && <span className="lumen-champion-ring" aria-hidden/>}
+              {displayName[0]}
             </div>
             <span style={{
               maxWidth: 84,
@@ -365,13 +548,13 @@ function LeaderboardPodium({ leaders }) {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               display: 'flex', alignItems: 'center', gap: 3, justifyContent: 'center',
             }}>
-              {u.displayName || u.userId}
+              {displayName}
               {u.isYou && (
                 <span style={{
                   fontSize: 8, padding: '1px 4px',
                   background: 'rgba(37,244,238,.2)', color: 'var(--douyin-cyan)',
                   borderRadius: 3, fontWeight: 600,
-                }}>YOU</span>
+                }}>我</span>
               )}
             </span>
             <span className="mono" style={{
@@ -525,6 +708,8 @@ function QuickBidChips({
   onBid = () => {},
 }) {
   const [showDrawer, setShowDrawer] = React.useState(false);
+  // Custom amount is typed in 元 (meeting: 自定义金额本地化 — buyers think in
+  // yuan, not cents). Converted to string-cents at the submit boundary.
   const [custom, setCustom] = React.useState('');
 
   // Defense-in-depth: stepCents=='0' would still bypass the early disabling
@@ -541,31 +726,40 @@ function QuickBidChips({
       return (BigInt(currentCents) + BigInt(multiplier) * stepBig).toString();
     } catch { return currentCents; }
   };
-  const maxBid = () => {
-    try {
-      if (capCents) return capCents;
-      // No cap → fall back to +10档 (matches the rightmost step chip).
-      return stepBump(10);
-    } catch { return currentCents; }
-  };
 
-  const chips = [
+  // 封顶 renders ONLY when a real cap exists (design review, 5/6 consensus):
+  // the old stepBump(10) fallback duplicated the +10档 amount side by side and
+  // read as a rendering bug. With a cap, step chips that meet/exceed it are
+  // dropped — those bids would land at/above cap, and the cap chip IS that bid.
+  let capBig = null;
+  try {
+    if (capCents != null && capCents !== '') {
+      const c = BigInt(capCents);
+      if (c > BigInt(currentCents)) capBig = c;
+    }
+  } catch { capBig = null; }
+  const stepChips = [
     { label: '+1档',  cents: stepBump(1) },
     { label: '+3档',  cents: stepBump(3) },
     { label: '+10档', cents: stepBump(10) },
-    { label: 'MAX',   cents: maxBid(), tone: 'gold' },
-  ];
+  ].filter((c) => {
+    if (capBig == null) return true;
+    try { return BigInt(c.cents) < capBig; } catch { return true; }
+  });
+  const chips = capBig != null
+    ? [...stepChips, { label: '封顶', cents: capBig.toString(), tone: 'gold' }]
+    : stepChips;
 
+  // Inner padding keeps the amount off the chip edge (meeting: 按钮内部
+  // padding); 6px horizontal balances that against 360px-wide phones where
+  // four chips must share ~330px.
   const chipBase = {
-    flex: 1, padding: '10px 0', borderRadius: 10, border: 'none',
+    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '10px 6px', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
     transition: 'transform .12s',
   };
-  const chipPress = (e) => { if (!disabled) e.currentTarget.style.transform = 'scale(.96)'; };
-  const chipRelease = (e) => { e.currentTarget.style.transform = ''; };
-
   // ws-envelope.md §Money: MaxMoneyCents = 2^53-1 (server's hard ceiling).
   // Above this the value can't survive Lua/JS/Redis ZSET float64 — the
   // backend rejects with ERR_BAD_INPUT. Validate client-side so the user
@@ -574,17 +768,21 @@ function QuickBidChips({
   let customBig = null;
   let customError = null;
   if (custom) {
-    try {
-      customBig = BigInt(custom);
-      if (customBig > MAX_MONEY_CENTS) customError = 'max';
-      else if (customBig <= BigInt(currentCents)) customError = 'low';
-      // v2: step-boundary check. place_bid.lua requires the bid to land on
-      // a stepCents multiple above currentCents; chips already snap, custom
-      // input does not, so an off-grid bid would round-trip to ERR_BAD_INPUT.
-      else if (stepUsable && (customBig - BigInt(currentCents)) % stepBig !== 0n) {
-        customError = 'step';
-      }
-    } catch { customError = 'parse'; }
+    const centsStr = yuanToCents(custom);
+    if (centsStr == null) customError = 'parse';
+    else {
+      try {
+        customBig = BigInt(centsStr);
+        if (customBig > MAX_MONEY_CENTS) customError = 'max';
+        else if (customBig <= BigInt(currentCents)) customError = 'low';
+        // v2: step-boundary check. place_bid.lua requires the bid to land on
+        // a stepCents multiple above currentCents; chips already snap, custom
+        // input does not, so an off-grid bid would round-trip to ERR_BAD_INPUT.
+        else if (stepUsable && (customBig - BigInt(currentCents)) % stepBig !== 0n) {
+          customError = 'step';
+        }
+      } catch { customError = 'parse'; }
+    }
   }
   const customSubmittable = !disabled && custom && customError == null;
 
@@ -598,12 +796,17 @@ function QuickBidChips({
     try {
       const c = BigInt(currentCents);
       const s = stepBig;
-      const base = (customBig != null && customError !== 'parse') ? customBig : c + s;
+      let base = (customBig != null) ? customBig : c + s;
+      if (base < c) base = c;
+      // Snap onto the step grid first (BigInt division floors), so a ± tap
+      // from an off-grid typed value lands valid — the error copy promises
+      // "点 ± 自动对齐" and this is what delivers it.
+      base = c + ((base - c) / s) * s;
       let next = base + BigInt(multiplier) * s;
       const min = c + s;
       if (next < min) next = min;
       if (next > MAX_MONEY_CENTS) next = MAX_MONEY_CENTS;
-      setCustom(next.toString());
+      setCustom(centsToYuanInput(next));
     } catch {}
   };
 
@@ -618,53 +821,27 @@ function QuickBidChips({
           加价阶梯未配置 · 出价请使用自定义金额
         </div>
       )}
-      <div style={{ display: 'flex', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
-        {chips.map((c, i) => {
-          const isGold = c.tone === 'gold' || isLeading;
-          return (
-            <button key={i}
-              disabled={disabled}
-              onClick={() => onBid(c.cents)}
-              onPointerDown={chipPress}
-              onPointerUp={chipRelease}
-              onPointerLeave={chipRelease}
-              style={{
-                ...chipBase,
-                background: disabled ? 'rgba(107,114,128,.25)'
-                  : isGold
-                    ? 'linear-gradient(135deg, var(--solemn-gold), var(--solemn-gold-soft))'
-                    : 'linear-gradient(135deg, var(--douyin-red), var(--douyin-red-soft))',
-                color: isGold ? 'var(--solemn-ink)' : '#fff',
-                boxShadow: disabled ? 'none'
-                  : isGold
-                    ? '0 4px 14px rgba(201,169,97,.28)'
-                    : '0 4px 14px rgba(254,44,85,.28)',
-              }}>
-              <span className="mono" style={{
-                fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
-                fontVariantNumeric: 'tabular-nums',
-              }}>
-                {formatCentsCNY(c.cents)}
-              </span>
-              <span style={{
-                fontSize: 10, fontWeight: 500, opacity: .85, letterSpacing: '.04em',
-              }}>
-                {c.label}
-              </span>
-            </button>
-          );
-        })}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, opacity: stepUsable ? 1 : 0.3, pointerEvents: stepUsable ? 'auto' : 'none' }}>
+        {chips.map((c, i) => (
+          <BidChip key={i}
+            chip={c}
+            disabled={disabled}
+            isGold={c.tone === 'gold' || isLeading}
+            chipBase={chipBase}
+            requireConfirm={c.tone === 'gold'}
+            onBid={onBid}/>
+        ))}
       </div>
       <button
         onClick={() => setShowDrawer((s) => !s)}
         disabled={disabled}
         style={{
-          marginTop: 6, width: '100%', padding: '6px 10px', borderRadius: 8,
+          marginTop: 6, width: '100%', minHeight: 44, padding: '8px 10px', borderRadius: 8,
           background: 'transparent', border: '1px dashed rgba(255,255,255,.18)',
           color: 'var(--douyin-ink-muted)', fontSize: 11, fontFamily: 'inherit',
           cursor: disabled ? 'not-allowed' : 'pointer',
         }}>
-        {showDrawer ? '收起' : '自定义金额 · CUSTOM'}
+        {showDrawer ? '收起' : '自定义金额'}
       </button>
       {showDrawer && (
         <div style={{
@@ -672,26 +849,44 @@ function QuickBidChips({
           background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.08)',
           display: 'flex', flexDirection: 'column', gap: 8,
         }}>
-          {/* Row 1 — typed input + Submit button (Whatnot Custom pattern). */}
+          {/* Row 1 — typed input + Submit button (Whatnot Custom pattern).
+              Typed in 元 with a ¥ prefix; decimal keyboard on phones. */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <input
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]*"
-              // Cap raw input at 17 chars (≈ MAX_MONEY_CENTS digit count + 1)
-              // so paste of "999..." (60 digits) never reaches state.
-              maxLength={17}
-              placeholder="cents（保持字符串)"
-              value={custom}
-              onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, '').slice(0, 17))}
-              style={{
-                flex: 1, padding: '8px 10px', borderRadius: 6,
-                background: 'rgba(0,0,0,.3)',
-                border: `1px solid ${customError ? 'rgba(254,44,85,.4)' : 'rgba(255,255,255,.1)'}`,
-                color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
-                outline: 'none',
-              }}
-            />
+            <div style={{
+              flex: 1, display: 'flex', alignItems: 'center', gap: 6,
+              padding: '0 10px', borderRadius: 6,
+              background: 'rgba(0,0,0,.3)',
+              border: `1px solid ${customError ? 'rgba(254,44,85,.4)' : 'rgba(255,255,255,.1)'}`,
+            }}>
+              <span className="mono" style={{ fontSize: 13, color: 'var(--douyin-ink-muted)' }}>¥</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                aria-label="自定义出价金额（元）"
+                // Cap raw input at 15 chars (MAX_MONEY_CENTS is 14 yuan digits
+                // + dot) so a 60-digit paste never reaches state.
+                maxLength={15}
+                placeholder="出价金额（元）"
+                value={custom}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.]/g, '');
+                  const dot = raw.indexOf('.');
+                  // keep a single dot + at most 2 decimals (元 has 100 分)
+                  const clean = dot < 0
+                    ? raw
+                    : raw.slice(0, dot + 1) + raw.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+                  setCustom(clean.slice(0, 15));
+                }}
+                style={{
+                  flex: 1, minWidth: 0, padding: '8px 0', border: 'none',
+                  background: 'transparent',
+                  // 16px floor: anything smaller makes iOS Safari force-zoom
+                  // the page on focus and it never zooms back out.
+                  color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 16,
+                  outline: 'none',
+                }}
+              />
+            </div>
             <button
               disabled={!customSubmittable}
               onClick={() => {
@@ -701,7 +896,7 @@ function QuickBidChips({
                 setShowDrawer(false);
               }}
               style={{
-                padding: '8px 14px', borderRadius: 6, border: 'none',
+                minHeight: 44, padding: '8px 14px', borderRadius: 6, border: 'none',
                 background: 'var(--douyin-red)', color: '#fff',
                 fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
                 cursor: customSubmittable ? 'pointer' : 'not-allowed',
@@ -726,7 +921,7 @@ function QuickBidChips({
                   disabled={disabled}
                   onClick={() => stepNudge(b.mult)}
                   style={{
-                    flex: 1, padding: '6px 4px', borderRadius: 6,
+                    flex: 1, minHeight: 44, padding: '6px 4px', borderRadius: 6,
                     background: 'rgba(255,255,255,.06)',
                     border: '1px solid rgba(255,255,255,.10)',
                     color: 'var(--douyin-ink-text)',
@@ -740,19 +935,258 @@ function QuickBidChips({
           )}
 
           {customError && (
-            <div style={{
-              fontSize: 10, color: 'var(--state-rejected)',
+            <div role="alert" style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--state-rejected)',
               fontFamily: 'var(--font-sans)',
             }}>
-              {customError === 'max'   && '金额超过单笔上限 · MaxMoneyCents (2^53-1)'}
-              {customError === 'low'   && `必须高于当前价 ${formatCentsCNY(currentCents)}`}
-              {customError === 'step'  && `差额必须是 ${formatCentsCNY(stepCents)} 倍数 · 点 ± 档位按钮自动对齐`}
-              {customError === 'parse' && '请输入纯数字 cents 字符串'}
+              {customError === 'max'   && '金额超过单笔上限'}
+              {customError === 'low'   && `须高于当前价 ${formatCentsCNYShort(currentCents)}`}
+              {customError === 'step'  && `加价需为 ${formatCentsCNYShort(stepCents)} 的整数倍 · 点 ± 自动对齐`}
+              {customError === 'parse' && '请输入有效金额（元，最多两位小数）'}
             </div>
           )}
         </div>
       )}
     </div>
+  );
+}
+
+// ─── BidConsole — spec-replica bid module (宣讲版原型 §用户端) ───
+// Faithful to the challenge PDF mock: a floating white card with
+//   距竞拍结束仅剩 [HH][MM][SS]
+//   [thumb] 商品标题
+//   当前价 + 领先者          | 我的出价
+//   [−]   ¥next   [+]        ← stepper, always on the step grid
+//         加价幅度 ¥step
+//   ████ 立即出价 ████
+// State bubbles per the mock: 高于当前价¥X (multi-step up) and
+// 当前您已是最高价 (自己超过自己 — bidding against yourself is allowed).
+// All money is string-cents/BigInt; the stepper can never go off-grid, so
+// the ERR_BAD_INPUT class of rejects is impossible by construction.
+function BidConsole({
+  remainingMs = 0,
+  currentCents = '0',
+  stepCents = '0',
+  capCents = null,
+  leaderName = null,
+  yourCents = null,
+  productImage = null,
+  productName = null,
+  disabled = false,
+  isYouLeading = false,
+  shake = false,
+  onBid = () => {},
+}) {
+  let curBig = 0n;
+  let stepBig = 0n;
+  let capBig = null;
+  try { curBig = BigInt(currentCents); } catch { curBig = 0n; }
+  try { stepBig = BigInt(stepCents); } catch { stepBig = 0n; }
+  try {
+    if (capCents != null && capCents !== '') {
+      const c = BigInt(capCents);
+      if (c > curBig) capBig = c;
+    }
+  } catch { capBig = null; }
+  const stepUsable = stepBig > 0n;
+  const minNext = curBig + stepBig;
+
+  const [valueStr, setValueStr] = React.useState(() => minNext.toString());
+  // Price moved under us → if our staged amount is no longer a valid bid,
+  // snap to the next valid one (the mock's stepper re-bases the same way).
+  React.useEffect(() => {
+    try {
+      if (BigInt(valueStr) <= curBig) setValueStr(minNext.toString());
+    } catch {
+      setValueStr(minNext.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCents, stepCents]);
+
+  let valBig = minNext;
+  try { valBig = BigInt(valueStr); } catch { valBig = minNext; }
+  if (valBig < minNext) valBig = minNext;
+  if (capBig != null && valBig > capBig) valBig = capBig;
+
+  const atCap = capBig != null && valBig >= capBig;
+  const stepsAbove = stepUsable ? (valBig - curBig) / stepBig : 1n;
+
+  const nudge = (dir) => {
+    if (!stepUsable || disabled) return;
+    let next = valBig + BigInt(dir) * stepBig;
+    if (next < minNext) next = minNext;
+    if (capBig != null && next > capBig) next = capBig;
+    setValueStr(next.toString());
+  };
+
+  const submit = () => {
+    if (disabled || !stepUsable) return;
+    onBid(valBig.toString());
+  };
+
+  // 距竞拍结束 segments — the mock shows HH:MM:SS digit boxes.
+  const totalS = Math.max(0, Math.ceil(remainingMs / 1000));
+  const segs = [
+    String(Math.floor(totalS / 3600)).padStart(2, '0'),
+    String(Math.floor((totalS % 3600) / 60)).padStart(2, '0'),
+    String(totalS % 60).padStart(2, '0'),
+  ];
+  const ended = disabled || remainingMs <= 0;
+  const urgent = !ended && remainingMs <= 10000;
+
+  const yourBidText = (() => {
+    if (!yourCents) return '暂无出价';
+    try { return BigInt(yourCents) > 0n ? formatCentsCNYShort(yourCents) : '暂无出价'; } catch { return '暂无出价'; }
+  })();
+
+  // Mock copy: 高于当前价100元 (relative to the current price) when stacking
+  // multiple steps; 当前您已是最高价 when bidding against yourself.
+  const hint = ended ? null
+    : isYouLeading ? { text: '当前您已是最高价', tone: 'gold' }
+    : stepsAbove > 1n ? { text: `高于当前价 ${formatCentsCNYShort((valBig - curBig).toString())}`, tone: 'pink' }
+    : null;
+
+  return (
+    <div className={shake ? 'lumen-shake' : ''} style={{
+      borderRadius: 14, overflow: 'hidden',
+      background: '#ffffff', color: '#1a1d26',
+      boxShadow: '0 10px 36px rgba(0,0,0,.45)',
+      fontFamily: 'var(--font-sans)',
+    }}>
+      {/* 距竞拍结束 strip */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        padding: '7px 12px',
+        background: ended
+          ? 'linear-gradient(90deg, #6b7186, #9aa0b4)'
+          : 'linear-gradient(90deg, #FE2C55, #ff7a45)',
+        color: '#fff', fontSize: 12, fontWeight: 700,
+      }}>
+        <span>{ended ? '本场竞拍已结束' : '距竞拍结束仅剩'}</span>
+        {!ended && segs.map((seg, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && <span style={{ fontWeight: 800, opacity: .9 }}>:</span>}
+            <span className={'mono' + (urgent ? ' lumen-pulse-warn' : '')} style={{
+              minWidth: 24, padding: '1px 4px', borderRadius: 4, textAlign: 'center',
+              background: 'rgba(255,255,255,.92)', color: '#FE2C55',
+              fontSize: 13, fontWeight: 800,
+            }}>{seg}</span>
+          </React.Fragment>
+        ))}
+      </div>
+
+      <div style={{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* product + prices row */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{
+            width: 46, height: 46, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
+            background: 'linear-gradient(160deg,#f2f3f7,#e3e5ee)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {productImage
+              ? <img src={productImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+              : <span style={{ fontSize: 18 }}>💎</span>}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 13, fontWeight: 700, color: '#1a1d26',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {productName || '直播竞拍'}
+            </div>
+            <div style={{ display: 'flex', gap: 14, marginTop: 3, alignItems: 'baseline' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 10, color: '#8a8f9e' }}>
+                  当前价{leaderName ? ` · ${leaderName}` : ''}
+                </span>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 800, color: '#FE2C55' }}>
+                  {formatCentsCNYShort(currentCents)}
+                </div>
+              </div>
+              <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                <span style={{ fontSize: 10, color: '#8a8f9e' }}>我的出价</span>
+                <div className="mono" style={{
+                  fontSize: yourBidText === '暂无出价' ? 12 : 16,
+                  fontWeight: yourBidText === '暂无出价' ? 500 : 800,
+                  color: yourBidText === '暂无出价' ? '#8a8f9e' : '#1a1d26',
+                }}>
+                  {yourBidText}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* state bubble (mock: 高于当前价 / 当前您已是最高价) */}
+        {hint && (
+          <div style={{
+            alignSelf: 'center',
+            padding: '3px 10px', borderRadius: 999,
+            background: hint.tone === 'gold' ? 'rgba(255,176,32,.14)' : 'rgba(254,44,85,.10)',
+            border: `1px solid ${hint.tone === 'gold' ? 'rgba(255,176,32,.5)' : 'rgba(254,44,85,.35)'}`,
+            color: hint.tone === 'gold' ? '#b97e12' : '#FE2C55',
+            fontSize: 11, fontWeight: 700,
+          }}>
+            {hint.text}
+          </div>
+        )}
+
+        {/* stepper */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
+          <StepperButton label="减一档" symbol="−" disabled={ended || valBig <= minNext} onClick={() => nudge(-1)}/>
+          <div style={{ textAlign: 'center', minWidth: 120 }}>
+            <div className="mono" style={{
+              fontSize: 'min(30px, 7.6vw)', fontWeight: 800, color: '#1a1d26',
+              whiteSpace: 'nowrap', lineHeight: 1.1,
+            }}>
+              {formatCentsCNYShort(valBig.toString())}
+            </div>
+            <div style={{ fontSize: 10, color: '#8a8f9e', marginTop: 2 }}>
+              {atCap ? '已达封顶价 · 成交即落槌' : `加价幅度 ${formatCentsCNYShort(stepCents)}`}
+            </div>
+          </div>
+          <StepperButton label="加一档" symbol="+" disabled={ended || atCap} onClick={() => nudge(1)}/>
+        </div>
+
+        {/* 立即出价 */}
+        <button
+          onClick={submit}
+          disabled={ended || !stepUsable}
+          style={{
+            width: '100%', minHeight: 46, borderRadius: 999, border: 'none',
+            background: (ended || !stepUsable)
+              ? 'rgba(107,114,128,.35)'
+              : 'linear-gradient(90deg, #FE2C55, #ff4d70)',
+            color: '#fff', fontSize: 16, fontWeight: 800, letterSpacing: '.06em',
+            cursor: (ended || !stepUsable) ? 'not-allowed' : 'pointer',
+            boxShadow: (ended || !stepUsable) ? 'none' : '0 6px 18px rgba(254,44,85,.35)',
+            fontFamily: 'inherit',
+          }}>
+          {ended ? '竞拍已结束' : '立即出价'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepperButton({ label, symbol, disabled, onClick }) {
+  return (
+    <button
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+        border: '1px solid #e3e5ee', background: disabled ? '#f4f5f8' : '#ffffff',
+        color: disabled ? '#c2c6d1' : '#1a1d26',
+        fontSize: 22, fontWeight: 700, lineHeight: 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        boxShadow: disabled ? 'none' : '0 2px 8px rgba(16,18,26,.08)',
+        fontFamily: 'var(--font-mono)',
+      }}>
+      {symbol}
+    </button>
   );
 }
 
@@ -800,9 +1234,15 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
 
 export {
   formatCentsCNY,
+  formatCentsCNYCompact,
+  formatCentsCNYShort,
+  yuanToCents,
+  centsToYuanInput,
   addCentsStr,
   fmtRemaining,
   bidRejectCopy,
+  useRipple,
+  RippleHost,
   PriceDisplay,
   Countdown,
   StatusBadge,
@@ -812,6 +1252,7 @@ export {
   Leaderboard,
   BidButton,
   QuickBidChips,
+  BidConsole,
   HeatMeter,
   ConnectionBar,
   ClockDriftIndicator,

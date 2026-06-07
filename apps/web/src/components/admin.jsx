@@ -25,14 +25,14 @@ const VLM_MODEL = {
 
 const VLM_FACTS = [
   {
-    id: 'brand',  label: '品牌',   vlmText: 'Patek Philippe (百达翡丽)',
-    editedText: 'Patek Philippe (百达翡丽)',
+    id: 'brand',  label: '品牌',   vlmText: 'Rolex (劳力士)',
+    editedText: 'Rolex (劳力士)',
     status: 'confirmed', confidence: 0.987, evidence: 'frame 02:14',
     highRisk: false,
   },
   {
-    id: 'model',  label: '型号',   vlmText: '5711/1A — Nautilus, blue sunburst dial',
-    editedText: '5711/1A-014 — Nautilus, 蓝面 sunburst',
+    id: 'model',  label: '型号',   vlmText: '114270 — Explorer, black dial',
+    editedText: '114270 — Explorer · 黑面',
     status: 'edited', confidence: 0.942, evidence: 'frame 02:31, 03:08',
     highRisk: false,
   },
@@ -497,7 +497,7 @@ function AdminVLMFacts() {
             <div style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em', marginBottom: 6 }}>
               LOT 信息
             </div>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>百达翡丽 5711/1A · 蓝面</div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>劳力士 Explorer 114270 · 黑面</div>
             <div className="mono" style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
               ID 2024-0142<br/>
               创建于 21:14:08<br/>
@@ -951,7 +951,7 @@ function AdminConsole() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
             <StatusBadge status={effectiveStatus} size="md"/>
             <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
-              {auctionId ? `AID ${auctionId.slice(0, 16)}` : 'LOT 2024-0142 · 百达翡丽 5711/1A'}
+              {auctionId ? `AID ${auctionId.slice(0, 16)}` : 'LOT 2024-0142 · 劳力士 Explorer 114270'}
             </span>
           </div>
           <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: '-.01em' }}>
@@ -1050,7 +1050,7 @@ function AdminConsole() {
               </button>
             </div>
             <div style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--douyin-ink-text)' }}>
-              <TypewriterText text={'"海风_2024 ¥128,800 领先 · 还剩 8 秒，谁来挑战这只蓝面鹦鹉螺？"'} charDelay={48}/>
+              <TypewriterText text={'"海风_2024 ¥128,800 领先 · 还剩 8 秒，谁来挑战这只黑面 Explorer？"'} charDelay={48}/>
             </div>
           </div>
         </div>

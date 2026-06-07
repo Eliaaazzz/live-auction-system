@@ -5,8 +5,8 @@
 // 7-state status badge mapping, podium <3-leaders graceful fallback,
 // heat meter clipping behavior.
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
 import {
   bidRejectCopy,
   StatusBadge,
@@ -17,6 +17,12 @@ import {
   PriceDisplay,
   Countdown,
   ClockDriftIndicator,
+  QuickBidChips,
+  BidConsole,
+  formatCentsCNYCompact,
+  formatCentsCNYShort,
+  yuanToCents,
+  centsToYuanInput,
 } from './primitives.jsx';
 import { bidRejectCopy as canonicalBidRejectCopy } from '../lib/types.js';
 
@@ -155,14 +161,14 @@ describe('Leaderboard · podium mode (TC-T6-230/234)', () => {
     expect(screen.getByText('user-001')).toBeInTheDocument();
   });
 
-  it('falls back to ? when both displayName and userId are missing', () => {
+  it('falls back to anonymous copy when both displayName and userId are missing', () => {
     const { container } = render(
       <Leaderboard
         leaders={[{ cents: '11000000' }]}
         mode="podium"
       />,
     );
-    expect(container.textContent).toContain('?');
+    expect(container.textContent).toContain('匿名买家');
   });
 });
 
@@ -203,14 +209,246 @@ describe('PriceDisplay', () => {
     expect(container.textContent).toMatch(/128,800/);
   });
 
-  it('renders 0', () => {
+  it('renders 0 without a noise ".00" tail (数字展示规范)', () => {
     const { container } = render(<PriceDisplay cents="0"/>);
-    expect(container.textContent).toMatch(/0\.00/);
+    expect(container.textContent).toBe('¥0');
+  });
+
+  it('keeps non-zero fen (it is money)', () => {
+    const { container } = render(<PriceDisplay cents="12880050"/>);
+    expect(container.textContent).toBe('¥128,800.50');
   });
 
   it('handles BigInt-range cents', () => {
     const { container } = render(<PriceDisplay cents="9000000000000000"/>);
     expect(container.textContent).toMatch(/90,000,000,000,000/);
+  });
+});
+
+describe('formatCentsCNYShort (display-only whole-yuan variant)', () => {
+  it('drops the ".00" tail on whole-yuan amounts', () => {
+    expect(formatCentsCNYShort('12880000')).toBe('¥128,800');
+    expect(formatCentsCNYShort('0')).toBe('¥0');
+    expect(formatCentsCNYShort('-12880000')).toBe('-¥128,800');
+  });
+
+  it('preserves non-zero fen exactly', () => {
+    expect(formatCentsCNYShort('12880050')).toBe('¥128,800.50');
+    expect(formatCentsCNYShort('5')).toBe('¥0.05');
+  });
+});
+
+describe('yuanToCents / centsToYuanInput (自定义金额 · 元)', () => {
+  it('converts integer and decimal yuan to string-cents', () => {
+    expect(yuanToCents('133800')).toBe('13380000');
+    expect(yuanToCents('1338.5')).toBe('133850');
+    expect(yuanToCents('1338.50')).toBe('133850');
+    expect(yuanToCents('0.05')).toBe('5');
+  });
+
+  it('rejects malformed input with null (never NaN)', () => {
+    expect(yuanToCents('')).toBeNull();
+    expect(yuanToCents('1338.')).toBeNull();
+    expect(yuanToCents('1.234')).toBeNull();
+    expect(yuanToCents('12a0')).toBeNull();
+    expect(yuanToCents('-5')).toBeNull();
+  });
+
+  it('round-trips through centsToYuanInput', () => {
+    expect(centsToYuanInput(13380000n)).toBe('133800');
+    expect(centsToYuanInput(133850n)).toBe('1338.5');
+    expect(centsToYuanInput(133855n)).toBe('1338.55');
+    expect(yuanToCents(centsToYuanInput(133850n))).toBe('133850');
+  });
+});
+
+describe('QuickBidChips · 自定义金额（元）+ 封顶两段确认', () => {
+  const setup = (props = {}) => {
+    const onBid = vi.fn();
+    const utils = render(
+      <QuickBidChips currentCents="12880000" stepCents="500000" onBid={onBid} {...props}/>,
+    );
+    return { onBid, ...utils };
+  };
+
+  it('submits a valid 元 amount as string-cents', () => {
+    const { onBid } = setup();
+    fireEvent.click(screen.getByText('自定义金额'));
+    const input = screen.getByPlaceholderText('出价金额（元）');
+    fireEvent.change(input, { target: { value: '133800' } }); // +1 档
+    fireEvent.click(screen.getByText('提交'));
+    expect(onBid).toHaveBeenCalledWith('13380000');
+  });
+
+  it('blocks an off-step 元 amount and the ± nudge realigns onto the grid', () => {
+    const { onBid, container } = setup();
+    fireEvent.click(screen.getByText('自定义金额'));
+    const input = screen.getByPlaceholderText('出价金额（元）');
+    fireEvent.change(input, { target: { value: '133900' } }); // off-grid
+    expect(screen.getByText(/整数倍/)).toBeInTheDocument();
+    expect(screen.getByText('提交')).toBeDisabled();
+
+    // drawer nudge button is the bare "+1档" (the chip also says +1档 but
+    // includes the amount in its textContent)
+    const nudge = [...container.querySelectorAll('button')]
+      .find((b) => b.textContent === '+1档');
+    fireEvent.click(nudge);
+    // snapped down to grid (¥133,800) then +1 step → ¥138,800
+    expect(input.value).toBe('138800');
+    fireEvent.click(screen.getByText('提交'));
+    expect(onBid).toHaveBeenCalledWith('13880000');
+  });
+
+  it('rejects a below-current 元 amount', () => {
+    setup();
+    fireEvent.click(screen.getByText('自定义金额'));
+    fireEvent.change(screen.getByPlaceholderText('出价金额（元）'), { target: { value: '128800' } });
+    expect(screen.getByText(/须高于当前价/)).toBeInTheDocument();
+    expect(screen.getByText('提交')).toBeDisabled();
+  });
+
+  it('封顶 needs two taps: first arms the confirm, second submits', () => {
+    const { onBid, container } = setup({ capCents: '15000000' });
+    const cap = [...container.querySelectorAll('button')]
+      .find((b) => b.textContent.includes('封顶'));
+    fireEvent.click(cap);
+    expect(onBid).not.toHaveBeenCalled();
+    expect(cap.textContent).toMatch(/再点一次确认/);
+    fireEvent.click(cap);
+    expect(onBid).toHaveBeenCalledWith('15000000');
+  });
+
+  it('disarms the 封顶 confirm when its amount moves', () => {
+    const onBid = vi.fn();
+    const { container, rerender } = render(
+      <QuickBidChips currentCents="12880000" stepCents="500000" capCents="15000000" onBid={onBid}/>,
+    );
+    const cap = [...container.querySelectorAll('button')]
+      .find((b) => b.textContent.includes('封顶'));
+    fireEvent.click(cap);
+    expect(cap.textContent).toMatch(/再点一次确认/);
+
+    // Amount moved (rules changed) → the armed confirm must reset so the
+    // buyer re-reads before committing (lock-amount-at-tap).
+    rerender(<QuickBidChips currentCents="12880000" stepCents="500000" capCents="16000000" onBid={onBid}/>);
+    expect(container.textContent).not.toMatch(/再点一次确认/);
+    fireEvent.click(cap);
+    expect(onBid).not.toHaveBeenCalled(); // re-armed, not submitted
+  });
+
+  it('hides the 封顶 chip when no real cap exists (no duplicate of +10档)', () => {
+    const { container } = render(
+      <QuickBidChips currentCents="12880000" stepCents="500000" onBid={vi.fn()}/>,
+    );
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels.some((t) => t.includes('封顶'))).toBe(false);
+    expect(labels.some((t) => t.includes('+10档'))).toBe(true);
+  });
+
+  it('drops step chips that meet/exceed the cap (the cap chip IS that bid)', () => {
+    const { container } = render(
+      // +3档 = ¥143,800 and +10档 = ¥178,800 both ≥ cap ¥138,800 → dropped.
+      <QuickBidChips currentCents="12880000" stepCents="500000" capCents="13880000" onBid={vi.fn()}/>,
+    );
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels.some((t) => t.includes('+1档'))).toBe(true);
+    expect(labels.some((t) => t.includes('+3档'))).toBe(false);
+    expect(labels.some((t) => t.includes('+10档'))).toBe(false);
+    expect(labels.some((t) => t.includes('封顶'))).toBe(true);
+  });
+});
+
+describe('BidConsole · spec-replica stepper (宣讲版原型)', () => {
+  const setup = (props = {}) => {
+    const onBid = vi.fn();
+    const utils = render(
+      <BidConsole
+        remainingMs={30000}
+        currentCents="85000"
+        stepCents="5000"
+        onBid={onBid}
+        {...props}
+      />,
+    );
+    return { onBid, ...utils };
+  };
+  const bidBtn = () => screen.getByText('立即出价');
+  const plus = () => screen.getByLabelText('加一档');
+  const minus = () => screen.getByLabelText('减一档');
+
+  it('stages current + one step by default and bids that amount', () => {
+    const { onBid, container } = setup(); // ¥850 + ¥50 → ¥900
+    expect(container.textContent).toMatch(/¥900/);
+    fireEvent.click(bidBtn());
+    expect(onBid).toHaveBeenCalledWith('90000');
+  });
+
+  it('steps up/down on the grid; − clamps at the minimum valid bid', () => {
+    const { onBid, container } = setup();
+    expect(minus()).toBeDisabled(); // already at the minimum
+
+    fireEvent.click(plus());
+    fireEvent.click(plus());
+    expect(container.textContent).toMatch(/¥1,000/); // 900 + 50 + 50
+    expect(container.textContent).toMatch(/高于当前价 ¥150/); // mock bubble
+
+    fireEvent.click(minus());
+    fireEvent.click(bidBtn());
+    expect(onBid).toHaveBeenCalledWith('95000');
+  });
+
+  it('clamps + at the cap and announces 封顶', () => {
+    const { container } = setup({ capCents: '95000' }); // one step above min
+    fireEvent.click(plus());
+    fireEvent.click(plus()); // would exceed → clamp
+    expect(container.textContent).toMatch(/¥950/);
+    expect(container.textContent).toMatch(/已达封顶价/);
+    expect(plus()).toBeDisabled();
+  });
+
+  it('re-bases when the current price moves past the staged amount', () => {
+    const { container, rerender } = setup();
+    // someone bids ¥900 → our staged ¥900 is no longer valid
+    rerender(
+      <BidConsole remainingMs={30000} currentCents="90000" stepCents="5000" onBid={vi.fn()}/>,
+    );
+    expect(container.textContent).toMatch(/¥950/);
+  });
+
+  it('shows 当前您已是最高价 when leading (自己超过自己 stays possible)', () => {
+    const { onBid, container } = setup({ isYouLeading: true });
+    expect(container.textContent).toMatch(/当前您已是最高价/);
+    fireEvent.click(bidBtn()); // mock allows over-bidding yourself
+    expect(onBid).toHaveBeenCalled();
+  });
+
+  it('disables everything and flips the strip when ended', () => {
+    const { onBid } = setup({ disabled: true });
+    expect(screen.getByText('竞拍已结束')).toBeDisabled();
+    fireEvent.click(screen.getByText('竞拍已结束'));
+    expect(onBid).not.toHaveBeenCalled();
+  });
+
+  it('renders 我的出价 from yourCents, 暂无出价 otherwise', () => {
+    const { container } = setup({ yourCents: '80000' });
+    expect(container.textContent).toMatch(/我的出价/);
+    expect(container.textContent).toMatch(/¥800/);
+
+    const { container: c2 } = render(
+      <BidConsole remainingMs={30000} currentCents="85000" stepCents="5000" onBid={vi.fn()}/>,
+    );
+    expect(c2.textContent).toMatch(/暂无出价/);
+  });
+});
+
+describe('formatCentsCNYCompact', () => {
+  it('uses Chinese units for compact room labels', () => {
+    expect(formatCentsCNYCompact('12880000')).toBe('¥12.88万');
+    expect(formatCentsCNYCompact('9000000000000000')).toBe('¥90万亿');
+  });
+
+  it('keeps exact formatting below ten-thousand yuan', () => {
+    expect(formatCentsCNYCompact('123456')).toBe('¥1,234.56');
   });
 });
 
