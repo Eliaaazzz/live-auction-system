@@ -504,17 +504,8 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			// broadcast so a marshal-error skip above doesn't half-update state
 			// (the `continue` jumps back to the next event without reaching here).
 			updateRoomStateFromEvent(h, aid, e)
-			if m != nil && !coalesced {
-				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
-				// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
-				// field rather than parse the full payload — the event payloads share
-				// this field across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
-				// AUCTION_NO_BID / AUCTION_CANCELLED. Failing to unmarshal (e.g. an
-				// older event that predates the field) silently skips the observation,
-				// which is the correct behaviour: no fake zero in p50.
-				if ts := eventServerTimeMs(e.Payload); ts > 0 {
-					m.BroadcastLatency.Observe(time.Since(time.UnixMilli(ts)))
-				}
+			if !coalesced {
+				observeBroadcastLatency(m, e.Payload)
 			}
 			lastSeq[aid] = e.Seq
 			// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
@@ -658,6 +649,35 @@ func eventServerTimeMs(payload string) int64 {
 		return 0
 	}
 	return probe.ServerTimeMs
+}
+
+// maxBroadcastObserveAge bounds what counts as a live-fanout latency sample. The
+// broadcast consumer loop also RE-broadcasts old Stream events on the sweep
+// backstop / cold-start catchup path (a lost Pub/Sub wakeup, or a gateway that
+// starts with lastSeq=0 and re-reads an auction's history); those events'
+// serverTimeMs is minutes old, so `now - serverTimeMs` is their AGE, not fanout
+// latency. Including them froze the 2026-06-07 dashboard's broadcastLatencyMs at
+// ~775,000 ms of garbage. A real fanout sample is sub-second (budget < 150 ms),
+// so anything older than this bound is a replay artifact and is excluded to keep
+// p95/p99 honest. (roomStatePatchLatencyMs is the authoritative large-room fanout.)
+const maxBroadcastObserveAge = 30 * time.Second
+
+// observeBroadcastLatency records a BroadcastLatency sample for a freshly
+// fanned-out event. It skips (a) events that predate the serverTimeMs field
+// (ts <= 0 — no fake zero in p50) and (b) replay/sweep re-broadcasts of old
+// events (age >= maxBroadcastObserveAge). Nil-safe so alt-mode/test paths that
+// don't wire metrics can call it unconditionally.
+func observeBroadcastLatency(m *metrics.Registry, payload string) {
+	if m == nil {
+		return
+	}
+	ts := eventServerTimeMs(payload)
+	if ts <= 0 {
+		return
+	}
+	if d := time.Since(time.UnixMilli(ts)); d < maxBroadcastObserveAge {
+		m.BroadcastLatency.Observe(d)
+	}
 }
 
 // outboundFrame is one queued must-deliver frame: either raw pre-marshalled

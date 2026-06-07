@@ -36,6 +36,11 @@ type Store struct {
 	evidenceKeySource  EvidenceKeySource
 	evidenceKeyVersion int
 	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
+
+	// snap collapses concurrent Snapshot(aid) reads of the same hot state hash
+	// into one HGetAll — 缓存防击穿 for the crash-restart reconnect stampede
+	// (see store_singleflight.go). Zero value is ready to use.
+	snap snapFlight
 }
 
 const redisUnavailableTimeout = time.Second
@@ -729,18 +734,23 @@ func (s *Store) Leaderboard(ctx context.Context, aid string, n int) ([]LeaderEnt
 
 // Snapshot returns the current room state from the Redis state Hash.
 func (s *Store) Snapshot(ctx context.Context, aid string) (model.RoomSnapshotData, error) {
-	m, err := s.rdb.HGetAll(ctx, stateKey(aid)).Result()
-	if err != nil {
-		return model.RoomSnapshotData{}, err
-	}
-	return model.RoomSnapshotData{
-		Status:            m["status"],
-		CurrentPriceCents: m["currentPriceCents"],
-		WinnerID:          m["winnerId"],
-		EndAtMs:           parseInt(m["endAtMs"]),
-		Seq:               parseInt(m["seq"]),
-		Rules:             snapshotRules(m),
-	}, nil
+	// Single-flight the HGetAll so a mass-reconnect stampede (every client
+	// re-JOINs the same auction after a gateway restart) collapses to one read
+	// per in-flight window instead of N reads on the single hot state key.
+	return s.snap.Do(aid, func() (model.RoomSnapshotData, error) {
+		m, err := s.rdb.HGetAll(ctx, stateKey(aid)).Result()
+		if err != nil {
+			return model.RoomSnapshotData{}, err
+		}
+		return model.RoomSnapshotData{
+			Status:            m["status"],
+			CurrentPriceCents: m["currentPriceCents"],
+			WinnerID:          m["winnerId"],
+			EndAtMs:           parseInt(m["endAtMs"]),
+			Seq:               parseInt(m["seq"]),
+			Rules:             snapshotRules(m),
+		}, nil
+	})
 }
 
 func snapshotRules(m map[string]string) *model.RoomSnapshotRules {
