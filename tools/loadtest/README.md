@@ -62,6 +62,45 @@ docker run --rm --network infra_default --ulimit nofile=1048576:1048576 \
   -conns 9900 -bidders 100 -ramp 45s -hold 60s
 ```
 
+### ⚠️ Public-IP self-dial / NAT hairpin (issue #231) + the preflight guard
+
+The Beijing 10k runs all failed the same way: dialing the gateway's **public
+EIP from a box inside the gateway's own host/VPC**. Most clouds (Alibaba /
+Volcengine ECS) will **not** hairpin a host back to its own EIP, so connections
+time out at the handshake — while the *same* binary held 10k cleanly over
+loopback and the **private IP** with sub-ms server ack. It is a topology
+problem, not the Redis-Lua bid path.
+
+To stop anyone burning another 10k ramp on a dead path, `wsload` runs a
+**connection-path preflight** before the ramp: it probes ~20 connections, and if
+they can't be established at low concurrency it **aborts in seconds** with a
+diagnosis (and, for a public-IP target, the NAT-hairpin hint → use the private
+IP / private LB):
+
+```bash
+# defaults: -preflight=abort -preflight-conns=20 -preflight-min-ok=0.9 -preflight-timeout=12s
+./wsload -host ws://<private-lb>:80 -aid <AID> -tokens tokens.txt -conns 9900 -bidders 100
+#   -preflight=warn   # probe + warn, but proceed anyway
+#   -preflight=off    # skip the probe entirely
+```
+
+The full turnkey path (provision one in-VPC worker + private LB, seed, run, and
+drive the live `wsdash.py` capacity panel for the mentor demo) is in
+[`docs/runbooks/beijing-tier1-10k-demo.md`](../../docs/runbooks/beijing-tier1-10k-demo.md).
+Build the upload binary with [`wsload/build-linux.sh`](wsload/build-linux.sh).
+
+### Live `/metrics` capacity panel (`wsdash.py`)
+
+`wsdash.py` is a read-only, stdlib-only live dashboard of the server `/metrics`
+gates — it turns green only when `activeConns` hits the target **and** every
+§4.2 latency budget holds **and** `seqGapCount == 0` / `backpressureForceClose
+== 0`. Runs on any box that can reach the gateway:
+
+```bash
+python3 tools/loadtest/wsdash.py --target http://<gateway-or-private-lb> --target-conns 10000
+python3 tools/loadtest/wsdash.py --target ... --json >> metrics-window.jsonl   # capture for evidence
+```
+
 ### Distributed token shards for 100k rehearsals
 
 For multi-worker runs, do not point every worker at the same `.k6-tokens` file:

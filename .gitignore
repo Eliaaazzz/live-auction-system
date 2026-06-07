@@ -29,6 +29,10 @@ tools/loadtest/.k6-aid
 tools/loadtest/.k6-tokens
 tools/loadtest/.k6-tokens-clean
 .k6-aid-10k
+# Beijing Tier-1 10k buyer tokens (docs/runbooks/beijing-tier1-10k-demo.md) —
+# live credentials, never commit even if copied into the repo tree
+tokens-current.txt
+tokens-*.txt
 # Locust bytecode cache (tools/loadtest/locustfile.py)
 __pycache__/
 
