@@ -32,18 +32,50 @@ const maxClientBidIDLen = 128
 // past it the client gets a snapshot instead (cheaper than a huge replay).
 const catchupMaxGap = 200
 
-// sendBufFrames sizes the per-conn CRITICAL lane. It MUST exceed catchupMaxGap
-// so a full Stream replay into the buffer never trips the trySend force-close
-// before writePump can drain — the catchup case is exactly the one where the
-// client may be slow (just-reconnected, possibly high-RTT), and force-closing
-// it would re-enter the reconnect loop the catchup is meant to break.
+// sendBufFrames sizes BOTH per-conn must-deliver lanes (crit + broadcast). It
+// MUST exceed catchupMaxGap so a full Stream replay into the crit buffer never
+// trips the trySend force-close before writePump can drain — the catchup case
+// is exactly the one where the client may be slow (just-reconnected, possibly
+// high-RTT), and force-closing it would re-enter the reconnect loop the catchup
+// is meant to break.
 //
-// V10k Tier A: bumped 256 → 1024 to absorb a 500+ bid/s broadcast burst at 10k
-// connected. At 256 frames a single broadcast at 500/s with a 0.5 s writePump
-// stall would force-close; 1024 gives 2 s headroom. Per-conn memory cost is
-// `1024 × 8B (slice header) ≈ 8 KiB` channel buffer; at 10k conn = 80 MiB
-// resident — well within budget on any deploy box.
-const sendBufFrames = 1024
+// V10k Tier A tuning (env-overridable via WS_CRIT_FRAMES):
+//   - originally 256 → 1024 to absorb a 500+ bid/s broadcast burst at 10k.
+//   - 1024 → 512 (2026-06-07): the Tier-2 load test crashed a single 4 vCPU/8 GiB
+//     gateway at ~15.7k conns (OOM / GC-thrash, NOT bandwidth — backpressureForceClose
+//     stayed 0, EIP unsaturated). The old cost note below was wrong: outboundFrame
+//     is {[]byte, *PreparedMessage, string, time.Time} = 72 B/slot, and BOTH the
+//     crit and broadcast channels are sized to sendBufFrames, so the real cost is
+//     2 × 1024 × 72 B ≈ 144 KiB/conn ≈ 2.1 GiB at 15k — a primary OOM driver.
+//     Cutting to 512 reclaims ~72 KiB/conn (~1 GiB at 15k). 512 is still 2.56×
+//     catchupMaxGap (200) so a full catchup replay cannot trip the force-close,
+//     and with ROOM_STATE_PATCH_MIN_VIEWERS lowered to 200 the only un-coalesced
+//     (per-bid-broadcast) rooms are <200 viewers, which cannot sustain a >512-frame
+//     backlog into one client.
+//
+// Validate any change with the 50k-bid/s burst (10k obs + 10k bidders):
+// backpressureForceClose MUST stay 0 and seqGap 0; if bpClose appears, raise to
+// 640/768 (still ≫ catchupMaxGap) and re-test before locking the default.
+var sendBufFrames = envInt("WS_CRIT_FRAMES", 512)
+
+// maxWSConns is the front-door admission watermark: handleWS rejects new WS
+// upgrades with 503 + Retry-After once ActiveConns reaches it, BEFORE allocating
+// the per-conn crit/broadcast rings + 2 goroutines — converting the proven
+// ~15.7k OOM/crash (which drops ALL conns, zeroes /metrics, and invites a
+// reconnect-storm re-crash loop) into bounded, survivable degradation where the
+// auction keeps running. 0 (default) disables the gate (no behavior change until
+// MAX_WS_CONNS is set in the deploy env, e.g. ~12000 on a 4 vCPU/8 GiB box).
+// Selective WS shedding only — REST / /healthz / /metrics stay flowing (an
+// app-level pre-upgrade 503, NOT a shared-listener LimitListener that would
+// starve health checks and cascade).
+var maxWSConns = envInt("MAX_WS_CONNS", 0)
+
+// wsWriteBufferPool is shared across all connections so gorilla borrows/returns
+// write buffers from one pool instead of allocating a 4 KiB write buffer per
+// conn (broadcasts ride PreparedMessage and acks/snapshots coalesce via wbuf,
+// so the per-conn write buffer is mostly idle — pooling it is ~−4 KiB/conn
+// resident at scale with no behavior change).
+var wsWriteBufferPool = &sync.Pool{}
 
 // fastRejectExpiryMarginMs is the safety margin between the gateway's wall
 // clock and the cached endAtMs below which the V10k Tier C fast-reject defers
@@ -1237,6 +1269,13 @@ func (c *Conn) pushLossy(env model.Envelope) {
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
+		// Inbound client frames (BID_PLACE/ROOM_JOIN/PING) are <256 B; frame SIZE
+		// is bounded separately by SetReadLimit below, so a 1 KiB read buffer is
+		// correctness-neutral and ~−3 KiB/conn vs gorilla's 4 KiB default. The
+		// write buffer is pooled across connections (see wsWriteBufferPool).
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		WriteBufferPool: wsWriteBufferPool,
 		CheckOrigin: func(req *http.Request) bool {
 			return auth.OriginAllowed(req.Header.Get("Origin"), s.cfg.FrontendOrigin)
 		},
@@ -1246,11 +1285,30 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Front-door admission control (2026-06-07): shed new WS upgrades past the
+	// connection watermark BEFORE allocating the per-conn crit/broadcast rings +
+	// 2 goroutines, so the gateway degrades gracefully (503 + Retry-After) instead
+	// of climbing to the OOM cliff. Reserve the slot pre-upgrade — ActiveConns is
+	// the authoritative admission counter — so a concurrent burst can't overshoot
+	// the cap between the check and the allocate; the reservation is released on
+	// every early-return path below and in the steady-state teardown defer.
+	if s.metrics != nil {
+		if maxWSConns > 0 && s.metrics.ActiveConns.Load() >= int64(maxWSConns) {
+			w.Header().Set("Retry-After", "2")
+			s.metrics.AdmissionRejected.Inc()
+			http.Error(w, "overloaded", http.StatusServiceUnavailable)
+			return
+		}
+		s.metrics.ActiveConns.Add(1)
+	}
 	// Wrap the ResponseWriter so the net.Conn gorilla hijacks is our
 	// flush-on-demand bufferedConn (write coalescing — see ws_coalesce.go).
 	var wbuf *bufferedConn
 	ws, err := upgrader.Upgrade(&coalescingUpgradeWriter{ResponseWriter: w, out: &wbuf}, r, nil)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.ActiveConns.Add(-1) // release the reserved slot
+		}
 		return // upgrader already wrote the error
 	}
 	// gorilla wrote the 101 Switching Protocols response into the coalescing
@@ -1269,6 +1327,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		// later batch flushes each re-set their own deadline, so no clear needed.
 		if err := wbuf.flushWithDeadline(time.Now().Add(writeWait)); err != nil {
 			_ = ws.Close()
+			if s.metrics != nil {
+				s.metrics.ActiveConns.Add(-1) // release the reserved slot
+			}
 			return
 		}
 	}
@@ -1323,9 +1384,8 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		userID:    userID, displayName: display,
 		metrics: s.metrics, pingPeriod: connPingPeriod,
 	}
-	if s.metrics != nil {
-		s.metrics.ActiveConns.Add(1)
-	}
+	// ActiveConns was already reserved pre-upgrade (admission gate above); the
+	// teardown defer releases it exactly once on the steady-state path.
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
