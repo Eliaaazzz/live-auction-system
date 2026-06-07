@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux only — served on the loopback PPROF_ADDR below, never the public mux
+	"net/netip"
 	"os"
 	"path"
 	"path/filepath"
@@ -90,13 +92,17 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// serves http.DefaultServeMux (where net/http/pprof registered) on a PRIVATE
 	// addr so it is never reachable from the public mux/EIP. Opt-in: empty
 	// PPROF_ADDR (the default outside the prod compose) leaves it off entirely.
-	if addr := strings.TrimSpace(os.Getenv("PPROF_ADDR")); addr != "" {
-		go func() {
-			log.Printf("lumen: pprof (loopback forensics) on %s", addr)
-			if err := http.ListenAndServe(addr, nil); err != nil {
-				log.Printf("lumen: pprof listener on %s: %v", addr, err)
-			}
-		}()
+	if raw := os.Getenv("PPROF_ADDR"); strings.TrimSpace(raw) != "" {
+		if addr, ok := safePprofListenAddr(raw); ok {
+			go func() {
+				log.Printf("lumen: pprof (loopback forensics) on %s", addr)
+				if err := http.ListenAndServe(addr, nil); err != nil {
+					log.Printf("lumen: pprof listener on %s: %v", addr, err)
+				}
+			}()
+		} else {
+			log.Printf("lumen: ignoring unsafe PPROF_ADDR=%q (must be localhost/loopback host:port)", raw)
+		}
 	}
 
 	mux := http.NewServeMux()
@@ -115,6 +121,29 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		return err
 	}
 	return nil
+}
+
+// safePprofListenAddr accepts only explicit loopback host:port values for the
+// opt-in pprof listener. This is a code-level safety net for the prod/systemd
+// path: a mistaken PPROF_ADDR=:6060 or 0.0.0.0:6060 must not expose
+// /debug/pprof on the public interface.
+func safePprofListenAddr(raw string) (string, bool) {
+	addr := strings.TrimSpace(raw)
+	if addr == "" {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "", false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return addr, true
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return "", false
+	}
+	return addr, ip.IsLoopback()
 }
 
 func timerDisabledByChaos(cfg config.Config, mode string) (bool, error) {
