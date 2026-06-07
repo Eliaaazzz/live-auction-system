@@ -73,6 +73,12 @@ services:
       ROOM_STATE_PATCH_MIN_VIEWERS: "${ROOM_STATE_PATCH_MIN_VIEWERS:-200}"
       # PPROF_ADDR: loopback-only pprof for crash forensics; NEVER bind a public iface.
       PPROF_ADDR: "${PPROF_ADDR:-127.0.0.1:6060}"
+      # GATEWAY_ROOM_AFFINITY: multi-gateway room-level routing isolation — a gateway
+      # only reads/fans out rooms it has local members for (vs every gateway reading
+      # every room). DEFAULT OFF; enable ONLY in a multi-gateway deploy that also
+      # pins a consistent room->gateway shard at the LB. Single-process mode=all
+      # ignores it (inert).
+      GATEWAY_ROOM_AFFINITY: "${GATEWAY_ROOM_AFFINITY:-}"
       MYSQL_HOST: "${MYSQL_HOST:-}"
       MYSQL_PORT: "${MYSQL_PORT:-3306}"
       MYSQL_USER: "${MYSQL_USER:-lumen}"
