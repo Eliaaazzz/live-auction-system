@@ -26,6 +26,8 @@ larger concurrency tier.
 ## Preconditions
 
 - `BASE_URL` points at the remote stack root, for example `https://auction.example.com`.
+- `EXPECTED_BUILD_SHA` is the commit intended for the deployed backend, and
+  `EXPECTED_SCHEMA_VERSION` matches `model.SchemaVersion` for that commit.
 - No secrets, cookies, cloud tokens, or provider credentials are written into the
   repository or evidence bundle.
 - Backend `/metrics` output can provide the required server-side latency fields
@@ -44,27 +46,50 @@ larger concurrency tier.
 2. Run deploy preflight.
 
    ```sh
-   BASE_URL="$BASE_URL" AID="${AID:-auc_demo}" OUT_DIR="$PREFLIGHT_OUT" scripts/deploy-preflight.sh
+   BASE_URL="$BASE_URL" \
+     AID="${AID:-auc_demo}" \
+     EXPECTED_BUILD_SHA="$EXPECTED_BUILD_SHA" \
+     EXPECTED_SCHEMA_VERSION="$EXPECTED_SCHEMA_VERSION" \
+     REQUIRE_VERSION_IDENTITY=1 \
+     OUT_DIR="$PREFLIGHT_OUT" \
+     scripts/deploy-preflight.sh
    ```
 
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
    `metrics-summary.json`. The helper reads only public HTTP endpoints:
-   `/healthz`, `/metrics`, `/admin.html`, and `/room.html?auction=$AID`.
+   `/healthz`, `/version`, `/metrics`, `/admin.html`, and
+   `/room.html?auction=$AID`. The `/version` artifact must match the expected
+   build SHA and schema version before the run can be treated as current-head
+   evidence.
 
-3. Decide whether SRS is in scope.
+3. Run the current-schema LIVE bid smoke.
+
+   ```sh
+   HOST_HTTP="$BASE_URL" \
+     HOST_WS="$BASE_WS_URL" \
+     LOGIN_PATH=/api/login \
+     WEB_SMOKE_AID="$AID" \
+     make web-smoke-wire
+   ```
+
+   The auction must be `LIVE`. Passing output proves the current checked-in
+   client contract can complete `ROOM_JOIN -> ROOM_SNAPSHOT` and
+   `BID_PLACE -> BID_ACCEPTED` against the deployed endpoint.
+
+4. Decide whether SRS is in scope.
 
    If the rehearsal includes live video, run the SRS smoke path from #164/#165
    and archive its evidence next to the preflight pack. If SRS fails, keep the
    bidding rehearsal separate: video is non-authoritative and must not decide bid
    order, winner, payment, or replay evidence.
 
-4. Run the load or remote performance scenario.
+5. Run the load or remote performance scenario.
 
    Capture the server metrics JSON at or near peak load. If a client runner such
    as k6 is used, keep its summary JSON, but do not use client RTT as the backend
    SLO source.
 
-5. Run the remote perf gate.
+6. Run the remote perf gate.
 
    ```sh
    scripts/remote-perf-gate.sh \
@@ -80,13 +105,15 @@ larger concurrency tier.
    hammer and catchup p95 metrics, or the run must explicitly document why those
    checks were not required.
 
-6. Archive the evidence pack.
+7. Archive the evidence pack.
 
    Keep these artifacts together:
 
    - preflight `manifest.txt`
    - preflight `status.tsv`
    - preflight route artifacts
+   - preflight `version-summary.json`
+   - current-schema LIVE bid smoke output
    - server metrics JSON used by the perf gate
    - remote perf gate `summary.md`
    - remote perf gate `gate.tsv`
@@ -94,7 +121,7 @@ larger concurrency tier.
    - optional `client-observed.tsv`
    - optional SRS smoke evidence
 
-7. Run teardown.
+8. Run teardown.
 
    Follow the #154 teardown/cost checklist after the evidence has been copied to
    its durable location. Record which remote resources were stopped or deleted.
@@ -104,6 +131,8 @@ larger concurrency tier.
 | Gate | Go condition | No-go condition |
 | --- | --- | --- |
 | Deploy preflight | Public routes return expected 2xx responses and artifacts are captured | Any required route is unreachable unless `ALLOW_FAILURE=1` is intentionally documented |
+| Version identity | `/version` schema and build SHA match the intended commit | Missing `/version`, `unknown` build identity, or schema/build mismatch |
+| Current-schema bid smoke | `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED` pass on a LIVE auction | Smoke runs against a non-LIVE auction, stale schema, or missing `BID_ACCEPTED` |
 | Metrics capture | Backend server metrics are available at peak load | Only client-side latency or screenshots are available |
 | Remote perf gate | `summary.md` reports `result: PASS` for the target tier | Any required server SLO row fails or is missing |
 | SRS smoke | Required only when live video is part of the rehearsal | SRS failure blocks video demo only, not bid correctness |
