@@ -635,7 +635,8 @@ describe('applyReject', () => {
     expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
     expect(useAuctionStore.getState().lastRejectAt).toBe(1_000);
 
-    vi.advanceTimersByTime(1_799);
+    // 3s TTL — the reject bar sits above the bid chips (design review P0-1).
+    vi.advanceTimersByTime(2_999);
     expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
 
     vi.advanceTimersByTime(1);
@@ -653,7 +654,7 @@ describe('applyReject', () => {
     reject({ type: EventType.BID_REJECTED, requestId: 'r-2', data: { code: 'ERR_RATE_LIMITED' } });
     expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
 
-    vi.advanceTimersByTime(1_799);
+    vi.advanceTimersByTime(2_999);
     expect(useAuctionStore.getState().lastRejectCode).toBe('ERR_RATE_LIMITED');
 
     vi.advanceTimersByTime(1);

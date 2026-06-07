@@ -77,7 +77,9 @@ body {
 .lumen-frame-outer {
   width: 100%;
   min-height: 100dvh;
-  background: #06070d;
+  /* Soft radial stage light so the phone card separates from the page on
+   * projector-grade contrast (review P1-8: black-on-black card vanished). */
+  background: radial-gradient(820px 560px at 50% 42%, #0d1019 0%, #06070d 72%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -95,7 +97,10 @@ body {
     max-width: var(--frame-max-w, 420px);
     height: min(calc(100dvh - 48px), var(--frame-max-h, 892px));
     border-radius: 28px;
-    box-shadow: 0 30px 80px rgba(0, 0, 0, .5), 0 0 0 1.5px rgba(255, 255, 255, .04);
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, .6),
+      0 30px 80px rgba(0, 0, 0, .5),
+      0 0 0 1px rgba(255, 255, 255, .09);
   }
 }
 
@@ -409,6 +414,18 @@ body {
   animation: lumen-ripple .42s cubic-bezier(.2, 0, 0, 1) forwards;
 }
 
+/* ─── Price odometer digit tick — scale-only, no urgency drop-shadow ─── */
+@keyframes lumen-digit-tick {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+.lumen-digit-tick { animation: lumen-digit-tick .2s ease-out 1; }
+
+/* ─── Rules summary disclosure chevron ─── */
+.lumen-rules-chev { display: inline-block; transition: transform .2s ease; }
+details[open] > summary .lumen-rules-chev { transform: rotate(180deg); }
+
 /* ─── Terms sheet — bottom slide-up (参与流程 join gate) ─── */
 @keyframes lumen-sheet-up {
   0%   { transform: translateY(28px); opacity: 0; }
@@ -449,7 +466,9 @@ body {
 .surface-calm .lumen-black-horse-in,
 .surface-calm .lumen-flame-flicker,
 .surface-calm .lumen-veil-drop,
-.surface-calm .lumen-veil-bridge-fade,  /* P9 self-spotted gap — TerminalOverlay also uses this keyframe */
+.surface-calm .lumen-veil-bridge,  /* class name, not keyframe — TerminalOverlay carries it too */
+.surface-calm .lumen-livefeed::after,
+.surface-calm .lumen-digit-tick,
 .surface-calm .lumen-room-blur-out,
 .surface-calm .lumen-hammer-reveal-up,
 .surface-calm .lumen-cursor-blink,

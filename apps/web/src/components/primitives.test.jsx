@@ -317,22 +317,43 @@ describe('QuickBidChips · 自定义金额（元）+ 封顶两段确认', () => 
     expect(onBid).toHaveBeenCalledWith('15000000');
   });
 
-  it('disarms the 封顶 confirm when its amount moves (price changed)', () => {
+  it('disarms the 封顶 confirm when its amount moves', () => {
     const onBid = vi.fn();
     const { container, rerender } = render(
-      <QuickBidChips currentCents="12880000" stepCents="500000" onBid={onBid}/>,
+      <QuickBidChips currentCents="12880000" stepCents="500000" capCents="15000000" onBid={onBid}/>,
     );
     const cap = [...container.querySelectorAll('button')]
       .find((b) => b.textContent.includes('封顶'));
     fireEvent.click(cap);
     expect(cap.textContent).toMatch(/再点一次确认/);
 
-    // No capCents → the cap chip derives from currentCents; a price move
-    // changes the amount and must reset the armed confirm.
-    rerender(<QuickBidChips currentCents="12980000" stepCents="500000" onBid={onBid}/>);
+    // Amount moved (rules changed) → the armed confirm must reset so the
+    // buyer re-reads before committing (lock-amount-at-tap).
+    rerender(<QuickBidChips currentCents="12880000" stepCents="500000" capCents="16000000" onBid={onBid}/>);
     expect(container.textContent).not.toMatch(/再点一次确认/);
     fireEvent.click(cap);
     expect(onBid).not.toHaveBeenCalled(); // re-armed, not submitted
+  });
+
+  it('hides the 封顶 chip when no real cap exists (no duplicate of +10档)', () => {
+    const { container } = render(
+      <QuickBidChips currentCents="12880000" stepCents="500000" onBid={vi.fn()}/>,
+    );
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels.some((t) => t.includes('封顶'))).toBe(false);
+    expect(labels.some((t) => t.includes('+10档'))).toBe(true);
+  });
+
+  it('drops step chips that meet/exceed the cap (the cap chip IS that bid)', () => {
+    const { container } = render(
+      // +3档 = ¥143,800 and +10档 = ¥178,800 both ≥ cap ¥138,800 → dropped.
+      <QuickBidChips currentCents="12880000" stepCents="500000" capCents="13880000" onBid={vi.fn()}/>,
+    );
+    const labels = [...container.querySelectorAll('button')].map((b) => b.textContent);
+    expect(labels.some((t) => t.includes('+1档'))).toBe(true);
+    expect(labels.some((t) => t.includes('+3档'))).toBe(false);
+    expect(labels.some((t) => t.includes('+10档'))).toBe(false);
+    expect(labels.some((t) => t.includes('封顶'))).toBe(true);
   });
 });
 

@@ -163,17 +163,23 @@ function BidChip({ chip, disabled, isGold, chipBase, onBid, requireConfirm = fal
               ? '0 4px 14px rgba(201,169,97,.28)'
               : '0 4px 14px rgba(254,44,85,.28)',
       }}>
+      {/* P0-3: a bid amount must never ellipsize (¥13.38万 → ¥13.38… loses
+          the magnitude). clamp() shrinks the type on 360px-class phones
+          instead of truncating. */}
       <span className="mono" title={formatCentsCNY(chip.cents)} style={{
         position: 'relative', zIndex: 1,
-        fontSize: 14, fontWeight: 700, letterSpacing: '-.01em',
+        fontSize: 'clamp(12px, 3.6vw, 14px)', fontWeight: 700, letterSpacing: '-.01em',
         fontVariantNumeric: 'tabular-nums',
-        maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        maxWidth: '100%', whiteSpace: 'nowrap',
       }}>
         {formatCentsCNYCompact(chip.cents)}
       </span>
       <span style={{
         position: 'relative', zIndex: 1,
-        fontSize: 10, fontWeight: armed ? 700 : 500, opacity: armed ? 1 : .85, letterSpacing: '.04em',
+        fontSize: 10, fontWeight: 600, letterSpacing: '.04em',
+        // full opacity + a hint of shadow: the sublabel carries the action
+        // semantics (+1档/封顶) — it was the lowest-contrast text on the page.
+        textShadow: '0 1px 2px rgba(0,0,0,.4)',
       }}>
         {armed ? '再点一次确认' : chip.label}
       </span>
@@ -201,19 +207,28 @@ function PriceDisplay({ cents, size = 56, tone = 'ink', flash = false, withUnder
     <span className={'mono' + (flash ? ' lumen-gold-flash' : '')}
       style={{
         position: 'relative',
+        // P0-2 (design review): never wrap a money readout — a 36px price
+        // that drops its last digit to a second line misreads by 10×. size
+        // may be a CSS length string (e.g. 'min(36px, 9.2vw)') so narrow
+        // phones scale instead of wrapping; per-char minWidth is em-based
+        // and follows along.
         fontSize: size, fontWeight: 700, color, lineHeight: 1, letterSpacing: 0,
         display: 'inline-flex', alignItems: 'baseline',
-        maxWidth: '100%', flexWrap: 'wrap',
+        maxWidth: '100%', whiteSpace: 'nowrap',
         transition: 'color .18s ease', willChange: 'transform',
         paddingBottom: withUnderline ? 4 : 0,
         borderBottom: withUnderline ? '1px solid var(--x-gold-thin)' : 'none',
       }}>
       {[...txt].map((ch, i) => (
-        <span key={i + ch} style={{
-          display: 'inline-block', minWidth: ch === '.' || ch === ',' ? undefined : '0.62em',
-          textAlign: 'center',
-          animation: changed && /[0-9]/.test(ch) ? 'lumen-pulse-warn .2s' : undefined,
-        }}>{ch}</span>
+        <span key={i + ch}
+          // .lumen-digit-tick is a scale-only tick (calm-mode aware). The old
+          // inline lumen-pulse-warn added a red drop-shadow — urgency
+          // semantics leaking onto a neutral price update.
+          className={changed && /[0-9]/.test(ch) ? 'lumen-digit-tick' : undefined}
+          style={{
+            display: 'inline-block', minWidth: ch === '.' || ch === ',' ? undefined : '0.62em',
+            textAlign: 'center',
+          }}>{ch}</span>
       ))}
     </span>
   );
@@ -711,25 +726,35 @@ function QuickBidChips({
       return (BigInt(currentCents) + BigInt(multiplier) * stepBig).toString();
     } catch { return currentCents; }
   };
-  const maxBid = () => {
-    try {
-      if (capCents) return capCents;
-      // No cap → fall back to +10档 (matches the rightmost step chip).
-      return stepBump(10);
-    } catch { return currentCents; }
-  };
 
-  const chips = [
+  // 封顶 renders ONLY when a real cap exists (design review, 5/6 consensus):
+  // the old stepBump(10) fallback duplicated the +10档 amount side by side and
+  // read as a rendering bug. With a cap, step chips that meet/exceed it are
+  // dropped — those bids would land at/above cap, and the cap chip IS that bid.
+  let capBig = null;
+  try {
+    if (capCents != null && capCents !== '') {
+      const c = BigInt(capCents);
+      if (c > BigInt(currentCents)) capBig = c;
+    }
+  } catch { capBig = null; }
+  const stepChips = [
     { label: '+1档',  cents: stepBump(1) },
     { label: '+3档',  cents: stepBump(3) },
     { label: '+10档', cents: stepBump(10) },
-    { label: '封顶',  cents: maxBid(), tone: 'gold' },
-  ];
+  ].filter((c) => {
+    if (capBig == null) return true;
+    try { return BigInt(c.cents) < capBig; } catch { return true; }
+  });
+  const chips = capBig != null
+    ? [...stepChips, { label: '封顶', cents: capBig.toString(), tone: 'gold' }]
+    : stepChips;
 
-  // Inner padding ≥8px horizontal so the amount never sits flush against the
-  // chip edge (meeting: 按钮内部 padding).
+  // Inner padding keeps the amount off the chip edge (meeting: 按钮内部
+  // padding); 6px horizontal balances that against 360px-wide phones where
+  // four chips must share ~330px.
   const chipBase = {
-    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '10px 8px', borderRadius: 10, border: 'none',
+    flex: '1 1 74px', minWidth: 0, minHeight: 54, padding: '10px 6px', borderRadius: 10, border: 'none',
     fontFamily: 'inherit', fontWeight: 600, fontSize: 12,
     display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
     cursor: disabled ? 'not-allowed' : 'pointer',
@@ -855,7 +880,9 @@ function QuickBidChips({
                 style={{
                   flex: 1, minWidth: 0, padding: '8px 0', border: 'none',
                   background: 'transparent',
-                  color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 13,
+                  // 16px floor: anything smaller makes iOS Safari force-zoom
+                  // the page on focus and it never zooms back out.
+                  color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-mono)', fontSize: 16,
                   outline: 'none',
                 }}
               />
@@ -908,8 +935,8 @@ function QuickBidChips({
           )}
 
           {customError && (
-            <div style={{
-              fontSize: 10, color: 'var(--state-rejected)',
+            <div role="alert" style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--state-rejected)',
               fontFamily: 'var(--font-sans)',
             }}>
               {customError === 'max'   && '金额超过单笔上限'}
