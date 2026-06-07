@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
-import { formatCentsCNY, StatusBadge } from './primitives.jsx';
+import { formatCentsCNY, formatCentsCNYShort } from './primitives.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { ensureSession } from '../lib/auth.js';
 import { suggestStepCents } from '../lib/bidding.js';
@@ -805,24 +805,42 @@ function AdminCancelModal({
 }
 
 // ───────────────────────────────────────────────────────────────
-// Admin · Orders / Products — real data from GET /api/auctions
+// Admin · 直播商品 console — real data from GET /api/auctions
+// (spec mock replica: light merchant-console table)
 // ───────────────────────────────────────────────────────────────
-function auctionToRow(a) {
-  const sold = a.status === 'SOLD' || a.status === 'ORDER_CREATED';
-  return {
-    lot: a.auctionId,
-    title: a.productName || a.auctionId,
-    status: a.status,
-    winner: a.winnerId || '—',
-    hammer: sold ? (a.currentPriceCents || '0') : '0',
-    settle: a.status === 'ORDER_CREATED' ? '已结算' : a.status === 'SOLD' ? '待结算' : '—',
-    t: a.createdAtMs ? new Date(a.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '—',
-    mode: a.mode || 'ENGLISH',
-    parentAuctionId: a.parentAuctionId || '',
-  };
-}
 
 const USE_MOCK_DATA = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'false') === 'true';
+
+// Demo fallback rows (also the no-backend preview). NOTE: this constant was
+// accidentally deleted in ede64e9 while its five usages stayed — the page
+// crashed on render whenever the fallback path was hit. Restored with the
+// extended column set (起拍价/固定加价/封顶价/出价次数).
+const ORDER_ROWS = [
+  { lot: 'auc-demo-0142', title: '百达翡丽 5711/1A 鹦鹉螺 · 蓝面', status: 'LIVE',
+    winner: '—', hammer: '0', currentCents: '12880000', startCents: '12000000',
+    stepCents: '500000', capCents: '30000000', bidCount: 13, endAtMs: 0,
+    imageUrl: '', settle: '—', t: '直播中', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0141', title: '劳力士 GMT-Master II 116710', status: 'ORDER_CREATED',
+    winner: '海风_2024', hammer: '6850000', currentCents: '6850000', startCents: '5000000',
+    stepCents: '100000', capCents: '9000000', bidCount: 30, endAtMs: 0,
+    imageUrl: '', settle: '已结算', t: '2026-06-05 21:48', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0140', title: '清代翡翠手镯 · A货', status: 'SOLD',
+    winner: '听雨人', hammer: '4200000', currentCents: '4200000', startCents: '3000000',
+    stepCents: '100000', capCents: '6000000', bidCount: 18, endAtMs: 0,
+    imageUrl: '', settle: '待结算', t: '2026-06-05 20:14', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0139', title: '欧米茄 Speedmaster Moonwatch', status: 'SCHEDULED',
+    winner: '—', hammer: '0', currentCents: '0', startCents: '4500000',
+    stepCents: '100000', capCents: '8000000', bidCount: 0, endAtMs: 0,
+    imageUrl: '', settle: '—', t: '2026-06-08 21:00', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0138', title: '宋瓷青瓷莲花碗', status: 'NO_BID',
+    winner: '—', hammer: '0', currentCents: '0', startCents: '8000000',
+    stepCents: '200000', capCents: '12000000', bidCount: 0, endAtMs: 0,
+    imageUrl: '', settle: '—', t: '2026-06-04 22:30', mode: 'ENGLISH', parentAuctionId: '' },
+  { lot: 'auc-demo-0137', title: '田黄石印章 · 清乾隆 (暗拍)', status: 'SOLD',
+    winner: '盐渍生活', hammer: '1850000', currentCents: '1850000', startCents: '1000000',
+    stepCents: '50000', capCents: '0', bidCount: 9, endAtMs: 0,
+    imageUrl: '', settle: '待结算', t: '2026-06-03 19:48', mode: 'SEALED_FIRST', parentAuctionId: '' },
+];
 
 const normalizeCents = (raw) => {
   const s = String(raw == null ? '0' : raw).trim();
@@ -859,22 +877,35 @@ const normalizeSettlement = (status) => {
 const mapBackendRows = (rows = []) => rows.map((it, i) => {
   const status = normalizeStatus(it?.status);
   const lot = String(it?.lot ?? it?.auctionId ?? it?.id ?? `auc-${i + 1}`).trim() || `auc-${i + 1}`;
+  const sold = status === 'SOLD' || status === 'ORDER_CREATED';
   return {
     lot,
     title: String(it?.title ?? it?.productName ?? it?.name ?? '—'),
     status,
     winner: String(it?.winner ?? it?.winnerId ?? it?.winnerName ?? '—'),
-    hammer: normalizeCents(it?.hammer ?? it?.currentPriceCents ?? it?.currentPrice ?? '0'),
+    hammer: sold ? normalizeCents(it?.hammer ?? it?.currentPriceCents ?? it?.currentPrice ?? '0') : '0',
     settle: normalizeSettlement(status),
-    t: normalizeTimeText(it?.t ?? it?.updatedAt ?? it?.createdAt),
+    t: normalizeTimeText(it?.t ?? it?.updatedAt ?? (it?.createdAtMs ? new Date(it.createdAtMs) : it?.createdAt)),
     mode: String(it?.mode ?? 'ENGLISH'),
     parentAuctionId: String(it?.parentAuctionId ?? ''),
+    // 商品管理 columns (backed by the extended GET /api/auctions DTO)
+    imageUrl: String(it?.imageUrl ?? ''),
+    currentCents: normalizeCents(it?.currentPriceCents ?? it?.currentPrice ?? '0'),
+    startCents: normalizeCents(it?.startPriceCents ?? it?.startCents ?? '0'),
+    stepCents: normalizeCents(it?.incrementCents ?? it?.stepCents ?? '0'),
+    capCents: normalizeCents(it?.capPriceCents ?? it?.capCents ?? '0'),
+    bidCount: Number(it?.bidCount ?? 0) || 0,
+    endAtMs: Number(it?.endAtMs ?? 0) || 0,
   };
 });
 
 function AdminOrders() {
   const navigate = useNavigate();
   const [filter, setFilter] = React.useState('ALL');
+  // Mock tabs: 直播商品 (everything that hit the floor) vs 待上架商品
+  // (DRAFT/SCHEDULED), plus free-text search over 名称/ID.
+  const [group, setGroup] = React.useState('live');
+  const [query, setQuery] = React.useState('');
   const [copyHint, setCopyHint] = React.useState(null);
   const [rows, setRows] = React.useState(ORDER_ROWS);
   const [isDemoData, setIsDemoData] = React.useState(true);
@@ -956,11 +987,29 @@ function AdminOrders() {
     NO_BID: rows.filter(r => r.status === 'NO_BID').length,
     CANCELLED: rows.filter(r => r.status === 'CANCELLED').length,
   };
-  const filteredRows = filter === 'ALL'
-    ? rows
-    : filter === 'SOLD'
-      ? rows.filter(r => r.status === 'SOLD' || r.status === 'ORDER_CREATED')
-      : rows.filter(r => r.status === filter);
+
+  const isPending = (r) => r.status === 'DRAFT' || r.status === 'SCHEDULED';
+  const groupRows = rows.filter((r) => (group === 'pending' ? isPending(r) : !isPending(r)));
+  const pendingCount = rows.filter(isPending).length;
+  const q = query.trim().toLowerCase();
+  const filteredRows = groupRows
+    .filter((r) => (filter === 'ALL'
+      ? true
+      : filter === 'SOLD'
+        ? (r.status === 'SOLD' || r.status === 'ORDER_CREATED')
+        : r.status === filter))
+    .filter((r) => !q
+      || r.title.toLowerCase().includes(q)
+      || r.lot.toLowerCase().includes(q));
+
+  // 1Hz tick keeps the 竞价中 countdown badges live (mock: 00:59:59).
+  const [, forceTick] = React.useState(0);
+  const hasLiveRows = rows.some((r) => r.status === 'LIVE' && r.endAtMs > 0);
+  React.useEffect(() => {
+    if (!hasLiveRows) return undefined;
+    const id = setInterval(() => forceTick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, [hasLiveRows]);
 
   const totalGmv = filteredRows.reduce((a, r) => a + BigInt(r.hammer || '0'), 0n).toString();
   const sales = filteredRows.filter(r => BigInt(r.hammer || '0') > 0n).length;
@@ -1063,219 +1112,291 @@ function AdminOrders() {
     }
   };
 
+  // ── Light merchant-console theme (spec mock 复刻: 直播商品 table) ──
+  const LT = {
+    pageBg: '#f5f6f8', card: '#ffffff', text: '#1f2329', sub: '#646a73',
+    line: '#e7e9ee', blue: '#1966ff', red: '#fe2c55',
+  };
+  const tabStyle = (active) => ({
+    padding: '4px 2px', background: 'none', border: 'none', cursor: 'pointer',
+    fontFamily: 'inherit', fontSize: active ? 17 : 14,
+    fontWeight: active ? 800 : 500,
+    color: active ? LT.text : LT.sub,
+    borderBottom: active ? `2px solid ${LT.red}` : '2px solid transparent',
+  });
+
   return (
     <div style={{
       width: '100%', height: '100%', display: 'flex', flexDirection: 'column',
-      background: '#0e1018', color: 'var(--douyin-ink-text)', fontFamily: 'var(--font-sans)',
+      background: LT.pageBg, color: LT.text, fontFamily: 'var(--font-sans)',
     }}>
-      {/* breadcrumb */}
+      {/* header — 直播商品 / 待上架商品 tabs (mock) */}
       <div style={{
-        flexShrink: 0, padding: '14px 28px', display: 'flex', alignItems: 'center', gap: 14,
-        borderBottom: '1px solid rgba(255,255,255,.06)',
+        flexShrink: 0, padding: '16px 28px 10px', display: 'flex',
+        alignItems: 'center', gap: 18, background: LT.card,
+        borderBottom: `1px solid ${LT.line}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>拍品 & 订单</span>
-        </div>
+        <button onClick={() => setGroup('live')} style={tabStyle(group === 'live')}>
+          直播商品
+        </button>
+        <button onClick={() => setGroup('pending')} style={tabStyle(group === 'pending')}>
+          待上架商品{pendingCount > 0 ? `（${pendingCount}）` : ''}
+        </button>
         <div style={{ flex: 1 }}/>
-        <button onClick={handleExportCsv} style={btnGhost2}>导出 CSV</button>
+        <span className="mono" style={{ fontSize: 11, color: LT.sub }}>
+          GMV {formatCentsCNY(totalGmv)} · 成交 {sales}/{filteredRows.length}
+        </span>
+        <button onClick={handleExportCsv} style={{
+          padding: '7px 14px', borderRadius: 7, cursor: 'pointer',
+          background: LT.card, border: `1px solid ${LT.line}`, color: LT.sub,
+          fontSize: 12, fontFamily: 'inherit',
+        }}>导出 CSV</button>
         <button
           onClick={() => navigate('/admin/auctions/new')}
-          style={{ ...btnPrimary2, background: 'var(--douyin-red)', color: '#fff', cursor: 'pointer' }}>
-          + 新建拍品
+          style={{
+            padding: '7px 16px', borderRadius: 7, border: 'none', cursor: 'pointer',
+            background: LT.blue, color: '#fff', fontSize: 12, fontWeight: 600,
+            fontFamily: 'inherit',
+          }}>
+          + 添加商品
         </button>
       </div>
 
-      {/* Summary cards */}
-      <div style={{ flexShrink: 0, padding: '20px 28px 12px', display: 'flex', gap: 16 }}>
-        <SumCard label="GMV (筛选范围)" value={
-          <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: 'var(--solemn-gold)' }}>
-            {formatCentsCNY(totalGmv)}
-          </span>}/>
-        <SumCard label="成交场次" value={
-          <span className="mono" style={{ fontSize: 26, fontWeight: 700 }}>
-            {sales} <span style={{ fontSize: 13, color: 'var(--douyin-ink-muted)', fontWeight: 400 }}>/ {filteredRows.length}</span>
-          </span>}/>
-        <SumCard label="正在 LIVE" value={
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <StatusBadge status="LIVE" size="md"/>
-            <span className="mono" style={{ fontSize: 18, fontWeight: 600 }}>{counts.LIVE}</span>
-          </div>}/>
-        <SumCard label="排期中" value={
-          <span className="mono" style={{ fontSize: 26, fontWeight: 700, color: 'var(--douyin-cyan)' }}>
-            {counts.SCHEDULED}
-          </span>}/>
-      </div>
-
-      {/* Filter chips */}
-      <div style={{ flexShrink: 0, padding: '8px 28px 14px', display: 'flex', gap: 8 }}>
-        {rowsError ? (
-          <span style={{
-            marginBottom: 6,
-            fontSize: 11,
-            color: isDemoData ? 'var(--state-extended)' : 'var(--douyin-cyan)',
-            padding: '6px 10px',
-            borderRadius: 6,
-            background: isDemoData ? 'rgba(255,176,32,.08)' : 'rgba(37,244,238,.08)',
-            border: `1px solid ${isDemoData ? 'rgba(255,176,32,.24)' : 'rgba(37,244,238,.22)'}`,
-            alignSelf: 'center',
-            whiteSpace: 'nowrap',
-          }}>
-            {loadingRows ? '拍场列表加载中…' : rowsError}
-          </span>
-        ) : loadingRows ? (
-          <span style={{
-            marginBottom: 6,
-            fontSize: 11,
-            color: 'var(--douyin-ink-muted)',
-            padding: '6px 10px',
-            borderRadius: 6,
-            background: 'rgba(255,255,255,.03)',
-            border: '1px solid rgba(255,255,255,.09)',
-            alignSelf: 'center',
-            whiteSpace: 'nowrap',
-          }}>拍场列表加载中…</span>
-        ) : null}
-        {['ALL', 'LIVE', 'SCHEDULED', 'SOLD', 'NO_BID', 'CANCELLED'].map(s => (
-          <button key={s} onClick={() => setFilter(s)} style={{
-            padding: '6px 12px', borderRadius: 999,
-            background: filter === s ? 'var(--douyin-ink-card)' : 'rgba(255,255,255,.02)',
-            color: filter === s ? 'var(--douyin-ink-text)' : 'var(--douyin-ink-muted)',
-            fontSize: 12, fontWeight: filter === s ? 600 : 500,
-            border: '1px solid ' + (filter === s ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.06)'),
-            cursor: 'pointer', fontFamily: 'inherit',
-          }}>
-            {s} <span className="mono" style={{ opacity: .6, marginLeft: 4 }}>{counts[s] ?? rows.filter(r => r.status === s).length}</span>
-          </button>
-        ))}
-      </div>
-
-      {copyHint && (
+      {/* toolbar — search + status filter (mock: 请搜索商品名称或ID · 筛选) */}
+      <div style={{
+        flexShrink: 0, padding: '12px 28px', display: 'flex', alignItems: 'center', gap: 10,
+        background: LT.card, borderBottom: `1px solid ${LT.line}`,
+      }}>
         <div style={{
-          margin: '0 28px 12px', padding: '8px 10px', borderRadius: 6,
-          fontSize: 11, color: 'var(--douyin-cyan)',
-          background: 'rgba(37,244,238,.08)',
-          border: '1px solid rgba(37,244,238,.26)',
-          width: 'fit-content',
+          flex: '0 1 320px', display: 'flex', alignItems: 'center', gap: 8,
+          padding: '0 12px', height: 34, borderRadius: 7,
+          background: LT.pageBg, border: `1px solid ${LT.line}`,
         }}>
-          已复制 LOT {copyHint}
+          <span aria-hidden style={{ fontSize: 12, color: LT.sub }}>🔍</span>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="请搜索商品名称或ID"
+            style={{
+              flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent',
+              fontSize: 12, color: LT.text, fontFamily: 'inherit',
+            }}
+          />
         </div>
-      )}
+        <select
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          aria-label="筛选状态"
+          style={{
+            height: 34, padding: '0 10px', borderRadius: 7,
+            background: LT.card, border: `1px solid ${LT.line}`, color: LT.sub,
+            fontSize: 12, fontFamily: 'inherit', cursor: 'pointer',
+          }}>
+          <option value="ALL">筛选 · 全部（{counts.ALL}）</option>
+          <option value="LIVE">竞拍中（{counts.LIVE}）</option>
+          <option value="SCHEDULED">即将开拍（{counts.SCHEDULED}）</option>
+          <option value="SOLD">已成交（{counts.SOLD}）</option>
+          <option value="NO_BID">已流拍（{counts.NO_BID}）</option>
+          <option value="CANCELLED">已取消（{counts.CANCELLED}）</option>
+        </select>
+        {(rowsError || loadingRows) && (
+          <span style={{
+            fontSize: 11, padding: '5px 10px', borderRadius: 6, whiteSpace: 'nowrap',
+            color: loadingRows ? LT.sub : isDemoData ? '#b45309' : LT.blue,
+            background: loadingRows ? LT.pageBg : isDemoData ? '#fef3c7' : '#e8f1ff',
+            border: `1px solid ${loadingRows ? LT.line : isDemoData ? '#fcd34d' : '#bcd6ff'}`,
+          }}>
+            {loadingRows ? '拍场列表加载中…' : isDemoData ? `演示数据 · ${rowsError}` : rowsError}
+          </span>
+        )}
+        {copyHint && (
+          <span style={{
+            fontSize: 11, padding: '5px 10px', borderRadius: 6,
+            color: '#0f766e', background: '#ccfbf1', border: '1px solid #5eead4',
+          }}>
+            已复制 {copyHint}
+          </span>
+        )}
+      </div>
 
-      {/* Table */}
-      <div style={{ flex: 1, padding: '0 28px 24px', overflow: 'auto', minHeight: 0 }} className="no-scrollbar">
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr style={{
-              fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em',
-              borderBottom: '1px solid rgba(255,255,255,.06)',
-            }}>
-              <Th>LOT</Th>
-              <Th style={{ textAlign: 'left' }}>拍品</Th>
-              <Th>状态</Th>
-              <Th>中标人</Th>
-              <Th style={{ textAlign: 'right' }}>落槌价</Th>
-              <Th>结算</Th>
-              <Th>时间</Th>
-              <Th></Th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredRows.map(r => (
-              <tr key={r.lot} style={{
-                fontSize: 12, borderBottom: '1px solid rgba(255,255,255,.04)',
-                transition: 'background .15s',
-              }} onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,.02)'}
-                 onMouseLeave={e => e.currentTarget.style.background = ''}>
-                <Td><span className="mono" style={{ color: 'var(--douyin-ink-muted)' }}>{r.lot}</span></Td>
-                <Td style={{ textAlign: 'left' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div style={{
-                      width: 26, height: 26, borderRadius: 4,
-                      background: 'linear-gradient(135deg,#2a1f2e,#0a0e1a)',
-                      flexShrink: 0,
-                    }}/>
-                    <span>{r.title}</span>
-                  </div>
-                </Td>
-                <Td><StatusBadge status={r.status} size="sm"/></Td>
-                <Td style={{ color: r.winner === '—' ? 'var(--douyin-ink-dim)' : 'var(--douyin-ink-text)' }}>
-                  {r.winner}
-                </Td>
-                <Td style={{ textAlign: 'right' }}>
-                  {BigInt(r.hammer || '0') > 0n ?
-                    <span className="mono" style={{ fontWeight: 600, color: 'var(--solemn-gold)' }}>
-                      {formatCentsCNY(r.hammer)}
-                    </span>
-                    : <span style={{ color: 'var(--douyin-ink-dim)' }}>—</span>}
-                </Td>
-                <Td>
-                  <span style={{
-                    fontSize: 11, padding: '2px 8px', borderRadius: 4,
-                    background: r.settle === '已结算' ? 'rgba(37,244,238,.15)'
-                              : r.settle === '待结算' ? 'rgba(255,176,32,.15)'
-                              : 'transparent',
-                    color: r.settle === '已结算' ? 'var(--douyin-cyan)'
-                         : r.settle === '待结算' ? 'var(--state-extended)'
-                         : 'var(--douyin-ink-dim)',
-                    fontWeight: 600,
-                  }}>{r.settle}</span>
-                </Td>
-                <Td><span className="mono" style={{ color: 'var(--douyin-ink-muted)', fontSize: 11 }}>{r.t}</span></Td>
-                <Td>
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
-                    {(r.status === 'DRAFT' || r.status === 'SCHEDULED') ? (
-                      <button onClick={() => handleEditRules(r.lot)} style={{
-                        border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
-                        color: 'var(--douyin-ink-text)', cursor: 'pointer', fontSize: 11,
-                        padding: '3px 10px', borderRadius: 6,
-                      }}>编辑规则</button>
-                    ) : ((r.status === 'SOLD' || r.status === 'ORDER_CREATED') && ['SEALED_FIRST', 'VICKREY'].includes(r.mode)) ? (
-                      <button onClick={() => handleSpawnFormal(r.lot)} style={{
-                        border: '1px solid rgba(37,244,238,.32)', background: 'rgba(37,244,238,.08)',
-                        color: 'var(--douyin-cyan)', cursor: 'pointer', fontSize: 11,
-                        padding: '3px 10px', borderRadius: 6,
-                      }}>生成正式明拍</button>
-                    ) : (
-                      <button onClick={() => navigate(
-                        (r.status === 'LIVE') ? `/room/${r.lot}` : `/evidence/${r.lot}`)} style={{
-                        border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
-                        cursor: 'pointer', fontSize: 14, padding: '4px 8px',
-                      }}>›</button>
-                    )}
-                    <button onClick={() => handleCopyRow(r)} aria-label={`复制 LOT ${r.lot} 明细`} style={{
-                      border: 'none', background: 'transparent', color: 'var(--douyin-ink-muted)',
-                      cursor: 'pointer', fontSize: 14, padding: '4px 8px',
-                    }} title="复制该行明细">⋯</button>
-                  </div>
-                </Td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {/* rows — mock replica cards (序号·缩略图·标题/标签·五列指标·状态·操作) */}
+      <div style={{ flex: 1, padding: '14px 28px 24px', overflow: 'auto', minHeight: 0 }} className="no-scrollbar">
+        <div style={{
+          background: LT.card, borderRadius: 10, border: `1px solid ${LT.line}`,
+          overflow: 'hidden',
+        }}>
+          {filteredRows.length === 0 && (
+            <div style={{ padding: 40, textAlign: 'center', fontSize: 13, color: LT.sub }}>
+              {group === 'pending' ? '暂无待上架商品' : '暂无直播商品'} · 点右上角「+ 添加商品」发布
+            </div>
+          )}
+          {filteredRows.map((r, idx) => (
+            <ConsoleRow
+              key={r.lot}
+              r={r}
+              idx={idx}
+              LT={LT}
+              navigate={navigate}
+              onEditRules={handleEditRules}
+              onSpawnFormal={handleSpawnFormal}
+              onCopy={handleCopyRow}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-function SumCard({ label, value }) {
+// One 直播商品 row, faithful to the merchant-console mock.
+function ConsoleRow({ r, idx, LT, navigate, onEditRules, onSpawnFormal, onCopy }) {
+  const sold = r.status === 'SOLD' || r.status === 'ORDER_CREATED';
+  const live = r.status === 'LIVE';
+  const pending = r.status === 'DRAFT' || r.status === 'SCHEDULED';
+  const remainMs = live && r.endAtMs > 0 ? Math.max(0, r.endAtMs - Date.now()) : 0;
+
+  const badge = live
+    ? { text: `竞价中${r.endAtMs > 0 ? ` ${fmtHMS(remainMs)}` : ''}`, fg: '#e02e24', bg: '#fdebea' }
+    : sold
+      ? { text: '已成交', fg: '#16a34a', bg: '#e7f6ec' }
+      : r.status === 'SCHEDULED'
+        ? { text: '即将开拍', fg: LT.blue, bg: '#e8f1ff' }
+        : r.status === 'DRAFT'
+          ? { text: '待上架', fg: LT.sub, bg: LT.pageBg }
+          : r.status === 'NO_BID'
+            ? { text: '已流拍', fg: LT.sub, bg: LT.pageBg }
+            : { text: '已取消', fg: LT.sub, bg: LT.pageBg };
+
+  const metric = (label, value, accent) => (
+    <div style={{ minWidth: 78, textAlign: 'center' }}>
+      <div className="mono" style={{
+        fontSize: 14, fontWeight: 700, color: accent || LT.text, whiteSpace: 'nowrap',
+      }}>{value}</div>
+      <div style={{ fontSize: 10, color: LT.sub, marginTop: 2 }}>{label}</div>
+    </div>
+  );
+
+  const actionBtn = (label, onClick, primary = false) => (
+    <button key={label} onClick={onClick} style={{
+      padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontFamily: 'inherit',
+      fontSize: 11, fontWeight: primary ? 600 : 500,
+      background: primary ? '#fdebea' : LT.card,
+      border: `1px solid ${primary ? '#f5b5b1' : LT.line}`,
+      color: primary ? '#e02e24' : LT.sub,
+    }}>{label}</button>
+  );
+
+  const actions = [];
+  if (pending) {
+    actions.push(actionBtn('修改规则', () => onEditRules(r.lot)));
+    actions.push(actionBtn('VLM 核对', () => navigate(`/admin/auctions/${r.lot}/vlm`)));
+    actions.push(actionBtn('下架', () => navigate(`/admin/auctions/${r.lot}/cancel`)));
+  } else if (live) {
+    actions.push(actionBtn('直播控制台', () => navigate(`/admin/auctions/${r.lot}/live`), true));
+    actions.push(actionBtn('进直播间', () => navigate(`/room/${r.lot}`)));
+    actions.push(actionBtn('取消竞拍', () => navigate(`/admin/auctions/${r.lot}/cancel`)));
+  } else {
+    if (sold && ['SEALED_FIRST', 'VICKREY'].includes(r.mode)) {
+      actions.push(actionBtn('生成正式明拍', () => onSpawnFormal(r.lot), true));
+    }
+    actions.push(actionBtn('竞拍结果', () => navigate(`/evidence/${r.lot}`)));
+  }
+
   return (
     <div style={{
-      flex: 1, padding: '14px 16px', borderRadius: 10,
-      background: 'rgba(255,255,255,.02)', border: '1px solid rgba(255,255,255,.06)',
-      display: 'flex', flexDirection: 'column', gap: 6,
+      display: 'flex', alignItems: 'center', gap: 14,
+      padding: '14px 16px', borderTop: idx === 0 ? 'none' : `1px solid ${LT.line}`,
     }}>
-      <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: '.06em' }}>
-        {label}
+      <span className="mono" style={{ width: 22, fontSize: 11, color: LT.sub, flexShrink: 0 }}>
+        {String(idx + 1).padStart(2, '0')}
       </span>
-      <div>{value}</div>
+
+      {/* thumb + 讲解中-style badge for LIVE */}
+      <div style={{ position: 'relative', width: 64, height: 64, flexShrink: 0 }}>
+        <div style={{
+          width: '100%', height: '100%', borderRadius: 8, overflow: 'hidden',
+          background: 'linear-gradient(160deg,#eceef3,#dde1ea)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }}>
+          {r.imageUrl
+            ? <img src={r.imageUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+            : <span style={{ fontSize: 20 }}>💎</span>}
+        </div>
+        {live && (
+          <span style={{
+            position: 'absolute', left: 0, bottom: 0, right: 0,
+            fontSize: 9, fontWeight: 700, textAlign: 'center', padding: '2px 0',
+            background: 'rgba(224,46,36,.92)', color: '#fff',
+            borderRadius: '0 0 8px 8px',
+          }}>直播中</span>
+        )}
+      </div>
+
+      {/* title + tags + id */}
+      <div style={{ flex: '1 1 220px', minWidth: 160 }}>
+        <div style={{
+          fontSize: 13, fontWeight: 600, color: LT.text, lineHeight: 1.35,
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}>
+          {r.title}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 3,
+            background: '#fdebea', color: '#e02e24', border: '1px solid #f5b5b1',
+          }}>竞拍</span>
+          {r.mode !== 'ENGLISH' && (
+            <span style={{
+              fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 3,
+              background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd',
+            }}>暗拍</span>
+          )}
+          <button onClick={() => onCopy(r)} title="复制该行明细" style={{
+            padding: 0, border: 'none', background: 'none', cursor: 'pointer',
+            fontSize: 10, color: LT.sub, fontFamily: 'var(--font-mono)',
+          }}>
+            ID {r.lot.length > 14 ? `${r.lot.slice(0, 14)}…` : r.lot} ⧉
+          </button>
+        </div>
+      </div>
+
+      {/* metric columns (mock: 起拍价/固定加价/封顶价/当前出价·成交金额/出价次数) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+        {metric('起拍价', BigInt(r.startCents || '0') > 0n ? formatCentsCNYShort(r.startCents) : '—')}
+        {metric('固定加价', BigInt(r.stepCents || '0') > 0n ? formatCentsCNYShort(r.stepCents) : '—')}
+        {metric('封顶价', BigInt(r.capCents || '0') > 0n ? formatCentsCNYShort(r.capCents) : '—')}
+        {sold
+          ? metric('成交金额', formatCentsCNYShort(r.hammer), '#16a34a')
+          : metric('当前出价', live && BigInt(r.currentCents || '0') > 0n ? formatCentsCNYShort(r.currentCents) : '—', live ? '#e02e24' : undefined)}
+        <div style={{ minWidth: 92, textAlign: 'center' }}>
+          <div className="mono" style={{ fontSize: 14, fontWeight: 700, color: LT.text }}>
+            {r.bidCount}<span style={{ fontSize: 10, fontWeight: 400, color: LT.sub }}> 次</span>
+          </div>
+          <span className="mono" style={{
+            display: 'inline-block', marginTop: 2,
+            fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 999,
+            background: badge.bg, color: badge.fg,
+          }}>{badge.text}</span>
+        </div>
+      </div>
+
+      {/* actions */}
+      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+        {actions}
+      </div>
     </div>
   );
 }
-function Th({ children, style }) {
-  return <th style={{ padding: '10px 12px', textAlign: 'center', fontWeight: 500, ...style }}>{children}</th>;
-}
-function Td({ children, style }) {
-  return <td style={{ padding: '12px 12px', textAlign: 'center', ...style }}>{children}</td>;
+
+// HH:MM:SS for the 竞价中 badge (mock shows 00:59:59).
+function fmtHMS(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const hh = String(Math.floor(s / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+  const ss = String(s % 60).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 export {
