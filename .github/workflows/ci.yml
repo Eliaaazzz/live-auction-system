@@ -71,6 +71,12 @@ jobs:
             echo "FAIL: a test was SKIPPED in CI (all infra must be provided so nothing skips)";
             grep -- '--- SKIP' /tmp/gotest.txt; exit 1
           fi
+      - name: fuzz smoke (review-discovered Go boundaries)
+        run: |
+          set -euo pipefail
+          FUZZTIME=5s bash scripts/fuzz-discover.sh
+      - name: ws coalescing race gate
+        run: bash scripts/ws-coalescing-race-gate.sh
 
   guards:
     runs-on: ubuntu-latest
@@ -88,6 +94,12 @@ jobs:
         run: |
           for f in ws-envelope redis-keys error-codes db-schema ai-events; do
             test -f "proto/$f.md" || (echo "missing proto/$f.md"; exit 1); done
+      - name: runner-up-pays fixture verifier
+        run: |
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update && sudo apt-get install -y jq
+          fi
+          bash scripts/runner-up-pays-fixtures-check.sh
 
   e2e:
     runs-on: ubuntu-latest
