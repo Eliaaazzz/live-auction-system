@@ -976,7 +976,25 @@ function BidConsole({
   isYouLeading = false,
   shake = false,
   onBid = () => {},
+  onLongPress = null,
 }) {
+  // P0-4: 长按出价轮盘. Hold 立即出价 for 400ms → onLongPress (the room opens
+  // the tier wheel); release before that → the normal click submit. The
+  // firedRef swallows the click that follows a completed long-press so one
+  // gesture never double-fires. Pointer events cover touch + mouse + pen.
+  const lpTimerRef = React.useRef(null);
+  const lpFiredRef = React.useRef(false);
+  const lpStart = () => {
+    if (disabled || !onLongPress) return;
+    lpFiredRef.current = false;
+    clearTimeout(lpTimerRef.current);
+    lpTimerRef.current = setTimeout(() => {
+      lpFiredRef.current = true;
+      onLongPress();
+    }, 400);
+  };
+  const lpCancel = () => clearTimeout(lpTimerRef.current);
+  React.useEffect(() => () => clearTimeout(lpTimerRef.current), []);
   let curBig = 0n;
   let stepBig = 0n;
   let capBig = null;
@@ -1021,6 +1039,7 @@ function BidConsole({
 
   const submit = () => {
     if (disabled || !stepUsable) return;
+    if (lpFiredRef.current) { lpFiredRef.current = false; return; } // long-press already handled
     onBid(valBig.toString());
   };
 
@@ -1149,9 +1168,14 @@ function BidConsole({
           <StepperButton label="加一档" symbol="+" disabled={ended || atCap} onClick={() => nudge(1)}/>
         </div>
 
-        {/* 立即出价 */}
+        {/* 立即出价 — tap = staged amount; hold 400ms = tier wheel (P0-4) */}
         <button
           onClick={submit}
+          onPointerDown={lpStart}
+          onPointerUp={lpCancel}
+          onPointerLeave={lpCancel}
+          onPointerCancel={lpCancel}
+          onContextMenu={(e) => { if (onLongPress) e.preventDefault(); }}
           disabled={ended || !stepUsable}
           style={{
             width: '100%', minHeight: 46, borderRadius: 999, border: 'none',
@@ -1232,6 +1256,99 @@ function HeatMeter({ bidsPerSec = 0, peak = 1, label = '热度' }) {
   );
 }
 
+// ─── EngineeringRibbon — P0-7: the backend invariants, on screen ───
+// Judges should not have to open the README to see the engineering: a slim
+// mono strip reads "WS OK · #14998 · Δ+12ms · 2.4/s · 延时×3" and expands on
+// tap into labeled rows (连接 / 序列号 / 时钟漂移 / 出价速率 / 延时 / 在线).
+// Pure presentational — every number is already a live prop in the room
+// (connStatus, lastSeq, drift, bids/s, extendCount, viewerCount); this just
+// stops hiding them.
+const RIBBON_CONN = {
+  ok:           { label: 'WS OK',  color: 'var(--douyin-cyan)' },
+  reconnecting: { label: 'WS 重连', color: 'var(--state-extended)' },
+  syncing:      { label: 'WS 同步', color: 'var(--state-extended)' },
+  idle:         { label: 'WS —',   color: 'var(--douyin-ink-muted)' },
+};
+
+function EngineeringRibbon({
+  connStatus = 'ok',
+  lastSeq = null,
+  driftMs = 0,
+  bidsPerSec = 0,
+  extendCount = 0,
+  viewerCount = 0,
+}) {
+  const [open, setOpen] = React.useState(false);
+  const conn = RIBBON_CONN[connStatus] || RIBBON_CONN.idle;
+  const drift = Number.isFinite(driftMs) ? Math.round(driftMs) : 0;
+  const driftText = `Δ${drift >= 0 ? '+' : ''}${drift}ms`;
+  return (
+    <div style={{ position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-label="工程指标"
+        className="mono"
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          minHeight: 28, padding: '2px 8px', borderRadius: 6,
+          background: 'rgba(255,255,255,.04)',
+          border: '1px solid rgba(255,255,255,.09)',
+          color: 'var(--douyin-ink-dim)', fontSize: 10, fontWeight: 600,
+          cursor: 'pointer', whiteSpace: 'nowrap', letterSpacing: 0,
+        }}>
+        <span aria-hidden style={{
+          width: 5, height: 5, borderRadius: 3, flexShrink: 0,
+          background: conn.color,
+          boxShadow: `0 0 6px ${conn.color}`,
+        }}/>
+        <span style={{ color: conn.color }}>{conn.label}</span>
+        <span>#{lastSeq ?? '—'}</span>
+        <span>{driftText}</span>
+        <span>{(bidsPerSec || 0).toFixed(1)}/s</span>
+        {extendCount > 0 && <span>延时×{extendCount}</span>}
+        <span aria-hidden style={{ fontSize: 8, transform: open ? 'rotate(180deg)' : 'none' }}>▾</span>
+      </button>
+      {open && (
+        <div role="region" aria-label="工程指标明细" style={{
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 66,
+          width: 218, padding: '10px 12px', borderRadius: 10,
+          background: 'rgba(16,18,28,.97)',
+          border: '1px solid rgba(255,255,255,.12)',
+          boxShadow: '0 14px 40px rgba(0,0,0,.55)',
+          display: 'flex', flexDirection: 'column', gap: 7,
+          fontFamily: 'var(--font-sans)',
+        }}>
+          <RibbonRow label="连接" value={conn.label} color={conn.color}/>
+          <RibbonRow label="事件序列" value={`#${lastSeq ?? '—'} · 零空洞校验`}/>
+          <RibbonRow label="时钟漂移" value={`${driftText} · 服务端时间为准`}/>
+          <RibbonRow label="出价速率" value={`${(bidsPerSec || 0).toFixed(1)} bids/s`}/>
+          <RibbonRow label="反狙击" value={`已触发 ${extendCount || 0} 次`}/>
+          <RibbonRow label="在线" value={`${viewerCount || 0} 人`}/>
+          <div style={{
+            marginTop: 2, paddingTop: 7, borderTop: '1px solid rgba(255,255,255,.08)',
+            fontSize: 9, color: 'var(--douyin-ink-dim)', lineHeight: 1.5,
+          }}>
+            每个 WebSocket 事件带 seq 与服务端时间 · 断线重连按 lastSeq 续传
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RibbonRow({ label, value, color }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+      <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', flexShrink: 0 }}>{label}</span>
+      <span className="mono" style={{
+        fontSize: 11, fontWeight: 600, textAlign: 'right',
+        color: color || 'var(--douyin-ink-text)',
+      }}>{value}</span>
+    </div>
+  );
+}
+
 export {
   formatCentsCNY,
   formatCentsCNYCompact,
@@ -1256,5 +1373,6 @@ export {
   HeatMeter,
   ConnectionBar,
   ClockDriftIndicator,
+  EngineeringRibbon,
   HashCell
 };

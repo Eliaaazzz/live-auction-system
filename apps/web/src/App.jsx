@@ -18,6 +18,7 @@ import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
 import { EvidenceRoute } from './routes/EvidenceRoute.jsx';
 import { HallRoute } from './routes/HallRoute.jsx';
 import { IndexPage } from './routes/IndexPage.jsx';
+import { JudgesShowcaseRoute } from './routes/JudgesShowcaseRoute.jsx';
 import { api } from './lib/api.js';
 import { ensureSession } from './lib/auth.js';
 import { useParams } from 'react-router-dom';
@@ -30,6 +31,10 @@ export default function App() {
       <Route path="/" element={<MobileFrame><HallRoute/></MobileFrame>}/>
       {/* Dev index (all screens) moved off the root. */}
       <Route path="/dev" element={<IndexPage/>}/>
+
+      {/* 评委导演模式 (P0-1): scripted dual-buyer stage — 90s judge path with
+          deterministic beats; reuses the production room/evidence components. */}
+      <Route path="/showcase" element={<JudgesShowcaseRoute/>}/>
 
       {/* ─── Buyer flow (mobile) ─────────────────────────── */}
       {/* Real, WS-wired room. Falls back to mock data if VITE_USE_MOCK_DATA=true. */}

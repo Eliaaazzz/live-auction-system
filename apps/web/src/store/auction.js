@@ -74,6 +74,14 @@ const DEFAULT_STATE = {
   blackHorse:      false,
   hammerTrans:     false,
   hammerAt:        null,
+  // P0-3 (judges-stage review): one-shot anti-snipe flash. AUCTION_EXTENDED
+  // sets { count, seq, addedSec } so the room can show "反狙击触发 · 延时
+  // +30s · 第 N 次 · 序列 #seq" as an EVENT, not just a countdown that
+  // quietly grew. Token-guarded clear (like rejects) so back-to-back
+  // extends each restart the window instead of an old timer eating the
+  // new banner.
+  extendFlash:      null,
+  extendFlashToken: 0,
   lastRejectCode:  null,
   lastRejectAt:    null,
   lastRejectSeq:   0,
@@ -311,6 +319,21 @@ export const useAuctionStore = create((set, get) => ({
         case EventType.AUCTION_EXTENDED: {
           next.endAtMs     = data.endAtMs;
           next.extendCount = data.extendCount ?? (s.extendCount + 1);
+          // P0-3: surface the anti-snipe rule as a visible event. addedSec is
+          // derived from the authoritative endAtMs delta (never invented);
+          // when the previous endAtMs is unknown (catchup/replay) fall back
+          // to the contract's 30s so the copy still reads correctly.
+          const deltaMs = (typeof data.endAtMs === 'number' && typeof s.endAtMs === 'number')
+            ? data.endAtMs - s.endAtMs
+            : NaN;
+          const token = s.extendFlashToken + 1;
+          next.extendFlash = {
+            count:    next.extendCount,
+            seq:      seq ?? null,
+            addedSec: Number.isFinite(deltaMs) && deltaMs > 0 ? Math.round(deltaMs / 1000) : 30,
+          };
+          next.extendFlashToken = token;
+          scheduleExtendFlashClear(token);
           break;
         }
 
@@ -357,6 +380,18 @@ export const useAuctionStore = create((set, get) => ({
 
 function scheduleClear(key, ms) {
   setTimeout(() => useAuctionStore.setState({ [key]: false }), ms);
+}
+
+// 2.6s: long enough to read "反狙击触发 · 延时 +30s · 第 N 次 · 序列 #x",
+// short enough to be gone before the next endgame beat. Token compare keeps
+// rapid consecutive extends from being clipped by an older timer.
+function scheduleExtendFlashClear(token, ms = 2600) {
+  setTimeout(() => {
+    const current = useAuctionStore.getState();
+    if (current.extendFlashToken === token) {
+      useAuctionStore.setState({ extendFlash: null });
+    }
+  }, ms);
 }
 
 // 3s: the reject bar sits right above the bid chips now; 1.8s was gone

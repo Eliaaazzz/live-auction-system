@@ -325,6 +325,55 @@ describe('applyEvent · AUCTION_EXTENDED', () => {
     }));
     expect(useAuctionStore.getState().extendCount).toBe(1);
   });
+
+  // P0-3 (judges-stage): the anti-snipe flash — { count, seq, addedSec }
+  // derived from the authoritative endAtMs delta, auto-cleared, retriggerable.
+  describe('extendFlash one-shot', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it('sets { count, seq, addedSec } from the endAtMs delta', () => {
+      RESET();
+      const endBefore = useAuctionStore.getState().endAtMs;
+      useAuctionStore.getState().applyEvent(env({
+        seq: 14945,
+        type: EventType.AUCTION_EXTENDED,
+        data: { endAtMs: endBefore + 30_000, extendCount: 3 },
+      }));
+      expect(useAuctionStore.getState().extendFlash).toEqual({
+        count: 3, seq: 14945, addedSec: 30,
+      });
+    });
+
+    it('falls back to addedSec=30 when the previous endAtMs is unknown', () => {
+      useAuctionStore.getState().init({ auctionId: 'auc_t', endAtMs: null });
+      useAuctionStore.getState().applyEvent(env({
+        seq: 2,
+        type: EventType.AUCTION_EXTENDED,
+        data: { endAtMs: Date.now() + 38_000 },
+      }));
+      expect(useAuctionStore.getState().extendFlash?.addedSec).toBe(30);
+    });
+
+    it('auto-clears after the window — and a second extend restarts it', () => {
+      RESET();
+      const apply = useAuctionStore.getState().applyEvent;
+      const end0 = useAuctionStore.getState().endAtMs;
+      apply(env({ seq: 1, type: EventType.AUCTION_EXTENDED, data: { endAtMs: end0 + 30_000, extendCount: 1 } }));
+      expect(useAuctionStore.getState().extendFlash?.count).toBe(1);
+
+      // a second extend 1s later must NOT be clipped by the first timer
+      vi.advanceTimersByTime(1_000);
+      apply(env({ seq: 2, type: EventType.AUCTION_EXTENDED, data: { endAtMs: end0 + 60_000, extendCount: 2 } }));
+      expect(useAuctionStore.getState().extendFlash?.count).toBe(2);
+
+      vi.advanceTimersByTime(1_700); // first timer (2.6s) fires here — token mismatch, no clear
+      expect(useAuctionStore.getState().extendFlash?.count).toBe(2);
+
+      vi.advanceTimersByTime(1_000); // second timer fires — clears
+      expect(useAuctionStore.getState().extendFlash).toBeNull();
+    });
+  });
 });
 
 describe('applyEvent · ROOM_SNAPSHOT', () => {

@@ -297,6 +297,7 @@ export function LiveRoomRoute() {
       capCents={store.capCents}
       status={store.status}
       extendCount={store.extendCount}
+      extendFlash={store.extendFlash}
       connStatus={store.connStatus}
       yourRank={rankOfYou(store.leaders, store.yourUserId)}
       yourGapCents={youGap}

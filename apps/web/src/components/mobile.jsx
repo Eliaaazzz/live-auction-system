@@ -2,8 +2,8 @@ import React from 'react';
 import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, BidConsole, HeatMeter, Leaderboard,
-  ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
-import { LeadingToast, OvertakenSlam, MyPositionGap,
+  ConnectionBar, ClockDriftIndicator, EngineeringRibbon } from './primitives.jsx';
+import { LeadingToast, OvertakenSlam, AntiSnipeFlash, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
   BlackHorseBanner, HammerTransition } from './atmosphere.jsx';
@@ -172,6 +172,7 @@ function MobileRoom({
   capCents = null,
   extendCount = 2,
   extendSweep = false,
+  extendFlash = null,      // P0-3: { count, seq, addedSec } one-shot from the store
   isYouLeading = false,
   overtakeBanner = false,
   rejectShake = false,
@@ -231,6 +232,8 @@ function MobileRoom({
   const [soundOn, setSoundOn] = React.useState(() => readLocalFlag('lumen:sound:enabled'));
   const [videoExpanded, setVideoExpanded] = React.useState(false);
   const [videoBroken, setVideoBroken] = React.useState(false);
+  // P0-4: long-press on 立即出价 opens the tier wheel (+1/+2/+5/+10).
+  const [wheelOpen, setWheelOpen] = React.useState(false);
   const swipeRef = React.useRef(null);
   const suppressVideoClickUntilRef = React.useRef(0);
   const audioRef = React.useRef(null);
@@ -388,16 +391,23 @@ function MobileRoom({
       {/* Black horse banner — F13 */}
       <BlackHorseBanner visible={showBlackHorse && expressive}/>
 
+      {/* Anti-snipe flash — P0-3: the extend RULE firing as an event */}
+      <AntiSnipeFlash flash={extendFlash}/>
+
       {/* Leading celebration toast — F06 */}
       <LeadingToast visible={showLeadingToast} gainCents="500000"/>
 
-      {/* Long-press bid wheel — F25 */}
+      {/* Long-press bid wheel — F25 / P0-4: now actually wired. Long-pressing
+          立即出价 (400ms, in BidConsole) opens it; picking a tier fires the
+          absolute cents through the SAME onBid lane as a chip tap — the wheel
+          never invents its own bid path. showLongPress keeps the preview
+          routes working. */}
       <LongPressBidWheel
-        visible={showLongPress}
+        visible={showLongPress || wheelOpen}
         currentCents={currentCents}
-        stepCents="500000"
-        onPick={() => {}}
-        onClose={() => {}}
+        stepCents={stepCents}
+        onPick={(absCents) => { if (!biddingLocked && onBid) onBid(absCents); }}
+        onClose={() => setWheelOpen(false)}
       />
 
       {/* Hammer transition (A→B) overlay — covers the room during the flip */}
@@ -550,6 +560,7 @@ function MobileRoom({
             visible
             byName={firstLeader?.displayName || firstLeader?.userId || '竞拍者'}
             gapCents={yourGapCents}
+            stepCents={stepCents}
             onReverse={(e) => {
               e?.stopPropagation?.();
               if (!biddingLocked && onBid) onBid(minBidCents);
@@ -681,16 +692,23 @@ function MobileRoom({
           </div>
         </div>
 
-        {/* Anti-snipe badge row — F02 */}
+        {/* Anti-snipe badge row — F02. Right side: the engineering ribbon
+            (P0-7) replaces the bare seq chip — same data, plus conn / drift /
+            bids-per-sec / extend count, expandable into labeled rows. */}
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
-          <ExtendBadge count={extendCount} sweep={extendSweep}/>
+          <ExtendBadge count={extendCount} sweep={extendSweep || !!extendFlash}/>
           <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
             末 10 秒出价自动延时
           </span>
           <div style={{ flex: 1 }}/>
-          <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
-            序列 #{lastSeq ?? '—'}
-          </span>
+          <EngineeringRibbon
+            connStatus={connStatus}
+            lastSeq={lastSeq}
+            driftMs={serverClockOffsetMs}
+            bidsPerSec={bidsPerSec}
+            extendCount={extendCount}
+            viewerCount={viewerCount}
+          />
         </div>
 
         {/* Buyer focus — no tab switching. Price/countdown are above, bid chips
@@ -773,12 +791,13 @@ function MobileRoom({
                 isYouLeading={isYouLeading}
                 shake={rejectShake}
                 onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
+                onLongPress={() => { if (!biddingLocked) setWheelOpen(true); }}
               />
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
                 padding: '6px 4px 0', fontSize: 11, color: 'var(--douyin-ink-muted)',
               }}>
-                <span>最低加价 {formatCentsCNYShort(stepCents)}</span>
+                <span>最低加价 {formatCentsCNYShort(stepCents)} · 长按出价键选档</span>
                 <span className="mono">末 10 秒出价延时 30 秒</span>
               </div>
             </>
@@ -1666,8 +1685,12 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         </button>
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <span className="serif" style={{ fontSize: 18, fontWeight: 500 }}>证据卡</span>
+          {/* P0-6: honest trust framing — the chain is an integrity /
+              consistency check (threat model in EvidenceRoute.jsx), NOT an
+              external notarization. Saying so reads as professional, not
+              weak — technical judges reward the precision. */}
           <span style={{ fontSize: 10, color: 'var(--solemn-cream-dim)', letterSpacing: '.04em' }}>
-            证据链可验证
+            T4 Evidence v0 · 哈希链可验证 · 非外部公证
           </span>
         </div>
         <div style={{ flex: 1 }}/>
@@ -1884,13 +1907,19 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
             <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--solemn-gold)', letterSpacing: '.06em' }}>
               证据链头
             </span>
-            <span style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>哈希算法</span>
+            <span className="mono" style={{ fontSize: 9, color: 'var(--solemn-cream-dim)' }}>HMAC 链式哈希</span>
           </div>
           <div className="mono" style={{
             fontSize: 11, color: 'var(--solemn-cream)', wordBreak: 'break-all',
             lineHeight: 1.5,
           }}>
             {chainHead || '—'}
+          </div>
+          <div style={{
+            fontSize: 9, color: 'var(--solemn-cream-dim)', marginTop: 6, lineHeight: 1.55,
+          }}>
+            链式哈希逐条覆盖事件序列，可检测事后单点篡改并定位断点；
+            完整性校验由 Replay Verifier 重算，非区块链/第三方公证。
           </div>
           <div style={{
             fontSize: 10, color: 'var(--solemn-cream-dim)', marginTop: 4,

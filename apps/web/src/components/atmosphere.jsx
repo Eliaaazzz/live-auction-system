@@ -60,7 +60,10 @@ function LeadingToast({ visible, gainCents }) {
 }
 
 // ─── OvertakenSlam — "⚡ 被超越!" drops from top, screen shakes ──
-function OvertakenSlam({ visible, byName, gapCents, onReverse }) {
+// P0-5 (judges-stage review): the CTA is action-typed — it names the exact
+// increment the tap will fire ("再加 ¥5,000 反超"), so the emotional beat
+// carries its own conversion path instead of a bare arrow.
+function OvertakenSlam({ visible, byName, gapCents, stepCents = null, onReverse }) {
   if (!visible) return null;
   return (
     <div className="lumen-slam-in" style={{
@@ -99,7 +102,44 @@ function OvertakenSlam({ visible, byName, gapCents, onReverse }) {
         fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 700,
         cursor: 'pointer', whiteSpace: 'nowrap',
         boxShadow: '0 4px 10px rgba(0,0,0,.18)',
-      }}>反超 →</button>
+      }}>{stepCents ? `再加 ${formatCentsCNYShort(stepCents)} 反超` : '反超 →'}</button>
+    </div>
+  );
+}
+
+// ─── AntiSnipeFlash — P0-3: the anti-snipe rule firing AS AN EVENT ──
+// "反狙击触发 · 延时 +30s · 第 3 次 · 序列 #14945". The countdown bouncing
+// back is easy to miss; this banner names the business rule, counts it, and
+// pins it to a server seq — the single most legible "this is engineered,
+// not animated" moment in the room. One-shot: store clears extendFlash
+// ~2.6s after AUCTION_EXTENDED.
+function AntiSnipeFlash({ flash }) {
+  if (!flash) return null;
+  return (
+    <div className="lumen-slam-in" role="status" style={{
+      position: 'absolute', top: 128, left: 12, right: 12, zIndex: 61,
+      display: 'flex', justifyContent: 'center', pointerEvents: 'none',
+    }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '9px 14px', borderRadius: 10,
+        background: 'linear-gradient(135deg, rgba(255,176,32,.96), rgba(255,140,32,.92))',
+        boxShadow: '0 10px 30px rgba(255,176,32,.45), inset 0 1px 0 rgba(255,255,255,.25)',
+        color: '#1a1208', fontFamily: 'var(--font-sans)',
+      }}>
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+          <path d="M7 1.5v5l3 2" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+          <circle cx="7" cy="7" r="5.4" stroke="currentColor" strokeWidth="1.5" fill="none"/>
+        </svg>
+        <span style={{ fontSize: 12, fontWeight: 800, letterSpacing: '.01em' }}>
+          反狙击触发 · 延时 +{flash.addedSec}s · 第 {flash.count} 次
+        </span>
+        {flash.seq != null && (
+          <span className="mono" style={{ fontSize: 10, fontWeight: 700, opacity: .75 }}>
+            序列 #{flash.seq}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -592,6 +632,7 @@ function ChampagneShockwave({ visible }) {
 export {
   LeadingToast,
   OvertakenSlam,
+  AntiSnipeFlash,
   MyPositionGap,
   BidTickerStream,
   BidHistoryStrip,

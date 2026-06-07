@@ -83,6 +83,13 @@ export function HallRoute() {
   const upcoming = (auctions || []).filter((a) => a.status === SCHEDULED);
   const past = (auctions || []).filter((a) => ENDED.includes(a.status));
 
+  // P0-2 (judges-stage review): the first screen must read "实时竞拍剧场",
+  // not a CRUD list. Hero = the hottest LIVE auction (falls back to the next
+  // SCHEDULED one); it leaves its section so the list below never duplicates.
+  const hero = live[0] || upcoming[0] || null;
+  const liveRest = hero ? live.filter((a) => a !== hero) : live;
+  const upcomingRest = hero ? upcoming.filter((a) => a !== hero) : upcoming;
+
   return (
     <div style={S.page}>
       {/* Header */}
@@ -138,14 +145,16 @@ export function HallRoute() {
           </div>
         )}
 
-        {live.length > 0 && (
+        {hero && <HallHero a={hero} onEnter={enterRoom}/>}
+
+        {liveRest.length > 0 && (
           <Section title="正在直播" accent="var(--state-live)">
-            {live.map((a) => <AuctionCard key={a.auctionId} a={a} onEnter={enterRoom}/>)}
+            {liveRest.map((a) => <AuctionCard key={a.auctionId} a={a} onEnter={enterRoom}/>)}
           </Section>
         )}
-        {upcoming.length > 0 && (
+        {upcomingRest.length > 0 && (
           <Section title="即将开始" accent="var(--solemn-gold)">
-            {upcoming.map((a) => <AuctionCard key={a.auctionId} a={a} onEnter={enterRoom}/>)}
+            {upcomingRest.map((a) => <AuctionCard key={a.auctionId} a={a} onEnter={enterRoom}/>)}
           </Section>
         )}
         {past.length > 0 && (
@@ -155,6 +164,105 @@ export function HallRoute() {
         )}
       </div>
     </div>
+  );
+}
+
+// ─── HallHero — P0-2: 拍卖剧场 first screen ─────────────────────────
+// One LIVE (or next SCHEDULED) auction as a stage: image, live badge,
+// current price, countdown, the anti-snipe rule, and a single dominant
+// CTA — 进入竞拍现场. The trust footer names the engineering, so the very
+// first screen already says "实时同步 · 可追溯 · 有证据链", not "a list".
+// Exported for tests.
+export function HallHero({ a, onEnter }) {
+  const isLive = a.status === LIVE;
+  const remaining = a.endAtMs ? msRemaining(a.endAtMs) : 0;
+  const price = a.currentPriceCents && a.currentPriceCents !== '0'
+    ? formatCentsCNYShort(a.currentPriceCents) : null;
+  return (
+    <section
+      aria-label="主推竞拍"
+      style={{
+        position: 'relative', overflow: 'hidden', borderRadius: 16,
+        marginBottom: 22, minHeight: 218,
+        border: isLive ? '1px solid rgba(254,44,85,.35)' : '1px solid rgba(201,169,97,.3)',
+        background: 'linear-gradient(160deg, #221826 0%, #141220 55%, #0c0e18 100%)',
+        display: 'flex', flexDirection: 'column', justifyContent: 'flex-end',
+      }}>
+      {/* item image as the stage backdrop */}
+      {a.imageUrl && (
+        <img src={a.imageUrl} alt=""
+          onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          style={{
+            position: 'absolute', inset: 0, width: '100%', height: '100%',
+            objectFit: 'cover', opacity: .62,
+          }}/>
+      )}
+      {/* legibility scrim — image stays visible, copy stays readable */}
+      <div aria-hidden style={{
+        position: 'absolute', inset: 0,
+        background: 'linear-gradient(180deg, rgba(10,10,18,.08) 0%, rgba(10,10,18,.55) 52%, rgba(10,10,18,.92) 100%)',
+      }}/>
+
+      {/* top-left: live badge + countdown */}
+      <div style={{
+        position: 'absolute', top: 12, left: 12, right: 12,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <StatusBadge status={a.status} size="sm"/>
+        {isLive && remaining > 0 && <Countdown remainingMs={remaining} size="sm"/>}
+        <div style={{ flex: 1 }}/>
+        <span className="mono" style={{
+          fontSize: 9, color: 'rgba(245,237,221,.75)', letterSpacing: '.06em',
+          padding: '3px 8px', borderRadius: 999,
+          background: 'rgba(0,0,0,.45)', border: '1px solid rgba(255,255,255,.14)',
+        }}>
+          末 10 秒出价自动延时
+        </span>
+      </div>
+
+      {/* bottom: name · price · CTA */}
+      <div style={{ position: 'relative', padding: '14px 14px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div className="serif" style={{
+          fontSize: 19, fontWeight: 600, lineHeight: 1.3, color: '#f5f0e4',
+          overflow: 'hidden', textOverflow: 'ellipsis',
+          display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+        }}>
+          {a.productName || a.auctionId}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: 14 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, color: 'rgba(245,237,221,.6)' }}>
+              {isLive ? '当前价' : '起拍价'}
+            </div>
+            <div className="mono" style={{
+              fontSize: 26, fontWeight: 800, lineHeight: 1.1,
+              color: 'var(--solemn-gold)', textShadow: '0 2px 18px rgba(201,169,97,.35)',
+            }}>
+              {price || '待开拍'}
+            </div>
+          </div>
+          <button
+            onClick={() => onEnter(a.auctionId)}
+            style={{
+              flexShrink: 0, minHeight: 46, padding: '0 20px', borderRadius: 12,
+              border: 'none', cursor: 'pointer',
+              background: isLive
+                ? 'linear-gradient(135deg, var(--douyin-red,#FE2C55), #ff5c7a)'
+                : 'linear-gradient(135deg, var(--solemn-gold,#C9A961), #dcbf7f)',
+              color: isLive ? '#fff' : '#2a2310',
+              fontSize: 15, fontWeight: 800, letterSpacing: '.02em',
+              boxShadow: isLive ? '0 8px 24px rgba(254,44,85,.4)' : '0 8px 24px rgba(201,169,97,.32)',
+            }}>
+            {isLive ? '进入竞拍现场 →' : '提前进场 →'}
+          </button>
+        </div>
+        <div className="mono" style={{
+          fontSize: 9, color: 'rgba(245,237,221,.5)', letterSpacing: '.04em',
+        }}>
+          WebSocket 实时同步 · seq 可追溯 · 证据链落槌生成
+        </div>
+      </div>
+    </section>
   );
 }
 
