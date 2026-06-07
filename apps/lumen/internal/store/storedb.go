@@ -328,65 +328,43 @@ func (s *Store) WithAuctionTransitionLock(ctx context.Context, aid string, fn fu
 	if !got.Valid || got.Int64 != 1 {
 		return fmt.Errorf("auction transition lock timeout: %s", aid)
 	}
-	defer func() { _, _ = conn.ExecContext(context.Background(), `SELECT RELEASE_LOCK(?)`, lockName) }()
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		var released sql.NullInt64
+		_ = conn.QueryRowContext(releaseCtx, `SELECT RELEASE_LOCK(?)`, lockName).Scan(&released)
+	}()
+
 	return fn()
 }
 
-func (s *Store) RecreateAuctionRules(ctx context.Context, aid string, r model.Rules) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM auction_rules WHERE auction_id = ?`, aid); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO auction_rules (auction_id, mode, start_price_cents, increment_cents, cap_price_cents, duration_sec, extend_window_sec, extend_sec, max_extensions, live_play_url, live_stream_key)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		aid, model.NormalizeMode(r.Mode), r.StartPriceCents, r.IncrementCents, r.CapPriceCents, r.DurationSec, r.ExtendWindowSec, r.ExtendSec, r.MaxExtensions, r.LivePlayUrl, r.LiveStreamKey); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
+// ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
+// DIFFERENT event type or payload than the one being projected — a tamper/bug
+// signal, not the normal idempotent re-projection.
+var ErrEventPayloadMismatch = errors.New("event type/payload mismatch for existing (auction_id, seq)")
 
-// ErrEventPayloadMismatch is returned when a projected event row already exists
-// for (auction_id, seq) but its payload differs from the Stream payload. A replay
-// of the same Stream entry is idempotent; a divergent row is a projection bug or
-// tamper signal.
-var ErrEventPayloadMismatch = errors.New("event payload mismatch")
+// ErrPreviousEventHashMissing is a transient hash-fill dependency: the previous seq
+// exists but has not been chained yet. The persistence worker should retry later.
+var ErrPreviousEventHashMissing = errors.New("previous event hash missing")
 
-func (s *Store) SaveBid(ctx context.Context, aid, user string, amount int64, seq int64, clientBidID, source string) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO bids (auction_id, user_id, amount_cents, seq, client_bid_id, source, accepted_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
-		aid, user, amount, seq, clientBidID, source, time.Now().UTC())
-	return err
-}
+// ErrPermanentOrderProjection marks a SOLD event/order inconsistency that retrying
+// cannot repair without operator action.
+var ErrPermanentOrderProjection = errors.New("permanent order projection error")
 
-func (s *Store) SaveOrder(ctx context.Context, id, aid, productID, buyer string, amount int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO orders (id, auction_id, product_id, buyer_id, amount_cents, status, created_at)
-		 VALUES (?, ?, ?, ?, ?, 'created', ?)
-		 ON DUPLICATE KEY UPDATE id = id`,
-		id, aid, productID, buyer, amount, time.Now().UTC())
-	return err
-}
+// ErrOrderProjectionMismatch means an idempotent order re-projection found an
+// existing order for the auction that disagrees with the SOLD event.
+var ErrOrderProjectionMismatch = errors.New("order projection mismatch")
 
-func (s *Store) SaveCoinLedger(ctx context.Context, aid, user string, delta int64, reason string, seq int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO coin_ledger (auction_id, user_id, delta_coins, reason, seq, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE id = id`,
-		aid, user, delta, reason, seq, time.Now().UTC())
-	return err
-}
-
-func (s *Store) SaveEvent(ctx context.Context, aid string, seq int64, eventType string, payload string) error {
+// InsertEvent projects one Stream event into auction_events and extends the hash
+// chain. Idempotent via UNIQUE(auction_id, seq): a re-projection of the same (seq,
+// payload) is a no-op, but a DIFFERENT payload for an existing seq returns
+// ErrEventPayloadMismatch rather than being silently swallowed by INSERT IGNORE.
+// The hash chain (event_hash/prev_hash) is filled separately and idempotently — see
+// fillEventHash — so it self-heals after a crash between the INSERT and the fill.
+func (s *Store) InsertEvent(ctx context.Context, aid string, seq int64, eventType, payload string) error {
 	res, err := s.db.ExecContext(ctx,
 		`INSERT IGNORE INTO auction_events (auction_id, seq, event_type, payload_json, created_at)
-		 VALUES (?, ?, ?, CAST(? AS JSON), ?)`,
+		 VALUES (?, ?, ?, ?, ?)`,
 		aid, seq, eventType, payload, time.Now().UTC())
 	if err != nil {
 		return err
@@ -650,4 +628,247 @@ func (s *Store) evidenceChainStats(ctx context.Context, aid string) (evidenceCha
 	}
 	st.tipHash = tip.String
 	return st, nil
+}
+
+func (s *Store) loadEvidenceChainCache(ctx context.Context, aid string) (evidenceChainCache, bool, error) {
+	var c evidenceChainCache
+	err := s.db.QueryRowContext(ctx,
+		`SELECT verified_seq, events_count, chain_head, max_event_updated_at, verified_at
+		   FROM evidence_chain_cache WHERE auction_id = ?`, aid).
+		Scan(&c.verifiedSeq, &c.eventsCount, &c.chainHead, &c.maxEventUpdatedAt, &c.verifiedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, false, nil
+	}
+	return c, err == nil, err
+}
+
+func (s *Store) evidencePrefixUnchanged(ctx context.Context, aid string, c evidenceChainCache) (bool, error) {
+	var prefixCount, changedSinceVerify int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(SUM(CASE WHEN updated_at >= ? THEN 1 ELSE 0 END), 0)
+		   FROM auction_events WHERE auction_id = ? AND seq <= ?`,
+		c.verifiedAt, aid, c.verifiedSeq).Scan(&prefixCount, &changedSinceVerify); err != nil {
+		return false, err
+	}
+	if prefixCount != int(c.verifiedSeq) || changedSinceVerify != 0 {
+		return false, nil
+	}
+	var head sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT event_hash FROM auction_events WHERE auction_id = ? AND seq = ?`, aid, c.verifiedSeq).Scan(&head); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	return head.Valid && head.String == c.chainHead, nil
+}
+
+func (s *Store) dbNow(ctx context.Context) (time.Time, error) {
+	var now time.Time
+	if err := s.db.QueryRowContext(ctx, "SELECT NOW(6)").Scan(&now); err != nil {
+		return time.Time{}, fmt.Errorf("db now: %w", err)
+	}
+	return now, nil
+}
+
+func (s *Store) storeEvidenceChainCache(ctx context.Context, aid string, verifiedSeq int64, chainHead string, verifiedAt time.Time) error {
+	stats, err := s.evidenceChainStats(ctx, aid)
+	if err != nil {
+		return err
+	}
+	if stats.maxSeq != verifiedSeq || stats.tipHash != chainHead {
+		return nil // concurrent append/delete changed the chain after verification; avoid writing a stale cache.
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO evidence_chain_cache
+		    (auction_id, verified_seq, events_count, chain_head, max_event_updated_at, verified_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		    verified_seq = VALUES(verified_seq),
+		    events_count = VALUES(events_count),
+		    chain_head = VALUES(chain_head),
+		    max_event_updated_at = VALUES(max_event_updated_at),
+		    verified_at = VALUES(verified_at)`,
+		aid, verifiedSeq, stats.count, chainHead, stats.maxUpdatedAt, verifiedAt); err != nil {
+		return fmt.Errorf("store evidence chain cache: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) CountEvents(ctx context.Context, aid string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM auction_events WHERE auction_id = ?`, aid).Scan(&n)
+	return n, err
+}
+
+// Order is the buyer order created when an auction is hammered SOLD (T4).
+type Order struct {
+	ID          string      `json:"id"`
+	AuctionID   string      `json:"auctionId"`
+	ProductID   string      `json:"productId"`
+	BuyerID     string      `json:"buyerId"`
+	AmountCents model.Cents `json:"amountCents"` // money-as-string on the JSON boundary
+	Status      string      `json:"status"`      // created | paid (模拟支付)
+	CreatedAt   time.Time   `json:"createdAt"`
+	PaidAt      *time.Time  `json:"paidAt"` // nil until 模拟支付 marks it paid
+}
+
+// CreateOrderFromSold creates the buyer order for a hammered/cap-hit SOLD auction from
+// its AUCTION_SOLD event payload. It is exactly-once: orders.UNIQUE(auction_id) +
+// INSERT IGNORE make it idempotent under re-projection or a double persistence worker,
+// and the id is derived from the auction id so the primary key is stable too. Returns
+// nil when the order already exists.
+// ProjectAllPayWin records the WINNER's coin debit for an ALL_PAY auction's
+// hammer (issue #114). Idempotent via UNIQUE(auction_id,user_id,seq) — a retry
+// is a no-op. NEVER touches the orders table; the persistence worker branches on
+// the auction's mode before getting here.
+func (s *Store) ProjectAllPayWin(ctx context.Context, aid, payload string) error {
+	var d model.AuctionSoldData
+	if err := json.Unmarshal([]byte(payload), &d); err != nil {
+		return fmt.Errorf("parse AUCTION_SOLD: %w", err)
+	}
+	if d.WinnerID == "" {
+		return fmt.Errorf("AUCTION_SOLD has empty winnerId")
+	}
+	coins, err := strconv.ParseInt(d.AmountCents, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid winner amount %q: %w", d.AmountCents, err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO coin_ledger (auction_id, user_id, delta_coins, reason, seq, created_at)
+		 VALUES (?, ?, ?, 'WIN', ?, ?)`,
+		aid, d.WinnerID, -coins, d.Seq, time.Now().UTC())
+	return err
+}
+
+// ProjectAllPayForfeit records the RUNNER-UP's coin forfeit for an ALL_PAY
+// auction's hammer (issue #114). Idempotent. The hard money-safety invariant:
+// this writes ONLY to coin_ledger, never to orders. Settlement is virtual coins.
+func (s *Store) ProjectAllPayForfeit(ctx context.Context, aid, payload string) error {
+	var d model.AllPayForfeitData
+	if err := json.Unmarshal([]byte(payload), &d); err != nil {
+		return fmt.Errorf("parse ALL_PAY_FORFEIT: %w", err)
+	}
+	if d.UserID == "" {
+		return fmt.Errorf("ALL_PAY_FORFEIT has empty userId")
+	}
+	coins, err := strconv.ParseInt(d.CoinsForfeit, 10, 64)
+	if err != nil {
+		return fmt.Errorf("invalid forfeit amount %q: %w", d.CoinsForfeit, err)
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO coin_ledger (auction_id, user_id, delta_coins, reason, seq, created_at)
+		 VALUES (?, ?, ?, 'RUNNER_UP_FORFEIT', ?, ?)`,
+		aid, d.UserID, -coins, d.Seq, time.Now().UTC())
+	return err
+}
+
+func (s *Store) CreateOrderFromSold(ctx context.Context, aid, payload string) error {
+	var p model.AuctionSoldData
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return fmt.Errorf("%w: parse AUCTION_SOLD payload for %s: %v", ErrPermanentOrderProjection, aid, err)
+	}
+	if p.WinnerID == "" {
+		return fmt.Errorf("%w: AUCTION_SOLD payload has empty winnerId (aid=%s)", ErrPermanentOrderProjection, aid)
+	}
+	amount, err := strconv.ParseInt(p.AmountCents, 10, 64)
+	if err != nil {
+		return fmt.Errorf("%w: parse amountCents %q for %s: %v", ErrPermanentOrderProjection, p.AmountCents, aid, err)
+	}
+	var productID string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT product_id FROM auctions WHERE id = ?`, aid).Scan(&productID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: missing auction/product for %s", ErrPermanentOrderProjection, aid)
+		}
+		return fmt.Errorf("order: look up product for %s: %w", aid, err)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT IGNORE INTO orders (id, auction_id, product_id, buyer_id, amount_cents, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, 'created', ?)`,
+		"ord_"+aid, aid, productID, p.WinnerID, amount, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return nil
+	}
+	o, err := s.GetOrder(ctx, aid)
+	if err != nil {
+		return err
+	}
+	if o.ProductID != productID || o.BuyerID != p.WinnerID || int64(o.AmountCents) != amount || o.Status != "created" {
+		return fmt.Errorf("%w: aid=%s", ErrOrderProjectionMismatch, aid)
+	}
+	return nil
+}
+
+// GetOrder returns the order for an auction, or ErrNotFound if none exists yet.
+func (s *Store) GetOrder(ctx context.Context, aid string) (Order, error) {
+	var o Order
+	var paidAt sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, auction_id, product_id, buyer_id, amount_cents, status, created_at, paid_at
+		 FROM orders WHERE auction_id = ?`, aid).
+		Scan(&o.ID, &o.AuctionID, &o.ProductID, &o.BuyerID, &o.AmountCents, &o.Status, &o.CreatedAt, &paidAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return o, ErrNotFound
+	}
+	if paidAt.Valid {
+		o.PaidAt = &paidAt.Time
+	}
+	return o, err
+}
+
+// PayOrder simulates the 模拟支付流程: marks a 'created' order 'paid' (paid_at=now).
+// Idempotent — paying an already-paid order is a no-op success. Returns the
+// resulting order (ErrNotFound if the auction has no order yet).
+func (s *Store) PayOrder(ctx context.Context, aid string) (Order, error) {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE orders SET status='paid', paid_at=? WHERE auction_id=? AND status='created'`,
+		time.Now().UTC(), aid); err != nil {
+		return Order{}, err
+	}
+	return s.GetOrder(ctx, aid)
+}
+
+// EvidenceEvent is one row of the evidence-card timeline (T4): the projected event plus
+// its hash-chain links. payload is embedded as JSON (the MySQL-normalized form that the
+// hash was computed over).
+type EvidenceEvent struct {
+	Seq       int64           `json:"seq"`
+	EventType string          `json:"eventType"`
+	Payload   json.RawMessage `json:"payload"`
+	EventHash string          `json:"eventHash"`
+	PrevHash  string          `json:"prevHash"`
+}
+
+// EventTimeline returns the full hash-chained event timeline for an auction in seq
+// order — the body of the evidence card (T4).
+func (s *Store) EventTimeline(ctx context.Context, aid string) ([]EvidenceEvent, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT seq, event_type, payload_json, event_hash, prev_hash
+		 FROM auction_events WHERE auction_id = ? ORDER BY seq ASC`, aid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EvidenceEvent
+	for rows.Next() {
+		var e EvidenceEvent
+		var payload, eh, ph sql.NullString
+		if err := rows.Scan(&e.Seq, &e.EventType, &payload, &eh, &ph); err != nil {
+			return nil, err
+		}
+		if payload.Valid {
+			e.Payload = json.RawMessage(payload.String)
+		} else {
+			e.Payload = json.RawMessage("null")
+		}
+		e.EventHash, e.PrevHash = eh.String, ph.String
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
