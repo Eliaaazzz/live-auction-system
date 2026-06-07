@@ -271,10 +271,17 @@ func (h *Histogram) Reset() {
 // (float for sub-ms resolution at low traffic).
 type HistogramSnapshot struct {
 	Count int64   `json:"count"`
+	Min   float64 `json:"min"`
 	P50   float64 `json:"p50"`
 	P95   float64 `json:"p95"`
 	P99   float64 `json:"p99"`
-	Max   float64 `json:"max"`
+	// P999 (99.9th) surfaces the deep tail: with thousands of concurrent users a
+	// problem that hits "only" 0.1% still hits dozens of real bidders, and it can
+	// be invisible at p99. min/p999/max bracket the full distribution alongside
+	// the p50/p95/p99 body (per-bid percentiles are the reliable signal — a mean
+	// would hide exactly the tail we care about under high concurrency).
+	P999 float64 `json:"p999"`
+	Max  float64 `json:"max"`
 }
 
 // Snapshot returns the current p50/p95/p99 + max + lifetime count. Cheap: one
@@ -290,11 +297,26 @@ func (h *Histogram) Snapshot() HistogramSnapshot {
 	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
 	return HistogramSnapshot{
 		Count: n,
+		Min:   ms(cp[0]),
 		P50:   ms(cp[rankN(len(cp), 50)]),
 		P95:   ms(cp[rankN(len(cp), 95)]),
 		P99:   ms(cp[rankN(len(cp), 99)]),
+		P999:  ms(cp[rankPerMille(len(cp), 999)]),
 		Max:   ms(cp[len(cp)-1]),
 	}
+}
+
+// rankPerMille is rankN at per-mille resolution, for sub-percent tails (p99.9).
+// Mirrors rankN's nearest-rank, clamped semantics.
+func rankPerMille(n, pm int) int {
+	idx := (pm*n + 999) / 1000 // ceil(pm/1000 * n)
+	if idx < 1 {
+		idx = 1
+	}
+	if idx > n {
+		idx = n
+	}
+	return idx - 1
 }
 
 // rankN maps a percentile to a 0-based index (nearest-rank, clamped) over a
