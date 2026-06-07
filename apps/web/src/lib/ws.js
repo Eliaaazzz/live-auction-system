@@ -137,7 +137,14 @@ export class RoomClient {
       this.heartbeatId = null;
       if (this.dead) return;
       this.attempts += 1;
-      const delay = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** this.attempts);
+      // Full-jitter backoff (AWS "Exponential Backoff And Jitter"): a deterministic
+      // min(MAX, MIN*2^n) makes thousands of clients that dropped together (e.g. a
+      // gateway restart) reconnect in lockstep waves — a self-inflicted thundering
+      // herd on the just-recovered process. Spreading uniformly across [0, cap)
+      // turns that spike into a smooth ramp (pairs with the server-side Snapshot
+      // single-flight that absorbs the residual concurrency).
+      const cap = Math.min(RECONNECT_MAX, RECONNECT_MIN * 2 ** this.attempts);
+      const delay = Math.round(Math.random() * cap);
       this.onState({
         status: ConnStatus.RECONNECTING,
         attempts: this.attempts,
