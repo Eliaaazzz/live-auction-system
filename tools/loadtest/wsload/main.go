@@ -88,11 +88,9 @@ func (s *stats) markActive(delta int64) {
 }
 
 func (s *stats) recordDialErr(err error) {
-	msg := err.Error()
-	// Collapse the volatile per-call dial address so errors group cleanly.
-	if i := strings.Index(msg, ": "); i > 0 && len(msg) > 60 {
-		msg = msg[strings.LastIndex(msg, ": ")+2:]
-	}
+	// Collapse the volatile per-call dial address so errors group cleanly
+	// (shared with the preflight probe via collapseDialErr).
+	msg := collapseDialErr(err)
 	s.mu.Lock()
 	if s.dialErr == nil {
 		s.dialErr = map[string]int{}
@@ -140,10 +138,18 @@ func main() {
 	ramp := flag.Duration("ramp", 45*time.Second, "time to open all connections")
 	hold := flag.Duration("hold", 60*time.Second, "time to hold all connections after ramp")
 	readBuf := flag.Int("readbuf", 1024, "per-conn read buffer bytes (small = less RAM at scale)")
+	preflight := flag.String("preflight", "abort", "connection-path probe before the ramp: abort|warn|off (issue #231)")
+	preflightConns := flag.Int("preflight-conns", 20, "probe connection count for the preflight burst")
+	preflightMinOK := flag.Float64("preflight-min-ok", 0.9, "minimum probe connect-success fraction to proceed")
+	preflightBudget := flag.Duration("preflight-timeout", 12*time.Second, "total time budget for the preflight probe")
 	flag.Parse()
 
 	if *aid == "" {
 		log.Fatal("-aid required (e.g. -aid \"$(cat ../../../.k6-aid)\")")
+	}
+	pfMode, err := parsePreflightMode(*preflight)
+	if err != nil {
+		log.Fatal(err)
 	}
 	tokens, err := loadTokens(*tokensPath)
 	if err != nil {
@@ -159,6 +165,23 @@ func main() {
 		HandshakeTimeout: 15 * time.Second,
 		ReadBufferSize:   *readBuf,
 		WriteBufferSize:  *readBuf,
+	}
+
+	if pfMode != preflightOff {
+		cfg := preflightConfig{mode: pfMode, conns: *preflightConns, minOK: *preflightMinOK, budget: *preflightBudget}
+		class, hostOnly := classifyHost(*host)
+		log.Printf("preflight: probing %d conns to %s (class=%s) before the %d-conn ramp…",
+			min(cfg.conns, len(tokens)), *host, class, total)
+		res := runPreflight(*host, *aid, tokens, cfg)
+		pass, diag := evaluatePreflight(res, cfg, class, hostOnly)
+		switch {
+		case pass:
+			log.Printf("%s", diag)
+		case pfMode == preflightWarn:
+			log.Printf("WARNING %s\n  (continuing because -preflight=warn)", diag)
+		default:
+			log.Fatalf("%s\n  (override with -preflight=warn or -preflight=off)", diag)
+		}
 	}
 
 	start := time.Now()
