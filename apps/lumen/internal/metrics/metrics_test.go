@@ -239,6 +239,43 @@ func TestSnapshotJSONShape(t *testing.T) {
 			t.Errorf("snapshot missing field %q (shape break)", k)
 		}
 	}
+	// The per-histogram shape carries the full distribution: count + min + p50/p95
+	// /p99 + p99.9 + max. min/p99/max are mandatory and p999 surfaces the deep tail
+	// (0.1% of thousands of bidders is still dozens of real users). Pin it on
+	// ackLatencyMs so a percentile rename breaks CI, not the live dashboard.
+	var hist map[string]json.RawMessage
+	if err := json.Unmarshal(got["ackLatencyMs"], &hist); err != nil {
+		t.Fatalf("unmarshal ackLatencyMs: %v", err)
+	}
+	for _, k := range []string{"count", "min", "p50", "p95", "p99", "p999", "max"} {
+		if _, ok := hist[k]; !ok {
+			t.Errorf("histogram missing field %q (shape break)", k)
+		}
+	}
+}
+
+// TestHistogramMinAndP999 pins the new min + p99.9 against a known distribution:
+// min is the smallest sample, max the largest, p999 sits in the deep tail, and
+// the reported quantiles are monotonic (min<=p50<=p95<=p99<=p999<=max).
+func TestHistogramMinAndP999(t *testing.T) {
+	h := NewHistogram(2000)
+	// 1000 samples: 1..1000 ms. min=1, max=1000, p50~500, p99~990, p999~1000.
+	for i := 1; i <= 1000; i++ {
+		h.Observe(time.Duration(i) * time.Millisecond)
+	}
+	s := h.Snapshot()
+	if s.Min != 1 {
+		t.Errorf("Min=%v, want 1", s.Min)
+	}
+	if s.Max != 1000 {
+		t.Errorf("Max=%v, want 1000", s.Max)
+	}
+	if s.P999 < 999 || s.P999 > 1000 {
+		t.Errorf("P999=%v, want in [999,1000] (deep tail)", s.P999)
+	}
+	if !(s.Min <= s.P50 && s.P50 <= s.P95 && s.P95 <= s.P99 && s.P99 <= s.P999 && s.P999 <= s.Max) {
+		t.Errorf("non-monotonic: min=%v p50=%v p95=%v p99=%v p999=%v max=%v", s.Min, s.P50, s.P95, s.P99, s.P999, s.Max)
+	}
 }
 
 // TestHistogramTimeRecordsElapsed — the convenience `defer h.Time(t0)()`
