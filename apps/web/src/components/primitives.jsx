@@ -951,6 +951,245 @@ function QuickBidChips({
   );
 }
 
+// ─── BidConsole — spec-replica bid module (宣讲版原型 §用户端) ───
+// Faithful to the challenge PDF mock: a floating white card with
+//   距竞拍结束仅剩 [HH][MM][SS]
+//   [thumb] 商品标题
+//   当前价 + 领先者          | 我的出价
+//   [−]   ¥next   [+]        ← stepper, always on the step grid
+//         加价幅度 ¥step
+//   ████ 立即出价 ████
+// State bubbles per the mock: 高于当前价¥X (multi-step up) and
+// 当前您已是最高价 (自己超过自己 — bidding against yourself is allowed).
+// All money is string-cents/BigInt; the stepper can never go off-grid, so
+// the ERR_BAD_INPUT class of rejects is impossible by construction.
+function BidConsole({
+  remainingMs = 0,
+  currentCents = '0',
+  stepCents = '0',
+  capCents = null,
+  leaderName = null,
+  yourCents = null,
+  productImage = null,
+  productName = null,
+  disabled = false,
+  isYouLeading = false,
+  shake = false,
+  onBid = () => {},
+}) {
+  let curBig = 0n;
+  let stepBig = 0n;
+  let capBig = null;
+  try { curBig = BigInt(currentCents); } catch { curBig = 0n; }
+  try { stepBig = BigInt(stepCents); } catch { stepBig = 0n; }
+  try {
+    if (capCents != null && capCents !== '') {
+      const c = BigInt(capCents);
+      if (c > curBig) capBig = c;
+    }
+  } catch { capBig = null; }
+  const stepUsable = stepBig > 0n;
+  const minNext = curBig + stepBig;
+
+  const [valueStr, setValueStr] = React.useState(() => minNext.toString());
+  // Price moved under us → if our staged amount is no longer a valid bid,
+  // snap to the next valid one (the mock's stepper re-bases the same way).
+  React.useEffect(() => {
+    try {
+      if (BigInt(valueStr) <= curBig) setValueStr(minNext.toString());
+    } catch {
+      setValueStr(minNext.toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentCents, stepCents]);
+
+  let valBig = minNext;
+  try { valBig = BigInt(valueStr); } catch { valBig = minNext; }
+  if (valBig < minNext) valBig = minNext;
+  if (capBig != null && valBig > capBig) valBig = capBig;
+
+  const atCap = capBig != null && valBig >= capBig;
+  const stepsAbove = stepUsable ? (valBig - curBig) / stepBig : 1n;
+
+  const nudge = (dir) => {
+    if (!stepUsable || disabled) return;
+    let next = valBig + BigInt(dir) * stepBig;
+    if (next < minNext) next = minNext;
+    if (capBig != null && next > capBig) next = capBig;
+    setValueStr(next.toString());
+  };
+
+  const submit = () => {
+    if (disabled || !stepUsable) return;
+    onBid(valBig.toString());
+  };
+
+  // 距竞拍结束 segments — the mock shows HH:MM:SS digit boxes.
+  const totalS = Math.max(0, Math.ceil(remainingMs / 1000));
+  const segs = [
+    String(Math.floor(totalS / 3600)).padStart(2, '0'),
+    String(Math.floor((totalS % 3600) / 60)).padStart(2, '0'),
+    String(totalS % 60).padStart(2, '0'),
+  ];
+  const ended = disabled || remainingMs <= 0;
+  const urgent = !ended && remainingMs <= 10000;
+
+  const yourBidText = (() => {
+    if (!yourCents) return '暂无出价';
+    try { return BigInt(yourCents) > 0n ? formatCentsCNYShort(yourCents) : '暂无出价'; } catch { return '暂无出价'; }
+  })();
+
+  // Mock copy: 高于当前价100元 (relative to the current price) when stacking
+  // multiple steps; 当前您已是最高价 when bidding against yourself.
+  const hint = ended ? null
+    : isYouLeading ? { text: '当前您已是最高价', tone: 'gold' }
+    : stepsAbove > 1n ? { text: `高于当前价 ${formatCentsCNYShort((valBig - curBig).toString())}`, tone: 'pink' }
+    : null;
+
+  return (
+    <div className={shake ? 'lumen-shake' : ''} style={{
+      borderRadius: 14, overflow: 'hidden',
+      background: '#ffffff', color: '#1a1d26',
+      boxShadow: '0 10px 36px rgba(0,0,0,.45)',
+      fontFamily: 'var(--font-sans)',
+    }}>
+      {/* 距竞拍结束 strip */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        padding: '7px 12px',
+        background: ended
+          ? 'linear-gradient(90deg, #6b7186, #9aa0b4)'
+          : 'linear-gradient(90deg, #FE2C55, #ff7a45)',
+        color: '#fff', fontSize: 12, fontWeight: 700,
+      }}>
+        <span>{ended ? '本场竞拍已结束' : '距竞拍结束仅剩'}</span>
+        {!ended && segs.map((seg, i) => (
+          <React.Fragment key={i}>
+            {i > 0 && <span style={{ fontWeight: 800, opacity: .9 }}>:</span>}
+            <span className={'mono' + (urgent ? ' lumen-pulse-warn' : '')} style={{
+              minWidth: 24, padding: '1px 4px', borderRadius: 4, textAlign: 'center',
+              background: 'rgba(255,255,255,.92)', color: '#FE2C55',
+              fontSize: 13, fontWeight: 800,
+            }}>{seg}</span>
+          </React.Fragment>
+        ))}
+      </div>
+
+      <div style={{ padding: '10px 12px 12px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* product + prices row */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <div style={{
+            width: 46, height: 46, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
+            background: 'linear-gradient(160deg,#f2f3f7,#e3e5ee)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
+            {productImage
+              ? <img src={productImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}/>
+              : <span style={{ fontSize: 18 }}>💎</span>}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{
+              fontSize: 13, fontWeight: 700, color: '#1a1d26',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {productName || '直播竞拍'}
+            </div>
+            <div style={{ display: 'flex', gap: 14, marginTop: 3, alignItems: 'baseline' }}>
+              <div style={{ minWidth: 0 }}>
+                <span style={{ fontSize: 10, color: '#8a8f9e' }}>
+                  当前价{leaderName ? ` · ${leaderName}` : ''}
+                </span>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 800, color: '#FE2C55' }}>
+                  {formatCentsCNYShort(currentCents)}
+                </div>
+              </div>
+              <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                <span style={{ fontSize: 10, color: '#8a8f9e' }}>我的出价</span>
+                <div className="mono" style={{
+                  fontSize: yourBidText === '暂无出价' ? 12 : 16,
+                  fontWeight: yourBidText === '暂无出价' ? 500 : 800,
+                  color: yourBidText === '暂无出价' ? '#8a8f9e' : '#1a1d26',
+                }}>
+                  {yourBidText}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* state bubble (mock: 高于当前价 / 当前您已是最高价) */}
+        {hint && (
+          <div style={{
+            alignSelf: 'center',
+            padding: '3px 10px', borderRadius: 999,
+            background: hint.tone === 'gold' ? 'rgba(255,176,32,.14)' : 'rgba(254,44,85,.10)',
+            border: `1px solid ${hint.tone === 'gold' ? 'rgba(255,176,32,.5)' : 'rgba(254,44,85,.35)'}`,
+            color: hint.tone === 'gold' ? '#b97e12' : '#FE2C55',
+            fontSize: 11, fontWeight: 700,
+          }}>
+            {hint.text}
+          </div>
+        )}
+
+        {/* stepper */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
+          <StepperButton label="减一档" symbol="−" disabled={ended || valBig <= minNext} onClick={() => nudge(-1)}/>
+          <div style={{ textAlign: 'center', minWidth: 120 }}>
+            <div className="mono" style={{
+              fontSize: 'min(30px, 7.6vw)', fontWeight: 800, color: '#1a1d26',
+              whiteSpace: 'nowrap', lineHeight: 1.1,
+            }}>
+              {formatCentsCNYShort(valBig.toString())}
+            </div>
+            <div style={{ fontSize: 10, color: '#8a8f9e', marginTop: 2 }}>
+              {atCap ? '已达封顶价 · 成交即落槌' : `加价幅度 ${formatCentsCNYShort(stepCents)}`}
+            </div>
+          </div>
+          <StepperButton label="加一档" symbol="+" disabled={ended || atCap} onClick={() => nudge(1)}/>
+        </div>
+
+        {/* 立即出价 */}
+        <button
+          onClick={submit}
+          disabled={ended || !stepUsable}
+          style={{
+            width: '100%', minHeight: 46, borderRadius: 999, border: 'none',
+            background: (ended || !stepUsable)
+              ? 'rgba(107,114,128,.35)'
+              : 'linear-gradient(90deg, #FE2C55, #ff4d70)',
+            color: '#fff', fontSize: 16, fontWeight: 800, letterSpacing: '.06em',
+            cursor: (ended || !stepUsable) ? 'not-allowed' : 'pointer',
+            boxShadow: (ended || !stepUsable) ? 'none' : '0 6px 18px rgba(254,44,85,.35)',
+            fontFamily: 'inherit',
+          }}>
+          {ended ? '竞拍已结束' : '立即出价'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function StepperButton({ label, symbol, disabled, onClick }) {
+  return (
+    <button
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      style={{
+        width: 44, height: 44, borderRadius: 10, flexShrink: 0,
+        border: '1px solid #e3e5ee', background: disabled ? '#f4f5f8' : '#ffffff',
+        color: disabled ? '#c2c6d1' : '#1a1d26',
+        fontSize: 22, fontWeight: 700, lineHeight: 1,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        boxShadow: disabled ? 'none' : '0 2px 8px rgba(16,18,26,.08)',
+        fontFamily: 'var(--font-mono)',
+      }}>
+      {symbol}
+    </button>
+  );
+}
+
 // ─── HeatMeter — F-new · bids/sec from store.recentEvents ───
 // Elia round-2 review point 3: surface "热度" so demo viewers feel the
 // pace without us narrating it. Pure presentational — caller computes
@@ -1013,6 +1252,7 @@ export {
   Leaderboard,
   BidButton,
   QuickBidChips,
+  BidConsole,
   HeatMeter,
   ConnectionBar,
   ClockDriftIndicator,

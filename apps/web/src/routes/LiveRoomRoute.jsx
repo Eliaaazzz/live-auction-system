@@ -300,6 +300,7 @@ export function LiveRoomRoute() {
       connStatus={store.connStatus}
       yourRank={rankOfYou(store.leaders, store.yourUserId)}
       yourGapCents={youGap}
+      yourCents={store.yourCents}
       leaders={store.leaders}
       onBid={handleBid}
       bidsPerSec={bidsPerSec}

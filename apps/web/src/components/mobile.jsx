@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
-  AIBubble, QuickBidChips, HeatMeter, Leaderboard,
+  AIBubble, BidConsole, HeatMeter, Leaderboard,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
@@ -216,6 +216,7 @@ function MobileRoom({
   // hardcoded 百达翡丽 title showed for every auction created in the admin.
   productName = null,
   lotNo = null,
+  yourCents = null,        // your highest accepted bid — 我的出价 in the console
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
@@ -757,12 +758,19 @@ function MobileRoom({
           )}
           {joined ? (
             <>
-              <QuickBidChips
+              {/* Spec-replica bid module (宣讲版原型): white floating card,
+                  countdown strip, stepper, 立即出价. */}
+              <BidConsole
+                remainingMs={remainingMs}
                 currentCents={currentCents}
                 stepCents={stepCents}
                 capCents={capCents}
+                leaderName={firstLeader?.displayName || firstLeader?.userId || null}
+                yourCents={yourCents}
+                productImage={productImage}
+                productName={productName}
                 disabled={biddingLocked}
-                isLeading={isYouLeading}
+                isYouLeading={isYouLeading}
                 shake={rejectShake}
                 onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
               />
@@ -1414,6 +1422,9 @@ function MobileHammer({
           </div>
         </div>
 
+        {/* Winner CTA per the spec mock (恭喜竞拍成功 → 确认地址并支付): the
+            evidence card hosts the simulated PaymentBar, so the winner's
+            primary action routes there. Everyone else just views evidence. */}
         <button onClick={onViewEvidence} style={{
           width: '100%', padding: '14px', borderRadius: 12,
           background: 'linear-gradient(135deg, var(--solemn-gold) 0%, var(--solemn-gold-soft) 100%)',
@@ -1423,11 +1434,19 @@ function MobileHammer({
           boxShadow: '0 8px 28px rgba(201,169,97,.35)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
         }}>
-          查看证据卡
+          {isYouWinner ? '确认地址并支付（模拟）' : '查看证据卡'}
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M3 7h8M8 3l4 4-4 4" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
+        {isYouWinner && (
+          <div className="sans" style={{
+            fontSize: 10, color: 'var(--solemn-cream-dim)', textAlign: 'center',
+            letterSpacing: '.02em',
+          }}>
+            保证金将在拍品付款后退回 · 虚拟币演示，无真实扣款
+          </div>
+        )}
 
         {onBackToHall && (
           <button onClick={onBackToHall} style={{
