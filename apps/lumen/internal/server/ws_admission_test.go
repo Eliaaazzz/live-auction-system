@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
@@ -40,6 +41,55 @@ func TestHandleWSAdmissionGate(t *testing.T) {
 	}
 	if got := s.metrics.ActiveConns.Load(); got != 3 {
 		t.Errorf("ActiveConns=%d, want 3 — a rejected upgrade must not reserve a slot", got)
+	}
+}
+
+// TestTryReserveWSConcurrentDoesNotOvershootCap is the regression test for the
+// admission race that matters under reconnect storms: check-then-Add can admit
+// many goroutines that all observed cur<limit; tryReserveWS must CAS-reserve so
+// only `limit` callers succeed, ActiveConns never rises past the cap, and every
+// loser increments AdmissionRejected.
+func TestTryReserveWSConcurrentDoesNotOvershootCap(t *testing.T) {
+	m := metrics.New()
+	const (
+		limit = 1
+		calls = 64
+	)
+	start := make(chan struct{})
+	results := make(chan bool, calls)
+	var wg sync.WaitGroup
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			results <- tryReserveWS(m, limit)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	successes := 0
+	for ok := range results {
+		if ok {
+			successes++
+		}
+	}
+	if successes != limit {
+		t.Fatalf("successful reservations=%d, want %d", successes, limit)
+	}
+	if got := m.ActiveConns.Load(); got != int64(limit) {
+		t.Fatalf("ActiveConns=%d, want capped at %d", got, limit)
+	}
+	if got := m.AdmissionRejected.Load(); got != int64(calls-limit) {
+		t.Fatalf("AdmissionRejected=%d, want %d", got, calls-limit)
+	}
+	// Simulate the single admitted connection's teardown; the gauge must return
+	// to zero so a later wave can be admitted.
+	m.ActiveConns.Add(-int64(successes))
+	if got := m.ActiveConns.Load(); got != 0 {
+		t.Fatalf("ActiveConns after release=%d, want 0", got)
 	}
 }
 
