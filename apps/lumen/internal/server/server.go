@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux only — served on the loopback PPROF_ADDR below, never the public mux
 	"os"
 	"path"
 	"path/filepath"
@@ -81,6 +82,21 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		} else {
 			log.Printf("lumen: LUMEN_CHAOS_DISABLE_TIMER=1 — Timer Worker NOT started (T9 chaos drill)")
 		}
+	}
+
+	// Loopback-only pprof for crash forensics (heap / goroutine profiles). The
+	// 2026-06-07 load test crashed the gateway at ~15.7k conns with /metrics
+	// zeroed and no captured cause; pprof + GODEBUG=gctrace pin OOM-vs-panic. It
+	// serves http.DefaultServeMux (where net/http/pprof registered) on a PRIVATE
+	// addr so it is never reachable from the public mux/EIP. Opt-in: empty
+	// PPROF_ADDR (the default outside the prod compose) leaves it off entirely.
+	if addr := strings.TrimSpace(os.Getenv("PPROF_ADDR")); addr != "" {
+		go func() {
+			log.Printf("lumen: pprof (loopback forensics) on %s", addr)
+			if err := http.ListenAndServe(addr, nil); err != nil {
+				log.Printf("lumen: pprof listener on %s: %v", addr, err)
+			}
+		}()
 	}
 
 	mux := http.NewServeMux()

@@ -15,6 +15,7 @@ package metrics
 
 import (
 	"math/rand"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -61,6 +62,13 @@ type Registry struct {
 	RoomStatePatches     *Counter
 	RoomStatePatchBids   *Counter
 
+	// AdmissionRejected counts WS upgrades shed by the front-door admission gate
+	// (handleWS, when ActiveConns >= MAX_WS_CONNS). A non-zero value means the
+	// gateway is at its connection watermark and degrading gracefully (503 +
+	// Retry-After) instead of climbing toward the OOM/crash cliff. Pairs with
+	// ActiveConns to read "held N, shed the rest, process survives".
+	AdmissionRejected *Counter
+
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
 	StreamLenMax atomic.Int64 // peak observed stream length since start
@@ -85,6 +93,7 @@ func New() *Registry {
 		RoomStatePatchBids:   &Counter{},
 		BackpressureDrop:     &Counter{},
 		SeqGap:               &Counter{},
+		AdmissionRejected:    &Counter{},
 	}
 }
 
@@ -122,11 +131,21 @@ type Snapshot struct {
 	SeqGap               int64             `json:"seqGapCount"`
 	StreamLenMax         int64             `json:"streamLenMax"`
 	ActiveConns          int64             `json:"activeConns"`
+	AdmissionRejected    int64             `json:"admissionRejected"`
+	// Runtime gauges sampled at scrape time (runtime.ReadMemStats does a brief
+	// STW pause; /metrics is scraped infrequently so this is acceptable, and it
+	// turns "process died, cause unknown, metrics zeroed" into a pre-alertable
+	// approach-to-cliff signal: HeapInuse/NumGoroutine trending up under load.
+	HeapInuseBytes uint64 `json:"heapInuseBytes"`
+	HeapSysBytes   uint64 `json:"heapSysBytes"`
+	NumGoroutine   int    `json:"numGoroutine"`
 }
 
 // Snapshot is non-blocking from the writer side: each histogram takes its own
 // mutex briefly to copy + sort a sample slice; counters/gauges are atomic.
 func (r *Registry) Snapshot() Snapshot {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
 	return Snapshot{
 		Ack:                  r.AckLatency.Snapshot(),
 		Broadcast:            r.BroadcastLatency.Snapshot(),
@@ -144,6 +163,10 @@ func (r *Registry) Snapshot() Snapshot {
 		SeqGap:               r.SeqGap.Load(),
 		StreamLenMax:         r.StreamLenMax.Load(),
 		ActiveConns:          r.ActiveConns.Load(),
+		AdmissionRejected:    r.AdmissionRejected.Load(),
+		HeapInuseBytes:       ms.HeapInuse,
+		HeapSysBytes:         ms.HeapSys,
+		NumGoroutine:         runtime.NumGoroutine(),
 	}
 }
 
@@ -166,6 +189,7 @@ func (r *Registry) Reset() {
 	r.RoomStatePatchBids.Reset()
 	r.BackpressureDrop.Reset()
 	r.SeqGap.Reset()
+	r.AdmissionRejected.Reset()
 	r.StreamLenMax.Store(0)
 }
 
