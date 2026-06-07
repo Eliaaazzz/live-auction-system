@@ -9,7 +9,7 @@ LOAD_AID_FILE := .load-auction-id
 CHAOS_AID_FILE := .chaos-auction-id
 CHAOS_TOKEN_FILE := .chaos-buyer-token
 
-.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke load-100k load-preflight verify verify-evidence build vet test fmt guard \
+.PHONY: up down logs seed e2e-dummy-bid perf-smoke e2e-ai-offline load load-smoke cleanup-load-auctions load-100k load-preflight verify verify-evidence build vet test fmt guard \
         chaos chaos-ai chaos-redis chaos-mysql chaos-ws chaos-timer chaos-smoke _chaos-restart-lumen-default _chaos-restart-lumen-no-timer \
         demo demo-smoke demo-auction demo-sudden-death demo-sealed demo-vickrey demo-hybrid demo-allpay demo-prequalify \
         web-smoke-wire web-smoke-catchup k6 k6-setup k6-run up-toxiproxy toxiproxy-reset k6-wan k6-wan-run
@@ -112,6 +112,12 @@ load-smoke:       ## CI-cheap load smoke: small N, short window, relaxed budgets
 	if [ -n "$$aid" ]; then printf '%s\n' "$$aid" > $(LOAD_AID_FILE); fi; \
 	if [ $$rc -ne 0 ]; then echo "make load-smoke: FAIL (rc=$$rc)"; exit $$rc; fi
 	@$(MAKE) verify VERIFY_AID="$$(cat $(LOAD_AID_FILE))"
+
+cleanup-load-auctions: ## Dry-run cleanup for Redis auc_load_* artifacts; set LOAD_CLEANUP_EXECUTE=1 to delete.
+	$(COMPOSE) --profile tools run --rm --build \
+		-e LOAD_CLEANUP_AUCTION_PREFIX="$(LOAD_CLEANUP_AUCTION_PREFIX)" \
+		-e LOAD_CLEANUP_EXECUTE="$(LOAD_CLEANUP_EXECUTE)" \
+		verifier cleanup-load-auctions
 
 load-100k: load-preflight ## Large-scale rehearsal: 100k connected, 2k active (non-gate, external environment only).
 	@echo "CAUTION: 100k rehearsal is non-gate and resource-heavy; run on external staging capacity only."
