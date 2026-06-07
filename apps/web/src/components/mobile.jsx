@@ -288,6 +288,7 @@ function MobileRoom({
     }));
   const minBidCents = safeAddCents(currentCents, stepCents);
   const firstLeader = leaders[0] || null;
+  const secondLeader = leaders[1] || null;
 
   // F23 / Elia round-2 #3: screen-shake on hammer. One-shot — flips back
   // to false ~700ms after status enters SOLD so the keyframe doesn't loop.
@@ -685,6 +686,7 @@ function MobileRoom({
         }}>
           <BuyerFocusPanel
             firstLeader={firstLeader}
+            secondLeader={secondLeader}
             yourRank={yourRank}
             yourGapCents={yourGapCents}
             isYouLeading={isYouLeading}
@@ -1027,6 +1029,7 @@ function TermsSheet({ stepCents, joined = false, onAccept, onClose }) {
 
 function BuyerFocusPanel({
   firstLeader,
+  secondLeader,
   yourRank,
   yourGapCents,
   isYouLeading,
@@ -1046,9 +1049,10 @@ function BuyerFocusPanel({
 }) {
   return (
     <>
-      <PanelHeader title="当前领先" meta="第一名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
+      <PanelHeader title="当前领先" meta="前两名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
       <CompactLeaderCard
         firstLeader={firstLeader}
+        secondLeader={secondLeader}
         yourRank={yourRank}
         yourGapCents={yourGapCents}
         isYouLeading={isYouLeading}
@@ -1074,12 +1078,14 @@ function BuyerFocusPanel({
 }
 
 // Meeting decision (Yifan/Zhenyu 2026-06): deep rank lists carry little
-// meaning in a live room — show the champion and where *you* stand, drop
-// ranks 2-5 entirely. Less to scan, nothing occluded on small phones.
-function CompactLeaderCard({ firstLeader, yourRank, yourGapCents, isYouLeading }) {
+// meaning in a live room — show the champion, the runner-up chasing them,
+// and where *you* stand. Ranks 3-5 stay dropped (nothing occluded on small
+// phones, less to scan).
+function CompactLeaderCard({ firstLeader, secondLeader, yourRank, yourGapCents, isYouLeading }) {
   return (
     <InfoSurface accent="gold">
       <CompactLeaderRow rank={1} leader={firstLeader} lead/>
+      {secondLeader && <CompactLeaderRow rank={2} leader={secondLeader}/>}
       <MyPositionGap
         rank={yourRank}
         gapCents={yourGapCents}
