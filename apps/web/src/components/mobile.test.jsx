@@ -215,6 +215,11 @@ describe('MobileRoom simplified buyer flow', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
     expect(screen.queryByRole('tabpanel')).not.toBeInTheDocument();
     expect(container.textContent).toMatch(/当前领先/);
+    // Champion + runner-up render; ranks 3+ stay dropped (化繁为简) — the
+    // rank-3 bidder ("You") only surfaces through the my-position pill.
+    expect(container.textContent).toMatch(/Alice/);
+    expect(container.textContent).toMatch(/Bob/);
+    expect(container.textContent).not.toMatch(/\bYou\b/);
     expect(container.textContent).toMatch(/最近出价/);
     expect(container.textContent).toMatch(/规则/);
     expect(container.textContent).toMatch(/最低加价/);
