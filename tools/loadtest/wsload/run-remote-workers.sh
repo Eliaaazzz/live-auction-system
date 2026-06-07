@@ -35,7 +35,8 @@ Output:
   <logs-dir>/shards.tsv     aggregate summary for v100k-evidence-gate.sh
 
 This helper does not print token values. It copies each worker's shard to only
-that worker and stores aggregate wsload logs locally.
+that worker, removes the remote shard after the run, and stores aggregate wsload
+logs locally.
 USAGE
 }
 
@@ -270,6 +271,10 @@ while read -r worker ssh_target _rest; do
 
   remote_cmd=$(cat <<EOF_REMOTE
 cd $(shell_quote "$worker_remote_dir") || exit 1
+cleanup_worker_secret() {
+  rm -f -- $(shell_quote "$remote_token")
+}
+trap cleanup_worker_secret EXIT INT TERM
 (
   ulimit -n 200000 2>/dev/null || ulimit -n 65535 2>/dev/null || true
   echo "effective_ulimit_n=\$(ulimit -n 2>/dev/null || true)"
@@ -277,6 +282,7 @@ cd $(shell_quote "$worker_remote_dir") || exit 1
   printf '%s\n' "\$?" > $(shell_quote "$remote_rc")
 ) 2>&1 | tee $(shell_quote "$remote_log")
 run_rc=\$(cat $(shell_quote "$remote_rc") 2>/dev/null || printf '1')
+cleanup_worker_secret
 exit "\$run_rc"
 EOF_REMOTE
 )
