@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { formatCentsCNY, StatusBadge } from './primitives.jsx';
 import { api, ApiError } from '../lib/api.js';
 import { ensureSession } from '../lib/auth.js';
+import { suggestStepCents } from '../lib/bidding.js';
 
 // lumen-admin-extra.jsx
 // Publish form · Cancel modal · Orders/Products
@@ -196,7 +197,29 @@ function AdminPublish() {
               </FormRow>
               <FormRow label="加价阶梯" required>
                 <CurrencyInput cents={stepCents} onChange={setStepCents}/>
-                <Hint>每次出价最小增量</Hint>
+                {(() => {
+                  // 动态建议 (meeting: 根据起拍价动态调整最低加价): ladder from
+                  // the eBay/阿里 increment research — ~1-5% of the start price.
+                  const suggested = suggestStepCents(startCents);
+                  if (suggested && suggested !== stepCents) {
+                    return (
+                      <Hint>
+                        每次出价最小增量 ·{' '}
+                        <button
+                          type="button"
+                          onClick={() => setStepCents(suggested)}
+                          style={{
+                            padding: 0, border: 'none', background: 'none', cursor: 'pointer',
+                            color: 'var(--douyin-cyan)', fontSize: 10, fontFamily: 'inherit',
+                            fontWeight: 600,
+                          }}>
+                          建议 {formatCentsCNY(suggested)}（按起拍价 1–5%）
+                        </button>
+                      </Hint>
+                    );
+                  }
+                  return <Hint>每次出价最小增量 · 已按起拍价建议档位</Hint>;
+                })()}
               </FormRow>
               <FormRow label="保留价 (≤ 起拍价)" required>
                 <CurrencyInput cents={reserveCents} onChange={setReserveCents}/>

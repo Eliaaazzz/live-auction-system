@@ -159,8 +159,11 @@ function CancelOverlay() {
 }
 
 // ─── Demo room variants (used by /preview/room*) ────────────────
+// Distinct followScopeId per variant so the join-gate (拍卖须知) can be
+// demoed independently on each preview route.
 function DemoRoom() {
   return <MobileRoom
+    followScopeId="preview-room"
     remainingMs={28400}
     currentCents="12880000"
     extendCount={2}
@@ -171,6 +174,7 @@ function DemoRoom() {
 }
 function DemoRoomFinal10() {
   return <MobileRoom
+    followScopeId="preview-room-final10"
     remainingMs={5400}
     currentCents="13380000"
     extendCount={3}
@@ -182,6 +186,7 @@ function DemoRoomFinal10() {
 }
 function DemoRoomLeading() {
   return <MobileRoom
+    followScopeId="preview-room-leading"
     remainingMs={28400}
     currentCents="12500000"
     extendCount={2}
