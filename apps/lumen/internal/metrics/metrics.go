@@ -58,9 +58,12 @@ type Registry struct {
 	// hub.roomStateSnap). High value relative to BidsRejected indicates the
 	// filter is effective; low value indicates light bid contention. Always
 	// also bumps BidsRejected so the aggregate stays consistent.
-	BidsRejectedFastPath *Counter
-	RoomStatePatches     *Counter
-	RoomStatePatchBids   *Counter
+	BidsRejectedFastPath        *Counter
+	RoomStatePatches            *Counter
+	RoomStatePatchBids          *Counter
+	TimerErrInternal            *Counter
+	TimerErrInternalKeyType     *Counter
+	TimerErrInternalSeqMismatch *Counter
 
 	// AdmissionRejected counts WS upgrades shed by the front-door admission gate
 	// (handleWS, when ActiveConns >= MAX_WS_CONNS). A non-zero value means the
@@ -79,21 +82,24 @@ type Registry struct {
 // (~60k per histogram at 500/50) are well within memory budget at cap=4096.
 func New() *Registry {
 	return &Registry{
-		AckLatency:           NewHistogram(4096),
-		BroadcastLatency:     NewHistogram(4096),
-		RoomStatePatch:       NewHistogram(4096),
-		HammerLatency:        NewHistogram(4096),
-		CatchupLatency:       NewHistogram(4096),
-		ScriptTime:           NewHistogram(4096),
-		HandlerOverhead:      NewHistogram(4096),
-		BidsAccepted:         &Counter{},
-		BidsRejected:         &Counter{},
-		BidsRejectedFastPath: &Counter{},
-		RoomStatePatches:     &Counter{},
-		RoomStatePatchBids:   &Counter{},
-		BackpressureDrop:     &Counter{},
-		SeqGap:               &Counter{},
-		AdmissionRejected:    &Counter{},
+		AckLatency:                  NewHistogram(4096),
+		BroadcastLatency:            NewHistogram(4096),
+		RoomStatePatch:              NewHistogram(4096),
+		HammerLatency:               NewHistogram(4096),
+		CatchupLatency:              NewHistogram(4096),
+		ScriptTime:                  NewHistogram(4096),
+		HandlerOverhead:             NewHistogram(4096),
+		BidsAccepted:                &Counter{},
+		BidsRejected:                &Counter{},
+		BidsRejectedFastPath:        &Counter{},
+		RoomStatePatches:            &Counter{},
+		RoomStatePatchBids:          &Counter{},
+		TimerErrInternal:            &Counter{},
+		TimerErrInternalKeyType:     &Counter{},
+		TimerErrInternalSeqMismatch: &Counter{},
+		BackpressureDrop:            &Counter{},
+		SeqGap:                      &Counter{},
+		AdmissionRejected:           &Counter{},
 	}
 }
 
@@ -115,23 +121,26 @@ func (r *Registry) ObserveStreamLen(n int64) {
 // proto/observed.md (T8 will materialize a doc; the field names here are the
 // source). Histograms render as {p50,p95,p99,count} in milliseconds.
 type Snapshot struct {
-	Ack                  HistogramSnapshot `json:"ackLatencyMs"`
-	Broadcast            HistogramSnapshot `json:"broadcastLatencyMs"`
-	RoomStatePatch       HistogramSnapshot `json:"roomStatePatchLatencyMs"`
-	Hammer               HistogramSnapshot `json:"hammerLatencyMs"`
-	Catchup              HistogramSnapshot `json:"catchupLatencyMs"`
-	ScriptTime           HistogramSnapshot `json:"placeBidScriptTimeMs"`
-	HandlerOverhead      HistogramSnapshot `json:"bidHandlerOverheadMs"`
-	BidsAccepted         int64             `json:"bidsAccepted"`
-	BidsRejected         int64             `json:"bidsRejected"`
-	BidsRejectedFastPath int64             `json:"bidsRejectedFastPath"`
-	RoomStatePatches     int64             `json:"roomStatePatches"`
-	RoomStatePatchBids   int64             `json:"roomStatePatchBids"`
-	BackpressureDrop     int64             `json:"backpressureForceClose"`
-	SeqGap               int64             `json:"seqGapCount"`
-	StreamLenMax         int64             `json:"streamLenMax"`
-	ActiveConns          int64             `json:"activeConns"`
-	AdmissionRejected    int64             `json:"admissionRejected"`
+	Ack                         HistogramSnapshot `json:"ackLatencyMs"`
+	Broadcast                   HistogramSnapshot `json:"broadcastLatencyMs"`
+	RoomStatePatch              HistogramSnapshot `json:"roomStatePatchLatencyMs"`
+	Hammer                      HistogramSnapshot `json:"hammerLatencyMs"`
+	Catchup                     HistogramSnapshot `json:"catchupLatencyMs"`
+	ScriptTime                  HistogramSnapshot `json:"placeBidScriptTimeMs"`
+	HandlerOverhead             HistogramSnapshot `json:"bidHandlerOverheadMs"`
+	BidsAccepted                int64             `json:"bidsAccepted"`
+	BidsRejected                int64             `json:"bidsRejected"`
+	BidsRejectedFastPath        int64             `json:"bidsRejectedFastPath"`
+	RoomStatePatches            int64             `json:"roomStatePatches"`
+	RoomStatePatchBids          int64             `json:"roomStatePatchBids"`
+	TimerErrInternal            int64             `json:"timerErrInternal"`
+	TimerErrInternalKeyType     int64             `json:"timerErrInternalKeyType"`
+	TimerErrInternalSeqMismatch int64             `json:"timerErrInternalSeqMismatch"`
+	BackpressureDrop            int64             `json:"backpressureForceClose"`
+	SeqGap                      int64             `json:"seqGapCount"`
+	StreamLenMax                int64             `json:"streamLenMax"`
+	ActiveConns                 int64             `json:"activeConns"`
+	AdmissionRejected           int64             `json:"admissionRejected"`
 	// Runtime gauges sampled at scrape time (runtime.ReadMemStats does a brief
 	// STW pause; /metrics is scraped infrequently so this is acceptable, and it
 	// turns "process died, cause unknown, metrics zeroed" into a pre-alertable
@@ -147,26 +156,29 @@ func (r *Registry) Snapshot() Snapshot {
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
 	return Snapshot{
-		Ack:                  r.AckLatency.Snapshot(),
-		Broadcast:            r.BroadcastLatency.Snapshot(),
-		RoomStatePatch:       r.RoomStatePatch.Snapshot(),
-		Hammer:               r.HammerLatency.Snapshot(),
-		Catchup:              r.CatchupLatency.Snapshot(),
-		ScriptTime:           r.ScriptTime.Snapshot(),
-		HandlerOverhead:      r.HandlerOverhead.Snapshot(),
-		BidsAccepted:         r.BidsAccepted.Load(),
-		BidsRejected:         r.BidsRejected.Load(),
-		BidsRejectedFastPath: r.BidsRejectedFastPath.Load(),
-		RoomStatePatches:     r.RoomStatePatches.Load(),
-		RoomStatePatchBids:   r.RoomStatePatchBids.Load(),
-		BackpressureDrop:     r.BackpressureDrop.Load(),
-		SeqGap:               r.SeqGap.Load(),
-		StreamLenMax:         r.StreamLenMax.Load(),
-		ActiveConns:          r.ActiveConns.Load(),
-		AdmissionRejected:    r.AdmissionRejected.Load(),
-		HeapInuseBytes:       ms.HeapInuse,
-		HeapSysBytes:         ms.HeapSys,
-		NumGoroutine:         runtime.NumGoroutine(),
+		Ack:                         r.AckLatency.Snapshot(),
+		Broadcast:                   r.BroadcastLatency.Snapshot(),
+		RoomStatePatch:              r.RoomStatePatch.Snapshot(),
+		Hammer:                      r.HammerLatency.Snapshot(),
+		Catchup:                     r.CatchupLatency.Snapshot(),
+		ScriptTime:                  r.ScriptTime.Snapshot(),
+		HandlerOverhead:             r.HandlerOverhead.Snapshot(),
+		BidsAccepted:                r.BidsAccepted.Load(),
+		BidsRejected:                r.BidsRejected.Load(),
+		BidsRejectedFastPath:        r.BidsRejectedFastPath.Load(),
+		RoomStatePatches:            r.RoomStatePatches.Load(),
+		RoomStatePatchBids:          r.RoomStatePatchBids.Load(),
+		TimerErrInternal:            r.TimerErrInternal.Load(),
+		TimerErrInternalKeyType:     r.TimerErrInternalKeyType.Load(),
+		TimerErrInternalSeqMismatch: r.TimerErrInternalSeqMismatch.Load(),
+		BackpressureDrop:            r.BackpressureDrop.Load(),
+		SeqGap:                      r.SeqGap.Load(),
+		StreamLenMax:                r.StreamLenMax.Load(),
+		ActiveConns:                 r.ActiveConns.Load(),
+		AdmissionRejected:           r.AdmissionRejected.Load(),
+		HeapInuseBytes:              ms.HeapInuse,
+		HeapSysBytes:                ms.HeapSys,
+		NumGoroutine:                runtime.NumGoroutine(),
 	}
 }
 
@@ -187,6 +199,9 @@ func (r *Registry) Reset() {
 	r.BidsRejectedFastPath.Reset()
 	r.RoomStatePatches.Reset()
 	r.RoomStatePatchBids.Reset()
+	r.TimerErrInternal.Reset()
+	r.TimerErrInternalKeyType.Reset()
+	r.TimerErrInternalSeqMismatch.Reset()
 	r.BackpressureDrop.Reset()
 	r.SeqGap.Reset()
 	r.AdmissionRejected.Reset()

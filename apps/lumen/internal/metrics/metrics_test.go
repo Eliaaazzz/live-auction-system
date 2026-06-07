@@ -231,7 +231,8 @@ func TestSnapshotJSONShape(t *testing.T) {
 	required := []string{
 		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs",
 		"catchupLatencyMs", "placeBidScriptTimeMs", "bidHandlerOverheadMs",
-		"bidsAccepted", "bidsRejected", "backpressureForceClose",
+		"bidsAccepted", "bidsRejected", "timerErrInternal",
+		"timerErrInternalKeyType", "timerErrInternalSeqMismatch", "backpressureForceClose",
 		"seqGapCount", "streamLenMax", "activeConns",
 	}
 	for _, k := range required {
