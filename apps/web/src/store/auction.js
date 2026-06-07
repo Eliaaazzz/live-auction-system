@@ -52,6 +52,7 @@ const DEFAULT_STATE = {
   // against GET /leaderboard?n=10 at strategic moments (room open + every
   // SOLD/CANCELLED). See applyEvent + setLeaders below.
   leaders:      [],         // [{ userId, displayName, cents, avatarBg?, isYou? }]
+  leadersSeq:   0,          // state seq of the last REST /leaderboard applied (orders REST reconciles)
   yourUserId:   null,
   yourCents:    null,
 
@@ -115,18 +116,18 @@ export const useAuctionStore = create((set, get) => ({
   setConn: (status, detail) => set({ connStatus: status, connDetail: detail ?? null }),
 
   // ── leaderboard reconcile (after REST GET /leaderboard) ──────
-  setLeaders: (leaders) => set((s) => ({
-    // Normalize the REST /leaderboard shape ({ userId, amountCents }) to the
-    // render shape ({ displayName, cents }). The backend ZSET has no display
-    // name, so fall back to userId — rendering u.displayName[0] on an undefined
-    // name crashes the whole room (blank screen). cents<-amountCents likewise.
-    leaders: leaders.map((l) => ({
-      ...l,
-      displayName: l.displayName || l.userId,
-      cents: l.cents ?? l.amountCents ?? '0',
-      isYou: l.userId === s.yourUserId,
-    })),
-  })),
+  // MERGE-MAX into the live board, never wholesale-overwrite: a late/stale REST
+  // response must not regress a row a ROOM_STATE_PATCH already advanced (跨端排名
+  // 一致). snapSeq (from the backend response) gates the apply so an out-of-order
+  // older REST response can't clobber a newer one; merge-max itself guarantees no
+  // regression even without it. snapSeq omitted (older backend) => always merge.
+  setLeaders: (leaders, snapSeq) => set((s) => {
+    if (typeof snapSeq === 'number' && snapSeq < s.leadersSeq) return {}; // stale REST → ignore
+    return {
+      leaders: mergeLeadersMax(s.leaders, leaders, s.yourUserId),
+      leadersSeq: typeof snapSeq === 'number' ? Math.max(s.leadersSeq, snapSeq) : s.leadersSeq,
+    };
+  }),
 
   // ── countdown tick (driven by RAF in LiveRoomRoute) ──────────
   tickRemaining: (ms) => set({ remainingMs: ms }),
@@ -377,14 +378,55 @@ function hasOwn(obj, key) {
  * Insert/update one user in the leaderboard, keep top N by cents desc.
  * String-cents compare via BigInt — never parseFloat.
  */
+// centsDesc orders leaderboard rows high→low by string-cents (BigInt, never
+// parseFloat — money is exact decimal strings up to 2^53-1+).
+function centsDesc(a, b) {
+  try {
+    const av = BigInt(a.cents), bv = BigInt(b.cents);
+    return av < bv ? 1 : av > bv ? -1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// maxCents returns the larger of two string-cents (either may be undefined).
+function maxCents(a, b) {
+  if (a == null) return String(b ?? '0');
+  if (b == null) return String(a);
+  try {
+    return BigInt(a) >= BigInt(b) ? String(a) : String(b);
+  } catch {
+    return String(b ?? a ?? '0');
+  }
+}
+
 function mergeLeader(leaders, entry) {
   const cleaned = leaders.filter((l) => l.userId !== entry.userId);
   cleaned.push(entry);
-  cleaned.sort((a, b) => {
-    try {
-      const av = BigInt(a.cents), bv = BigInt(b.cents);
-      return av < bv ? 1 : av > bv ? -1 : 0;
-    } catch { return 0; }
-  });
+  cleaned.sort(centsDesc);
   return cleaned.slice(0, LEADERBOARD_CAP);
+}
+
+// mergeLeadersMax reconciles a REST /leaderboard snapshot into the live board.
+// CRITICAL (跨端排名一致): it MUST NOT wholesale-overwrite — a late/stale REST
+// response must never regress a row the user watched climb via ROOM_STATE_PATCH.
+// So it keeps max(existing.cents, rest.cents) per user, ADDS rows it hasn't seen,
+// and never drops a live-only row. The auction ZSET is monotonic max-per-user, so
+// merge-max is the correct reconciliation. Pure + hidden-tested.
+export function mergeLeadersMax(existing, restRows, yourUserId) {
+  const byId = new Map((existing || []).map((l) => [l.userId, l]));
+  for (const l of restRows || []) {
+    if (!l || l.userId == null) continue;
+    const restCents = l.cents ?? l.amountCents ?? '0';
+    const prev = byId.get(l.userId);
+    byId.set(l.userId, {
+      ...prev,
+      ...l,
+      userId: l.userId,
+      displayName: l.displayName || prev?.displayName || l.userId,
+      cents: maxCents(prev?.cents, restCents),
+      isYou: l.userId === yourUserId,
+    });
+  }
+  return [...byId.values()].sort(centsDesc).slice(0, LEADERBOARD_CAP);
 }

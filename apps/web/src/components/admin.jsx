@@ -817,8 +817,8 @@ function AdminConsole() {
 
     leaderboardFlightRef.current = true;
     try {
-      const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
-      useAuctionStore.getState().setLeaders(leaderboard);
+      const { leaderboard = [], seq } = await api.getLeaderboard(auctionId, 10);
+      useAuctionStore.getState().setLeaders(leaderboard, seq);
       leaderboardAtMsRef.current = now;
     } catch (e) {
       console.warn('[Console] leaderboard reconcile failed', e);
