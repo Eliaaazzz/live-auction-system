@@ -140,17 +140,12 @@ func RunDemo(target string) error {
 	}
 
 	// §12.5: the evidence card publishes the hash-chain head (events_hash) per §6.
-	var ev struct {
-		EventsHash string `json:"eventsHash"`
+	// The persistence worker projects the stream asynchronously, so poll instead
+	// of making a single immediate read after AUCTION_SOLD.
+	headPrefix, err := fetchEvidenceHead(hc, target, aid, seller.Token, 20*time.Second)
+	if err != nil {
+		return err
 	}
-	if err := getJSONAuth(hc, target+"/api/auctions/"+aid+"/evidence", seller.Token, &ev); err != nil {
-		return fmt.Errorf("evidence fetch: %w", err)
-	}
-	if ev.EventsHash == "" {
-		return fmt.Errorf("evidence card has empty eventsHash (chain head must be published per §6)")
-	}
-
-	headPrefix := ev.EventsHash
 	if len(headPrefix) > 8 {
 		headPrefix = headPrefix[:8]
 	}
