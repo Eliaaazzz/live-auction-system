@@ -32,18 +32,103 @@ const maxClientBidIDLen = 128
 // past it the client gets a snapshot instead (cheaper than a huge replay).
 const catchupMaxGap = 200
 
-// sendBufFrames sizes the per-conn CRITICAL lane. It MUST exceed catchupMaxGap
-// so a full Stream replay into the buffer never trips the trySend force-close
-// before writePump can drain — the catchup case is exactly the one where the
-// client may be slow (just-reconnected, possibly high-RTT), and force-closing
-// it would re-enter the reconnect loop the catchup is meant to break.
+// sendBufFrames sizes BOTH per-conn must-deliver lanes (crit + broadcast). It
+// MUST exceed catchupMaxGap so a full Stream replay into the crit buffer never
+// trips the trySend force-close before writePump can drain — the catchup case
+// is exactly the one where the client may be slow (just-reconnected, possibly
+// high-RTT), and force-closing it would re-enter the reconnect loop the catchup
+// is meant to break.
 //
-// V10k Tier A: bumped 256 → 1024 to absorb a 500+ bid/s broadcast burst at 10k
-// connected. At 256 frames a single broadcast at 500/s with a 0.5 s writePump
-// stall would force-close; 1024 gives 2 s headroom. Per-conn memory cost is
-// `1024 × 8B (slice header) ≈ 8 KiB` channel buffer; at 10k conn = 80 MiB
-// resident — well within budget on any deploy box.
-const sendBufFrames = 1024
+// V10k Tier A tuning (env-overridable via WS_CRIT_FRAMES):
+//   - originally 256 → 1024 to absorb a 500+ bid/s broadcast burst at 10k.
+//   - 1024 → 512 (2026-06-07): the Tier-2 load test crashed a single 4 vCPU/8 GiB
+//     gateway at ~15.7k conns (OOM / GC-thrash, NOT bandwidth — backpressureForceClose
+//     stayed 0, EIP unsaturated). The old cost note below was wrong: outboundFrame
+//     is {[]byte, *PreparedMessage, string, time.Time} = 72 B/slot, and BOTH the
+//     crit and broadcast channels are sized to sendBufFrames, so the real cost is
+//     2 × 1024 × 72 B ≈ 144 KiB/conn ≈ 2.1 GiB at 15k — a primary OOM driver.
+//     Cutting to 512 reclaims ~72 KiB/conn (~1 GiB at 15k). 512 is still 2.56×
+//     catchupMaxGap (200) so a full catchup replay cannot trip the force-close,
+//     and with ROOM_STATE_PATCH_MIN_VIEWERS lowered to 200 the only un-coalesced
+//     (per-bid-broadcast) rooms are <200 viewers, which cannot sustain a >512-frame
+//     backlog into one client.
+//
+// Validate any change with the 50k-bid/s burst (10k obs + 10k bidders):
+// backpressureForceClose MUST stay 0 and seqGap 0; if bpClose appears, raise to
+// 640/768 (still ≫ catchupMaxGap) and re-test before locking the default.
+var sendBufFrames = envInt("WS_CRIT_FRAMES", 512)
+
+// maxWSConns is the front-door admission watermark: handleWS rejects new WS
+// upgrades with 503 + Retry-After once ActiveConns reaches it, BEFORE allocating
+// the per-conn crit/broadcast rings + 2 goroutines — converting the proven
+// ~15.7k OOM/crash (which drops ALL conns, zeroes /metrics, and invites a
+// reconnect-storm re-crash loop) into bounded, survivable degradation where the
+// auction keeps running. 0 (default) disables the gate (no behavior change until
+// MAX_WS_CONNS is set in the deploy env, e.g. ~12000 on a 4 vCPU/8 GiB box).
+// Selective WS shedding only — REST / /healthz / /metrics stay flowing (an
+// app-level pre-upgrade 503, NOT a shared-listener LimitListener that would
+// starve health checks and cascade).
+var maxWSConns = envInt("MAX_WS_CONNS", 0)
+
+// tryReserveWS atomically reserves one connection slot under the admission cap.
+// Returns true if admitted (the caller MUST release the slot exactly once on
+// teardown/failure); false if the cap is full (caller sheds with 503). The
+// reserve is a CAS loop, so a concurrent upgrade burst CANNOT overshoot maxWSConns
+// the way a check-then-Add could (many goroutines observe below-cap, then all
+// Add(1)) — the exact reconnect-storm the gate must survive (PDGGK review #235).
+// limit<=0 disables the cap (single-gateway default until MAX_WS_CONNS is set).
+func tryReserveWS(m *metrics.Registry, limit int) bool {
+	if m == nil {
+		return true
+	}
+	if limit <= 0 {
+		m.ActiveConns.Add(1)
+		return true
+	}
+	for {
+		cur := m.ActiveConns.Load()
+		if cur >= int64(limit) {
+			m.AdmissionRejected.Inc()
+			return false
+		}
+		if m.ActiveConns.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+	}
+}
+
+// wsWriteBufferPool is shared across all connections so gorilla borrows/returns
+// write buffers from one pool instead of allocating a 4 KiB write buffer per
+// conn (broadcasts ride PreparedMessage and acks/snapshots coalesce via wbuf,
+// so the per-conn write buffer is mostly idle — pooling it is ~−4 KiB/conn
+// resident at scale with no behavior change).
+var wsWriteBufferPool = &sync.Pool{}
+
+// gatewayRoomAffinity enables multi-gateway room-level routing isolation: a
+// gateway only reads + fans out the Stream for rooms it has LOCAL members for,
+// instead of every gateway reading every room (today's fleet-wide PSubscribe,
+// which is anti-scale-out). DEFAULT OFF — single-process `mode=all` (the demo)
+// keeps the exact current behaviour, so this is inert and zero-risk until a
+// multi-gateway deploy sets GATEWAY_ROOM_AFFINITY=1 (paired with a consistent
+// room->gateway shard at the load balancer; see gatewayHostsRoom). The
+// matching cursor-seed (resume from current state, not replay history) is in the
+// subscribe fanout — both MUST move together (a filter without the seed would
+// replay an entire stream the first time a gateway hosts a room).
+var gatewayRoomAffinity = envBool("GATEWAY_ROOM_AFFINITY", false)
+
+// gatewayHostsRoom decides, for the room-affinity path, whether THIS gateway
+// should process a woken room's Stream and whether it must first seed its
+// broadcast cursor. With no local members the room is hosted elsewhere → skip
+// the read entirely (the scale-out win). The first time this gateway hosts a
+// room (no prior cursor) it must seed from current state seq so it broadcasts
+// only NEW events; the joining client independently catches up the prior history
+// via its ROOM_JOIN snapshot/replay. Pure + hidden-tested.
+func gatewayHostsRoom(localViewers int, seeded bool) (process, seed bool) {
+	if localViewers == 0 {
+		return false, false
+	}
+	return true, !seeded
+}
 
 // fastRejectExpiryMarginMs is the safety margin between the gateway's wall
 // clock and the cached endAtMs below which the V10k Tier C fast-reject defers
@@ -431,6 +516,22 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 	lastSeq := make(map[string]int64)
 	patches := newRoomStatePatchCoalescer(roomStatePatchConfigFromEnv())
 	fanout := func(aid string) {
+		// Multi-gateway room affinity (default off → block skipped, behaviour
+		// unchanged). When on: skip rooms with no local members (hosted on another
+		// gateway), and on first hosting seed the cursor from current state seq so
+		// we resume from "now" instead of replaying the whole stream.
+		if gatewayRoomAffinity {
+			_, seeded := lastSeq[aid]
+			process, seed := gatewayHostsRoom(h.viewerCount(aid), seeded)
+			if !process {
+				return
+			}
+			if seed {
+				if snap, err := st.Snapshot(ctx, aid); err == nil {
+					lastSeq[aid] = snap.Seq
+				}
+			}
+		}
 		events, _, err := st.ReadEventsAfter(ctx, aid, streamIDForSeq(lastSeq[aid]))
 		if err != nil {
 			log.Printf("fanout read %s: %v", aid, err)
@@ -472,17 +573,8 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			// broadcast so a marshal-error skip above doesn't half-update state
 			// (the `continue` jumps back to the next event without reaching here).
 			updateRoomStateFromEvent(h, aid, e)
-			if m != nil && !coalesced {
-				// Broadcast latency = wall-clock now - payload.serverTimeMs (Lua TIME
-				// at adjudication). Use a typed unmarshal of the small "serverTimeMs"
-				// field rather than parse the full payload — the event payloads share
-				// this field across BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD /
-				// AUCTION_NO_BID / AUCTION_CANCELLED. Failing to unmarshal (e.g. an
-				// older event that predates the field) silently skips the observation,
-				// which is the correct behaviour: no fake zero in p50.
-				if ts := eventServerTimeMs(e.Payload); ts > 0 {
-					m.BroadcastLatency.Observe(time.Since(time.UnixMilli(ts)))
-				}
+			if !coalesced {
+				observeBroadcastLatency(m, e.Payload)
 			}
 			lastSeq[aid] = e.Seq
 			// T7 §4.2: feed the auctioneer trigger detectors. nil-safe
@@ -626,6 +718,35 @@ func eventServerTimeMs(payload string) int64 {
 		return 0
 	}
 	return probe.ServerTimeMs
+}
+
+// maxBroadcastObserveAge bounds what counts as a live-fanout latency sample. The
+// broadcast consumer loop also RE-broadcasts old Stream events on the sweep
+// backstop / cold-start catchup path (a lost Pub/Sub wakeup, or a gateway that
+// starts with lastSeq=0 and re-reads an auction's history); those events'
+// serverTimeMs is minutes old, so `now - serverTimeMs` is their AGE, not fanout
+// latency. Including them froze the 2026-06-07 dashboard's broadcastLatencyMs at
+// ~775,000 ms of garbage. A real fanout sample is sub-second (budget < 150 ms),
+// so anything older than this bound is a replay artifact and is excluded to keep
+// p95/p99 honest. (roomStatePatchLatencyMs is the authoritative large-room fanout.)
+const maxBroadcastObserveAge = 30 * time.Second
+
+// observeBroadcastLatency records a BroadcastLatency sample for a freshly
+// fanned-out event. It skips (a) events that predate the serverTimeMs field
+// (ts <= 0 — no fake zero in p50) and (b) replay/sweep re-broadcasts of old
+// events (age >= maxBroadcastObserveAge). Nil-safe so alt-mode/test paths that
+// don't wire metrics can call it unconditionally.
+func observeBroadcastLatency(m *metrics.Registry, payload string) {
+	if m == nil {
+		return
+	}
+	ts := eventServerTimeMs(payload)
+	if ts <= 0 {
+		return
+	}
+	if d := time.Since(time.UnixMilli(ts)); d < maxBroadcastObserveAge {
+		m.BroadcastLatency.Observe(d)
+	}
 }
 
 // outboundFrame is one queued must-deliver frame: either raw pre-marshalled
@@ -1237,6 +1358,13 @@ func (c *Conn) pushLossy(env model.Envelope) {
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	upgrader := websocket.Upgrader{
+		// Inbound client frames (BID_PLACE/ROOM_JOIN/PING) are <256 B; frame SIZE
+		// is bounded separately by SetReadLimit below, so a 1 KiB read buffer is
+		// correctness-neutral and ~−3 KiB/conn vs gorilla's 4 KiB default. The
+		// write buffer is pooled across connections (see wsWriteBufferPool).
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		WriteBufferPool: wsWriteBufferPool,
 		CheckOrigin: func(req *http.Request) bool {
 			return auth.OriginAllowed(req.Header.Get("Origin"), s.cfg.FrontendOrigin)
 		},
@@ -1246,12 +1374,33 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// Front-door admission control (2026-06-07): shed new WS upgrades past the
+	// connection watermark BEFORE allocating the per-conn crit/broadcast rings +
+	// 2 goroutines, so the gateway degrades gracefully (503 + Retry-After) instead
+	// of climbing to the OOM cliff. tryReserveWS does the check+reserve ATOMICALLY
+	// (CAS loop) so a concurrent upgrade burst — exactly the reconnect-storm the
+	// gate must survive — cannot overshoot the cap (PDGGK review #235). A single
+	// `release` (idempotent) returns the reserved slot on every early-return path
+	// and in the steady-state teardown defer — one reserve, one release.
+	if !tryReserveWS(s.metrics, maxWSConns) {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, "overloaded", http.StatusServiceUnavailable)
+		return
+	}
+	released := false
+	release := func() {
+		if !released && s.metrics != nil {
+			s.metrics.ActiveConns.Add(-1)
+			released = true
+		}
+	}
 	// Wrap the ResponseWriter so the net.Conn gorilla hijacks is our
 	// flush-on-demand bufferedConn (write coalescing — see ws_coalesce.go).
 	var wbuf *bufferedConn
 	ws, err := upgrader.Upgrade(&coalescingUpgradeWriter{ResponseWriter: w, out: &wbuf}, r, nil)
 	if err != nil {
-		return // upgrader already wrote the error
+		release() // upgrade failed — return the reserved slot
+		return    // upgrader already wrote the error
 	}
 	// gorilla wrote the 101 Switching Protocols response into the coalescing
 	// buffer (it writes the handshake via netConn.Write, now buffered). Flush it
@@ -1269,6 +1418,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		// later batch flushes each re-set their own deadline, so no clear needed.
 		if err := wbuf.flushWithDeadline(time.Now().Add(writeWait)); err != nil {
 			_ = ws.Close()
+			release()
 			return
 		}
 	}
@@ -1323,16 +1473,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		userID:    userID, displayName: display,
 		metrics: s.metrics, pingPeriod: connPingPeriod,
 	}
-	if s.metrics != nil {
-		s.metrics.ActiveConns.Add(1)
-	}
+	// ActiveConns was already reserved pre-upgrade (tryReserveWS); the teardown
+	// defer releases it exactly once via the idempotent `release` (one reserve,
+	// one release — no double-release, no leak).
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
 		c.close()
-		if s.metrics != nil {
-			s.metrics.ActiveConns.Add(-1)
-		}
+		release()
 	}()
 
 	for {
