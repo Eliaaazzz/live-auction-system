@@ -70,6 +70,33 @@ var sendBufFrames = envInt("WS_CRIT_FRAMES", 512)
 // starve health checks and cascade).
 var maxWSConns = envInt("MAX_WS_CONNS", 0)
 
+// tryReserveWS atomically reserves one connection slot under the admission cap.
+// Returns true if admitted (the caller MUST release the slot exactly once on
+// teardown/failure); false if the cap is full (caller sheds with 503). The
+// reserve is a CAS loop, so a concurrent upgrade burst CANNOT overshoot maxWSConns
+// the way a check-then-Add could (many goroutines observe below-cap, then all
+// Add(1)) — the exact reconnect-storm the gate must survive (PDGGK review #235).
+// limit<=0 disables the cap (single-gateway default until MAX_WS_CONNS is set).
+func tryReserveWS(m *metrics.Registry, limit int) bool {
+	if m == nil {
+		return true
+	}
+	if limit <= 0 {
+		m.ActiveConns.Add(1)
+		return true
+	}
+	for {
+		cur := m.ActiveConns.Load()
+		if cur >= int64(limit) {
+			m.AdmissionRejected.Inc()
+			return false
+		}
+		if m.ActiveConns.CompareAndSwap(cur, cur+1) {
+			return true
+		}
+	}
+}
+
 // wsWriteBufferPool is shared across all connections so gorilla borrows/returns
 // write buffers from one pool instead of allocating a 4 KiB write buffer per
 // conn (broadcasts ride PreparedMessage and acks/snapshots coalesce via wbuf,
@@ -1350,28 +1377,30 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	// Front-door admission control (2026-06-07): shed new WS upgrades past the
 	// connection watermark BEFORE allocating the per-conn crit/broadcast rings +
 	// 2 goroutines, so the gateway degrades gracefully (503 + Retry-After) instead
-	// of climbing to the OOM cliff. Reserve the slot pre-upgrade — ActiveConns is
-	// the authoritative admission counter — so a concurrent burst can't overshoot
-	// the cap between the check and the allocate; the reservation is released on
-	// every early-return path below and in the steady-state teardown defer.
-	if s.metrics != nil {
-		if maxWSConns > 0 && s.metrics.ActiveConns.Load() >= int64(maxWSConns) {
-			w.Header().Set("Retry-After", "2")
-			s.metrics.AdmissionRejected.Inc()
-			http.Error(w, "overloaded", http.StatusServiceUnavailable)
-			return
+	// of climbing to the OOM cliff. tryReserveWS does the check+reserve ATOMICALLY
+	// (CAS loop) so a concurrent upgrade burst — exactly the reconnect-storm the
+	// gate must survive — cannot overshoot the cap (PDGGK review #235). A single
+	// `release` (idempotent) returns the reserved slot on every early-return path
+	// and in the steady-state teardown defer — one reserve, one release.
+	if !tryReserveWS(s.metrics, maxWSConns) {
+		w.Header().Set("Retry-After", "2")
+		http.Error(w, "overloaded", http.StatusServiceUnavailable)
+		return
+	}
+	released := false
+	release := func() {
+		if !released && s.metrics != nil {
+			s.metrics.ActiveConns.Add(-1)
+			released = true
 		}
-		s.metrics.ActiveConns.Add(1)
 	}
 	// Wrap the ResponseWriter so the net.Conn gorilla hijacks is our
 	// flush-on-demand bufferedConn (write coalescing — see ws_coalesce.go).
 	var wbuf *bufferedConn
 	ws, err := upgrader.Upgrade(&coalescingUpgradeWriter{ResponseWriter: w, out: &wbuf}, r, nil)
 	if err != nil {
-		if s.metrics != nil {
-			s.metrics.ActiveConns.Add(-1) // release the reserved slot
-		}
-		return // upgrader already wrote the error
+		release() // upgrade failed — return the reserved slot
+		return    // upgrader already wrote the error
 	}
 	// gorilla wrote the 101 Switching Protocols response into the coalescing
 	// buffer (it writes the handshake via netConn.Write, now buffered). Flush it
@@ -1389,9 +1418,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		// later batch flushes each re-set their own deadline, so no clear needed.
 		if err := wbuf.flushWithDeadline(time.Now().Add(writeWait)); err != nil {
 			_ = ws.Close()
-			if s.metrics != nil {
-				s.metrics.ActiveConns.Add(-1) // release the reserved slot
-			}
+			release()
 			return
 		}
 	}
@@ -1446,15 +1473,14 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		userID:    userID, displayName: display,
 		metrics: s.metrics, pingPeriod: connPingPeriod,
 	}
-	// ActiveConns was already reserved pre-upgrade (admission gate above); the
-	// teardown defer releases it exactly once on the steady-state path.
+	// ActiveConns was already reserved pre-upgrade (tryReserveWS); the teardown
+	// defer releases it exactly once via the idempotent `release` (one reserve,
+	// one release — no double-release, no leak).
 	go c.writePump()
 	defer func() {
 		s.hub.leave(c)
 		c.close()
-		if s.metrics != nil {
-			s.metrics.ActiveConns.Add(-1)
-		}
+		release()
 	}()
 
 	for {
