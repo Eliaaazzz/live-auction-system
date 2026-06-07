@@ -75,8 +75,10 @@ describe('MobileRoom · reject toast copy', () => {
   });
 
   it('falls back to raw code when copy is unavailable', () => {
+    // The raw code shows once as the message fallback; the machine code
+    // otherwise lives in the toast's title attribute (design review P0-1).
     render(<MobileRoom rejectCode={'ERR_UNKNOWN_REJECTION'} leaders={[]}/>);
-    expect(screen.getAllByText('ERR_UNKNOWN_REJECTION')).toHaveLength(2);
+    expect(screen.getByText('ERR_UNKNOWN_REJECTION')).toBeInTheDocument();
   });
 });
 
@@ -90,7 +92,7 @@ describe('MobileRoom bid locking', () => {
   it('does not submit chip bids after the local countdown reaches zero', () => {
     const onBid = vi.fn();
     const { container } = render(
-      <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid}/>,
+      <MobileRoom status="LIVE" remainingMs={0} leaders={[]} onBid={onBid} capCents="15000000"/>,
     );
 
     const maxButton = [...container.querySelectorAll('button')]
@@ -107,7 +109,7 @@ describe('MobileRoom bid locking', () => {
   it('still submits chip bids while LIVE and time remains', () => {
     const onBid = vi.fn();
     const { container } = render(
-      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid}/>,
+      <MobileRoom status="LIVE" remainingMs={1000} leaders={[]} onBid={onBid} capCents="15000000"/>,
     );
 
     const maxButton = [...container.querySelectorAll('button')]
@@ -131,15 +133,16 @@ describe('MobileRoom · join gate (拍卖参与流程)', () => {
     window.localStorage.clear();
   });
 
-  // The rules summary mentions 封顶价 as copy, so "is the cap CHIP there"
-  // must look at buttons, not raw text.
-  const hasCapChip = (container) =>
-    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('封顶'));
+  // Detect the bid chips via the +1档 button (the 封顶 chip only renders
+  // when a real capCents exists, and the rules summary mentions 封顶价 as
+  // copy — raw-text matching would false-positive).
+  const hasBidChips = (container) =>
+    [...container.querySelectorAll('button')].some((b) => b.textContent.includes('+1档'));
 
   it('locks the bid chips behind 我要参与竞拍 until the 须知 is accepted', () => {
     const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
     expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
-    expect(hasCapChip(container)).toBe(false);
+    expect(hasBidChips(container)).toBe(false);
   });
 
   it('我要参与 → 须知 sheet → 勾选同意 → chips unlock + persisted', () => {
@@ -161,7 +164,7 @@ describe('MobileRoom · join gate (拍卖参与流程)', () => {
 
     // Sheet closes, chips unlock, acceptance persists per room.
     expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
-    expect(hasCapChip(container)).toBe(true);
+    expect(hasBidChips(container)).toBe(true);
     expect(window.localStorage.getItem('lumen:joined:auc-join')).toBe('1');
   });
 
@@ -171,7 +174,7 @@ describe('MobileRoom · join gate (拍卖参与流程)', () => {
     fireEvent.click(screen.getByText('暂不参与'));
     expect(screen.queryByRole('dialog', { name: '拍卖须知' })).not.toBeInTheDocument();
     expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
-    expect(hasCapChip(container)).toBe(false);
+    expect(hasBidChips(container)).toBe(false);
   });
 
   it('scopes acceptance by room — joining auc-a leaves auc-b gated', () => {
@@ -179,11 +182,11 @@ describe('MobileRoom · join gate (拍卖参与流程)', () => {
     const { container, rerender } = render(
       <MobileRoom status="LIVE" leaders={[]} followScopeId="auc-a"/>,
     );
-    expect(hasCapChip(container)).toBe(true);
+    expect(hasBidChips(container)).toBe(true);
 
     rerender(<MobileRoom status="LIVE" leaders={[]} followScopeId="auc-b"/>);
     expect(screen.getByText('我要参与竞拍')).toBeInTheDocument();
-    expect(hasCapChip(container)).toBe(false);
+    expect(hasBidChips(container)).toBe(false);
   });
 
   it('re-opens the 须知 read-only from the rules summary after joining', () => {

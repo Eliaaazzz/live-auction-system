@@ -112,8 +112,10 @@ function AdminPublish() {
           <span style={{ fontSize: 12, fontWeight: 600 }}>新建拍品 · DRAFT</span>
         </div>
         <div style={{ flex: 1 }}/>
-        <button style={btnGhost2}>预览</button>
-        <button style={btnGhost2}>保存草稿</button>
+        {/* Honest placeholders: dead-looking buttons read as bugs in review.
+            Disabled + tooltip until the flows exist (design review P1-7). */}
+        <button disabled title="Demo 版未开放" style={{ ...btnGhost2, opacity: .45, cursor: 'not-allowed' }}>预览</button>
+        <button disabled title="Demo 版未开放" style={{ ...btnGhost2, opacity: .45, cursor: 'not-allowed' }}>保存草稿</button>
       </div>
 
       <div style={{
@@ -275,15 +277,18 @@ function AdminPublish() {
           {/* ─ Section: schedule ─ */}
           <FormSection step="04" title="时间安排" desc="服务器时区 UTC+8 · 排期后无法直接 LIVE，需先 VLM 核对">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14 }}>
-              <FormRow label="开拍日期" required>
+              <FormRow label="开拍日期">
                 <input type="date" value={scheduleDate} onChange={e => setScheduleDate(e.target.value)} style={inp}/>
               </FormRow>
-              <FormRow label="开拍时间" required>
+              <FormRow label="开拍时间">
                 <input type="time" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} style={inp}/>
               </FormRow>
               <FormRow label="排期模式">
-                <SegBar value="auto" onChange={()=>{}}
-                  options={[{v:'auto',l:'到点自动 LIVE'},{v:'manual',l:'人工开拍'}]}/>
+                {/* Backend has no scheduled-start endpoint — don't promise
+                    「到点自动 LIVE」 (P1-7). Date/time are a display hint. */}
+                <SegBar value="manual" onChange={() => {}}
+                  options={[{v:'manual',l:'人工开拍'}]}/>
+                <Hint>到点自动 LIVE 即将支持 · 排期时间仅作展示</Hint>
               </FormRow>
             </div>
           </FormSection>
@@ -344,7 +349,7 @@ function AdminPublish() {
             background: 'rgba(37,244,238,.06)', border: '1px solid rgba(37,244,238,.22)',
             fontSize: 11, color: 'var(--douyin-ink-text)', lineHeight: 1.5,
           }}>
-            <strong style={{ color: 'var(--douyin-cyan)' }}>下一步：</strong> 视频上传后 AI Sidecar 会自动运行 VLM，
+            <strong style={{ color: 'var(--douyin-cyan)' }}>下一步：</strong> 提交后 AI Sidecar 会对商品图运行 VLM，
             生成的 5 项事实需要在 <em>VLM 事实核对</em> 页人工确认，才能进入 SCHEDULED 状态。
           </div>
         </div>

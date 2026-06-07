@@ -116,7 +116,7 @@ function MobileRoomSkeleton() {
         right: 0,
         bottom: 0,
         top: '46%',
-        padding: '18px 14px calc(34px + env(safe-area-inset-bottom, 0px))',
+        padding: '18px 14px max(34px, calc(env(safe-area-inset-bottom, 0px) + 12px))',
         background: 'linear-gradient(180deg, rgba(23,26,40,.72), rgba(23,26,40,.96))',
         backdropFilter: 'blur(18px)',
         display: 'flex',
@@ -179,7 +179,7 @@ function MobileRoom({
   flashPrice = false,
   aiStatus = 'live',
   aiTrigger = 'open',
-  aiText = '当前价 ¥128,800 · 还有 30 秒，机会留给最果断的人。',
+  aiText = '当前价 ¥128,800 · 距落槌 30 秒，如需出价请尽快确认。',
   aiStreaming = false,
   connStatus = 'ok',
   showColorRamp = false,
@@ -206,10 +206,16 @@ function MobileRoom({
   videoUrl = null,         // 直播画面 URL (spec §4): HLS .m3u8 (火山直播 #121) or a
                            // fixed loop; absent → simulate the feed (CSS sheen)
   winnerName = '匿名买家',  // shown on the SOLD 落槌 result page
+  isYouWinner = false,     // SOLD result: winner-specific celebration copy
   onViewEvidence,          // SOLD result "查看证据卡" → navigate to evidence card
+  onBackToHall,            // SOLD result ghost CTA — losers need an exit too
   onSwitchRoom,            // optional Douyin-style vertical room switching
   switchRoomAvailable = false,
   followScopeId = 'lumen-auction',
+  // P0-6 (design review): real item identity from the snapshot. The old
+  // hardcoded 百达翡丽 title showed for every auction created in the admin.
+  productName = null,
+  lotNo = null,
 }) {
   // Follow the seller — cosmetic social toggle (no backend; the relationship
   // graph is out of V9 scope). Local state so the button visibly responds.
@@ -268,6 +274,13 @@ function MobileRoom({
   // Background color-temp ramp on the last 10s — only if asked, anchored to urgency (§9.2)
   const warn = remainingMs > 0 && remainingMs <= 10000 && status === 'LIVE';
   const biddingLocked = status !== 'LIVE' || remainingMs <= 0;
+
+  // Final 10s: an expanded video hides the countdown AND the bid chips — an
+  // accidental tap there would lock the buyer out of the endgame. Collapse
+  // and block re-expanding until the hammer (design review P2-2).
+  React.useEffect(() => {
+    if (warn) setVideoExpanded(false);
+  }, [warn]);
   const bg = warn && showColorRamp
     ? 'radial-gradient(ellipse at top, rgba(254,44,85,.18) 0%, var(--douyin-ink) 55%)'
     : 'var(--douyin-ink)';
@@ -377,22 +390,6 @@ function MobileRoom({
       {/* Leading celebration toast — F06 */}
       <LeadingToast visible={showLeadingToast} gainCents="500000"/>
 
-      {/* Reject toast — CN copy from bidRejectCopy[code] */}
-      {rejectMsg && (
-        <div className="lumen-slam-in" style={{
-          position: 'absolute', top: 100, left: '50%', transform: 'translateX(-50%)', zIndex: 65,
-          padding: '8px 14px', borderRadius: 8,
-          background: 'rgba(255,77,112,.95)', color: '#fff', backdropFilter: 'blur(8px)',
-          fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)',
-          display: 'flex', alignItems: 'center', gap: 8,
-          boxShadow: '0 10px 28px rgba(255,77,112,.4)',
-        }}>
-          <span>✗</span>
-          <span>{rejectMsg}</span>
-          <span className="mono" style={{ fontSize: 10, opacity: .8 }}>{rejectCode}</span>
-        </div>
-      )}
-
       {/* Long-press bid wheel — F25 */}
       <LongPressBidWheel
         visible={showLongPress}
@@ -411,6 +408,7 @@ function MobileRoom({
           if (Date.now() < suppressVideoClickUntilRef.current) {
             return;
           }
+          if (!videoExpanded && warn) return; // no expanding inside final 10s
           setVideoExpanded((v) => !v);
         }}
         onTouchStart={handleVideoTouchStart}
@@ -524,27 +522,47 @@ function MobileRoom({
           <SpeakerToggle muted={!soundOn} onToggle={(e) => { e?.stopPropagation?.(); toggleSound(); }}/>
         </div>
 
-        {/* item meta strip */}
+        {/* item meta strip — real product identity; 「卖家已实名」 replaces the
+            old 「已认证」 which read as a platform authenticity guarantee
+            (compliance red line: no 保真 commitment). */}
         <div style={{
           position: 'absolute', top: 100, left: 16, right: 16, zIndex: 5,
           display: 'flex', flexDirection: 'column', gap: 4,
         }}>
           <div style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
-            拍品 2024-0142 · 二手腕表 · 已认证
+            {lotNo ? `拍品 ${lotNo} · ` : ''}卖家已实名 · 单品竞拍
           </div>
-          <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: 0 }}>
-            百达翡丽 5711/1A 鹦鹉螺 · 蓝面
+          <div style={{
+            fontSize: 16, fontWeight: 600, letterSpacing: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {productName || '直播竞拍'}
           </div>
         </div>
 
-        {/* Overtake slam — F07 */}
+        {/* Overtake slam — F07. Real leader + real gap (the old hardcoded
+            海风_2024/¥1,300 showed wrong data in live rooms), and 反超 →
+            actually fires the next valid bid — the eBay outbid loop's core
+            action was a dead button (P0-5). */}
         {overtakeBanner && (
-          <OvertakenSlam visible byName="海风_2024" gapCents="130000"/>
+          <OvertakenSlam
+            visible
+            byName={firstLeader?.displayName || firstLeader?.userId || '竞拍者'}
+            gapCents={yourGapCents}
+            onReverse={(e) => {
+              e?.stopPropagation?.();
+              if (!biddingLocked && onBid) onBid(minBidCents);
+            }}
+          />
         )}
 
         <button
           type="button"
-          onClick={(e) => { e.stopPropagation(); setVideoExpanded((v) => !v); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!videoExpanded && warn) return; // final-10s: bidding stays visible
+            setVideoExpanded((v) => !v);
+          }}
           aria-label={videoExpanded ? '收起直播画面' : '展开直播画面'}
           title={videoExpanded ? '收起直播画面' : '展开直播画面'}
           style={{
@@ -624,28 +642,25 @@ function MobileRoom({
         backdropFilter: 'blur(18px) saturate(1.18)',
         display: 'flex', flexDirection: 'column',
         // Bottom pad clears the iOS home indicator on a full-bleed phone
-        // (meeting: safe-area). env() is 0 inside the desktop preview card.
-        padding: '12px 14px calc(34px + env(safe-area-inset-bottom, 0px))',
+        // (meeting: safe-area); max() avoids double-padding when the inset
+        // itself is already ~34px. env() is 0 inside the desktop card.
+        padding: '12px 14px max(34px, calc(env(safe-area-inset-bottom, 0px) + 12px))',
         gap: 10, overflow: 'hidden',
       }}>
-        {/* Drag handle */}
-        <div style={{
-          alignSelf: 'center', width: 36, height: 4, borderRadius: 2,
-          background: 'rgba(255,255,255,.18)', marginBottom: -4,
-        }}/>
-
         {/* Price + countdown row */}
         <div className={showOwnFlash ? 'lumen-gold-flash' : ''} style={{
           flexShrink: 0,
           display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
           padding: '6px 4px 0', borderRadius: 8,
         }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
             <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
               当前价
             </span>
-            <PriceDisplay cents={currentCents} size={36} tone="ink" flash={flashPrice} withUnderline/>
-            <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)', letterSpacing: 0 }}>
+            {/* size scales down on 360px-class phones instead of wrapping the
+                last digit onto a second line (P0-2). */}
+            <PriceDisplay cents={currentCents} size="min(36px, 9.2vw)" tone="ink" flash={flashPrice} withUnderline/>
+            <span className="mono" style={{ fontSize: 11, color: 'var(--douyin-ink-muted)', letterSpacing: 0 }}>
               {formatCentsCNYCompact(currentCents)}
             </span>
           </div>
@@ -669,7 +684,7 @@ function MobileRoom({
         <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
           <ExtendBadge count={extendCount} sweep={extendSweep}/>
           <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
-            末 10s 出价自动延时
+            末 10 秒出价自动延时
           </span>
           <div style={{ flex: 1 }}/>
           <span className="mono" style={{ fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
@@ -683,6 +698,10 @@ function MobileRoom({
         <div className="no-scrollbar" style={{
           flex: 1, minHeight: 0, overflowY: 'auto',
           display: 'flex', flexDirection: 'column', gap: 10,
+          // Bottom fade = "more below" affordance; the scrollbar is hidden so
+          // without it small screens read the cut-off content as the end.
+          maskImage: 'linear-gradient(180deg, #000 calc(100% - 18px), transparent)',
+          WebkitMaskImage: 'linear-gradient(180deg, #000 calc(100% - 18px), transparent)',
         }}>
           <BuyerFocusPanel
             firstLeader={firstLeader}
@@ -710,7 +729,31 @@ function MobileRoom({
             确认弹窗 + 须知), then the 加价 chips. onBid is called with the
             absolute cents string the chip computed; LiveRoomRoute wires it to
             placeBid. Pinned (flex-shrink:0) so it is always visible. */}
-        <div style={{ flexShrink: 0, marginTop: 8 }}>
+        <div style={{ flexShrink: 0, marginTop: 8, position: 'relative' }}>
+          {/* Reject feedback lands right above the chips — where the eyes and
+              thumb already are (P0-1; the old top-of-video toast was outside
+              the bidding sightline and its slam-in keyframe overrode the
+              inline translateX, flinging it half off-screen). The wrapper
+              does the centering; the raw error code lives in title. */}
+          {rejectMsg && (
+            <div style={{
+              position: 'absolute', left: 0, right: 0, bottom: '100%', marginBottom: 8,
+              display: 'flex', justifyContent: 'center',
+              pointerEvents: 'none', zIndex: 65,
+            }}>
+              <div className="lumen-slam-in" role="alert" title={rejectCode || undefined} style={{
+                maxWidth: '94%',
+                padding: '8px 14px', borderRadius: 8,
+                background: 'rgba(255,77,112,.95)', color: '#fff', backdropFilter: 'blur(8px)',
+                fontSize: 12, fontWeight: 600, fontFamily: 'var(--font-sans)',
+                display: 'flex', alignItems: 'center', gap: 8,
+                boxShadow: '0 10px 28px rgba(255,77,112,.4)',
+              }}>
+                <span>✗</span>
+                <span style={{ minWidth: 0 }}>{rejectMsg}</span>
+              </div>
+            </div>
+          )}
           {joined ? (
             <>
               <QuickBidChips
@@ -724,7 +767,7 @@ function MobileRoom({
               />
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
-                padding: '6px 4px 0', fontSize: 10, color: 'var(--douyin-ink-dim)',
+                padding: '6px 4px 0', fontSize: 11, color: 'var(--douyin-ink-muted)',
               }}>
                 <span>最低加价 {formatCentsCNYShort(stepCents)}</span>
                 <span className="mono">末 10 秒出价延时 30 秒</span>
@@ -746,7 +789,11 @@ function MobileRoom({
           <MobileHammer
             amountCents={currentCents}
             winnerName={winnerName}
+            isYouWinner={isYouWinner}
             onViewEvidence={onViewEvidence}
+            onBackToHall={onBackToHall}
+            productName={productName}
+            lotNo={lotNo}
             expressive={expressive}
           />
         </div>
@@ -787,8 +834,7 @@ function TerminalOverlay({ status }) {
         : 'radial-gradient(ellipse at center, rgba(40,8,18,.92) 0%, rgba(10,10,18,.96) 70%)',
       backdropFilter: 'blur(2px)',
       fontFamily: 'var(--font-sans)',
-      animation: 'lumen-veil-bridge-fade .4s ease-in 1 both',
-    }}>
+    }} className="lumen-veil-bridge">
       <div style={{
         display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14,
         padding: '28px 36px', borderRadius: 18,
@@ -872,7 +918,7 @@ function JoinGate({ onShowTerms }) {
         }}>
         我要参与竞拍
       </button>
-      <div style={{ textAlign: 'center', fontSize: 10, color: 'var(--douyin-ink-dim)' }}>
+      <div style={{ textAlign: 'center', fontSize: 11, color: 'var(--douyin-ink-muted)' }}>
         参与前请阅读并同意《拍卖须知》
       </div>
     </div>
@@ -885,8 +931,8 @@ function JoinGate({ onShowTerms }) {
 // no real payment/logistics commitment.
 const AUCTION_TERMS = [
   { title: '透明单品竞拍', text: '明牌出价、单一拍品，无盲盒、无随机开箱玩法。' },
-  { title: '出价即承诺', text: '出价须高于当前价且为最低加价的整数倍；正式环境需实名认证并缴纳保证金，竞得后弃标将按平台规则处理。' },
-  { title: '延时保护', text: '最后 10 秒内的有效出价自动延长 30 秒，防止狙击出价。' },
+  { title: '出价即承诺', text: '出价须高于当前价，且加价幅度为最低加价的整数倍；正式环境需实名认证并缴纳保证金，竞得后悔拍将按平台规则处理。' },
+  { title: '延时保护', text: '最后 10 秒内出现有效出价时，本场竞拍自动延长 30 秒，防止压哨狙击。' },
   { title: '成交判定', text: '以服务端事件序列与证据链为准；直播画面仅供参考，不参与判定。' },
   { title: '演示环境', text: '当前为虚拟币演示，不涉及真实支付、物流与保真承诺。' },
 ];
@@ -922,7 +968,7 @@ function TermsSheet({ stepCents, joined = false, onAccept, onClose }) {
           borderRadius: '18px 18px 0 0',
           background: 'var(--douyin-ink-soft)',
           border: '1px solid rgba(255,255,255,.08)', borderBottom: 'none',
-          padding: '14px 16px calc(20px + env(safe-area-inset-bottom, 0px))',
+          padding: '14px 16px max(20px, calc(env(safe-area-inset-bottom, 0px) + 12px))',
           display: 'flex', flexDirection: 'column', gap: 12,
         }}>
         <div style={{
@@ -1166,8 +1212,11 @@ function RulesSummary({ minBidCents, stepCents, capCents, extendCount, onShowTer
         fontWeight: 700,
       }}>
         <span>规则</span>
-        <span className="mono" style={{ fontSize: 10, fontWeight: 500 }}>
-          最低 {formatCentsCNYCompact(minBidCents)}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="mono" style={{ fontSize: 10, fontWeight: 500 }}>
+            最低 {formatCentsCNYCompact(minBidCents)}
+          </span>
+          <span className="lumen-rules-chev" aria-hidden style={{ fontSize: 9 }}>▾</span>
         </span>
       </summary>
       <div style={{ padding: '0 0 10px', display: 'flex', flexDirection: 'column', gap: 7 }}>
@@ -1232,7 +1281,20 @@ function InfoLine({ label, value }) {
 }
 
 // ─── Mobile · Hammer overlay (A→B accent flip) ─────────────────
-function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', expressive = true, onViewEvidence }) {
+// isYouWinner splits the most emotional moment of the journey: winners get
+// the congratulation, everyone else gets a neutral close + an exit back to
+// the hall (design review P1-3 — the page previously answered neither
+// "did I win?" nor "what now?").
+function MobileHammer({
+  amountCents = '12880000',
+  winnerName = '海风_2024',
+  isYouWinner = false,
+  expressive = true,
+  onViewEvidence,
+  onBackToHall,
+  productName = null,
+  lotNo = null,
+}) {
   return (
     <div style={{
       position: 'relative', width: '100%', height: '100%',
@@ -1270,7 +1332,7 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           }}>已成交</span>
         </div>
         <div className="sans" style={{ fontSize: 11, color: 'var(--solemn-cream-dim)', letterSpacing: 0 }}>
-          拍品 2024-0142 · 百达翡丽 5711/1A
+          {lotNo ? `拍品 ${lotNo} · ` : ''}{productName || '直播竞拍'}
         </div>
       </div>
 
@@ -1296,9 +1358,13 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
         <div className="serif" style={{
           marginTop: 16, fontSize: 22, fontWeight: 500, color: 'var(--solemn-cream)',
           letterSpacing: '.02em',
-        }}>{winnerName}</div>
-        <div className="sans" style={{ fontSize: 11, color: 'var(--solemn-cream-dim)' }}>
-          最终竞得人
+        }}>{isYouWinner ? '恭喜，您竞得本场' : winnerName}</div>
+        <div className="sans" style={{
+          fontSize: 11,
+          color: isYouWinner ? 'var(--solemn-gold)' : 'var(--solemn-cream-dim)',
+          fontWeight: isYouWinner ? 600 : 400,
+        }}>
+          {isYouWinner ? `${winnerName} · 最终竞得人` : '最终竞得人'}
         </div>
       </div>
 
@@ -1337,11 +1403,22 @@ function MobileHammer({ amountCents = '12880000', winnerName = '海风_2024', ex
           </svg>
         </button>
 
+        {onBackToHall && (
+          <button onClick={onBackToHall} style={{
+            width: '100%', minHeight: 44, padding: '11px', borderRadius: 12,
+            background: 'transparent', border: '1px solid rgba(245,237,221,.25)',
+            color: 'var(--solemn-cream)', fontFamily: 'var(--font-sans)',
+            fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>
+            返回大厅 · 看其他场次
+          </button>
+        )}
+
         <div className="sans" style={{
           fontSize: 10, color: 'var(--solemn-cream-dim)', textAlign: 'center',
           letterSpacing: '.04em',
         }}>
-          成交结果已返回 · 服务器时序与链头哈希请以证据卡为准
+          成交结果已确认 · 服务端时序与链头哈希请以证据卡为准
         </div>
       </div>
     </div>
@@ -1390,7 +1467,7 @@ const TYPE_META = {
 //    GET /api/auctions/:id/evidence (see EvidenceRoute.jsx). The
 //    component maps backend's timeline event shape to its own row shape
 //    inside the render below — no external mapping required.
-function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null }) {
+function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null, onBack = null }) {
   const isWired = evidence != null;
   const [actionHint, setActionHint] = React.useState('');
   const actionHintTimerRef = React.useRef(null);
@@ -1527,11 +1604,17 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
         padding: '52px 18px 14px',
         display: 'flex', alignItems: 'center', gap: 10,
       }}>
-        <button style={{
-          width: 30, height: 30, borderRadius: 15, border: 'none',
-          background: 'rgba(245,237,221,.06)', color: 'var(--solemn-cream)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
+        <button
+          aria-label="返回"
+          onClick={() => {
+            if (onBack) onBack();
+            else if (typeof window !== 'undefined') window.history.back();
+          }}
+          style={{
+            width: 44, height: 44, borderRadius: 22, border: 'none', cursor: 'pointer',
+            background: 'rgba(245,237,221,.06)', color: 'var(--solemn-cream)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M9 3L4 7l5 4" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
@@ -1642,7 +1725,7 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
               letterSpacing: 0,
               lineHeight: 1.35,
             }}>
-              虚拟币 · 非真实支付 · 非赌博
+              虚拟币 · 非真实支付 · 非博彩
             </span>
             <span style={{
               fontSize: 10,
@@ -1775,9 +1858,11 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
                 border: '1px solid rgba(201,169,97,.35)',
                 background: 'transparent',
                 color: 'var(--solemn-cream)',
-                padding: '3px 8px',
-                borderRadius: 7,
-                fontSize: 10,
+                minHeight: 40,
+                padding: '0 12px',
+                borderRadius: 8,
+                fontSize: 11,
+                cursor: isWired ? 'pointer' : 'not-allowed',
               }}
             >
               复制证据数据
@@ -1789,9 +1874,11 @@ function MobileEvidence({ chainBreak = false, breakAtSeq = null, evidence = null
                 border: '1px solid rgba(201,169,97,.35)',
                 background: 'transparent',
                 color: 'var(--solemn-cream)',
-                padding: '3px 8px',
-                borderRadius: 7,
-                fontSize: 10,
+                minHeight: 40,
+                padding: '0 12px',
+                borderRadius: 8,
+                fontSize: 11,
+                cursor: isWired ? 'pointer' : 'not-allowed',
               }}
             >
               分享证据链接

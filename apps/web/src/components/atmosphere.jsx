@@ -278,12 +278,19 @@ function displayBidderName(item) {
 }
 
 // ─── HeartbeatVignette — red glow on device edges in final-10s ─
+// Biased to the bottom + sides: the old symmetric glow washed over the item
+// title / host chrome at the top and crushed its contrast exactly at the
+// attention peak (design review P1-1).
 function HeartbeatVignette({ active }) {
   if (!active) return null;
   return (
     <div className="lumen-heartbeat" style={{
       position: 'absolute', inset: 0, zIndex: 5, pointerEvents: 'none',
-      boxShadow: 'inset 0 0 60px 12px rgba(254,44,85,.35), inset 0 0 18px 4px rgba(254,44,85,.5)',
+      boxShadow: [
+        'inset 0 -60px 60px -8px rgba(254,44,85,.4)',
+        'inset 40px 0 60px -36px rgba(254,44,85,.28)',
+        'inset -40px 0 60px -36px rgba(254,44,85,.28)',
+      ].join(', '),
     }}/>
   );
 }

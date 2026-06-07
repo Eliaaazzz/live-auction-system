@@ -34,7 +34,7 @@
 // see "T4 evidence v0 · 哈希链可验证" not "blockchain-secured."
 
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { MobileEvidence } from '../components/mobile.jsx';
 import { formatCentsCNY } from '../components/primitives.jsx';
 import { ensureSession } from '../lib/auth.js';
@@ -42,6 +42,7 @@ import { api } from '../lib/api.js';
 
 export function EvidenceRoute() {
   const { auctionId } = useParams();
+  const navigate = useNavigate();
   const [state, setState] = useState({ phase: 'loading', evidence: null, error: null });
   const [order, setOrder] = useState(null); // settlement order (null = none / not sold)
 
@@ -72,7 +73,7 @@ export function EvidenceRoute() {
   }
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <MobileEvidence evidence={state.evidence} />
+      <MobileEvidence evidence={state.evidence} onBack={() => navigate(`/room/${auctionId}`)} />
       {order && <PaymentBar order={order} onPaid={setOrder} auctionId={auctionId} />}
     </div>
   );

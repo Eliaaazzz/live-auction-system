@@ -43,6 +43,9 @@ export function LiveRoomRoute() {
   // Item 3: the real product image, rendered as the "live" feed in the room
   // (V9: video is non-authoritative — purely the ambiance; never gates bids).
   const [productImage, setProductImage] = useState(null);
+  // P0-6: real item title from the snapshot — the room no longer hardcodes
+  // the demo watch name.
+  const [productName, setProductName] = useState(null);
   // #121: optional live-stream play URL (火山直播 HLS .m3u8) for the 直播画面.
   // Non-authoritative — null → the room simulates the feed (CSS sheen).
   const [livePlayUrl, setLivePlayUrl] = useState(null);
@@ -136,6 +139,7 @@ export function LiveRoomRoute() {
     let client;
     setBooting(!USE_MOCK);
     setProductImage(null);
+    setProductName(null);
     setLivePlayUrl(null);
 
     (async () => {
@@ -199,6 +203,7 @@ export function LiveRoomRoute() {
           yourUserId:   useAuctionStore.getState().yourUserId,
         });
         if (snap.imageUrl) setProductImage(snap.imageUrl);
+        if (snap.productName) setProductName(snap.productName);
         if (snap.livePlayUrl) setLivePlayUrl(snap.livePlayUrl);
       } catch (e) {
         console.warn('[LiveRoom] snapshot failed (continuing — WS will rebuild)', e);
@@ -282,6 +287,7 @@ export function LiveRoomRoute() {
     <PullToResync onResync={handleResync}>
     <MobileRoom
       productImage={productImage}
+      productName={productName}
       videoUrl={livePlayUrl}
       followScopeId={auctionId}
       viewerCount={store.viewerCount}
@@ -301,7 +307,9 @@ export function LiveRoomRoute() {
       serverClockOffsetMs={getDriftMs()}
       lastSeq={store.lastSeq}
       winnerName={store.winnerDisplayName || store.winnerId || '匿名买家'}
+      isYouWinner={!!store.winnerId && store.winnerId === store.yourUserId}
       onViewEvidence={() => navigate(`/evidence/${auctionId}`)}
+      onBackToHall={() => navigate('/')}
       ticker={store.recentEvents
         .map(tickerItemFromEvent)
         .filter(Boolean)
@@ -315,7 +323,9 @@ export function LiveRoomRoute() {
       rejectShake={!!store.lastRejectCode}
       showColorRamp={inFinal10}
       showHourglass={inFinal10}
-      showPulseWaves={inFinal10}
+      // P1-1 (design review): pulse waves OFF — final-10s already runs the
+      // heartbeat vignette + countdown pulse; a third concentric animation
+      // was noise at the exact moment attention peaks.
       onSwitchRoom={handleSwitchRoom}
       switchRoomAvailable={roomIds.length > 1}
       // T7-2: aiTrigger / aiText prefer the AI_COMMENTARY broadcast
