@@ -6,7 +6,10 @@ import React from 'react';
 export function DesktopShell({ title, children }) {
   return (
     <div style={{
-      width: '100%', minHeight: '100vh',
+      // Fixed viewport height: admin pages manage their own internal scroll
+      // (height:100% + overflow:auto). minHeight alone left the flex child at
+      // content height — visible as a dead band under light-themed pages.
+      width: '100%', height: '100dvh',
       background: '#06070d', display: 'flex', flexDirection: 'column',
     }}>
       <div style={{

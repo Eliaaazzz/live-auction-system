@@ -240,6 +240,12 @@ type AuctionListItem struct {
 	CreatedAtMs       int64
 	Mode              string
 	ParentAuctionID   string
+	// Rules + bid count back the 商品管理 table columns (起拍价 / 固定加价 /
+	// 封顶价 / 出价次数) so the console renders without N+1 detail fetches.
+	StartPriceCents int64
+	IncrementCents  int64
+	CapPriceCents   int64
+	BidCount        int64
 }
 
 // ListAuctions returns recent auctions (newest first), joined to their product.
@@ -252,7 +258,11 @@ func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem,
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, COALESCE(p.name,''), COALESCE(p.image_url,''), a.status,
 		        a.current_price_cents, COALESCE(a.winner_id,''), a.end_at, a.created_at,
-		        COALESCE(ar.mode,'ENGLISH'), COALESCE(a.parent_auction_id,'')
+		        COALESCE(ar.mode,'ENGLISH'), COALESCE(a.parent_auction_id,''),
+		        COALESCE(ar.start_price_cents,0), COALESCE(ar.increment_cents,0),
+		        COALESCE(ar.cap_price_cents,0),
+		        (SELECT COUNT(*) FROM auction_events e
+		          WHERE e.auction_id = a.id AND e.event_type = 'BID_ACCEPTED')
 		   FROM auctions a
 		   LEFT JOIN products p ON a.product_id = p.id
 		   LEFT JOIN auction_rules ar ON ar.auction_id = a.id
@@ -266,7 +276,8 @@ func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem,
 		var it AuctionListItem
 		var endAt, createdAt sql.NullTime
 		if err := rows.Scan(&it.ID, &it.ProductName, &it.ImageURL, &it.Status,
-			&it.CurrentPriceCents, &it.WinnerID, &endAt, &createdAt, &it.Mode, &it.ParentAuctionID); err != nil {
+			&it.CurrentPriceCents, &it.WinnerID, &endAt, &createdAt, &it.Mode, &it.ParentAuctionID,
+			&it.StartPriceCents, &it.IncrementCents, &it.CapPriceCents, &it.BidCount); err != nil {
 			return nil, err
 		}
 		if endAt.Valid {
