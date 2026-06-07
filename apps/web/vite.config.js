@@ -18,6 +18,11 @@ export default defineConfig(({ mode }) => {
           target: API_BASE,
           changeOrigin: true,
         },
+        // Uploaded product media — POST /api/upload responses point here
+        '/uploads': {
+          target: API_BASE,
+          changeOrigin: true,
+        },
         // WebSocket — forward /ws to the backend
         '/ws': {
           target: WS_BASE,

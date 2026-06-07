@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
-  AIBubble, QuickBidChips, HeatMeter,
+  AIBubble, QuickBidChips, HeatMeter, Leaderboard,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
@@ -704,6 +704,7 @@ function MobileRoom({
           WebkitMaskImage: 'linear-gradient(180deg, #000 calc(100% - 18px), transparent)',
         }}>
           <BuyerFocusPanel
+            leaders={leaders}
             firstLeader={firstLeader}
             secondLeader={secondLeader}
             yourRank={yourRank}
@@ -1074,6 +1075,7 @@ function TermsSheet({ stepCents, joined = false, onAccept, onClose }) {
 }
 
 function BuyerFocusPanel({
+  leaders,
   firstLeader,
   secondLeader,
   yourRank,
@@ -1097,6 +1099,7 @@ function BuyerFocusPanel({
     <>
       <PanelHeader title="当前领先" meta="前两名与我的位置" right={<HeatMeter bidsPerSec={bidsPerSec} peak={bidsPerSecPeak}/>}/>
       <CompactLeaderCard
+        leaders={leaders}
         firstLeader={firstLeader}
         secondLeader={secondLeader}
         yourRank={yourRank}
@@ -1123,11 +1126,13 @@ function BuyerFocusPanel({
   );
 }
 
-// Meeting decision (Yifan/Zhenyu 2026-06): deep rank lists carry little
-// meaning in a live room — show the champion, the runner-up chasing them,
-// and where *you* stand. Ranks 3-5 stay dropped (nothing occluded on small
-// phones, less to scan).
-function CompactLeaderCard({ firstLeader, secondLeader, yourRank, yourGapCents, isYouLeading }) {
+// Meeting decision (Yifan/Zhenyu 2026-06): the default view shows the
+// champion, the runner-up chasing them, and where *you* stand. The full
+// standings stay one tap away behind a collapsible 全部排行 toggle —
+// available for whoever wants depth, zero cost for everyone else.
+function CompactLeaderCard({ leaders = [], firstLeader, secondLeader, yourRank, yourGapCents, isYouLeading }) {
+  const [showAll, setShowAll] = React.useState(false);
+  const hasMore = leaders.length > 2;
   return (
     <InfoSurface accent="gold">
       <CompactLeaderRow rank={1} leader={firstLeader} lead/>
@@ -1137,6 +1142,27 @@ function CompactLeaderCard({ firstLeader, secondLeader, yourRank, yourGapCents, 
         gapCents={yourGapCents}
         isLeading={isYouLeading}
       />
+      {hasMore && (
+        <>
+          <button
+            onClick={() => setShowAll((s) => !s)}
+            aria-expanded={showAll}
+            style={{
+              minHeight: 36, padding: '4px 2px',
+              background: 'none', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              color: 'var(--douyin-ink-muted)', fontFamily: 'inherit',
+              fontSize: 11, fontWeight: 600,
+            }}>
+            {showAll ? '收起完整排行' : `全部排行（${leaders.length}）`}
+            <span className="lumen-rules-chev" aria-hidden style={{
+              fontSize: 9,
+              transform: showAll ? 'rotate(180deg)' : 'none',
+            }}>▾</span>
+          </button>
+          {showAll && <Leaderboard leaders={leaders}/>}
+        </>
+      )}
     </InfoSurface>
   );
 }

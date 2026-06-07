@@ -95,6 +95,33 @@ export const api = {
   createProduct: (payload) => request('/products', { method: 'POST', body: payload }),
 
   /**
+   * Seller: upload a product image (multipart, ≤5MB, png/jpg/webp/gif).
+   * Returns { url: "/uploads/<name>" } — same-origin, store it as imageUrl.
+   * Not routed through request(): multipart must NOT carry a JSON
+   * content-type header (the browser sets the boundary itself).
+   */
+  uploadImage: async (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers = {};
+    const tok = currentToken();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/upload`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthFailure();
+      let code, message;
+      try {
+        const j = await res.json();
+        code = j.code; message = j.error || j.message;
+      } catch {
+        message = res.statusText;
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res.json();
+  },
+
+  /**
    * Seller: publish auction.
    *   payload = { productId, rules: { mode?, startPriceCents, incrementCents,
    *               capPriceCents?, durationSec, extendWindowSec, extendSec,

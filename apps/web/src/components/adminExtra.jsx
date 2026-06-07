@@ -8,6 +8,110 @@ import { suggestStepCents } from '../lib/bidding.js';
 // lumen-admin-extra.jsx
 // Publish form · Cancel modal · Orders/Products
 
+// ─── ImageDropZone — 拖拽/点击上传商品图 (spec: 竞拍发布 上传商品图片) ───
+// Drag-over highlight, click-to-pick, client-side type/size validation, then
+// POST /api/upload → onChange("/uploads/<name>"). URL paste survives as a
+// secondary path for remote images.
+const UPLOAD_MAX_BYTES = 5 * 1024 * 1024;
+
+function ImageDropZone({ imageUrl, onChange }) {
+  const [drag, setDrag] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [showUrl, setShowUrl] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  const pick = () => { if (!busy) inputRef.current?.click(); };
+
+  const accept = async (file) => {
+    if (!file || busy) return;
+    setError(null);
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) {
+      setError('仅支持 PNG / JPG / WebP / GIF 图片');
+      return;
+    }
+    if (file.size > UPLOAD_MAX_BYTES) {
+      setError('图片不能超过 5MB');
+      return;
+    }
+    setBusy(true);
+    try {
+      await ensureSession('seller-demo');
+      const { url } = await api.uploadImage(file);
+      onChange(url);
+    } catch (e) {
+      setError(e?.message ? `上传失败 · ${e.message}` : '上传失败，请重试');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div
+        onClick={pick}
+        onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDrag(false);
+          accept(e.dataTransfer?.files?.[0]);
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } }}
+        aria-label="上传商品图片"
+        data-testid="image-dropzone"
+        style={{
+          minHeight: 86, borderRadius: 10, cursor: busy ? 'wait' : 'pointer',
+          border: `1.5px dashed ${drag ? 'var(--douyin-cyan)' : error ? 'rgba(254,44,85,.5)' : 'rgba(255,255,255,.18)'}`,
+          background: drag ? 'rgba(37,244,238,.06)' : 'rgba(255,255,255,.03)',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          gap: 4, padding: '12px 14px', textAlign: 'center',
+          transition: 'border-color .15s ease, background .15s ease',
+        }}>
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif"
+          style={{ display: 'none' }}
+          onChange={(e) => { accept(e.target.files?.[0]); e.target.value = ''; }}
+        />
+        <span aria-hidden style={{ fontSize: 20, lineHeight: 1 }}>{busy ? '⏳' : '🖼️'}</span>
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--douyin-ink-text)' }}>
+          {busy ? '正在上传…' : drag ? '松手即上传' : '拖拽图片到此处，或点击选择'}
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--douyin-ink-muted)' }}>
+          PNG / JPG / WebP / GIF · ≤ 5MB
+        </span>
+      </div>
+      {error && (
+        <span role="alert" style={{ fontSize: 11, color: 'var(--state-rejected)', fontWeight: 600 }}>
+          {error}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={() => setShowUrl((s) => !s)}
+        style={{
+          alignSelf: 'flex-start', padding: 0, background: 'none', border: 'none',
+          cursor: 'pointer', color: 'var(--douyin-cyan)', fontFamily: 'inherit',
+          fontSize: 11, fontWeight: 600,
+        }}>
+        {showUrl ? '收起 URL 输入' : '或粘贴图片 URL'}
+      </button>
+      {showUrl && (
+        <input
+          value={imageUrl}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="https://…/item.jpg"
+          style={inp}
+        />
+      )}
+    </div>
+  );
+}
+
 // ───────────────────────────────────────────────────────────────
 // Admin · Publish form
 // ───────────────────────────────────────────────────────────────
@@ -153,7 +257,7 @@ function AdminPublish() {
 
           {/* ─ Section: media ─ (real image URL + 介绍; the room renders these
                and the VLM page drafts facts from the image) */}
-          <FormSection step="02" title="商品图片 & 介绍" desc="图片 URL + 介绍 — 直播间渲染该图,VLM 据此抽取事实">
+          <FormSection step="02" title="商品图片 & 介绍" desc="拖拽上传商品图 + 介绍 — 直播间渲染该图,VLM 据此抽取事实">
             <div style={{ display: 'flex', gap: 16 }}>
               <div style={{
                 width: 96, height: 128, borderRadius: 8, flexShrink: 0, overflow: 'hidden',
@@ -166,9 +270,8 @@ function AdminPublish() {
                   : <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>无图</span>}
               </div>
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <FormRow label="图片 URL" required>
-                  <input value={imageUrl} onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://…/item.jpg" style={inp}/>
+                <FormRow label="商品图片" required>
+                  <ImageDropZone imageUrl={imageUrl} onChange={setImageUrl}/>
                 </FormRow>
                 <FormRow label="商品介绍">
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)}
@@ -1179,4 +1282,5 @@ export {
   AdminPublish,
   AdminCancelModal,
   AdminOrders,
+  ImageDropZone,
 };
