@@ -72,6 +72,13 @@ type Registry struct {
 	// ActiveConns to read "held N, shed the rest, process survives".
 	AdmissionRejected *Counter
 
+	// GoroutinePanics counts panics recovered in long-lived background goroutines
+	// (subscribe / persistence / timer / AI dispatch) by recoverGoroutine. net/http
+	// only recovers request-handler panics, so without this firewall one malformed
+	// Stream payload could crash the whole gateway. A non-zero value is an ALERT
+	// signal: the process survived but a worker tripped and was restarted.
+	GoroutinePanics *Counter
+
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
 	StreamLenMax atomic.Int64 // peak observed stream length since start
@@ -100,6 +107,7 @@ func New() *Registry {
 		BackpressureDrop:            &Counter{},
 		SeqGap:                      &Counter{},
 		AdmissionRejected:           &Counter{},
+		GoroutinePanics:             &Counter{},
 	}
 }
 
@@ -141,6 +149,7 @@ type Snapshot struct {
 	StreamLenMax                int64             `json:"streamLenMax"`
 	ActiveConns                 int64             `json:"activeConns"`
 	AdmissionRejected           int64             `json:"admissionRejected"`
+	GoroutinePanics             int64             `json:"goroutinePanics"`
 	// Runtime gauges sampled at scrape time (runtime.ReadMemStats does a brief
 	// STW pause; /metrics is scraped infrequently so this is acceptable, and it
 	// turns "process died, cause unknown, metrics zeroed" into a pre-alertable
@@ -176,6 +185,7 @@ func (r *Registry) Snapshot() Snapshot {
 		StreamLenMax:                r.StreamLenMax.Load(),
 		ActiveConns:                 r.ActiveConns.Load(),
 		AdmissionRejected:           r.AdmissionRejected.Load(),
+		GoroutinePanics:             r.GoroutinePanics.Load(),
 		HeapInuseBytes:              ms.HeapInuse,
 		HeapSysBytes:                ms.HeapSys,
 		NumGoroutine:                runtime.NumGoroutine(),
@@ -205,6 +215,7 @@ func (r *Registry) Reset() {
 	r.BackpressureDrop.Reset()
 	r.SeqGap.Reset()
 	r.AdmissionRejected.Reset()
+	r.GoroutinePanics.Reset()
 	r.StreamLenMax.Store(0)
 }
 
