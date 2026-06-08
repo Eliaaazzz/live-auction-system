@@ -141,17 +141,19 @@ func normalize(d Draft) Draft {
 }
 
 // MockGenerator drafts deterministic, input-aware copy without a model. It only
-// echoes facts the seller supplied (category/title) — never invents brand/year.
+// echoes safe seller-supplied fields. Toxic input (保真/phone/URL/money/etc.) is
+// dropped before copy generation so the no-creds path cannot leak non-compliant
+// seller text.
 func MockGenerator(req Request) (Draft, error) {
-	item := strings.TrimSpace(req.Title)
+	item := safeInputField(req.Title, maxTitleLen)
 	if item == "" {
-		item = strings.TrimSpace(req.Category)
+		item = safeInputField(req.Category, maxPointLen)
 	}
 	if item == "" {
 		item = "本场拍品"
 	}
 	points := []string{"单一拍品 · 透明竞价", "实时出价 · 反狙击延时保护", "成交链路可回放核验"}
-	if c := strings.TrimSpace(req.Category); c != "" {
+	if c := safeInputField(req.Category, maxPointLen-8); c != "" {
 		points = append([]string{c + " · 卖家已实名"}, points...)
 	}
 	return Draft{
@@ -252,14 +254,8 @@ func draftFailsGuardrail(d Draft) (string, bool) {
 		}
 	}
 	for _, f := range fields {
-		if reURL.MatchString(f) {
-			return "url", true
-		}
-		if rePhone.MatchString(f) {
-			return "phone", true
-		}
-		if reMoney.MatchString(f) {
-			return "money", true
+		if textUnsafe(f) {
+			return "unsafe", true
 		}
 		for _, bad := range bannedWords {
 			if strings.Contains(f, bad) {
@@ -270,12 +266,40 @@ func draftFailsGuardrail(d Draft) (string, bool) {
 	return "", false
 }
 
-// fallbackResponse returns complete canned copy (Fallback=true) on any failure,
-// reusing MockGenerator's deterministic draft so the seller UI never sees empty
-// fields.
+func textUnsafe(s string) bool {
+	return reURL.MatchString(s) || rePhone.MatchString(s) || reMoney.MatchString(s)
+}
+
+func safeInputField(s string, maxLen int) string {
+	v := strings.TrimSpace(s)
+	if v == "" || textUnsafe(v) {
+		return ""
+	}
+	for _, bad := range bannedWords {
+		if strings.Contains(v, bad) {
+			return ""
+		}
+	}
+	return truncateRunes(v, maxLen)
+}
+
+func truncateRunes(s string, maxLen int) string {
+	if maxLen <= 0 || utf8.RuneCountInString(s) <= maxLen {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:maxLen])
+}
+
+// fallbackResponse returns complete canned copy (Fallback=true) on any failure.
+// It never echoes unsafe seller input: MockGenerator first drops toxic fields,
+// then we re-run the guardrail and fall back to a fixed generic draft if needed.
 func fallbackResponse(req Request) Response {
 	d, _ := MockGenerator(req)
 	d = normalize(d)
+	if _, bad := draftFailsGuardrail(d); bad {
+		d = fixedFallbackDraft()
+	}
 	return Response{
 		Title:         d.Title,
 		SellingPoints: d.SellingPoints,
@@ -283,5 +307,17 @@ func fallbackResponse(req Request) Response {
 		Disclaimer:    disclaimer,
 		Fallback:      true,
 		ModelName:     activeModel,
+	}
+}
+
+func fixedFallbackDraft() Draft {
+	return Draft{
+		Title: "本场拍品",
+		SellingPoints: []string{
+			"单一拍品 · 透明竞价",
+			"实时出价 · 反狙击延时保护",
+			"成交链路可回放核验",
+		},
+		Script: "各位买家，本场拍品现在开拍，欢迎理性出价，把握最后十秒的反狙击延时。",
 	}
 }
