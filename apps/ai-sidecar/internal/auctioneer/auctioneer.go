@@ -65,6 +65,7 @@ type Response struct {
 // char-friendly: counts runes not bytes, ≤80 fits comfortably in the
 // AIBubble typewriter without scrolling).
 const maxTextLen = 80
+
 const mockModelName = "mock-llm-T7"
 
 // Compiled once at package init for hot-path use.
