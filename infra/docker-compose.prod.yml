@@ -18,6 +18,16 @@ services:
     restart: unless-stopped
     environment:
       SIDECAR_ADDR: ":8090"
+      # Real AI opt-in (火山方舟 / 豆包). Empty → canned generators (unchanged).
+      # Set in infra/.env on the prod host: ARK_API_KEY + ARK_VLM_MODEL +
+      # ARK_LLM_MODEL (inference endpoint ids). One place flips VLM + auctioneer.
+      VLM_MODE: ${VLM_MODE:-mock}
+      VLM_API_KEY: ${ARK_API_KEY:-}
+      VLM_MODEL: ${ARK_VLM_MODEL:-}
+      VLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      LLM_API_KEY: ${ARK_API_KEY:-}
+      LLM_MODEL: ${ARK_LLM_MODEL:-}
+      LLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
     expose: ["8090"]
 
   lumen:

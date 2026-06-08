@@ -37,6 +37,21 @@ services:
       dockerfile: apps/ai-sidecar/Dockerfile
     environment:
       SIDECAR_ADDR: ":8090"
+      # Real AI is OPT-IN: with no key these stay empty → the sidecar serves the
+      # canned generators (demo path unchanged). To go live, drop the values into
+      # infra/.env — ONE place flips both VLM + auctioneer:
+      #   ARK_API_KEY=…       (火山方舟 API key)
+      #   ARK_VLM_MODEL=ep-…  (doubao-vision inference endpoint id)
+      #   ARK_LLM_MODEL=ep-…  (doubao text inference endpoint id)
+      # Defaults to Ark Beijing; repoint ARK_BASE_URL at an Ollama/vLLM server
+      # (e.g. http://host:11434/v1) + a Qwen model id for the open-source path.
+      VLM_MODE: ${VLM_MODE:-mock}
+      VLM_API_KEY: ${ARK_API_KEY:-}
+      VLM_MODEL: ${ARK_VLM_MODEL:-}
+      VLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      LLM_API_KEY: ${ARK_API_KEY:-}
+      LLM_MODEL: ${ARK_LLM_MODEL:-}
+      LLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
     ports: ["8090:8090"]
 
   lumen:

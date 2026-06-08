@@ -13,6 +13,7 @@
 package auctioneer
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/llm"
 )
 
 // Trigger enumerates the 4 auctioneer triggers per spec.
@@ -118,6 +121,68 @@ func HandlerFunc(generate Generator) http.HandlerFunc {
 // implementation; prod injects real Doubao.
 type Generator func(req Request) (text string, err error)
 
+// activeModel labels Response.ModelName. Select() flips it to the real model id
+// when the Ark path is wired; the default keeps the mock label so existing
+// behavior + tests are unchanged.
+var activeModel = "mock-llm-T7"
+
+// Select returns the generator chosen by env. A real OpenAI-compatible client
+// runs when LLM_API_KEY + LLM_MODEL are set — Volcengine Ark / 豆包 by default,
+// or any OpenAI-compatible server (Ollama + Qwen2.5 for the open-source path)
+// via LLM_BASE_URL/LLM_MODEL. With no key it returns MockGenerator, so a box
+// without creds keeps emitting canned-but-trigger-aware commentary. main.go
+// wires the result; the guardrail + canned fallback wrap whichever is chosen.
+func Select() Generator {
+	cfg := llm.ConfigFromEnv("LLM", llm.DefaultArkBaseURL, "")
+	if !cfg.Enabled() {
+		return MockGenerator
+	}
+	activeModel = cfg.Model
+	log.Printf("[auctioneer] real LLM enabled model=%s base=%s", cfg.Model, cfg.BaseURL)
+	return arkGenerator(cfg)
+}
+
+// auctioneerSystem pins the commentary contract: ONE short spoken Chinese line,
+// no URLs / phones / explicit money amounts / banned compliance words — so the
+// model's output rarely trips failsGuardrail (and the guardrail still catches it
+// when it does, falling back to canned text).
+const auctioneerSystem = "你是抖音直播拍卖的 AI 主播。根据给定的拍卖状态，用一句口语化中文解说（不超过 35 字），" +
+	"点出当前局势、带动气氛。严禁出现网址、电话、具体货币金额数字，以及" +
+	"“保真/百分百正品/假一赔十/绝对最低价/仅此一件/原价回收”等词。只输出解说词本身，不要引号、不要前缀。"
+
+// arkGenerator adapts an llm.Config into a Generator. context.Background() is
+// fine: llm.Complete bounds itself with cfg.Timeout, and the auctioneer call is
+// already off the bid hot path (backend dispatches it in a goroutine).
+func arkGenerator(cfg llm.Config) Generator {
+	return func(req Request) (string, error) {
+		return cfg.Complete(context.Background(), []llm.Message{
+			llm.System(auctioneerSystem),
+			llm.UserText(renderTriggerCtx(req)),
+		}, llm.Options{MaxTokens: 96, Temperature: 0.9})
+	}
+}
+
+// renderTriggerCtx describes the auction moment for the model WITHOUT currency
+// symbols (so the model isn't tempted to echo a ¥ amount and trip the money
+// guardrail). The guardrail is the backstop; this is the nudge.
+func renderTriggerCtx(req Request) string {
+	winner := req.Ctx.WinnerDisplayName
+	if winner == "" {
+		winner = "暂无领先者"
+	}
+	switch req.Trigger {
+	case TriggerOpen:
+		return fmt.Sprintf("场景=开拍。领先者=%s。请开场，提醒留意末 10 秒反狙击延时。", winner)
+	case TriggerSurge:
+		return fmt.Sprintf("场景=竞价升温，加价节奏明显加快。领先者=%s，已延时 %d 次。请渲染紧张感。", winner, req.Ctx.ExtendCount)
+	case TriggerCold:
+		return fmt.Sprintf("场景=冷场，已沉寂 %d 秒。领先者=%s。请激励观众反手出价。", req.Ctx.SecondsSinceLastBid, winner)
+	case TriggerHammer:
+		return fmt.Sprintf("场景=落槌成交。得主=%s。请宣布成交并恭喜，提到编号已上链。", winner)
+	}
+	return "场景=拍卖进行中。"
+}
+
 // MockGenerator returns canned-but-trigger-aware text in development.
 // Includes the winner's name in surge/hammer to look LLM-y without
 // actually calling an LLM. Production swaps this for a Doubao client.
@@ -145,7 +210,7 @@ func MockGenerator(req Request) (string, error) {
 // need to handle "AI failed" specially because we always have text).
 func generateWithGuardrail(req Request, generate Generator) Response {
 	text, err := generate(req)
-	model := "mock-llm-T7"
+	model := activeModel
 	if err != nil {
 		log.Printf("[auctioneer] generator failed trigger=%s err=%v · falling back", req.Trigger, err)
 		return Response{
