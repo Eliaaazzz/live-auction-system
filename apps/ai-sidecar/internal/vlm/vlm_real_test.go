@@ -3,6 +3,7 @@ package vlm
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -85,16 +86,16 @@ func TestSelect_CredsEnableRealUnlessMockKillSwitch(t *testing.T) {
 	t.Setenv("VLM_API_KEY", "k")
 	t.Setenv("VLM_MODEL", "ep-vlm-test")
 	realGen := Select()
+	_, err := realGen(context.Background(), Request{})
+	if !errors.Is(err, ErrNoImage) {
+		t.Fatalf("creds with blank VLM_MODE must select real generator (no-image => ErrNoImage), got %v", err)
+	}
+
+	t.Setenv("VLM_MODE", "mock")
 	mockResp, err := MockGenerator(context.Background(), Request{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	realResp, err := realGen(context.Background(), Request{})
-	if err == nil && realResp.ModelName == mockResp.ModelName {
-		t.Fatalf("creds with blank VLM_MODE must not select mock generator; got modelName=%q", realResp.ModelName)
-	}
-
-	t.Setenv("VLM_MODE", "mock")
 	mockGen := Select()
 	resp, err := mockGen(context.Background(), Request{})
 	if err != nil {
