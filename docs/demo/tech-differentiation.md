@@ -14,7 +14,7 @@
 | 写聚合:扇出突发合并为单次 syscall | 8 KiB flush-on-demand 写缓冲(`ws_coalesce.go:12-23`) |
 | 万人房扇出坍缩 | `ROOM_STATE_PATCH(bidCountDelta)` 50ms 节拍/≥1000 观众时合并出价广播(`ws_state_patch.go:14-15,118-124`) |
 | 背压有界:慢客户端不拖垮房间 | 协议预算 bufferedAmount 1MB/4MB(冻结,`docs/ws-protocol.md:58-65`);Go 实现 1024 帧 critical lane + code 4000 force-close→重连补帧(`ws.go:46,104`) |
-| 实测容量 | 真公网 10k 并发全绿:ack p95 **0.46ms**、seqGap **0**(`docs/reports/2026-06-07-tier2-public-loadtest-10k-20k.md` 场景A);单网关天花板实测 **~15,777 连接 / ~50k bids/s**,瓶颈为网关 CPU/内存,崩溃自动重启且**正确性不破**(同报告场景B);公网就绪核查另见 `docs/reports/2026-06-06-public-locust-10k-beijing-readiness.md` |
+| 实测容量 | 真公网 10k 并发全绿:ack p95 **0.46ms**、seqGap **0**(#233 场景A);单网关天花板实测 **~15,777 连接 / ~50k bids/s**,瓶颈为网关 CPU/内存,崩溃自动重启且**正确性不破**(#233 场景B);公网就绪核查另见 `docs/reports/2026-06-06-public-locust-10k-beijing-readiness.md` |
 
 ## 2. 出价幂等性
 
@@ -24,7 +24,7 @@
 | 裁决单点原子 | 一段 Redis Lua 完成 state/seller/amount/cap/dedupe/seq/anti-snipe/Stream/publish(`place_bid.lua:1`);Lua 无回滚,故所有 key 先 type-guard 再写(`:21-30`) |
 | 客户端幂等令牌 | `crypto.randomUUID()` 生成 clientBidId(`apps/web/src/routes/LiveRoomRoute.jsx:363-367`) |
 | HTTP→WS 双道切换安全 | 前端 HTTP 命令道优先、WS `BID_PLACE` 兜底(`LiveRoomRoute.jsx:118-134 submitBidCommand`);换道重试不会双扣——因为幂等在服务端 dedupe,与入口无关 |
-| 网关 fast-reject 不破坏幂等 | Tier-C 快拒前 pipeline 预检 dedupe HEXISTS,重复重试必落 Lua 回放(`ws.go:1383-1386,1442-1443`);实测 fast-reject 吸收 99.97% 注定失败出价、ack p95 3.5ms@20k bids/s(Tier-2 报告场景C) |
+| 网关 fast-reject 不破坏幂等 | Tier-C 快拒前 pipeline 预检 dedupe HEXISTS,重复重试必落 Lua 回放(`ws.go:1383-1386,1442-1443`);实测 fast-reject 吸收 99.97% 注定失败出价、ack p95 3.5ms@20k bids/s(#233 场景C) |
 | 隐藏对抗测试盯死边界 | `server/ws_t2_pdggk_hidden_input_test.go`、`store/lua_t2_hidden_unwinnable_first_bid_test.go`、`store/lua_t2_pdggk_hidden_money_precision_test.go` |
 
 ## 3. 跨端状态同步
