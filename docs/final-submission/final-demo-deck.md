@@ -154,9 +154,9 @@ At 10k viewers, broadcasting every bid to every connection can overload queues, 
 
 | Scenario | Result | Meaning |
 |---|---:|---|
-| Real public Tier-2 10k | PASS | Public path reached clean 10k with correctness signals green |
+| Real public Tier-2 10k | PASS | Public path reached clean 10k with correctness signals green; evidence tracked in #233 |
 | Loopback/private-IP 10k | PASS | App process and private path can hold 10k |
-| 20k / ~50k bids/s | FAIL / boundary found | Single-gateway memory/GC capacity cliff found |
+| 20k / ~50k bids/s | FAIL / boundary found | Single-gateway memory/GC capacity cliff found; evidence tracked in #233 |
 
 Do not claim 20k as a pass. Use it as a boundary discovery that led to admission control and observability hardening.
 
@@ -234,7 +234,7 @@ Compliance note for ALL_PAY: virtual coins only; no real payment, no gambling, n
 - GitHub: `https://github.com/Eliaaazzz/live-auction-system`
 - README: `README.md`
 - Demo runbook: `docs/demo-runbook.md`
-- Performance report: `docs/reports/2026-06-07-tier2-public-loadtest-10k-20k.md`
+- Performance evidence: #233 (Tier-2 public 10k pass + 20k boundary issue) and `docs/runbooks/beijing-tier1-10k-demo.md`
 - Architecture / protocols:
   - `proto/ws-envelope.md`
   - `proto/redis-keys.md`
