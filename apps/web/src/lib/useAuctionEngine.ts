@@ -1,6 +1,29 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { AuctionState, Bid, EngineEvent, Lot, RankRow, AuctionStatus } from './types';
-import { BOT_USERS, ME, pick } from './mockData';
+// useAuctionEngine — REAL backend-connected auction engine.
+//
+// Drop-in replacement for the prototype's mock engine: SAME signature
+// ({ state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart }) and the
+// SAME AuctionState shape the UI consumes, but driven by the production backend:
+//   - ensureSession  → JWT (auth.js)
+//   - api.getAuction → REST snapshot seeds the store
+//   - api.getLeaderboard → top-N ranking
+//   - RoomClient (WebSocket) → live events into the battle-tested zustand reducer
+//   - placeBid → HTTP command lane (POST /api/auctions/{id}/bids) + WS fallback
+//
+// The backend speaks string-CENTS; the UI speaks YUAN numbers, so we ÷100 on the
+// way out and ×100 on the way in. AI is never in the bid path (V9 P3): the server
+// Lua adjudicates; a mis-bid is rejected, never double-charged.
+//
+// Reuses src/backend/{lib,store} (the original apps/web data layer, unchanged).
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AuctionState, EngineEvent, Lot, RankRow, Bid, AuctionStatus } from './types';
+import { avatar } from './assets';
+import { useAuctionStore } from '../backend/store/auction.js';
+import { RoomClient, buildRoomUrl } from '../backend/lib/ws.js';
+import { api } from '../backend/lib/api.js';
+import { ensureSession, currentToken } from '../backend/lib/auth.js';
+import { msRemaining } from '../backend/lib/clock.js';
+import { EventType, BidErrorCode } from '../backend/lib/types.js';
 
 interface Opts {
   seedToPrice?: number;
@@ -9,238 +32,266 @@ interface Opts {
   onEvent?: (e: EngineEvent) => void;
 }
 
+const WS_BASE = (import.meta as any).env?.VITE_WS_BASE || undefined;
+const BID_HTTP_TIMEOUT_MS = 1_200;
 const ENDING_WINDOW_MS = 10_000;
-let seq = 0;
-const bid = (): string => `b${(seq++).toString(36)}${Date.now().toString(36).slice(-4)}`;
 
-interface Model {
-  status: AuctionStatus;
-  startsAt: number;
-  endsAt: number;
-  totalMs: number;
-  currentPrice: number;
-  leaderId: string | null;
-  bids: Bid[];
-  maxByUser: Map<string, Bid>;
-  myMax: number | null;
-  autoBidMax: number | null;
-  nextBotAt: number;
-  lastEvent: EngineEvent | null;
-  extendedFlash: number;
-  settledWon: boolean | null;
+// stable pseudo-avatar from a backend userId (the backend has no avatar field).
+function hashNum(s: string): number {
+  let h = 0;
+  for (let i = 0; i < (s || '').length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 70 + 1;
+}
+const yuan = (cents: string | number | null | undefined): number => {
+  if (cents == null) return 0;
+  try { return Math.round(Number(BigInt(String(cents))) / 100); } catch { return Math.round(Number(cents) / 100) || 0; }
+};
+
+// backend status string → prototype AuctionStatus
+function mapStatus(beStatus: string, remainingMs: number): AuctionStatus {
+  switch (beStatus) {
+    case 'LIVE':
+      return remainingMs > 0 && remainingMs <= ENDING_WINDOW_MS ? 'ending' : 'live';
+    case 'SOLD':
+    case 'ORDER_CREATED':
+      return 'sold';
+    case 'NO_BID':
+    case 'CANCELLED':
+      return 'unsold';
+    default:
+      return 'upcoming'; // DRAFT / SCHEDULED
+  }
 }
 
-function computeNextMin(m: Model, lot: Lot): number {
-  if (m.bids.length === 0) return lot.startPrice > 0 ? lot.startPrice : lot.minIncrement;
-  return m.currentPrice + lot.minIncrement;
-}
-
-function ranking(m: Model): RankRow[] {
-  return Array.from(m.maxByUser.values())
-    .sort((a, b) => b.amount - a.amount || a.ts - b.ts)
-    .map((b) => ({ userId: b.userId, userName: b.userName, avatar: b.avatar, amount: b.amount, self: b.self }));
-}
-
-function snapshot(m: Model, lot: Lot, now: number): AuctionState {
-  const rank = ranking(m);
-  const myRank = m.myMax != null ? rank.findIndex((r) => r.userId === ME.id) + 1 || null : null;
-  const leader = m.bids.find((b) => b.userId === m.leaderId) ?? m.bids[0] ?? null;
+function bidFromLeader(l: any, rank: number): Bid {
+  const uid = l?.userId ?? `u${rank}`;
   return {
-    status: m.status,
-    startsInMs: Math.max(0, m.startsAt - now),
-    remainingMs: Math.max(0, m.endsAt - now),
-    totalMs: m.totalMs,
-    currentPrice: m.currentPrice,
-    leader,
-    bids: m.bids,
-    ranking: rank,
-    participants: m.maxByUser.size,
-    myMaxBid: m.myMax,
-    myRank,
-    extendedFlash: m.extendedFlash,
-    lastEvent: m.lastEvent,
-    bidCount: m.bids.length,
+    id: `${uid}-${l?.cents ?? 0}`,
+    userId: uid,
+    userName: l?.displayName || l?.userId || '匿名买家',
+    avatar: avatar(hashNum(uid)),
+    amount: yuan(l?.cents),
+    ts: Date.now(),
+    self: !!l?.isYou,
   };
 }
 
-function applyBid(m: Model, lot: Lot, b: Bid, now: number): void {
-  m.bids = [b, ...m.bids].slice(0, 60);
-  m.currentPrice = b.amount;
-  const wasLeaderMe = m.leaderId === ME.id;
-  m.leaderId = b.userId;
-  const prev = m.maxByUser.get(b.userId);
-  if (!prev || b.amount > prev.amount) m.maxByUser.set(b.userId, b);
-  if (b.self) m.myMax = Math.max(m.myMax ?? 0, b.amount);
-
-  if (b.self) {
-    m.lastEvent = { kind: 'leading', amount: b.amount };
-  } else if (wasLeaderMe) {
-    m.lastEvent = { kind: 'outbid', by: b.userName, amount: b.amount };
-  }
-
-  const remaining = m.endsAt - now;
-  if (m.status !== 'sold' && m.status !== 'unsold' && remaining < ENDING_WINDOW_MS && m.currentPrice < lot.capPrice) {
-    m.endsAt = now + lot.extendSec * 1000;
-    m.extendedFlash = now;
-    m.lastEvent = { kind: 'extend', addSec: lot.extendSec };
-  }
-
-  if (m.currentPrice >= lot.capPrice) {
-    settle(m, lot, now, { cap: true });
-  }
-}
-
-function settle(m: Model, lot: Lot, now: number, opt?: { cap?: boolean }): void {
-  const won = m.leaderId === ME.id;
-  if (m.bids.length === 0) {
-    m.status = 'unsold';
-  } else {
-    m.status = 'sold';
-  }
-  m.endsAt = now;
-  m.settledWon = won;
-  if (opt?.cap) m.lastEvent = { kind: 'cap' };
-  m.lastEvent = { kind: 'settle', won: m.status === 'sold' && won, price: m.currentPrice };
-}
-
 export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
-  const { seedToPrice, startDelaySec = 0, running = true, onEvent } = opts;
-  const modelRef = useRef<Model | null>(null);
+  const { running = true, onEvent } = opts;
+  const auctionId = lot.id;
+  const store = useAuctionStore();
+  const clientRef = useRef<any>(null);
+  const rafRef = useRef<number>(0);
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
-  const lastEmittedRef = useRef<EngineEvent | null>(null);
+  const lastEmitRef = useRef<string>('');
+  const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
+  const autoMaxRef = useRef<number | null>(null);
+  useEffect(() => { onEventRef.current = onEvent; });
 
-  const init = useCallback((): Model => {
-    const now = Date.now();
-    const m: Model = {
-      status: startDelaySec > 0 ? 'upcoming' : 'live',
-      startsAt: now + startDelaySec * 1000,
-      endsAt: now + (startDelaySec > 0 ? startDelaySec + lot.durationSec : lot.durationSec) * 1000,
-      totalMs: lot.durationSec * 1000,
-      currentPrice: lot.startPrice,
-      leaderId: null,
-      bids: [],
-      maxByUser: new Map(),
-      myMax: null,
-      autoBidMax: null,
-      nextBotAt: now + 1500 + Math.random() * 1500,
-      lastEvent: null,
-      extendedFlash: 0,
-      settledWon: null,
-    };
-    if (seedToPrice && seedToPrice > lot.startPrice) {
-      let price = lot.startPrice <= 0 ? lot.increment : lot.startPrice;
-      let t = now - 45_000;
-      while (price <= seedToPrice) {
-        const u = pick(BOT_USERS);
-        applyBid(m, lot, { id: bid(), userId: u.id, userName: u.name, avatar: u.avatar, color: u.color, amount: price, ts: t }, t);
-        price += lot.increment * (1 + (Math.random() < 0.25 ? 1 : 0));
-        t += 1500 + Math.random() * 2500;
-      }
-      const u1 = BOT_USERS[0];
-      const top = seedToPrice;
-      applyBid(m, lot, { id: bid(), userId: u1.id, userName: u1.name, avatar: u1.avatar, color: u1.color, amount: top, ts: now - 1500 }, now - 1500);
-      m.status = startDelaySec > 0 ? 'upcoming' : 'live';
-      m.endsAt = now + (startDelaySec > 0 ? startDelaySec + lot.durationSec : lot.durationSec) * 1000;
-    }
-    return m;
-  }, [lot, seedToPrice, startDelaySec]);
-
-  const [state, setState] = useState<AuctionState>(() => {
-    const m = init();
-    modelRef.current = m;
-    return snapshot(m, lot, Date.now());
-  });
-
-  const botStep = useCallback(
-    (m: Model, now: number) => {
-      if (m.status === 'sold' || m.status === 'unsold' || m.status === 'upcoming') return;
-      if (now < m.nextBotAt) return;
-      const nextMin = computeNextMin(m, lot);
-      if (nextMin > lot.capPrice) return;
-      const headroom = (lot.capPrice - m.currentPrice) / lot.capPrice;
-      const eager = Math.random() < 0.7 * Math.max(0.2, headroom) + 0.15;
-      if (eager) {
-        const bump = Math.random() < 0.2 ? 2 : 1;
-        const amount = Math.min(lot.capPrice, nextMin + (bump - 1) * lot.increment);
-        const u = pick(BOT_USERS);
-        applyBid(m, lot, { id: bid(), userId: u.id, userName: u.name, avatar: u.avatar, color: u.color, amount, ts: now }, now);
-
-        if (m.autoBidMax != null && m.leaderId !== ME.id) {
-          const myNext = computeNextMin(m, lot);
-          if (myNext <= m.autoBidMax) {
-            applyBid(m, lot, { id: bid(), userId: ME.id, userName: ME.name, avatar: ME.avatar, color: ME.color, amount: myNext, ts: now + 1, self: true }, now + 1);
-          }
-        }
-      }
-      const speed = m.status === 'ending' ? 700 : 1400;
-      m.nextBotAt = now + speed + Math.random() * 2200;
-    },
-    [lot]
-  );
-
+  // ── boot: session → snapshot → leaderboard → WS ──
   useEffect(() => {
-    if (!running) return;
-    let raf = 0;
+    if (!running || !auctionId) return undefined;
     let alive = true;
-    const loop = () => {
-      if (!alive) return;
-      const m = modelRef.current!;
-      const now = Date.now();
+    let client: any;
+    const st = useAuctionStore.getState();
 
-      if (m.status === 'upcoming' && now >= m.startsAt) {
-        m.status = 'live';
-        m.endsAt = now + m.totalMs;
-        m.lastEvent = { kind: 'start' };
-      }
-      if (m.status === 'live' || m.status === 'ending') {
-        m.status = m.endsAt - now <= ENDING_WINDOW_MS ? 'ending' : 'live';
-        botStep(m, now);
-        if (now >= m.endsAt) settle(m, lot, now);
-      }
+    (async () => {
+      try {
+        const session = await ensureSession('demo');
+        if (!alive) return;
+        st.setSelfUserId(session.userId);
+      } catch { /* room retries with its own session */ }
 
-      if (m.lastEvent && m.lastEvent !== lastEmittedRef.current) {
-        lastEmittedRef.current = m.lastEvent;
-        onEventRef.current?.(m.lastEvent);
-      }
-      setState(snapshot(m, lot, now));
-      raf = window.setTimeout(loop, 60) as unknown as number;
-    };
-    loop();
+      try {
+        const snap = await api.getAuction(auctionId);
+        if (!alive) return;
+        const rules = snap.rules ?? {};
+        st.init({
+          auctionId,
+          status: snap.status,
+          currentCents: snap.currentPriceCents ?? '0',
+          startCents: snap.startCents ?? rules.reserveCents ?? '0',
+          stepCents: rules.stepCents ?? snap.stepCents ?? String(lot.minIncrement * 100),
+          capCents: rules.capCents ?? snap.capCents ?? (lot.capPrice ? String(lot.capPrice * 100) : null),
+          endAtMs: snap.endAtMs ?? null,
+          winnerId: snap.winnerId ?? null,
+          yourUserId: useAuctionStore.getState().yourUserId,
+        });
+      } catch { /* WS will rebuild from snapshot frame */ }
+
+      try {
+        const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
+        if (alive) useAuctionStore.getState().setLeaders(leaderboard);
+      } catch { /* fills from BID_ACCEPTED */ }
+
+      const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
+      client = new RoomClient({
+        url,
+        auctionId,
+        getLastSeq: () => useAuctionStore.getState().lastSeq,
+        onState: (s: any) => useAuctionStore.getState().setConn(s.status, s),
+        onEvent: (env: any) => {
+          useAuctionStore.getState().applyEvent(env);
+          emitEngineEvent(env);
+          maybeRefreshLeaders(env);
+        },
+        onReject: (env: any) => useAuctionStore.getState().applyReject(env),
+      });
+      clientRef.current = client;
+      client.connect();
+    })();
+
     return () => {
       alive = false;
-      window.clearTimeout(raf);
+      clientRef.current = null;
+      try { client?.leave(); } catch { /* noop */ }
     };
-  }, [running, botStep, lot]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auctionId, running]);
 
-  const nextMinBid = modelRef.current ? computeNextMin(modelRef.current, lot) : lot.startPrice;
+  // ── countdown: drive store.remainingMs from the server clock ──
+  useEffect(() => {
+    const tick = () => {
+      const endAtMs = useAuctionStore.getState().endAtMs;
+      if (endAtMs) useAuctionStore.getState().tickRemaining(msRemaining(endAtMs));
+      rafRef.current = window.requestAnimationFrame(tick);
+    };
+    rafRef.current = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafRef.current);
+  }, []);
 
-  const placeBid = useCallback(
-    (amount: number): { ok: boolean; reason?: string } => {
-      const m = modelRef.current!;
-      const now = Date.now();
-      if (m.status !== 'live' && m.status !== 'ending') return { ok: false, reason: 'not biddable' };
-      const min = computeNextMin(m, lot);
-      if (amount < min) return { ok: false, reason: `出价需 ≥ ¥${min}` };
-      const amt = Math.min(amount, lot.capPrice);
-      applyBid(m, lot, { id: bid(), userId: ME.id, userName: ME.name, avatar: ME.avatar, color: ME.color, amount: amt, ts: now, self: true }, now);
-      setState(snapshot(m, lot, now));
-      return { ok: true };
-    },
-    [lot]
-  );
+  function maybeRefreshLeaders(env: any) {
+    if (env?.type === EventType.BID_ACCEPTED || env?.type === EventType.AUCTION_SOLD) {
+      api.getLeaderboard(auctionId, 10)
+        .then(({ leaderboard = [] }: any) => useAuctionStore.getState().setLeaders(leaderboard))
+        .catch(() => {});
+    }
+  }
+
+  // translate a backend envelope into the prototype's EngineEvent (overlays/撒花)
+  function emitEngineEvent(env: any) {
+    const cb = onEventRef.current;
+    if (!cb) return;
+    const key = `${env?.type}:${env?.seq ?? ''}`;
+    if (key === lastEmitRef.current) return;
+    lastEmitRef.current = key;
+    const s = useAuctionStore.getState();
+    switch (env?.type) {
+      case EventType.BID_ACCEPTED: {
+        const self = s.yourUserId && env.data?.userId === s.yourUserId;
+        if (self) cb({ kind: 'leading', amount: yuan(env.data?.amountCents) });
+        else cb({ kind: 'outbid', by: env.data?.displayName || '竞拍者', amount: yuan(env.data?.amountCents) });
+        break;
+      }
+      case EventType.AUCTION_EXTENDED:
+        cb({ kind: 'extend', addSec: 30 });
+        break;
+      case EventType.AUCTION_SOLD:
+        cb({ kind: 'settle', won: !!(s.yourUserId && env.data?.winnerId === s.yourUserId), price: yuan(env.data?.amountCents ?? s.currentCents) });
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ── map store state → prototype AuctionState ──
+  const state: AuctionState = useMemo(() => {
+    const remainingMs = store.remainingMs ?? 0;
+    const status = mapStatus(store.status, remainingMs);
+    const leaders = (store.leaders ?? []) as any[];
+    const ranking: RankRow[] = leaders.map((l, i) => ({
+      userId: l.userId,
+      userName: l.displayName || l.userId || '匿名买家',
+      avatar: avatar(hashNum(l.userId ?? `u${i}`)),
+      amount: yuan(l.cents),
+      self: !!l.isYou,
+    }));
+    const leader = leaders.length ? bidFromLeader(leaders[0], 0) : null;
+    const bids: Bid[] = (store.recentEvents ?? [])
+      .filter((e: any) => e.type === EventType.BID_ACCEPTED && e.data?.amountCents)
+      .slice(0, 20)
+      .map((e: any) => ({
+        id: String(e.seq ?? e.ts ?? Math.random()),
+        userId: e.data.userId,
+        userName: e.data.displayName || e.data.userId || '匿名买家',
+        avatar: avatar(hashNum(e.data.userId ?? '')),
+        amount: yuan(e.data.amountCents),
+        ts: e.ts ?? Date.now(),
+        self: !!(store.yourUserId && e.data.userId === store.yourUserId),
+      }));
+    const myRankIdx = store.yourUserId ? leaders.findIndex((l) => l.userId === store.yourUserId) : -1;
+    return {
+      status,
+      startsInMs: 0,
+      remainingMs,
+      totalMs: (lot.durationSec || 60) * 1000,
+      currentPrice: yuan(store.currentCents),
+      leader,
+      bids,
+      ranking,
+      participants: store.viewerCount ?? 0,
+      myMaxBid: store.yourCents ? yuan(store.yourCents) : null,
+      myRank: myRankIdx >= 0 ? myRankIdx + 1 : null,
+      extendedFlash: store.extendFlash ? (store.extendFlash.addedSec ?? 30) : 0,
+      lastEvent: null,
+      bidCount: store.totalBidsCount ?? 0,
+    };
+  }, [store, lot.durationSec]);
+
+  const nextMinBid = useMemo(() => {
+    const cur = yuan(store.currentCents);
+    const step = yuan(store.stepCents) || lot.minIncrement || 1;
+    if (!store.currentCents || store.currentCents === '0') return lot.startPrice > 0 ? lot.startPrice : step;
+    return cur + step;
+  }, [store.currentCents, store.stepCents, lot.minIncrement, lot.startPrice]);
+
+  // ── placeBid: HTTP command lane + WS fallback (server adjudicates) ──
+  const placeBid = useCallback((amount: number): { ok: boolean; reason?: string } => {
+    const s = useAuctionStore.getState();
+    if (s.status !== 'LIVE') return { ok: false, reason: '当前不可出价' };
+    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return { ok: false, reason: '竞拍已结束' };
+    const amountCents = String(Math.round(amount) * 100);
+    const clientBidId = makeBidId();
+    void submitBid(auctionId, { clientBidId, amountCents }, clientRef.current);
+    return { ok: true };
+  }, [auctionId]);
 
   const setAutoBidMax = useCallback((max: number | null) => {
-    const m = modelRef.current!;
-    m.autoBidMax = max;
+    autoMaxRef.current = max;
+    setAutoBidMaxState(max);
   }, []);
 
   const restart = useCallback(() => {
-    const m = init();
-    modelRef.current = m;
-    lastEmittedRef.current = null;
-    setState(snapshot(m, lot, Date.now()));
-  }, [init, lot]);
+    try { clientRef.current?.resync?.(); } catch { /* noop */ }
+  }, []);
 
-  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax: modelRef.current?.autoBidMax ?? null, restart };
+  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart };
+}
+
+function makeBidId(): string {
+  return (typeof crypto !== 'undefined' && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+async function submitBid(auctionId: string, payload: any, client: any) {
+  try {
+    const env = await placeBidHttp(auctionId, payload);
+    if (env?.type === EventType.BID_REJECTED) useAuctionStore.getState().applyReject(env);
+    else if (env?.type) useAuctionStore.getState().applyEvent(env);
+    return;
+  } catch (e: any) {
+    const status = Number(e?.status);
+    const fallback = e?.name === 'AbortError' || e?.name === 'TypeError' || status === 404 || status === 405 || status === 501;
+    if (fallback && client) { client.placeBid(payload); return; }
+    useAuctionStore.getState().applyReject({ type: EventType.BID_REJECTED, auctionId, requestId: payload.clientBidId, data: { code: BidErrorCode.ERR_INTERNAL } });
+  }
+}
+
+async function placeBidHttp(auctionId: string, payload: any) {
+  if (typeof AbortController === 'undefined') return api.placeBid(auctionId, payload);
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), BID_HTTP_TIMEOUT_MS);
+  try { return await api.placeBid(auctionId, payload, { signal: ctrl.signal }); }
+  finally { clearTimeout(t); }
 }
