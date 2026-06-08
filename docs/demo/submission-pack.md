@@ -195,7 +195,14 @@ flowchart TB
 
 ## 11. 大模型 / AI 能力使用说明
 
-本项目的 AI 能力采用 **sidecar 旁路设计**。AI 不在竞拍裁决链路内，不读取或写入价格、赢家和终态裁决，只提供可解释、可下线的辅助能力。
+本项目的 AI 能力采用 **sidecar 旁路设计**（独立进程 `apps/ai-sidecar`，三端点：`/facts/draft` VLM 事实抽取、`/llm/auctioneer` 主播文案、`/llm/recommend` 定价建议）。AI 不在竞拍裁决链路内，不读取或写入价格、赢家和终态裁决，只提供可解释、可下线的辅助能力。
+
+### 模型与接入方式
+
+- **主用模型：豆包 Doubao（火山方舟 Volcengine Ark）** —— 字节自家大模型，与本赛题同源。`doubao-vision` 多模态做商品图事实抽取，`doubao` 文本模型做拍卖师解说。
+- **统一 OpenAI 兼容适配器**（`apps/ai-sidecar/internal/llm`）：调用 Ark `/api/v3/chat/completions`。同一份代码、仅换 `*_BASE_URL/*_MODEL` 环境变量即可指向**自托管开源模型**（Ollama / vLLM 跑 Qwen2.5，对应「开源模型调用」可选项）或任何 OpenAI 兼容网关——无需改代码。
+- **Prompt 方案**：VLM 用「系统指令固定 JSON 输出 schema + 卖家文本作为受信任边界外的 DATA 分隔块」做**注入防御**（卖家描述里的「ignore previous instructions」只被当数据、不改 schema）；主播文案用「单句中文、禁金额/网址/电话/违规词」系统提示，把模型输出约束在合规带内。
+- **接入开关（默认 mock，零 key 可跑）**：设 `ARK_API_KEY` + 推理接入点 id（`ARK_VLM_MODEL`/`ARK_LLM_MODEL`）即从罐头切到真模型；未配置时 sidecar 自动回退确定性罐头文案，演示路径完整。`/llm/recommend` 定价建议**有意保留确定性启发式**（可解释、不让模型幻觉报价）。
 
 ### AI 能力 1：商品事实草稿
 
@@ -214,7 +221,7 @@ AI 输入输出可记录到 `ai_usage_logs`，用于复盘模型使用场景、�
 - AI 不执行 `place_bid`。
 - AI 不修改 Redis 热路径 key。
 - AI 不决定 `currentPriceCents`、`winnerId`、`endAtMs` 或终态事件。
-- AI 文案失败时，竞拍仍按后端状态机继续运行。
+- **双层 guardrail + 罐头兜底**：模型输出先过合规过滤（长度/网址/电话/金额/违规词），后端再独立复检一遍；任意失败（超时/限流/坏 JSON/违规）即换确定性罐头文案。AI 文案失败时，竞拍仍按后端状态机继续运行。
 
 ---
 
