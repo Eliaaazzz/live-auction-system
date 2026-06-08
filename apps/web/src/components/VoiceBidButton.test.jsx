@@ -45,6 +45,34 @@ describe('VoiceBidButton', () => {
     expect(onBid).toHaveBeenCalledWith('13800000');
   });
 
+  it('clears a pending voice bid when current price changes before confirmation', () => {
+    const onBid = vi.fn();
+    const { rerender } = render(<VoiceBidButton {...ctx} onBid={onBid} />);
+    fireEvent.click(screen.getByRole('button', { name: '语音出价' }));
+    act(() => lastRec.emit('加价五千'));
+    expect(screen.getByRole('button', { name: '确认出价' })).toBeTruthy();
+
+    rerender(<VoiceBidButton currentCents="13380000" stepCents="500000" onBid={onBid} />);
+
+    expect(screen.queryByRole('button', { name: '确认出价' })).toBeNull();
+    expect(screen.getByText(/价格已更新/)).toBeTruthy();
+    expect(onBid).not.toHaveBeenCalled();
+  });
+
+  it('clears a pending voice bid when step changes before confirmation', () => {
+    const onBid = vi.fn();
+    const { rerender } = render(<VoiceBidButton {...ctx} onBid={onBid} />);
+    fireEvent.click(screen.getByRole('button', { name: '语音出价' }));
+    act(() => lastRec.emit('加三档'));
+    expect(screen.getByRole('button', { name: '确认出价' })).toBeTruthy();
+
+    rerender(<VoiceBidButton currentCents="12880000" stepCents="1000000" onBid={onBid} />);
+
+    expect(screen.queryByRole('button', { name: '确认出价' })).toBeNull();
+    expect(screen.getByText(/价格已更新/)).toBeTruthy();
+    expect(onBid).not.toHaveBeenCalled();
+  });
+
   it('cancel discards the pending bid (no onBid)', () => {
     const onBid = vi.fn();
     render(<VoiceBidButton {...ctx} onBid={onBid} />);
