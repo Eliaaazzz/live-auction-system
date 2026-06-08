@@ -1,7 +1,12 @@
+import { useState } from 'react';
 import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
 import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
+import { api } from '../../backend/lib/api.js';
+import { ensureSession } from '../../backend/lib/auth.js';
+
+const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
 
 const CAT_EMOJI: Record<string, string> = { 玉石珠宝: '🧿', 翡翠玉镯: '💚', 二手奢侈品: '⌚️', 文玩杂项: '🫖', 钱币邮票: '🪙', 艺术品: '🎴', 特色食品: '🍫' };
 const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠玉镯: PROD.jadeBangle, 二手奢侈品: PROD.watch, 文玩杂项: PROD.teapot, 钱币邮票: PROD.goldNecklace, 艺术品: PROD.diamond, 特色食品: PROD.chocolate };
@@ -9,12 +14,47 @@ const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
+  const [busy, setBusy] = useState(false);
   const v = Form.useWatch([], form) || {};
   const previewImg = CAT_IMG[v.category as string] ?? PROD.jadePendant;
   const step = v.step ?? 50;
 
+  // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
+  // The auction immediately appears in the buyer mobile rail and is biddable.
   const onPublish = () => {
-    form.validateFields().then(() => message.success('竞拍已发布，移动端直播间已同步上架 🎉')).catch(() => message.error('请完善必填项与规则配置'));
+    form.validateFields().then(async (vals: any) => {
+      setBusy(true);
+      try {
+        await ensureSession('seller-demo');
+        const imageUrl = CAT_IMG[vals.category as string] ?? PROD.jadePendant;
+        const { productId } = await api.createProduct({
+          name: vals.name,
+          imageUrl,
+          description: vals.intro || '',
+        });
+        const durationSec = Number(vals.duration) || 80;
+        const { auctionId } = await api.createDraft({
+          productId,
+          rules: {
+            mode: 'ENGLISH',
+            startPriceCents: yuanToCents(vals.start),
+            incrementCents: yuanToCents(vals.step),
+            capPriceCents: yuanToCents(vals.cap),
+            durationSec,
+            extendWindowSec: 10,
+            extendSec: vals.autoExtend === false ? 0 : (Number(vals.extendSec) || 30),
+            maxExtensions: 10,
+          },
+        });
+        await api.freeze(auctionId, { factsConfirmed: true });
+        await api.startLive(auctionId, { durationMs: durationSec * 1000 });
+        message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
+      } catch (e: any) {
+        message.error('发布失败：' + (e?.message || e));
+      } finally {
+        setBusy(false);
+      }
+    }).catch(() => message.error('请完善必填项与规则配置'));
   };
 
   return (
@@ -71,7 +111,7 @@ export default function AuctionPublish() {
             </Form.Item>
           </Space>
           <Space style={{ marginTop: 8 }}>
-            <Button type="primary" size="large" icon={<RocketOutlined />} onClick={onPublish}>立即发布开拍</Button>
+            <Button type="primary" size="large" icon={<RocketOutlined />} loading={busy} onClick={onPublish}>立即发布开拍</Button>
             <Button size="large" icon={<SaveOutlined />} onClick={() => message.success('已存草稿')}>存草稿</Button>
           </Space>
         </Form>

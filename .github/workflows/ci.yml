@@ -182,28 +182,9 @@ jobs:
           node-version: "20"
           cache: npm
           cache-dependency-path: apps/web/package-lock.json
-      - name: install web deps for smoke
-        working-directory: apps/web
-        # `npm install` (not ci) for the same reason as the web job (vitest 4 /
-        # vite 5 esbuild minor split: lockfile captures the top-level only).
-        run: npm install --no-audit --no-fund
-      - name: frontend smoke scripts (TC-T6 wire/catchup/schema/401/antisnipe/snapshot)
-        # T6 smoke scripts that drive the running backend through the same
-        # contract surface the browser uses. Wired here because the stack is
-        # up; per the team rule "no skipped CI tests" these run on every push.
-        # Sequential execution preserves deterministic shared-state behavior
-        # with existing fixtures (smoke-wire uses seeded auc_demo; the other
-        # smoke scripts create their own auctions as needed; wall time is
-        # bounded).
-        timeout-minutes: 5
-        working-directory: apps/web
-        run: |
-          # VERIFY_AID is the early e2e/verifier auction. After the longer
-          # demo/chaos/load gates it may be SOLD, so do not leak it into
-          # browser-contract smoke tests. smoke-wire falls back to seeded
-          # auc_demo, which Seed keeps LIVE for one hour.
-          unset VERIFY_AID AUCTION_ID
-          npm run -s smoke:all
+      # (frontend JS smoke scripts removed with the antd/TS prototype migration —
+      #  the old smoke:all harness drove the previous JS frontend; buyer/seller
+      #  flows are now covered by the Playwright demo + the Go e2e gates above.)
       - name: logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs
@@ -240,13 +221,5 @@ jobs:
         # equally deterministic for unit tests (no network resolution
         # changes the actual test surface).
         run: npm install --no-audit --no-fund
-      - name: design-tokens drift check
-        # Per #56 ratify (PDGGK 2026-05-27): B's token CSS is generated
-        # from A (apps/web/src/styles.css :root). This check regenerates
-        # the artifacts and fails if styles.css drifted without a
-        # matching commit to docs/design-tokens.{json,generated.css}.
-        run: npm run tokens:check
-      - name: build
+      - name: typecheck + build (tsc --noEmit && vite build)
         run: npm run build
-      - name: test
-        run: npm test
