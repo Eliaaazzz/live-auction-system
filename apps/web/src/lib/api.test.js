@@ -62,6 +62,27 @@ describe('api.getAuction · happy path', () => {
   });
 });
 
+describe('api.draftListing', () => {
+  it('POSTs /api/listing/draft with the product info body', async () => {
+    const draft = { title: 'T', sellingPoints: ['a', 'b'], script: 's', fallback: false };
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => draft,
+    });
+
+    const got = await api.draftListing({ title: 'x', description: 'd', category: '腕表', facts: ['品牌: 劳力士'] });
+    expect(got).toEqual(draft);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/listing/draft',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ title: 'x', description: 'd', category: '腕表', facts: ['品牌: 劳力士'] }),
+      }),
+    );
+  });
+});
+
 describe('api.placeBid', () => {
   it('POSTs the buyer bid command with bearer auth and JSON body', async () => {
     const envelope = {

@@ -7,9 +7,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
+import { MemoryRouter } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import * as auth from '../lib/auth.js';
-import { ImageDropZone } from './adminExtra.jsx';
+import { ImageDropZone, AdminPublish } from './adminExtra.jsx';
 
 const makeFile = (name, type, sizeBytes) => {
   const f = new File(['x'], name, { type });
@@ -86,5 +87,47 @@ describe('ImageDropZone', () => {
     const input = screen.getByPlaceholderText('https://…/item.jpg');
     fireEvent.change(input, { target: { value: 'https://cdn.example.com/a.jpg' } });
     expect(onChange).toHaveBeenCalledWith('https://cdn.example.com/a.jpg');
+  });
+});
+
+describe('AdminPublish · AI 生成文案 (Feature 1)', () => {
+  beforeEach(() => {
+    vi.spyOn(auth, 'ensureSession').mockResolvedValue({ userId: 'seller-demo' });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const renderPublish = () => render(<MemoryRouter><AdminPublish/></MemoryRouter>);
+
+  it('fills title + description and renders selling-point chips on success', async () => {
+    vi.spyOn(api, 'draftListing').mockResolvedValue({
+      title: 'AI 起的标题',
+      sellingPoints: ['卖点一', '卖点二'],
+      script: 'AI 写的开场话术。',
+      fallback: false,
+    });
+    renderPublish();
+    fireEvent.click(screen.getByText('✦ AI 生成文案'));
+
+    await waitFor(() => expect(screen.getByDisplayValue('AI 起的标题')).toBeTruthy());
+    expect(screen.getByDisplayValue('AI 写的开场话术。')).toBeTruthy();
+    expect(screen.getByText('卖点一')).toBeTruthy();
+    expect(screen.getByText('卖点二')).toBeTruthy();
+    expect(screen.getByText(/AI 已生成/)).toBeTruthy();
+  });
+
+  it('shows the fallback note when the sidecar returned canned copy', async () => {
+    vi.spyOn(api, 'draftListing').mockResolvedValue({
+      title: '兜底标题', sellingPoints: ['x'], script: '兜底话术', fallback: true,
+    });
+    renderPublish();
+    fireEvent.click(screen.getByText('✦ AI 生成文案'));
+    await waitFor(() => expect(screen.getByText(/AI 暂不可用/)).toBeTruthy());
+  });
+
+  it('surfaces a non-blocking error note when generation throws', async () => {
+    vi.spyOn(api, 'draftListing').mockRejectedValue(new Error('boom'));
+    renderPublish();
+    fireEvent.click(screen.getByText('✦ AI 生成文案'));
+    await waitFor(() => expect(screen.getByText(/生成失败：boom/)).toBeTruthy());
   });
 });

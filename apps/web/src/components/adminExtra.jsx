@@ -136,6 +136,30 @@ function AdminPublish() {
   const [description, setDescription] = React.useState('经典运动腕表,黑面,盘面完好,附原厂证书。');
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
+  // AI 拍卖文案 (advisory): one tap fills title + description from the current
+  // inputs, plus a few selling points the seller can copy. Non-authoritative —
+  // the seller edits everything; failure is non-blocking (canned copy returns).
+  const [copyBusy, setCopyBusy] = React.useState(false);
+  const [sellingPoints, setSellingPoints] = React.useState([]);
+  const [copyNote, setCopyNote] = React.useState(null);
+
+  const generateCopy = React.useCallback(async () => {
+    if (copyBusy) return;
+    setCopyBusy(true);
+    setCopyNote(null);
+    try {
+      await ensureSession('seller-demo');
+      const draft = await api.draftListing({ title, description, category: '腕表' });
+      if (draft?.title) setTitle(draft.title);
+      if (draft?.script) setDescription(draft.script);
+      setSellingPoints(Array.isArray(draft?.sellingPoints) ? draft.sellingPoints : []);
+      setCopyNote(draft?.fallback ? 'AI 暂不可用 · 已填入兜底文案，可自行编辑' : 'AI 已生成 · 请核对后编辑');
+    } catch (e) {
+      setCopyNote('生成失败：' + (e?.message || e));
+    } finally {
+      setCopyBusy(false);
+    }
+  }, [copyBusy, title, description]);
 
   // #53-M4: cap must be reachable from start via integer steps. Without
   // this check the cap-hit path silently can't fire because no bid is
@@ -277,6 +301,28 @@ function AdminPublish() {
                   <textarea value={description} onChange={(e) => setDescription(e.target.value)}
                     rows={2} placeholder="成色 / 瑕疵 / 关键参数(VLM 会把它当作卖家声明,不作裁决)"
                     style={{ ...inp, resize: 'vertical', fontFamily: 'inherit' }}/>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' }}>
+                    <button type="button" onClick={generateCopy} disabled={copyBusy}
+                      style={{
+                        minHeight: 32, padding: '0 12px', borderRadius: 8, cursor: copyBusy ? 'wait' : 'pointer',
+                        border: '1px solid rgba(37,244,238,.4)', background: 'rgba(37,244,238,.08)',
+                        color: 'var(--douyin-cyan)', fontFamily: 'inherit', fontSize: 12, fontWeight: 600,
+                      }}>
+                      {copyBusy ? '生成中…' : '✦ AI 生成文案'}
+                    </button>
+                    {copyNote && <span style={{ fontSize: 11, color: 'var(--douyin-ink-muted)' }}>{copyNote}</span>}
+                  </div>
+                  {sellingPoints.length > 0 && (
+                    <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                      {sellingPoints.map((p, i) => (
+                        <span key={i} style={{
+                          fontSize: 11, padding: '3px 8px', borderRadius: 999,
+                          background: 'rgba(201,169,97,.12)', border: '1px solid rgba(201,169,97,.3)',
+                          color: 'var(--solemn-gold)',
+                        }}>{p}</span>
+                      ))}
+                    </div>
+                  )}
                 </FormRow>
               </div>
             </div>

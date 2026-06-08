@@ -226,6 +226,19 @@ export const api = {
     }
   },
 
+  /**
+   * AI 拍卖文案 (advisory). Drafts a title + selling points + opening script
+   * from the seller's product info. Proxied to ai-sidecar /llm/listing; the
+   * sidecar ALWAYS returns usable copy (canned fallback) so this never 502s on
+   * a model failure. Advisory only — the seller edits before publishing; the
+   * bid path never calls it (V9 P3).
+   */
+  draftListing: ({ title, description, category, facts } = {}) =>
+    request('/listing/draft', {
+      method: 'POST',
+      body: { title, description, category, facts },
+    }),
+
   // ---------- Evidence ----------
   /**
    * The design's `verifyChain()` POST does not exist on the backend.
