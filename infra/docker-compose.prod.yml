@@ -21,7 +21,9 @@ services:
       # Real AI opt-in (火山方舟 / 豆包). Empty → canned generators (unchanged).
       # Set in infra/.env on the prod host: ARK_API_KEY + ARK_VLM_MODEL +
       # ARK_LLM_MODEL (inference endpoint ids). One place flips VLM + auctioneer.
-      VLM_MODE: ${VLM_MODE:-mock}
+      # VLM_MODE is a kill-switch only: set VLM_MODE=mock to force canned VLM
+      # facts even with creds; otherwise key+model select the real VLM path.
+      VLM_MODE: ${VLM_MODE:-}
       VLM_API_KEY: ${ARK_API_KEY:-}
       VLM_MODEL: ${ARK_VLM_MODEL:-}
       VLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
