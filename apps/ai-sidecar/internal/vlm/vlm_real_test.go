@@ -75,3 +75,32 @@ func TestCallDoubao_IncompleteConfigReturnsCanned(t *testing.T) {
 		t.Fatalf("expected canned stub modelName, got %q", resp.ModelName)
 	}
 }
+
+func TestSelect_CredsEnableRealUnlessMockKillSwitch(t *testing.T) {
+	// With Ark creds present and VLM_MODE unset/blank, Select must NOT stay on
+	// MockGenerator. This pins the compose/env contract: ARK_API_KEY +
+	// ARK_VLM_MODEL should be enough to flip VLM real. VLM_MODE=mock is an
+	// explicit kill-switch only.
+	t.Setenv("VLM_MODE", "")
+	t.Setenv("VLM_API_KEY", "k")
+	t.Setenv("VLM_MODEL", "ep-vlm-test")
+	realGen := Select()
+	mockResp, err := MockGenerator(context.Background(), Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	realResp, err := realGen(context.Background(), Request{})
+	if err == nil && realResp.ModelName == mockResp.ModelName {
+		t.Fatalf("creds with blank VLM_MODE must not select mock generator; got modelName=%q", realResp.ModelName)
+	}
+
+	t.Setenv("VLM_MODE", "mock")
+	mockGen := Select()
+	resp, err := mockGen(context.Background(), Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ModelName != mockResp.ModelName {
+		t.Fatalf("VLM_MODE=mock must force mock, got modelName=%q", resp.ModelName)
+	}
+}
