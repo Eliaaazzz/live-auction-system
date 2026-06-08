@@ -286,7 +286,12 @@ function MobileRoom({
     ? 'radial-gradient(ellipse at top, rgba(254,44,85,.18) 0%, var(--douyin-ink) 55%)'
     : 'var(--douyin-ink)';
 
-  const baseLeaders = (leadersProp && leadersProp.length) ? leadersProp : DEMO_LEADERS;
+  // DEMO_LEADERS is preview-only seed data. A LIVE room ALWAYS passes a leaders
+  // array (store.leaders, possibly empty) — only an UNDEFINED prop means a preview
+  // route with no data source. Never inject fake bidders into a real room with no
+  // bids yet (it穿帮s on first real join). Empty live → empty leaderboard (handled
+  // by the empty-state in CompactLeaderCard), NOT 海风_2024 et al.
+  const baseLeaders = leadersProp === undefined ? DEMO_LEADERS : leadersProp;
   const leaders = baseLeaders.map((u, i) => ({
     ...u,
     cents: i === 0 ? currentCents : u.cents,
@@ -1141,6 +1146,19 @@ function BuyerFocusPanel({
 function CompactLeaderCard({ leaders = [], firstLeader, secondLeader, yourRank, yourGapCents, isYouLeading }) {
   const [showAll, setShowAll] = React.useState(false);
   const hasMore = leaders.length > 2;
+  // Empty live room (no bids yet): show an invitation, never a fake leaderboard.
+  if (!leaders.length || !firstLeader) {
+    return (
+      <InfoSurface accent="gold">
+        <div data-testid="leaderboard-empty" style={{
+          padding: '16px 4px', textAlign: 'center',
+          color: 'var(--douyin-ink-muted)', fontSize: 12, fontWeight: 600,
+        }}>
+          暂无出价 · 等你第一口 🔨
+        </div>
+      </InfoSurface>
+    );
+  }
   return (
     <InfoSurface accent="gold">
       <CompactLeaderRow rank={1} leader={firstLeader} lead/>

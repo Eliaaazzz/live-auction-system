@@ -7,9 +7,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
+import { MemoryRouter } from 'react-router-dom';
 import { api } from '../lib/api.js';
 import * as auth from '../lib/auth.js';
-import { ImageDropZone } from './adminExtra.jsx';
+import { ImageDropZone, AdminPublish } from './adminExtra.jsx';
 
 const makeFile = (name, type, sizeBytes) => {
   const f = new File(['x'], name, { type });
@@ -86,5 +87,23 @@ describe('ImageDropZone', () => {
     const input = screen.getByPlaceholderText('https://…/item.jpg');
     fireEvent.change(input, { target: { value: 'https://cdn.example.com/a.jpg' } });
     expect(onChange).toHaveBeenCalledWith('https://cdn.example.com/a.jpg');
+  });
+});
+
+// Regression (spec deep-review P0): the publish form used to show a 保留价
+// (reserve) field + "未达保留价 → NO_BID" hint, but it was never sent to the
+// backend AND was conceptually inert (labeled ≤ 起拍价, which can never bind).
+// A visible-but-broken feature is a credibility risk to judges, so the misleading
+// UI is removed until reserve is enforced end-to-end. This pins it stays gone.
+describe('AdminPublish · no non-functional reserve field', () => {
+  it('does NOT render a 保留价 input or "未达保留价" promise', () => {
+    const { container } = render(
+      <MemoryRouter initialEntries={['/admin/auctions/new']}>
+        <AdminPublish/>
+      </MemoryRouter>,
+    );
+    expect(container.textContent).not.toMatch(/保留价|未达保留价/);
+    // sanity: the form did render its other rule fields
+    expect(container.textContent).toMatch(/起拍|上限/);
   });
 });

@@ -120,7 +120,6 @@ function AdminPublish() {
   const [title, setTitle] = React.useState('劳力士 Explorer 114270 · 黑面');
   const [startCents, setStartCents] = React.useState('12000000');
   const [stepCents,  setStepCents]  = React.useState('500000');
-  const [reserveCents, setReserveCents] = React.useState('10000000');
   const [capCents, setCapCents] = React.useState('30000000');
   const [duration, setDuration] = React.useState(30);
   const [maxExtends, setMaxExtends] = React.useState(5);
@@ -149,7 +148,6 @@ function AdminPublish() {
 
   const valid = title.length > 4
     && BigInt(startCents) > 0n
-    && BigInt(reserveCents) <= BigInt(startCents)
     && BigInt(capCents) > BigInt(startCents)
     && capReachable;
 
@@ -326,12 +324,6 @@ function AdminPublish() {
                   return <Hint>每次出价最小增量 · 已按起拍价建议档位</Hint>;
                 })()}
               </FormRow>
-              <FormRow label="保留价 (≤ 起拍价)" required>
-                <CurrencyInput cents={reserveCents} onChange={setReserveCents}/>
-                <Hint warn={BigInt(reserveCents) > BigInt(startCents)}>
-                  {BigInt(reserveCents) > BigInt(startCents) ? '保留价不能高于起拍价' : '未达保留价 → NO_BID'}
-                </Hint>
-              </FormRow>
               <FormRow label="上限价 (cap)" required>
                 <CurrencyInput cents={capCents} onChange={setCapCents}/>
                 <Hint warn={BigInt(capCents) <= BigInt(startCents) || !capReachable}>
@@ -433,8 +425,6 @@ function AdminPublish() {
                     <td>{formatCentsCNY(startCents)}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>+ 阶梯</td>
                     <td>{formatCentsCNY(stepCents)}</td></tr>
-                <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>保留</td>
-                    <td>{formatCentsCNY(reserveCents)}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>上限</td>
                     <td style={{ color: 'var(--solemn-gold)' }}>{formatCentsCNY(capCents)}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>开拍</td>
