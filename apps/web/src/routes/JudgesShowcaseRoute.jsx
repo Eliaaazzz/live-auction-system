@@ -315,8 +315,8 @@ export function JudgesShowcaseRoute() {
             <div style={ST.railCard}>
               <div style={ST.railTitle}>讲解线索</div>
               {[
-                ['实时情绪', '领先 / 被超越 / 黑马 / 末 10 秒，全部来自服务端事件，不是前端动画自嗨。'],
-                ['工程可信', '每个事件带 seq 与服务端时间；房间里能看到漂移、速率与零空洞序列。'],
+                ['实时情绪', '真实房间的领先/被超越/末 10 秒来自服务端事件；导演模式用同构脚本事件复现这套语法。'],
+                ['工程可信', '脚本事件也带 seq 与服务端时间形态；真实房间里这些字段由 WebSocket 与 Stream 驱动。'],
                 ['成交可信', '落槌从抖音红黑切到拍卖行金色，证据卡用哈希链收束整场。'],
               ].map(([t, d]) => (
                 <div key={t} style={{ marginBottom: 10 }}>
@@ -360,94 +360,98 @@ function PhoneShell({ label, children }) {
   return (
     <div style={ST.phoneCol}>
       <div style={ST.phoneLabel}>{label}</div>
-      <div style={ST.phone}>{children}</div>
+      <div className="lumen-phone-frame" style={{ width: 330, height: 716, boxShadow: '0 22px 70px rgba(0,0,0,.38)' }}>
+        {children}
+      </div>
     </div>
   );
 }
 
 const ST = {
   page: {
-    width: '100vw', height: '100vh', overflow: 'hidden',
-    display: 'flex', flexDirection: 'column',
-    background: 'radial-gradient(ellipse at 50% -10%, #1b1430 0%, #0a0a14 55%)',
-    color: 'var(--douyin-ink-text,#f5f5f7)', fontFamily: 'var(--font-sans)',
+    minHeight: '100vh',
+    background: 'radial-gradient(circle at 12% 0%, rgba(254,44,85,.16), transparent 35%), linear-gradient(135deg,#090a10,#151827 55%,#0b0c12)',
+    color: 'var(--douyin-ink-text)',
+    fontFamily: 'var(--font-sans)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
   },
   header: {
-    flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    gap: 14, padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,.07)',
+    height: 56,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 22px',
+    borderBottom: '1px solid rgba(255,255,255,.08)',
+    background: 'rgba(7,8,12,.72)',
+    backdropFilter: 'blur(16px)',
   },
   scriptTag: {
-    fontSize: 10, fontWeight: 700, letterSpacing: '.06em',
-    padding: '3px 9px', borderRadius: 999,
-    background: 'rgba(255,176,32,.14)', color: 'var(--state-extended,#FFB020)',
-    border: '1px solid rgba(255,176,32,.4)', whiteSpace: 'nowrap',
+    fontSize: 11,
+    color: '#111827',
+    background: 'linear-gradient(135deg,#FDE68A,#F59E0B)',
+    padding: '4px 8px',
+    borderRadius: 999,
+    fontWeight: 800,
   },
   stage: {
-    flex: 1, minHeight: 0, display: 'flex', justifyContent: 'center',
-    gap: 'clamp(12px, 2.4vw, 30px)', padding: '14px clamp(12px, 3vw, 32px)',
+    flex: 1,
+    minHeight: 0,
+    display: 'grid',
+    gridTemplateColumns: '360px 360px minmax(260px,1fr)',
+    gap: 16,
+    padding: '16px 18px 12px',
     overflow: 'auto',
   },
-  phoneCol: { display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 },
-  phoneLabel: {
-    textAlign: 'center', fontSize: 11, fontWeight: 700,
-    color: 'var(--douyin-ink-muted)', letterSpacing: '.08em',
-  },
-  phone: {
-    position: 'relative',
-    width: 'clamp(250px, 24vw, 350px)', flex: 1, minHeight: 0,
-    maxHeight: 'calc(100vh - 175px)', aspectRatio: '402 / 874',
-    borderRadius: 26, overflow: 'hidden',
-    border: '1px solid rgba(255,255,255,.14)',
-    boxShadow: '0 24px 80px rgba(0,0,0,.6), 0 0 0 6px rgba(255,255,255,.03)',
-    background: '#000',
-  },
-  rail: {
-    width: 'clamp(240px, 23vw, 340px)', flexShrink: 0,
-    display: 'flex', flexDirection: 'column', gap: 10,
-    maxHeight: 'calc(100vh - 160px)', overflow: 'auto',
-  },
+  phoneCol: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 },
+  phoneLabel: { fontSize: 12, color: 'var(--douyin-ink-muted)', letterSpacing: '.04em' },
+  rail: { minHeight: 0, overflow: 'auto', display: 'flex' },
   railCard: {
-    flex: 1, display: 'flex', flexDirection: 'column',
-    padding: '14px 15px', borderRadius: 16,
-    background: 'rgba(255,255,255,.035)', border: '1px solid rgba(255,255,255,.09)',
+    width: '100%',
+    minHeight: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    padding: 16,
+    borderRadius: 20,
+    background: 'rgba(255,255,255,.06)',
+    border: '1px solid rgba(255,255,255,.1)',
   },
-  railTitle: {
-    fontSize: 12, fontWeight: 800, letterSpacing: '.1em',
-    color: 'var(--douyin-ink-text)', marginBottom: 12,
-  },
-  evidenceWrap: {
-    position: 'relative', flex: 1, minHeight: 480,
-    borderRadius: 16, overflow: 'hidden',
-    border: '1px solid rgba(201,169,97,.35)',
-  },
+  railTitle: { fontSize: 15, fontWeight: 900, marginBottom: 14 },
+  evidenceWrap: { width: 330, height: 716, overflow: 'hidden', margin: '0 auto' },
   bar: {
-    flexShrink: 0, display: 'flex', gap: 8, alignItems: 'stretch',
-    padding: '10px 18px max(12px, env(safe-area-inset-bottom, 0px))',
-    borderTop: '1px solid rgba(255,255,255,.07)',
-    background: 'rgba(10,10,18,.85)', backdropFilter: 'blur(10px)',
-    overflowX: 'auto',
+    minHeight: 78,
+    display: 'flex',
+    gap: 8,
+    alignItems: 'center',
+    padding: '10px 18px 14px',
+    borderTop: '1px solid rgba(255,255,255,.08)',
+    background: 'rgba(7,8,12,.84)',
   },
   stepBtn: {
-    flex: 1, minWidth: 92, minHeight: 54, borderRadius: 12, cursor: 'pointer',
-    border: '1px solid rgba(255,255,255,.12)', background: 'rgba(255,255,255,.04)',
-    color: 'var(--douyin-ink-text)', fontFamily: 'inherit',
-    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 1,
+    minWidth: 122,
+    height: 54,
+    border: '1px solid rgba(255,255,255,.12)',
+    background: 'rgba(255,255,255,.06)',
+    color: 'var(--douyin-ink-text)',
+    borderRadius: 14,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    padding: '0 12px',
+    cursor: 'pointer',
   },
-  stepBtnNext: {
-    border: '1px solid rgba(254,44,85,.55)',
-    background: 'linear-gradient(135deg, rgba(254,44,85,.22), rgba(254,44,85,.08))',
-    boxShadow: '0 6px 22px rgba(254,44,85,.25)',
-  },
-  stepBtnDone: {
-    opacity: .55,
-    border: '1px solid rgba(201,169,97,.35)',
-    background: 'rgba(201,169,97,.08)',
-  },
+  stepBtnDone: { borderColor: 'rgba(245,158,11,.55)', background: 'rgba(245,158,11,.14)' },
+  stepBtnNext: { borderColor: 'rgba(37,244,238,.65)', background: 'rgba(37,244,238,.12)' },
   resetBtn: {
-    flexShrink: 0, minWidth: 64, borderRadius: 12, cursor: 'pointer',
-    border: '1px solid rgba(255,255,255,.14)', background: 'transparent',
-    color: 'var(--douyin-ink-muted)', fontFamily: 'inherit', fontSize: 12, fontWeight: 700,
+    marginLeft: 'auto',
+    height: 40,
+    padding: '0 14px',
+    borderRadius: 12,
+    border: '1px solid rgba(255,255,255,.14)',
+    background: 'transparent',
+    color: 'var(--douyin-ink-muted)',
+    cursor: 'pointer',
   },
 };
-
-export default JudgesShowcaseRoute;
