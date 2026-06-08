@@ -80,8 +80,10 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// T7 §4.2: AI auctioneer trigger hooks. Always initialized so any
 	// mode that hosts the bid path / start path / timer can call into
 	// them — the goroutines fire only on events from those modes, so
-	// idle modes have zero overhead.
+	// idle modes have zero overhead. Wire metrics so recovered AI-dispatch
+	// panics are counted alongside supervised worker panics.
 	s.auctioneer = NewAuctioneerHooks(cfg.AISidecarURL, s.hub, s.httpClient)
+	s.auctioneer.metrics = s.metrics
 
 	switch mode {
 	case "all", "gateway":
