@@ -222,6 +222,33 @@ func (s *Server) handleFactsDraft(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
 }
 
+// POST /api/listing/draft -> proxied to ai-sidecar /llm/listing. Drafts AI
+// auction copy (title / selling points / script) the seller edits before
+// publishing. Auth-gated like facts/draft; the sidecar always returns usable
+// copy (canned fallback) so this never 502s on a model failure.
+func (s *Server) handleListingDraft(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.authUser(r); !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.cfg.AISidecarURL+"/llm/listing", strings.NewReader(string(body)))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "ai-sidecar unavailable")
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+}
+
 // POST /api/auctions {productId, rules} -> {auctionId}
 func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)

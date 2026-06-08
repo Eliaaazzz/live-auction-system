@@ -23,6 +23,7 @@ import (
 
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/advisor"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/auctioneer"
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/listing"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/vlm"
 )
 
@@ -47,6 +48,12 @@ func main() {
 	// adjudication are OUT of scope here (ratify-gated). See
 	// proto/ai-events.md §POST /llm/recommend.
 	mux.HandleFunc("POST /llm/recommend", advisor.HandlerFunc(advisor.MockGenerator))
+	// AI 拍卖文案: drafts a title + selling points + opening script from the
+	// seller's product info. listing.Select() shares the auctioneer's LLM_*
+	// creds (real Doubao when set, else canned). Compliance guardrail (no
+	// 保真/绝对化/联系方式/编造事实) runs on every generator's output. The
+	// seller edits before publishing — advisory only, never auto-applied.
+	mux.HandleFunc("POST /llm/listing", listing.HandlerFunc(listing.Select()))
 
 	addr := os.Getenv("SIDECAR_ADDR")
 	if addr == "" {
