@@ -60,6 +60,23 @@ func TestSelect_NoCredsKeepsMock(t *testing.T) {
 	}
 }
 
+func TestSelect_NoCredsResetsModelName(t *testing.T) {
+	t.Setenv("LLM_API_KEY", "k")
+	t.Setenv("LLM_MODEL", "ep-real")
+	_ = Select()
+	if activeModel != "ep-real" {
+		t.Fatalf("activeModel=%q want ep-real after real Select", activeModel)
+	}
+
+	t.Setenv("LLM_API_KEY", "")
+	t.Setenv("LLM_MODEL", "")
+	gen := Select()
+	resp := generateWithGuardrail(Request{Trigger: TriggerOpen}, gen)
+	if resp.ModelName != mockModelName {
+		t.Fatalf("ModelName=%q want %q after no-creds Select", resp.ModelName, mockModelName)
+	}
+}
+
 func TestRenderTriggerCtx_NoCurrencySymbols(t *testing.T) {
 	// The context we hand the model must not contain ¥/$/元+digit, so the model
 	// isn't primed to echo a money amount that the guardrail would reject.
