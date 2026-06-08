@@ -7,6 +7,7 @@ import { LeadingToast, OvertakenSlam, AntiSnipeFlash, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
   BlackHorseBanner, HammerTransition } from './atmosphere.jsx';
+import { AuctioneerVoice } from './AuctioneerVoice.jsx';
 
 // lumen-mobile.jsx
 // Mobile H5 screens: Room (LIVE + final-10s), Hammer overlay, Evidence.
@@ -393,6 +394,15 @@ function MobileRoom({
 
       {/* Anti-snipe flash — P0-3: the extend RULE firing as an event */}
       <AntiSnipeFlash flash={extendFlash}/>
+
+      {/* AI 关键时刻出声 — speaks a short cue at 开拍/黑马/反狙击/落槌, gated
+          by the room sound toggle (renders nothing). */}
+      <AuctioneerVoice
+        enabled={soundOn}
+        status={status}
+        showBlackHorse={showBlackHorse}
+        extendFlash={extendFlash}
+      />
 
       {/* Leading celebration toast — F06 */}
       <LeadingToast visible={showLeadingToast} gainCents="500000"/>
