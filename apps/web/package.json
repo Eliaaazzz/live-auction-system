@@ -1,49 +1,30 @@
 {
-  "name": "lumen-frontend",
+  "name": "live-auction-frontend",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
-  "description": "Lumen Auction — live auction front-end (React + Vite). Pairs with the lumen-backend Go service.",
+  "description": "douyin live auction frontend",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview --port 4173",
-    "lint": "eslint src --ext .js,.jsx --max-warnings 0",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "tokens:extract": "node scripts/extract-design-tokens.mjs",
-    "tokens:check": "node scripts/extract-design-tokens.mjs --check",
-    "smoke:wire": "node scripts/smoke-wire.mjs",
-    "smoke:catchup": "node scripts/smoke-catchup.mjs",
-    "smoke:schema": "node scripts/smoke-schema.mjs",
-    "smoke:401": "node scripts/smoke-401.mjs",
-    "smoke:antisnipe": "node scripts/smoke-antisnipe.mjs",
-    "smoke:snapshot": "node scripts/smoke-snapshot-fallback.mjs",
-    "smoke:all": "node scripts/smoke-wire.mjs && node scripts/smoke-catchup.mjs && node scripts/smoke-schema.mjs && node scripts/smoke-401.mjs && node scripts/smoke-antisnipe.mjs && node scripts/smoke-snapshot-fallback.mjs && node scripts/smoke-self-bid.mjs && node scripts/smoke-multitab.mjs",
-    "smoke:ratelimit": "node scripts/smoke-ratelimit.mjs",
-    "smoke:selfbid": "node scripts/smoke-self-bid.mjs",
-    "smoke:multitab": "node scripts/smoke-multitab.mjs",
-    "smoke:multigw": "node scripts/smoke-multigw.mjs"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "hls.js": "^1.6.16",
+    "@ant-design/icons": "^5.5.1",
+    "antd": "^5.21.6",
+    "dayjs": "^1.11.13",
+    "lucide-react": "^0.460.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
-    "zustand": "^4.5.5"
+    "zustand": "^4.5.7"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/coverage-v8": "^4.1.7",
-    "eslint": "^9.13.0",
-    "eslint-plugin-react": "^7.37.2",
-    "eslint-plugin-react-hooks": "^5.0.0",
-    "jsdom": "^29.1.1",
-    "vite": "^5.4.10",
-    "vitest": "^4.1.7",
-    "ws": "^8.18.0"
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
   }
 }
