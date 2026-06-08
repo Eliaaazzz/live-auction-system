@@ -25,15 +25,28 @@ export function VoiceBidButton({ currentCents = '0', stepCents = '0', disabled =
   const [pending, setPending] = React.useState(null); // { heard, amountCents }
   const [note, setNote] = React.useState(null);
   const recRef = React.useRef(null);
+  const pendingBaseRef = React.useRef(null); // { currentCents, stepCents } at transcript time
 
   React.useEffect(() => () => { try { recRef.current?.abort?.(); } catch { /* noop */ } }, []);
+
+  React.useEffect(() => {
+    if (!pending || !pendingBaseRef.current) return;
+    const base = pendingBaseRef.current;
+    if (base.currentCents !== currentCents || base.stepCents !== stepCents) {
+      setPending(null);
+      pendingBaseRef.current = null;
+      setNote('价格已更新，请重新语音出价');
+    }
+  }, [currentCents, stepCents, pending]);
 
   const handleTranscript = React.useCallback((transcript) => {
     const r = parseBidUtterance(transcript, { currentCents, stepCents });
     if (r.ok) {
+      pendingBaseRef.current = { currentCents, stepCents };
       setPending({ heard: r.heard, amountCents: r.amountCents });
       setNote(null);
     } else {
+      pendingBaseRef.current = null;
       setPending(null);
       setNote(r.reason);
     }
@@ -63,6 +76,7 @@ export function VoiceBidButton({ currentCents = '0', stepCents = '0', disabled =
     rec.onerror = () => { setListening(false); setNote('没听清，请再说一次'); };
     rec.onend = () => setListening(false);
     recRef.current = rec;
+    pendingBaseRef.current = null;
     setPending(null);
     setNote(null);
     setListening(true);
@@ -78,8 +92,14 @@ export function VoiceBidButton({ currentCents = '0', stepCents = '0', disabled =
     if (!pending) return;
     onBid?.(pending.amountCents);
     setNote(`已提交 ${formatCentsCNYShort(pending.amountCents)}`);
+    pendingBaseRef.current = null;
     setPending(null);
   }, [pending, onBid]);
+
+  const cancel = React.useCallback(() => {
+    pendingBaseRef.current = null;
+    setPending(null);
+  }, []);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -111,7 +131,7 @@ export function VoiceBidButton({ currentCents = '0', stepCents = '0', disabled =
             出价 {formatCentsCNYShort(pending.amountCents)}
           </span>
           <div style={{ flex: 1 }}/>
-          <button type="button" onClick={() => setPending(null)} style={{
+          <button type="button" onClick={cancel} style={{
             minHeight: 32, padding: '0 10px', borderRadius: 8, cursor: 'pointer',
             border: '1px solid rgba(255,255,255,.18)', background: 'transparent',
             color: 'var(--douyin-ink-muted)', fontSize: 12, fontWeight: 600,
