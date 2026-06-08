@@ -22,6 +22,7 @@ package vlm
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -29,6 +30,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/llm"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/ssrf"
 )
 
@@ -64,17 +66,30 @@ type Response struct {
 // Generator produces a facts draft from a request.
 type Generator func(ctx context.Context, req Request) (Response, error)
 
-// Select returns the generator chosen by VLM_MODE. real → Doubao (needs
-// VLM_DOUBAO_KEY); anything else → mock.
+// Select returns the VLM generator. The real Doubao/Ark path is chosen when
+// credentials are present (VLM_API_KEY+VLM_MODEL, or legacy VLM_MODE=real with
+// VLM_DOUBAO_KEY); VLM_MODE=mock is an explicit kill-switch that forces canned
+// even with a key. Anything else with no creds → mock, so a box without
+// credentials is always safe.
 func Select() Generator {
-	if os.Getenv("VLM_MODE") == "real" {
-		key := os.Getenv("VLM_DOUBAO_KEY")
-		client := ssrf.NewClient()
-		return func(ctx context.Context, req Request) (Response, error) {
-			return doubaoGenerate(ctx, client, key, req)
-		}
+	if os.Getenv("VLM_MODE") == "mock" {
+		return MockGenerator
 	}
-	return MockGenerator
+	cfg := llm.ConfigFromEnv("VLM", llm.DefaultArkBaseURL, "")
+	key := cfg.APIKey
+	if key == "" {
+		key = strings.TrimSpace(os.Getenv("VLM_DOUBAO_KEY")) // legacy alias
+	}
+	// Real path when creds are configured OR explicitly requested via the legacy
+	// VLM_MODE=real flag (which the T7 image-fetch/SSRF path is tested against).
+	realRequested := cfg.Enabled() || os.Getenv("VLM_MODE") == "real"
+	if !realRequested || key == "" {
+		return MockGenerator
+	}
+	client := ssrf.NewClient()
+	return func(ctx context.Context, req Request) (Response, error) {
+		return doubaoGenerate(ctx, client, key, req)
+	}
 }
 
 // MockGenerator returns canned facts (modelName mock-vlm-T1). The shape
@@ -168,20 +183,92 @@ func buildPrompt(title, description string) string {
 	return b.String()
 }
 
-// callDoubao is the actual model HTTP call. Stubbed for V9 (the Doubao
-// key was deprovisioned per #70 §7); returns a deterministic canned
-// payload so the real path is exercisable end-to-end in tests + the
-// demo can narrate "VLM via Doubao" while running this stub. Wiring a
-// real key is: replace this body with the Doubao chat-completions POST.
-func callDoubao(_ context.Context, _ string, _ string, _ []byte) ([]byte, error) {
-	return []byte(`{
-		"facts": [
-			{"field": "category", "value": "watch", "confidence": 0.93, "highRisk": false},
-			{"field": "brand", "value": "Patek Philippe", "confidence": 0.88, "highRisk": false},
-			{"field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true}
-		],
-		"modelName": "doubao-vlm-T7-stub"
-	}`), nil
+// visionSystem pins the output contract for the real VLM call: STRICT JSON in
+// the facts schema, no prose, no markdown fence. buildPrompt() supplies the
+// extraction instruction + the untrusted seller text as the user turn; this
+// system message guarantees a machine-parseable shape.
+const visionSystem = "You are a product-fact extractor for a live auction. " +
+	"Reply with ONLY a compact JSON object, no prose, no markdown fences:\n" +
+	`{"facts":[{"field":"category|brand|model|condition|defects","value":"...","confidence":0.0-1.0,"highRisk":false}]}` +
+	"\nSet highRisk=true and confidence=0 for any authenticity / 保真 claim — the platform never guarantees authenticity."
+
+// cannedVisionFacts is the deterministic fallback returned when the real path
+// is requested (VLM_MODE=real) but the Ark config is incomplete (no
+// VLM_MODEL/key). Keeps the path demoable end-to-end exactly as the T7 stub
+// did; a fully-configured box hits the real model below instead.
+var cannedVisionFacts = []byte(`{
+	"facts": [
+		{"field": "category", "value": "watch", "confidence": 0.93, "highRisk": false},
+		{"field": "brand", "value": "Patek Philippe", "confidence": 0.88, "highRisk": false},
+		{"field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true}
+	],
+	"modelName": "doubao-vlm-stub"
+}`)
+
+// callDoubao runs the real VLM completion against the OpenAI-compatible endpoint
+// (Volcengine Ark / 豆包 doubao-vision by default; any OpenAI-compatible VLM via
+// VLM_BASE_URL/VLM_MODEL). The SSRF-fetched image bytes are sent inline as a
+// base64 data URL — no second server-side fetch. With no key/model configured
+// it returns the canned facts so VLM_MODE=real stays demoable without creds.
+//
+// apiKey is the legacy VLM_DOUBAO_KEY threaded by Select(); VLM_API_KEY (read
+// via ConfigFromEnv) takes precedence when both are set.
+func callDoubao(ctx context.Context, apiKey string, prompt string, img []byte) ([]byte, error) {
+	cfg := llm.ConfigFromEnv("VLM", llm.DefaultArkBaseURL, "")
+	if cfg.APIKey == "" {
+		cfg.APIKey = strings.TrimSpace(apiKey)
+	}
+	if !cfg.Enabled() {
+		// real mode requested but model/key incomplete → canned (unchanged from
+		// the T7 stub). Wiring real Ark = set VLM_API_KEY + VLM_MODEL.
+		return cannedVisionFacts, nil
+	}
+	content, err := cfg.Complete(ctx, []llm.Message{
+		llm.System(visionSystem),
+		llm.UserWithImage(prompt, imageDataURL(img)),
+	}, llm.Options{MaxTokens: 500, Temperature: 0.2})
+	if err != nil {
+		return nil, err
+	}
+	return []byte(withModelName(extractJSONObject(content), cfg.Model)), nil
+}
+
+// imageDataURL wraps raw image bytes as a data: URL (mime sniffed) so the model
+// receives the image inline.
+func imageDataURL(img []byte) string {
+	mime := http.DetectContentType(img)
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(img)
+}
+
+// extractJSONObject pulls the first {...} object out of a model reply, tolerating
+// ```json fences or stray prose around it. Returns the input unchanged when no
+// braces are found (parseDoubao then surfaces the parse error → 502 → fallback).
+func extractJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	end := strings.LastIndexByte(s, '}')
+	if start < 0 || end < start {
+		return s
+	}
+	return s[start : end+1]
+}
+
+// withModelName guarantees the parsed facts JSON reports the model actually
+// used (the model rarely echoes its own name), so the evidence/admin UI shows
+// the real endpoint instead of an empty string. On parse failure it returns the
+// JSON untouched so parseDoubao can surface the error.
+func withModelName(jsonStr, model string) string {
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(jsonStr), &obj); err != nil {
+		return jsonStr
+	}
+	if v, ok := obj["modelName"].(string); !ok || strings.TrimSpace(v) == "" {
+		obj["modelName"] = model
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return jsonStr
+	}
+	return string(out)
 }
 
 // parseDoubao maps the Doubao response bytes to our Response schema and
