@@ -411,3 +411,27 @@ describe('PullToResync · gesture handling (TC-T6-#51-H2)', () => {
     expect(onResync).not.toHaveBeenCalled();
   });
 });
+
+// Regression (spec deep-review P0): a LIVE room with no bids yet must NOT render
+// the preview seed leaderboard (DEMO_LEADERS: 海风_2024 …). That穿帮ed on first
+// real join. A live room always passes a leaders array (store.leaders, maybe
+// empty); only an undefined prop (a preview route) may fall back to demo data.
+describe('MobileRoom · empty-room leaderboard (no fake bidders)', () => {
+  it('LIVE room with empty leaders shows the invite, NOT DEMO_LEADERS', () => {
+    const { container } = render(<MobileRoom status="LIVE" leaders={[]} currentCents="0"/>);
+    expect(container.textContent).not.toMatch(/海风_2024|听雨人|盐渍生活/); // no fake bidders
+    expect(container.textContent).toMatch(/暂无出价/);                      // empty-state invite
+  });
+
+  it('LIVE room with real leaders shows them (not the demo seed)', () => {
+    const real = [{ userId: 'r1', displayName: '真实买家A', cents: '500' }];
+    const { container } = render(<MobileRoom status="LIVE" leaders={real} currentCents="500"/>);
+    expect(container.textContent).toMatch(/真实买家A/);
+    expect(container.textContent).not.toMatch(/海风_2024/);
+  });
+
+  it('preview route (no leaders prop) still falls back to DEMO_LEADERS', () => {
+    const { container } = render(<MobileRoom status="LIVE" currentCents="12880000"/>);
+    expect(container.textContent).toMatch(/海风_2024/); // preview demo data preserved
+  });
+});
