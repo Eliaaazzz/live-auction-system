@@ -181,7 +181,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: apps/web/package-lock.json
+          cache-dependency-path: apps/web/package.json
       # (frontend JS smoke scripts removed with the antd/TS prototype migration —
       #  the old smoke:all harness drove the previous JS frontend; buyer/seller
       #  flows are now covered by the Playwright demo + the Go e2e gates above.)
@@ -210,7 +210,7 @@ jobs:
         with:
           node-version: "20"
           cache: npm
-          cache-dependency-path: apps/web/package-lock.json
+          cache-dependency-path: apps/web/package.json
       - name: install
         # `npm install` (not `npm ci`) because vitest 4 nests its own
         # vite which pulls esbuild ^0.27 — while the top-level vite 5
