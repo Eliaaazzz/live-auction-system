@@ -65,6 +65,7 @@ type Response struct {
 // char-friendly: counts runes not bytes, ≤80 fits comfortably in the
 // AIBubble typewriter without scrolling).
 const maxTextLen = 80
+const mockModelName = "mock-llm-T7"
 
 // Compiled once at package init for hot-path use.
 var (
@@ -124,7 +125,7 @@ type Generator func(req Request) (text string, err error)
 // activeModel labels Response.ModelName. Select() flips it to the real model id
 // when the Ark path is wired; the default keeps the mock label so existing
 // behavior + tests are unchanged.
-var activeModel = "mock-llm-T7"
+var activeModel = mockModelName
 
 // Select returns the generator chosen by env. A real OpenAI-compatible client
 // runs when LLM_API_KEY + LLM_MODEL are set — Volcengine Ark / 豆包 by default,
@@ -135,6 +136,7 @@ var activeModel = "mock-llm-T7"
 func Select() Generator {
 	cfg := llm.ConfigFromEnv("LLM", llm.DefaultArkBaseURL, "")
 	if !cfg.Enabled() {
+		activeModel = mockModelName
 		return MockGenerator
 	}
 	activeModel = cfg.Model
