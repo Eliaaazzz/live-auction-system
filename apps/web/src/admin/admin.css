@@ -1,0 +1,31 @@
+.admin-root { height: 100%; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+.admin-logo { height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 18px; color: #fff; font-weight: 800; font-size: 15px; letter-spacing: 0.2px; border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; overflow: hidden; }
+.admin-logo .mark { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg,#ff5f7e,#fe2c55); display: grid; place-items: center; font-size: 17px; flex-shrink: 0; }
+.admin-header { display: flex; align-items: center; gap: 14px; padding: 0 22px; background: #fff; border-bottom: 1px solid #f0f0f0; }
+.admin-header .title { font-size: 17px; font-weight: 700; }
+.admin-content { margin: 18px; padding: 20px; background: #fff; border-radius: 12px; min-height: 200px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.admin-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.admin-toolbar .spacer { flex: 1; }
+.prod-cell { display: flex; gap: 12px; align-items: flex-start; }
+.prod-thumb { width: 56px; height: 56px; border-radius: 10px; object-fit: cover; background: #f0f0f0; flex-shrink: 0; }
+.prod-meta .name { font-weight: 600; font-size: 13.5px; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prod-meta .id { color: #999; font-size: 12px; margin: 2px 0 6px; }
+.num-strong { font-weight: 700; font-variant-numeric: tabular-nums; }
+.num-red { color: #fe2c55; font-weight: 800; font-variant-numeric: tabular-nums; }
+.count-bar { display: inline-flex; align-items: center; gap: 4px; color: #fa8c16; font-variant-numeric: tabular-nums; }
+.mon-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
+@media (max-width: 1100px) { .mon-grid { grid-template-columns: 1fr; } }
+.mon-price { font-size: 40px; font-weight: 900; color: #fe2c55; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.mon-feed { height: 340px; overflow-y: auto; padding-right: 6px; }
+.mon-bid { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; background: #fafafa; animation: monin 0.3s ease; }
+.mon-bid.lead { background: linear-gradient(90deg,#fff7e6,#fff); border: 1px solid #ffe7ba; }
+.mon-bid.self { background: linear-gradient(90deg,#fff0f3,#fff); border: 1px solid #ffd6df; }
+@keyframes monin { from { transform: translateY(-6px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.mon-amt { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; }
+.pub-grid { display: grid; grid-template-columns: 1fr 320px; gap: 24px; }
+@media (max-width: 1080px) { .pub-grid { grid-template-columns: 1fr; } }
+.pub-preview { position: sticky; top: 8px; }
+.pub-phone { border-radius: 22px; overflow: hidden; background: linear-gradient(165deg,#2f6b5a,#0a0a10); color: #fff; padding: 16px; min-height: 360px; position: relative; box-shadow: 0 12px 30px rgba(0,0,0,0.18); }
+.pub-phone .pub-img { width: 100%; height: 148px; object-fit: cover; border-radius: 12px; margin: 8px 0; display: block; }
+.pub-card { background: rgba(255,255,255,0.12); backdrop-filter: blur(8px); border-radius: 14px; padding: 12px; }
+.pub-cta { margin-top: 10px; background: linear-gradient(96deg,#ff5f7e,#fe2c55); border-radius: 12px; text-align: center; padding: 11px; font-weight: 800; }
