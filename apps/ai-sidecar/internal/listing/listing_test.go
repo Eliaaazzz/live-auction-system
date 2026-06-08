@@ -23,6 +23,21 @@ func TestMockGenerator_InputAwareAndCompliant(t *testing.T) {
 	}
 }
 
+func TestMockGenerator_DropsToxicSellerInput(t *testing.T) {
+	resp := draftWithGuardrail(Request{
+		Title:    "百分百正品保真腕表 联系电话13800138000",
+		Category: "绝对最低价 ¥999",
+	}, MockGenerator)
+	if _, bad := draftFailsGuardrail(Draft{Title: resp.Title, SellingPoints: resp.SellingPoints, Script: resp.Script}); bad {
+		t.Fatalf("mock/no-creds path must not leak toxic seller input: %+v", resp)
+	}
+	for _, bad := range []string{"百分百正品", "保真", "绝对最低价", "13800138000", "¥999"} {
+		if strings.Contains(resp.Title, bad) || strings.Contains(resp.Script, bad) || anyPointContains(resp.SellingPoints, bad) {
+			t.Fatalf("mock output leaked %q from seller input: %+v", bad, resp)
+		}
+	}
+}
+
 func TestHandlerFunc_400OnMalformedBody(t *testing.T) {
 	req := httptest.NewRequest("POST", "/llm/listing", strings.NewReader("not json"))
 	rr := httptest.NewRecorder()
@@ -46,6 +61,25 @@ func TestHandlerFunc_AlwaysReturnsUsableCopy(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if !resp.Fallback || resp.Title == "" || len(resp.SellingPoints) == 0 {
 		t.Fatalf("error path must yield complete canned copy with Fallback=true: %+v", resp)
+	}
+}
+
+func TestFallbackResponse_DropsToxicSellerInputOnGeneratorError(t *testing.T) {
+	failing := func(Request) (Draft, error) { return Draft{}, errAlways }
+	resp := draftWithGuardrail(Request{
+		Title:    "保真名表 www.bad.example 联系电话13800138000",
+		Category: "绝对最低价 元999",
+	}, failing)
+	if !resp.Fallback {
+		t.Fatal("generator error must return fallback copy")
+	}
+	if _, bad := draftFailsGuardrail(Draft{Title: resp.Title, SellingPoints: resp.SellingPoints, Script: resp.Script}); bad {
+		t.Fatalf("fallback copy must pass guardrail even with toxic input: %+v", resp)
+	}
+	for _, bad := range []string{"保真", "www.bad.example", "13800138000", "绝对最低价", "元999"} {
+		if strings.Contains(resp.Title, bad) || strings.Contains(resp.Script, bad) || anyPointContains(resp.SellingPoints, bad) {
+			t.Fatalf("fallback output leaked %q from seller input: %+v", bad, resp)
+		}
 	}
 }
 
@@ -123,4 +157,13 @@ func TestNormalize_CapsPointsAndTrims(t *testing.T) {
 	if len(d.SellingPoints) != maxPoints {
 		t.Fatalf("points not capped to %d: %v", maxPoints, d.SellingPoints)
 	}
+}
+
+func anyPointContains(points []string, needle string) bool {
+	for _, p := range points {
+		if strings.Contains(p, needle) {
+			return true
+		}
+	}
+	return false
 }
