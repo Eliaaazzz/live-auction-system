@@ -187,7 +187,7 @@ function AuctionTab(p: SheetProps) {
   const [autoVal, setAutoVal] = useState(String(autoBidMax ?? state.currentPrice + lot.increment * 6));
   const [msg, setMsg] = useState<string | null>(null);
   const ratios = [{ label: '+1档', value: nextMinBid }, { label: '+3档', value: state.currentPrice + dynStep * 3 }, { label: '+5档', value: state.currentPrice + dynStep * 5 }];
-  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `已出价 ${fmtYuan(v)}` : r.reason ?? '出价失败'); setTimeout(() => setMsg(null), 1600); };
+  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `已提交出价 ${fmtYuan(v)} · 等待服务端裁决` : r.reason ?? '出价失败'); setTimeout(() => setMsg(null), 1800); };
   const bidCustom = () => { const v = parseInt(custom, 10); if (!Number.isFinite(v)) { setMsg('请输入有效金额'); return; } tryBid(v); setCustom(''); };
   const toggleAuto = () => { const next = !autoOn; setAutoOn(next); setAutoBidMax(next ? parseInt(autoVal, 10) || null : null); };
   return (
@@ -204,7 +204,7 @@ function AuctionTab(p: SheetProps) {
         <input className="lm-num tnum" inputMode="numeric" disabled={!autoOn} value={autoVal} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setAutoVal(v); if (autoOn) setAutoBidMax(parseInt(v, 10) || null); }} style={!autoOn ? { opacity: 0.4 } : undefined} />
         <div className={'lm-switch' + (autoOn ? ' on' : '')} onClick={toggleAuto}><i /></div>
       </div>
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>被超越时自动加价至上限（代理出价），守护第一名。</div>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>设定你愿意出到的最高价（上限）。出价不会超过此金额，帮你守住预算、理性竞拍。</div>
       <button className="lm-cta ghost" onClick={onOpenSheetBid}>精确出价 / 一次加多笔</button>
       {msg && <div className="lm-warn">{msg}</div>}
     </div>

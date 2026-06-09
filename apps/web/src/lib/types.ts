@@ -79,4 +79,6 @@ export interface AuctionState {
   extendedFlash: number;
   lastEvent: EngineEvent | null;
   bidCount: number;
+  /** Last server bid rejection (BID_REJECTED), localized — drives the buyer reject toast. */
+  lastReject?: { code: string; text: string; at: number } | null;
 }

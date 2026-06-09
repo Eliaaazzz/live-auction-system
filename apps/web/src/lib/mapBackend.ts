@@ -5,11 +5,6 @@
 import type { Room, Lot } from './types';
 import { avatar, PROD } from './assets';
 
-// Self-hosted looping mp4 used when an auction has no real livePlayUrl. Mirrors
-// the LIVE_FALLBACK export added to ../lib/assets separately; kept as a literal
-// here so this module type-checks before that export lands.
-const LIVE_FALLBACK = '/media/live-loop.mp4';
-
 export interface BackendAuction {
   auctionId: string;
   productName?: string;
@@ -63,7 +58,10 @@ export function auctionToLot(a: BackendAuction): Lot {
     title: a.productName || '直播拍品',
     subtitle: '单品竞拍 · 0 元起拍 · 服务端裁决',
     image: a.imageUrl || PROD.watch,
-    live: a.livePlayUrl || LIVE_FALLBACK,
+    // No fake fallback loop: the real stream URL arrives later via the per-room
+    // snapshot (engine livePlayUrl). With no real stream, VideoBackground shows
+    // the product still — never an off-brand placeholder video.
+    live: a.livePlayUrl || undefined,
     tone: '#1b2a4a',
     tone2: '#c9a961',
     startPrice: yuan(a.startPriceCents),

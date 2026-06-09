@@ -111,6 +111,14 @@ export class RoomClient {
           this.onReject(env);
           return;
 
+        case EventType.AI_COMMENTARY:
+          // Non-authoritative LLM auctioneer line (proto/ai-events.md). Forward to
+          // the store reducer so auctioneerText/aiSidecarHealth update + the buyer
+          // AI bubble shows — but DON'T treat it as a sync signal (no OPEN state,
+          // seq is null on this type so it's exempt from the seqguard).
+          this.onEvent(env);
+          return;
+
         case EventType.ROOM_SNAPSHOT:
         case EventType.ROOM_STATE_PATCH:
         case EventType.BID_ACCEPTED:

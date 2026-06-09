@@ -114,9 +114,14 @@ export const api = {
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
   /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable.
-   *  `token`/`seat` let a Showcase seat bid under its OWN identity (买家A/买家B). */
-  placeBid: (id, payload, { signal, token, seat = '' } = {}) =>
-    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal, token, seat }),
+   *  opts: { signal?, token?, seat? } — `token`/`seat` let a Showcase seat bid under
+   *  its OWN identity (买家A/买家B). NB: a destructured default `({ signal, token,
+   *  seat = '' } = {})` makes TS infer the param as `{ seat? }` only (binding-default
+   *  gotcha) and reject the engine's `{ token, signal }` call (tsc --noEmit fails even
+   *  though it runs fine). Taking `opts` ({}-typed) accepts any caller object and
+   *  forwards signal/token/seat to request() unchanged. */
+  placeBid: (id, payload, opts = {}) =>
+    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, ...opts }),
 
   /** Stub today (PR #34 fills the timeline + hash chain). */
   getEvidence: (id) => request(`/auctions/${id}/evidence`),
@@ -234,11 +239,12 @@ export const api = {
    * The bid path NEVER calls draftFacts, so AI-down does not affect
    * BID_PLACE / BID_ACCEPTED. V9 P3 invariant.
    */
-  draftFacts: async ({ productId, imageUrls, title, description }) => {
+  draftFacts: async ({ productId, imageUrls, title, description, signal }) => {
     try {
       const result = await request('/facts/draft', {
         method: 'POST',
         body: { productId, imageUrls, title, description },
+        signal,
       });
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-ok'));

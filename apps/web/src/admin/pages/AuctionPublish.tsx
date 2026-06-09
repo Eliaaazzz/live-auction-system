@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
 import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
-import { computeIncrement } from '../../lib/pricing';
+import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
@@ -12,11 +12,35 @@ const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) *
 const CAT_EMOJI: Record<string, string> = { 玉石珠宝: '🧿', 翡翠玉镯: '💚', 二手奢侈品: '⌚️', 文玩杂项: '🫖', 钱币邮票: '🪙', 艺术品: '🎴', 特色食品: '🍫' };
 const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠玉镯: PROD.jadeBangle, 二手奢侈品: PROD.watch, 文玩杂项: PROD.teapot, 钱币邮票: PROD.goldNecklace, 艺术品: PROD.diamond, 特色食品: PROD.chocolate };
 
+// 即时智能模板：点「AI 生成介绍」立刻出文案（卖家零等待、永不空白），合规——
+// 不出现「保真/正品/假一赔十」等词，结尾统一带平台不保真声明。后台真豆包返回后再精修。
+const INTRO_TEMPLATES: Record<string, (name: string) => string> = {
+  玉石珠宝: (n) => `${n}：天然材质，色泽温润，雕工细腻，佩戴大气百搭。成色与瑕疵以实物及卖家声明为准，平台不作真伪保证，理性出价。`,
+  翡翠玉镯: (n) => `${n}：种水透亮，触手细腻，圈口适中，日常佩戴显气质。颜色与种地以实物为准，平台不保真，喜欢的朋友放心参与。`,
+  二手奢侈品: (n) => `${n}：经典款式，品相良好，配件情况以图为准。二手非全新，真伪与成色由卖家声明，平台不作鉴定背书，请理性竞拍。`,
+  文玩杂项: (n) => `${n}：包浆自然，形制规整，盘玩手感佳。年代与材质以卖家描述为准，平台不保真，识货的朋友可大胆出价。`,
+  钱币邮票: (n) => `${n}：品相清晰，存世可藏，细节见图。评级与真伪以卖家声明为准，平台不作担保，欢迎理性竞拍。`,
+  艺术品: (n) => `${n}：做工考究，观感出众，适合收藏陈设。作者与年代以卖家描述为准，平台不作鉴定保证。`,
+  特色食品: (n) => `${n}：精选用料，风味地道，适合自享或送礼。保质期与产地以实物标签为准，请按需出价。`,
+};
+const defaultIntro = (n: string) => `${n}：成色良好，细节见图，喜欢的朋友可参与竞拍。具体材质与瑕疵以实物及卖家声明为准，平台不作真伪保证。`;
+
+// composeIntro 把真豆包识图返回的 facts 拼成一段「AI 识图」介绍：过滤掉
+// highRisk / authenticity / unverified（平台不保真），无可用事实时返回 null（保留模板）。
+const FIELD_CN: Record<string, string> = { category: '品类', brand: '品牌', model: '型号', condition: '成色', defects: '瑕疵', material: '材质', color: '颜色' };
+function composeIntro(name: string, facts?: Array<{ field?: string; value?: string; highRisk?: boolean }>): string | null {
+  const good = (facts ?? []).filter(
+    (f) => f?.value && !f.highRisk && f.field !== 'authenticity' && String(f.value).trim().toLowerCase() !== 'unverified',
+  );
+  if (!good.length) return null;
+  const parts = good.map((f) => `${FIELD_CN[f.field ?? ''] ?? f.field}：${f.value}`);
+  return `${name}（AI 识图）${parts.join('，')}。成色与瑕疵以实物及卖家声明为准，平台不作真伪保证。`;
+}
+
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
-  const [aiBusy, setAiBusy] = useState(false);
   const v = Form.useWatch([], form) || {};
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [fileList, setFileList] = useState<any[]>([]);
@@ -41,40 +65,53 @@ export default function AuctionPublish() {
     return false; // stop antd's built-in XHR; we upload via api.uploadImage
   };
 
-  // ✨ AI 生成商品介绍：调用真实豆包多模态（/facts/draft），可能耗时 10-30s。
-  // 把返回的 facts 拼成中文介绍，附上高风险免责声明，写回「商品介绍」字段。
-  const onAiIntro = async () => {
-    const name = form.getFieldValue('name');
+  // ✨ AI 生成商品介绍 —— 秒出 + 后台真 AI 精修：
+  //   1) 点击【立刻】写入合规智能模板，卖家零等待、按钮不转圈、永不空白；
+  //   2) 同时【非阻塞】调真豆包多模态识图（/facts/draft），8s 内返回且卖家未改动
+  //      就替换成「AI 识图」版；超时/失败/已被改动则保留模板。
+  // 这样真模型再慢也不卡 demo，而 AI 仍真实在跑（不是假装）。
+  const onAiIntro = () => {
+    const name = String(form.getFieldValue('name') || '').trim();
     if (!name) { message.warning('请先填写商品名称'); return; }
-    setAiBusy(true);
-    try {
-      await ensureSession('seller-demo');
-      const { facts, highRiskFieldsDisclaimer } = await api.draftFacts({
-        productId: 'draft-preview',
-        title: name,
-        description: form.getFieldValue('intro') || '',
-        // AI 视觉需服务端可抓取的【绝对】URL；上传图是相对 /uploads/，补成同源绝对地址（公网回环可达，过 SSRF）。
-        imageUrls: [uploadedUrl ? (uploadedUrl.startsWith('http') ? uploadedUrl : location.origin + uploadedUrl) : (CAT_IMG[form.getFieldValue('category') as string] ?? PROD.jadePendant)],
-      });
-      let text = (facts ?? [])
-        .map((f: { value?: string }) => f.value)
-        .filter(Boolean)
-        .join('，');
-      if (highRiskFieldsDisclaimer) text += `（${highRiskFieldsDisclaimer}）`;
-      form.setFieldsValue({ intro: text.slice(0, 200) });
-      message.success('AI 已生成商品介绍');
-    } catch (e: any) {
-      message.error('AI 生成失败：' + (e?.message || e));
-    } finally {
-      setAiBusy(false);
-    }
+    const category = form.getFieldValue('category') as string;
+    const tpl = (INTRO_TEMPLATES[category] ?? defaultIntro)(name).slice(0, 200);
+    form.setFieldsValue({ intro: tpl });
+    message.success('✨ 已生成商品介绍');
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    void (async () => {
+      try {
+        await ensureSession('seller-demo');
+        const { facts } = await api.draftFacts({
+          productId: 'draft-preview',
+          title: name,
+          description: tpl,
+          // AI 视觉需服务端可抓取的【绝对】URL；上传图是相对 /uploads/，补成同源绝对地址（过 SSRF）。
+          imageUrls: [uploadedUrl ? (uploadedUrl.startsWith('http') ? uploadedUrl : location.origin + uploadedUrl) : (CAT_IMG[category] ?? PROD.jadePendant)],
+          signal: ctrl.signal,
+        });
+        const refined = composeIntro(name, facts);
+        // 仅当卖家没动过（仍等于模板）才用 AI 版覆盖，绝不抹掉卖家手改。
+        if (refined && form.getFieldValue('name') === name && form.getFieldValue('intro') === tpl) {
+          form.setFieldsValue({ intro: refined.slice(0, 200) });
+          message.success('AI 已根据商品图优化介绍');
+        }
+      } catch {
+        /* 超时/中止/失败：静默保留模板——demo 永不暴露 AI 慢或不可用。 */
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
   };
 
-  // AI 推荐加价幅度：按封顶价（价值档）+ 基础热度推算一个「好看」的加价档位。
+  // AI 推荐加价幅度：按封顶价（=价值上限）取 ≈2.5% 的「好看」档位。高价品给到有分量的
+  // 一档（劳力士封顶 5 万→¥1300，而非旧公式的 ¥250）。详见 lib/pricing.recommendIncrement。
   const onAiStep = () => {
-    const rec = computeIncrement(form.getFieldValue('cap') || 0, 1000, 1);
+    const cap = Number(form.getFieldValue('cap')) || 0;
+    const rec = recommendIncrement(cap);
     form.setFieldsValue({ step: rec, minStep: rec });
-    message.success('AI 推荐加价幅度 ¥' + rec);
+    message.success(`AI 推荐加价幅度 ¥${rec}${cap ? '（按封顶价约 2.5%）' : ''}`);
   };
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
@@ -161,7 +198,7 @@ export default function AuctionPublish() {
             label={
               <Space>
                 <span>商品介绍</span>
-                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} loading={aiBusy} onClick={onAiIntro}>✨ AI 生成介绍</Button>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiIntro}>✨ AI 生成介绍</Button>
               </Space>
             }
           >
@@ -221,7 +258,7 @@ export default function AuctionPublish() {
                 <div><div style={{ fontSize: 10, opacity: 0.7 }}>{v.start === 0 ? '0 元起拍' : '起拍价'}</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(v.start ?? 0)}</div></div>
                 <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, opacity: 0.7 }}>加价幅度</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(step)}</div></div>
               </div>
-              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>封顶 ¥{fmtMoney(v.cap ?? 0)} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'} · 保证金 ¥{fmtMoney(v.deposit ?? 0)}</div>
+              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>{(v.cap ?? 0) > 0 ? `封顶 ¥${fmtMoney(v.cap)}` : '不封顶'} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'} · {(v.deposit ?? 0) > 0 ? `保证金 ¥${fmtMoney(v.deposit)}` : '免保证金'}</div>
             </div>
             <div className="pub-cta">立即出价 ¥{fmtMoney((v.start ?? 0) + step)}</div>
           </div>

@@ -97,7 +97,9 @@ export default function ProductManage() {
       await ensureSession('seller-demo');
       const s: any = await api.getStream(r.id);
       const key = s?.streamKey || '';
-      const push = `rtmp://${location.hostname}:1935/live/${key}`;
+      // Prefer the backend-issued push/play URLs (authoritative — built from the
+      // configured LivePushURLBase); only fall back to a local guess if absent.
+      const push = s?.pushUrl || `rtmp://${location.hostname}:1935/live/${key}`;
       const play = s?.livePlayUrl || `${location.origin}/live/${key}.m3u8`;
       // A previously-uploaded clip lives on as the auction's livePlayUrl (an
       // /uploads/… path, not the .m3u8 push stream) — reflect it so re-opening
@@ -187,7 +189,7 @@ export default function ProductManage() {
           {r.status === 'live' && (
             <Button size="small" type="primary" icon={<VideoCameraOutlined />} onClick={() => startLive(r)}
               style={liveStarted.has(r.id) ? { background: '#52c41a', borderColor: '#52c41a' } : undefined}>
-              {liveStarted.has(r.id) ? '● 直播中' : '开始直播'}
+              {liveStarted.has(r.id) ? '直播设置' : '开始直播'}
             </Button>
           )}
           <Button size="small" type={explaining === r.key ? 'primary' : 'default'} icon={<SoundOutlined />} onClick={() => { setExplaining(explaining === r.key ? null : r.key); message.info(explaining === r.key ? '已取消讲解' : '开始讲解中'); }}>{explaining === r.key ? '取消讲解' : '讲解'}</Button>
@@ -226,7 +228,7 @@ export default function ProductManage() {
         footer={[<Button key="ok" type="primary" onClick={() => setStreamInfo(null)}>知道了</Button>]}
         width={620}
       >
-        <p style={{ color: '#52c41a', fontWeight: 600, marginTop: 0 }}>● 已开播 · 本场直播间已上线，观众可在移动端实时观看</p>
+        <p style={{ color: '#52c41a', fontWeight: 600, marginTop: 0 }}>● 推流通道已就绪 · 上传视频或用 OBS 推流后，观众即可在移动端实时观看</p>
 
         {/* 推荐路径：上传准备好的视频，观众端自动循环播放，无需 OBS。 */}
         <div style={{ marginBottom: 18, padding: '14px 16px', background: '#fff7f8', border: '1px solid #ffd6dd', borderRadius: 10 }}>

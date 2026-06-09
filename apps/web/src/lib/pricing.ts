@@ -39,3 +39,35 @@ export function computeIncrement(valueYuan: number, online: number, baseStepYuan
   const heat = 1 + Math.min(Math.max(online, 0), 10000) / 4000;
   return roundNice(base * heat);
 }
+
+/** ≈ percentage of the lot value used by recommendIncrement (a ~40-bid climb). */
+export const RECOMMEND_INCREMENT_PCT = 0.025;
+
+/**
+ * Recommend a FIXED bid increment (加价幅度) for the SELLER to set BEFORE the
+ * auction, from the lot's cap / value. This is NOT computeIncrement: that one is
+ * the live, heat-driven dynamic step used DURING bidding (and stays unchanged —
+ * it has 4 live callers). This is a one-shot, value-PROPORTIONAL suggestion, so a
+ * high-value lot finally gets a meaningful step instead of a cheap flat tier:
+ *
+ *   ¥50,000 劳力士 → ¥1,300   (old tier gave ¥250 — a luxury watch climbing in
+ *                              ¥250 steps took ~200 bids and felt insulting)
+ *   ¥12,000 玉镯   → ¥300
+ *   ¥200 食品      → ¥10
+ *
+ * ≈2.5% of the lot value, snapped to a nice number, floored by the value tier so
+ * a cheap lot still gets a usable step. No fake "heat": the seller's fixed
+ * increment is set pre-auction, when there are no live viewers to heat it.
+ */
+export function recommendIncrement(valueYuan: number): number {
+  const v = Math.max(0, valueYuan || 0);
+  if (v <= 0) return 50;
+  const tierFloor =
+    v >= 100000 ? 1000 :
+    v >= 30000 ? 500 :
+    v >= 10000 ? 200 :
+    v >= 3000 ? 100 :
+    v >= 1000 ? 50 :
+    10;
+  return roundNice(Math.max(v * RECOMMEND_INCREMENT_PCT, tierFloor));
+}
