@@ -1,6 +1,7 @@
 package listing
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,7 @@ import (
 )
 
 func TestMockGenerator_InputAwareAndCompliant(t *testing.T) {
-	resp := draftWithGuardrail(Request{Title: "劳力士 Explorer 114270", Category: "腕表"}, MockGenerator)
+	resp := draftWithGuardrail(context.Background(), Request{Title: "劳力士 Explorer 114270", Category: "腕表"}, MockGenerator)
 	if resp.Title == "" || len(resp.SellingPoints) == 0 || resp.Script == "" {
 		t.Fatalf("mock must return complete copy: %+v", resp)
 	}
@@ -24,7 +25,7 @@ func TestMockGenerator_InputAwareAndCompliant(t *testing.T) {
 }
 
 func TestMockGenerator_DropsToxicSellerInput(t *testing.T) {
-	resp := draftWithGuardrail(Request{
+	resp := draftWithGuardrail(context.Background(), Request{
 		Title:    "百分百正品保真腕表 联系电话13800138000",
 		Category: "绝对最低价 ¥999",
 	}, MockGenerator)
@@ -49,7 +50,7 @@ func TestHandlerFunc_400OnMalformedBody(t *testing.T) {
 
 func TestHandlerFunc_AlwaysReturnsUsableCopy(t *testing.T) {
 	// A generator that errors → handler still returns complete canned copy.
-	failing := func(Request) (Draft, error) { return Draft{}, errAlways }
+	failing := func(context.Context, Request) (Draft, error) { return Draft{}, errAlways }
 	body, _ := json.Marshal(Request{Title: "青花瓷瓶", Category: "瓷器"})
 	req := httptest.NewRequest("POST", "/llm/listing", strings.NewReader(string(body)))
 	rr := httptest.NewRecorder()
@@ -65,8 +66,8 @@ func TestHandlerFunc_AlwaysReturnsUsableCopy(t *testing.T) {
 }
 
 func TestFallbackResponse_DropsToxicSellerInputOnGeneratorError(t *testing.T) {
-	failing := func(Request) (Draft, error) { return Draft{}, errAlways }
-	resp := draftWithGuardrail(Request{
+	failing := func(context.Context, Request) (Draft, error) { return Draft{}, errAlways }
+	resp := draftWithGuardrail(context.Background(), Request{
 		Title:    "保真名表 www.bad.example 联系电话13800138000",
 		Category: "绝对最低价 元999",
 	}, failing)
@@ -97,7 +98,7 @@ func TestArkGenerator_RoundTrip(t *testing.T) {
 	defer srv.Close()
 
 	gen := arkGenerator(llm.Config{BaseURL: srv.URL, APIKey: "k", Model: "ep-test"})
-	resp := draftWithGuardrail(Request{Title: "Explorer", Category: "腕表"}, gen)
+	resp := draftWithGuardrail(context.Background(), Request{Title: "Explorer", Category: "腕表"}, gen)
 	if resp.Fallback {
 		t.Fatalf("clean model output must not fall back: %+v", resp)
 	}
@@ -114,7 +115,7 @@ func TestGuardrail_RejectsNonCompliantModelOutput(t *testing.T) {
 	defer srv.Close()
 
 	gen := arkGenerator(llm.Config{BaseURL: srv.URL, APIKey: "k", Model: "ep-test"})
-	resp := draftWithGuardrail(Request{Title: "腕表", Category: "腕表"}, gen)
+	resp := draftWithGuardrail(context.Background(), Request{Title: "腕表", Category: "腕表"}, gen)
 	if !resp.Fallback {
 		t.Fatal("non-compliant copy (保真/绝对/最低价/假一赔十) must trip the guardrail")
 	}
@@ -123,7 +124,7 @@ func TestGuardrail_RejectsNonCompliantModelOutput(t *testing.T) {
 func TestSelect_NoCredsKeepsMock(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_MODEL", "")
-	resp := draftWithGuardrail(Request{Title: "测试", Category: "其他"}, Select())
+	resp := draftWithGuardrail(context.Background(), Request{Title: "测试", Category: "其他"}, Select())
 	if resp.ModelName != mockModelName {
 		t.Fatalf("no creds must keep mock, got modelName=%q", resp.ModelName)
 	}
@@ -139,7 +140,7 @@ func TestSelect_CredsResetModelLabel(t *testing.T) {
 	// reset for isolation: no creds must restore the mock label
 	t.Setenv("LLM_API_KEY", "")
 	t.Setenv("LLM_MODEL", "")
-	resp := draftWithGuardrail(Request{Title: "x", Category: "y"}, Select())
+	resp := draftWithGuardrail(context.Background(), Request{Title: "x", Category: "y"}, Select())
 	if resp.ModelName != mockModelName {
 		t.Fatalf("ModelName=%q want %q after no-creds Select", resp.ModelName, mockModelName)
 	}
@@ -156,6 +157,51 @@ func TestNormalize_CapsPointsAndTrims(t *testing.T) {
 	}
 	if len(d.SellingPoints) != maxPoints {
 		t.Fatalf("points not capped to %d: %v", maxPoints, d.SellingPoints)
+	}
+}
+
+// TestGuardrail_MoneyForms covers the suffix money gap: zh marketing copy
+// usually writes amounts as "1000元" / "5万" / "13.8万" / "100万元" rather than
+// "¥1000", and a real model could otherwise slip those past the guardrail.
+func TestGuardrail_MoneyForms(t *testing.T) {
+	unsafe := []string{
+		"1000元",     // digit + 元 suffix
+		"5万",        // digit + 万 suffix
+		"13.8万",     // decimal + 万 suffix
+		"参考价 100万元", // phrase + 万元
+		"成交价 13.8万", // phrase + decimal 万
+		"¥100",      // symbol prefix (existing)
+		"$50",       // symbol prefix (existing)
+		"元100",      // 元 prefix (existing)
+	}
+	for _, s := range unsafe {
+		if !textUnsafe(s) {
+			t.Errorf("money form %q must be flagged unsafe", s)
+		}
+	}
+	safe := []string{
+		"价格透明 · 理性出价",   // clean negative
+		"单一拍品 · 透明竞价",   // mock point
+		"把握最后十秒的反狙击延时",  // chinese numeral, no amount
+		"3天无理由 · 卖家已实名", // digit + non-money unit
+	}
+	for _, s := range safe {
+		if textUnsafe(s) {
+			t.Errorf("clean copy %q must not be flagged unsafe", s)
+		}
+	}
+}
+
+// TestGuardrail_RejectsSuffixMoneyDraft ensures a model draft that embeds a
+// suffix-form amount in selling points trips the guardrail and falls back.
+func TestGuardrail_RejectsSuffixMoneyDraft(t *testing.T) {
+	d := normalize(Draft{
+		Title:         "青花瓷瓶",
+		SellingPoints: []string{"参考价 5万", "成色良好"},
+		Script:        "各位买家，理性出价。",
+	})
+	if reason, bad := draftFailsGuardrail(d); !bad || reason != "unsafe" {
+		t.Fatalf("suffix-money draft must fail guardrail as unsafe, got reason=%q bad=%v", reason, bad)
 	}
 }
 

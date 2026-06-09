@@ -37,6 +37,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
@@ -48,6 +49,7 @@ type AuctioneerHooks struct {
 	sidecarURL string
 	hub        *Hub
 	httpClient *http.Client
+	metrics    *metrics.Registry
 
 	mu sync.Mutex
 	// per-auction debounce state
@@ -239,6 +241,12 @@ type HammerContext struct {
 // Errors are logged but never returned — V9 P3, AI failure must not
 // surface to the bid path.
 func (a *AuctioneerHooks) fire(parentCtx context.Context, aid, trigger string, ctxData map[string]any) {
+	// Every caller dispatches this as `go a.fire(...)`, so a panic here (bad
+	// sidecar payload, nil map, etc.) would crash the WHOLE gateway. Firewall it:
+	// AI is non-authoritative, a failed/​panicking dispatch must never take the
+	// bidding engine down (spec deep-review: 异常兜底; AI 非裁决). Passing a.metrics
+	// makes AI-dispatch panics observable in goroutinePanics too.
+	defer recoverGoroutine("auctioneer.fire("+trigger+")", a.metrics)
 	// Bounded timeout independent of parentCtx — even if the caller
 	// (fanout / Timer) has a long-lived context, the LLM call should
 	// never block beyond 5s. Failed call → canned fallback.

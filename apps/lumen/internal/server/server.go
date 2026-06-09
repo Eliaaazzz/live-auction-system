@@ -80,16 +80,25 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// T7 §4.2: AI auctioneer trigger hooks. Always initialized so any
 	// mode that hosts the bid path / start path / timer can call into
 	// them — the goroutines fire only on events from those modes, so
-	// idle modes have zero overhead.
+	// idle modes have zero overhead. Wire metrics so recovered AI-dispatch
+	// panics are counted alongside supervised worker panics.
 	s.auctioneer = NewAuctioneerHooks(cfg.AISidecarURL, s.hub, s.httpClient)
+	s.auctioneer.metrics = s.metrics
 
 	switch mode {
 	case "all", "gateway":
-		go s.hub.subscribe(ctx, st, s.auctioneer, s.metrics)
+		// goSupervised: a panic in a long-lived worker must NOT crash the gateway
+		// (net/http only recovers request-handler panics). Recover + restart, count
+		// goroutinePanics for alerting (spec deep-review: 异常兜底/稳定性).
+		goSupervised(ctx, "subscribe", s.metrics, func(c context.Context) {
+			s.hub.subscribe(c, st, s.auctioneer, s.metrics)
+		})
 	}
 	switch mode {
 	case "all", "pg-writer":
-		go runPersistenceWorker(ctx, st)
+		goSupervised(ctx, "persistence", s.metrics, func(c context.Context) {
+			runPersistenceWorker(c, st)
+		})
 	}
 	switch mode {
 	case "all", "timer":
@@ -100,7 +109,9 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		// guard only allows that in dev; non-dev fails fast. Anything other than
 		// "1" (including missing) keeps the timer on.
 		if !timerDisabled {
-			go runTimerWorker(ctx, st, s.auctioneer, s.metrics)
+			goSupervised(ctx, "timer", s.metrics, func(c context.Context) {
+				runTimerWorker(c, st, s.auctioneer, s.metrics)
+			})
 		} else {
 			log.Printf("lumen: LUMEN_CHAOS_DISABLE_TIMER=1 — Timer Worker NOT started (T9 chaos drill)")
 		}

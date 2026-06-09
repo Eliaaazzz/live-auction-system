@@ -6,7 +6,7 @@
 # host's macOS esbuild binary would otherwise break the build).
 FROM node:20-alpine AS webbuild
 WORKDIR /web-src
-COPY apps/web/package.json apps/web/package-lock.json ./
+COPY apps/web/package.json ./
 # `npm install` (not `npm ci`): the lockfile is known-incomplete (vitest 4
 # nests its own vite/esbuild vs the top-level vite 5), so `npm ci`'s strict
 # check fails on Linux — the CI `web` job uses `npm install` for the same reason.

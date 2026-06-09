@@ -59,8 +59,10 @@ const (
 // activeModel labels Response.ModelName; Select() flips it to the real model id.
 var activeModel = mockModelName
 
-// Generator drafts listing copy from a request (pre-guardrail).
-type Generator func(req Request) (Draft, error)
+// Generator drafts listing copy from a request (pre-guardrail). It receives the
+// request context so a canceled seller request stops the model call instead of
+// burning tokens until the sidecar's own timeout.
+type Generator func(ctx context.Context, req Request) (Draft, error)
 
 // Draft is the raw model/mock output before guardrail + normalization.
 type Draft struct {
@@ -95,22 +97,22 @@ func HandlerFunc(generate Generator) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(draftWithGuardrail(req, generate))
+		_ = json.NewEncoder(w).Encode(draftWithGuardrail(r.Context(), req, generate))
 	}
 }
 
 // draftWithGuardrail calls the generator, validates every text field, and falls
 // back to canned copy on a generator error OR any compliance violation.
-func draftWithGuardrail(req Request, generate Generator) Response {
-	d, err := generate(req)
+func draftWithGuardrail(ctx context.Context, req Request, generate Generator) Response {
+	d, err := generate(ctx, req)
 	if err != nil {
 		log.Printf("[listing] generator failed: %v · falling back", err)
-		return fallbackResponse(req)
+		return fallbackResponse(ctx, req)
 	}
 	d = normalize(d)
 	if reason, bad := draftFailsGuardrail(d); bad {
 		log.Printf("[listing] guardrail reason=%s · using canned copy", reason)
-		return fallbackResponse(req)
+		return fallbackResponse(ctx, req)
 	}
 	return Response{
 		Title:         d.Title,
@@ -144,7 +146,7 @@ func normalize(d Draft) Draft {
 // echoes safe seller-supplied fields. Toxic input (保真/phone/URL/money/etc.) is
 // dropped before copy generation so the no-creds path cannot leak non-compliant
 // seller text.
-func MockGenerator(req Request) (Draft, error) {
+func MockGenerator(_ context.Context, req Request) (Draft, error) {
 	item := safeInputField(req.Title, maxTitleLen)
 	if item == "" {
 		item = safeInputField(req.Category, maxPointLen)
@@ -173,8 +175,8 @@ const systemPrompt = "你是直播拍卖的文案助手。依据卖家提供的�
 	"严禁出现网址、电话、具体货币金额。只输出 JSON，不要前缀或围栏。"
 
 func arkGenerator(cfg llm.Config) Generator {
-	return func(req Request) (Draft, error) {
-		content, err := cfg.Complete(context.Background(), []llm.Message{
+	return func(ctx context.Context, req Request) (Draft, error) {
+		content, err := cfg.Complete(ctx, []llm.Message{
 			llm.System(systemPrompt),
 			llm.UserText(renderInput(req)),
 		}, llm.Options{MaxTokens: 400, Temperature: 0.8})
@@ -230,7 +232,13 @@ func extractJSONObject(s string) string {
 var (
 	reURL   = regexp.MustCompile(`(?i)\b(https?://|www\.)\S+`)
 	rePhone = regexp.MustCompile(`\b\d{11}\b|\b\+\d{1,3}[ -]?\d{4,}\b`)
-	reMoney = regexp.MustCompile(`(¥|\$|元)\s*\d`)
+	// Money guardrail: explicit amounts are forbidden in advisory copy. Catch
+	// both symbol/元 prefix forms (¥100, $50, 元100) AND the common Chinese
+	// suffix forms (1000元, 5万, 13.8万, 100万元). Suffix money is the normal
+	// shape in zh marketing copy, so without reMoneyCN a real model could slip
+	// "参考价 5万" straight past the guardrail.
+	reMoney   = regexp.MustCompile(`(¥|\$|€|£|元)\s*\d`)
+	reMoneyCN = regexp.MustCompile(`\d(?:[\d,.]*\d)?\s*[元万亿]`)
 )
 
 var bannedWords = []string{
@@ -267,7 +275,7 @@ func draftFailsGuardrail(d Draft) (string, bool) {
 }
 
 func textUnsafe(s string) bool {
-	return reURL.MatchString(s) || rePhone.MatchString(s) || reMoney.MatchString(s)
+	return reURL.MatchString(s) || rePhone.MatchString(s) || reMoney.MatchString(s) || reMoneyCN.MatchString(s)
 }
 
 func safeInputField(s string, maxLen int) string {
@@ -294,8 +302,8 @@ func truncateRunes(s string, maxLen int) string {
 // fallbackResponse returns complete canned copy (Fallback=true) on any failure.
 // It never echoes unsafe seller input: MockGenerator first drops toxic fields,
 // then we re-run the guardrail and fall back to a fixed generic draft if needed.
-func fallbackResponse(req Request) Response {
-	d, _ := MockGenerator(req)
+func fallbackResponse(ctx context.Context, req Request) Response {
+	d, _ := MockGenerator(ctx, req)
 	d = normalize(d)
 	if _, bad := draftFailsGuardrail(d); bad {
 		d = fixedFallbackDraft()

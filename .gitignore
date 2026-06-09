@@ -59,3 +59,4 @@ coverage/
 
 # Private session/memory notes — local only, never commit (PR #13 review #2)
 docs/team-memory/
+apps/web/package-lock.json
