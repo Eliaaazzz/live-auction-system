@@ -114,6 +114,11 @@ export default function AuctionPublish() {
         await api.freeze(auctionId, { factsConfirmed: true });
         await api.startLive(auctionId, { durationMs: durationSec * 1000 });
         message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
+        // 发布后重置表单与已上传主图：否则 uploadedUrl 会被下一个商品沿用，
+        // 导致「商品图片不反应商品变化」（新商品发上了上一个商品的图）。
+        form.resetFields();
+        setUploadedUrl(null);
+        setFileList([]);
       } catch (e: any) {
         message.error('发布失败：' + (e?.message || e));
       } finally {
