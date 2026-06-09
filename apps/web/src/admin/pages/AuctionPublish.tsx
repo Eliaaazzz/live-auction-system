@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
+import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Tag, App as AntdApp } from 'antd';
+import { PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
@@ -15,9 +15,43 @@ export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [sellingPoints, setSellingPoints] = useState<string[]>([]);
+  const [copyNote, setCopyNote] = useState<string | null>(null);
   const v = Form.useWatch([], form) || {};
   const previewImg = CAT_IMG[v.category as string] ?? PROD.jadePendant;
   const step = v.step ?? 50;
+
+  const onGenerateCopy = async () => {
+    if (copyBusy) return;
+    const vals = form.getFieldsValue();
+    setCopyBusy(true);
+    setCopyNote(null);
+    try {
+      await ensureSession('seller-demo');
+      const draft = await api.draftListing({
+        title: vals.name || '',
+        description: vals.intro || '',
+        category: vals.category || '',
+      });
+      const next: Record<string, string> = {};
+      if (draft?.title) next.name = draft.title;
+      if (draft?.script) next.intro = draft.script;
+      if (Object.keys(next).length > 0) form.setFieldsValue(next);
+      setSellingPoints(Array.isArray(draft?.sellingPoints) ? draft.sellingPoints : []);
+      const note = draft?.fallback
+        ? 'AI 暂不可用 · 已填入兜底文案，可继续编辑'
+        : 'AI 已生成 · 请核对后再发布';
+      setCopyNote(note);
+      message.success(note);
+    } catch (e: any) {
+      const msg = '生成失败：' + (e?.message || e);
+      setCopyNote(msg);
+      message.warning(msg);
+    } finally {
+      setCopyBusy(false);
+    }
+  };
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
   // The auction immediately appears in the buyer mobile rail and is biddable.
@@ -88,6 +122,26 @@ export default function AuctionPublish() {
           <Form.Item label="商品介绍" name="intro">
             <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
           </Form.Item>
+          <Space size={8} wrap style={{ marginTop: -8, marginBottom: 10 }}>
+            <Button size="small" icon={<ThunderboltOutlined />} loading={copyBusy} onClick={onGenerateCopy}>
+              AI 生成文案
+            </Button>
+            {copyNote && <span style={{ fontSize: 12, color: '#8c8c8c' }}>{copyNote}</span>}
+          </Space>
+          {sellingPoints.length > 0 && (
+            <div style={{ marginTop: -2, marginBottom: 10 }}>
+              <Space size={[6, 6]} wrap>
+                {sellingPoints.map((p, i) => <Tag color="gold" key={`${p}-${i}`}>{p}</Tag>)}
+              </Space>
+            </div>
+          )}
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="AI 文案仅供起草"
+            description="标题、卖点和开场话术不会自动发布为权威事实；卖家需核对后再点击发布。"
+          />
           <Divider orientation="left" plain>竞拍规则</Divider>
           <Space size={16} style={{ display: 'flex' }}>
             <Form.Item label="起拍价" name="start" style={{ flex: 1 }} tooltip="填 0 即 0 元起拍，人人可参与">
