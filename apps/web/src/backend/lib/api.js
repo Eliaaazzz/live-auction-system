@@ -21,10 +21,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, signal, auth = true } = {}) {
+async function request(path, { method = 'GET', body, signal, auth = true, token, seat = '' } = {}) {
   const headers = { 'content-type': 'application/json' };
   if (auth) {
-    const tok = currentToken();
+    // An explicit `token` (a Showcase seat's own JWT) wins over the default-seat
+    // session, so 买家A/买家B bid under their OWN identity — not whichever seat
+    // logged in last. Omitted (single-room /m + /admin) → the device token.
+    const tok = token ?? currentToken();
     if (tok) headers.Authorization = `Bearer ${tok}`;
   }
   const res = await fetch(`${API_BASE}${path}`, {
@@ -46,7 +49,7 @@ async function request(path, { method = 'GET', body, signal, auth = true } = {})
     // session via the event — which couples this layer to UI flow.
     // Keeping the path observable + caller-driven is simpler.
     if (res.status === 401 && auth) {
-      handleAuthFailure();
+      handleAuthFailure(seat);
     }
     // Backend convention: { code: "ERR_...", message?: "..." } on error.
     let code, message;
@@ -110,9 +113,10 @@ export const api = {
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
-  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable. */
-  placeBid: (id, payload, { signal } = {}) =>
-    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal }),
+  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable.
+   *  `token`/`seat` let a Showcase seat bid under its OWN identity (买家A/买家B). */
+  placeBid: (id, payload, { signal, token, seat = '' } = {}) =>
+    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal, token, seat }),
 
   /** Stub today (PR #34 fills the timeline + hash chain). */
   getEvidence: (id) => request(`/auctions/${id}/evidence`),

@@ -103,7 +103,28 @@ const DEFAULT_STATE = {
   auctioneerFallback: false,       // true when backend swapped in canned text
 };
 
-export const useAuctionStore = create((set, get) => ({
+// createAuctionStore — build a FRESH, independent room store.
+//
+// Was a single module-level singleton, which is correct when a browser context
+// holds exactly one room (full-screen /m buyer, /admin monitor). But the desktop
+// Showcase runs TWO buyer rooms side by side (买家A + 买家B) in one context; a
+// shared store means 买家B's snapshot/leaderboard/yourUserId clobber 买家A's. Each
+// seat now gets its own instance via this factory. The default singleton below
+// preserves every existing single-room call-site unchanged.
+export function createAuctionStore() {
+  return create((set, get) => {
+    // Auto-clear timers are bound to THIS instance's set/get — a seat clearing
+    // its own toast must never reach into another seat's store.
+    const scheduleClear = (key, ms) => setTimeout(() => set({ [key]: false }), ms);
+    // 3s: the reject bar sits right above the bid chips now; 1.8s was gone
+    // before a mid-tap buyer even looked down (design review P0-1).
+    const scheduleRejectClear = (seq, ms = 3000) => setTimeout(() => {
+      if (get().lastRejectSeq === seq) {
+        set({ lastRejectCode: null, lastRejectAt: null, lastRejectSeq: 0 });
+      }
+    }, ms);
+
+    return {
   ...DEFAULT_STATE,
 
   // ── lifecycle ────────────────────────────────────────────────
@@ -351,24 +372,16 @@ export const useAuctionStore = create((set, get) => ({
       return next;
     });
   },
-}));
+    };
+  });
+}
+
+// Default singleton — the room store for single-room contexts (full-screen /m
+// buyer, /admin live monitor). Existing call-sites import this unchanged; the
+// Showcase spins up extra per-seat instances via createAuctionStore().
+export const useAuctionStore = createAuctionStore();
 
 // ─── helpers ────────────────────────────────────────────────────
-
-function scheduleClear(key, ms) {
-  setTimeout(() => useAuctionStore.setState({ [key]: false }), ms);
-}
-
-// 3s: the reject bar sits right above the bid chips now; 1.8s was gone
-// before a mid-tap buyer even looked down (design review P0-1).
-function scheduleRejectClear(seq, ms = 3000) {
-  setTimeout(() => {
-    const current = useAuctionStore.getState();
-    if (current.lastRejectSeq === seq) {
-      useAuctionStore.setState({ lastRejectCode: null, lastRejectAt: null, lastRejectSeq: 0 });
-    }
-  }, ms);
-}
 
 function hasOwn(obj, key) {
   return Object.prototype.hasOwnProperty.call(obj, key);

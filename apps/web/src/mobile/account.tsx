@@ -72,8 +72,11 @@ export function LoginGate() {
   );
 }
 
-export function ProfileButton({ onClick }: { onClick: () => void }) {
-  const avatar = useIdentity((s) => s.avatar);
+export function ProfileButton({ onClick, avatar: avatarOverride }: { onClick: () => void; avatar?: string }) {
+  // Showcase seats pass their own face (买家A/买家B); real /m falls back to the
+  // logged-in identity. Hook is always called (no conditional) to keep order stable.
+  const globalAvatar = useIdentity((s) => s.avatar);
+  const avatar = avatarOverride ?? globalAvatar;
   if (!avatar) return null;
   return (
     <button className="lm-profile-btn" onClick={onClick} aria-label="我的账号">

@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import LiveRoom from './LiveRoom';
 import { ROOMS } from '../lib/mockData';
 import { SwipeHint } from './components';
 import { LoginGate } from './account';
-import { useIdentity } from '../lib/identity';
+import { useIdentity, seatIdentity, type SeatIdentity } from '../lib/identity';
 import { api } from '../backend/lib/api.js';
 import { auctionsToRooms } from '../lib/mapBackend';
 import type { Room } from '../lib/types';
@@ -30,7 +30,7 @@ function readRoomParam(): string | null {
   return new URLSearchParams(q).get('room');
 }
 
-export default function MobileApp({ startIndex = 0, autoGuest = false }: { startIndex?: number; autoGuest?: boolean } = {}) {
+export default function MobileApp({ startIndex = 0, autoGuest = false, seat = '' }: { startIndex?: number; autoGuest?: boolean; seat?: string } = {}) {
   const orderId = readOrderParam();
   // #3/#4 unified identity: gate the buyer rail behind a lightweight nickname
   // login. The login-free order page (#/m?order=) stays exempt above. The
@@ -40,17 +40,24 @@ export default function MobileApp({ startIndex = 0, autoGuest = false }: { start
   const ready = useIdentity((s) => s.ready);
   const resolve = useIdentity((s) => s.resolve);
   const continueAsGuest = useIdentity((s) => s.continueAsGuest);
+  // Showcase seats (买家A/买家B) own a FIXED per-seat identity + their own backend
+  // session (minted inside the engine, keyed by seat). They never touch the global
+  // login store — that global singleton is exactly what collapsed A and B into one
+  // account before. So seat panes skip the login gate entirely.
+  const seatIdent = useMemo<SeatIdentity | null>(() => (seat ? seatIdentity(seat) : null), [seat]);
   useEffect(() => {
+    if (seat) return; // seat panes manage their own session; never mutate the global identity
     if (ready) resolve();
     else if (autoGuest) continueAsGuest();
-  }, [ready, autoGuest, resolve, continueAsGuest]);
+  }, [seat, ready, autoGuest, resolve, continueAsGuest]);
 
   if (orderId) return <OrderView auctionId={orderId} />;
+  if (seat && seatIdent) return <BuyerRail startIndex={startIndex} seat={seat} identity={seatIdent} />;
   if (!ready) return autoGuest ? <CenterMsg text="正在进入直播间…" sub="LOADING" /> : <LoginGate />;
   return <BuyerRail startIndex={startIndex} />;
 }
 
-function BuyerRail({ startIndex = 0 }: { startIndex?: number }) {
+function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: number; seat?: string; identity?: SeatIdentity }) {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   // startIndex lets the Showcase open a second phone on a different live room.
   // It's only the initial room; safeIndex below clamps it once rooms load.
@@ -98,6 +105,21 @@ function BuyerRail({ startIndex = 0 }: { startIndex?: number }) {
   }, [index, rooms]);
 
   const list = rooms ?? [];
+
+  // Refs keep `advance` stable (empty deps) so LiveRoom's ended-overlay 5s timer
+  // effect — which depends on this callback's identity — fires exactly once.
+  const indexRef = useRef(index); indexRef.current = index;
+  const lenRef = useRef(list.length); lenRef.current = list.length;
+  // 一件拍品结束(流拍/落槌) 5s 后自动「进入下一件」：等同向上滑到下一个直播间。
+  const advance = useCallback(() => {
+    const len = lenRef.current;
+    if (len < 2 || cooldown.current) return;
+    cooldown.current = true;
+    setDir('up');
+    setIndex((i) => (i + 1) % len);
+    setTimeout(() => (cooldown.current = false), 480);
+  }, []);
+
   const go = (next: number, direction: 'up' | 'down') => {
     if (cooldown.current || list.length < 2) return;
     const clamped = (next + list.length) % list.length;
@@ -133,7 +155,7 @@ function BuyerRail({ startIndex = 0 }: { startIndex?: number }) {
       onTouchEnd={onTouchEnd}
     >
       <div key={room.id} className={'lm-room in-' + dir}>
-        <LiveRoom room={room} />
+        <LiveRoom room={room} seat={seat} identity={identity} onEnded={list.length > 1 ? advance : undefined} />
       </div>
 
       {safeIndex === 0 && list.length > 1 && <SwipeHint />}
