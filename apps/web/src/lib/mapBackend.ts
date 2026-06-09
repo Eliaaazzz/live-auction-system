@@ -5,10 +5,16 @@
 import type { Room, Lot } from './types';
 import { avatar, PROD } from './assets';
 
+// Self-hosted looping mp4 used when an auction has no real livePlayUrl. Mirrors
+// the LIVE_FALLBACK export added to ../lib/assets separately; kept as a literal
+// here so this module type-checks before that export lands.
+const LIVE_FALLBACK = '/media/live-loop.mp4';
+
 export interface BackendAuction {
   auctionId: string;
   productName?: string;
   imageUrl?: string;
+  livePlayUrl?: string;
   status?: string;
   currentPriceCents?: string;
   startPriceCents?: string;
@@ -17,6 +23,20 @@ export interface BackendAuction {
   endAtMs?: number;
   mode?: string;
   bidCount?: number;
+}
+
+/**
+ * Load-test / placeholder lots that must never reach a real buyer or the admin
+ * product list. Matches: "load test" (optional space, any case), names that
+ * start with "final" and end with "lot", and empty/whitespace names.
+ */
+export function isJunk(name?: string): boolean {
+  const n = (name || '').trim();
+  if (n === '') return true;
+  const lower = n.toLowerCase();
+  if (/load\s*test/.test(lower)) return true;
+  if (lower.startsWith('final') && lower.endsWith('lot')) return true;
+  return false;
 }
 
 const yuan = (cents?: string | number | null): number => {
@@ -43,6 +63,7 @@ export function auctionToLot(a: BackendAuction): Lot {
     title: a.productName || '直播拍品',
     subtitle: '单品竞拍 · 0 元起拍 · 服务端裁决',
     image: a.imageUrl || PROD.watch,
+    live: a.livePlayUrl || LIVE_FALLBACK,
     tone: '#1b2a4a',
     tone2: '#c9a961',
     startPrice: yuan(a.startPriceCents),
@@ -76,6 +97,7 @@ export function auctionsToRooms(auctions: BackendAuction[]): Room[] {
   const rank = (s?: string) => (s === 'LIVE' ? 0 : s === 'SCHEDULED' ? 1 : 2);
   return (auctions || [])
     .filter((a) => a.auctionId && (a.status === 'LIVE' || a.status === 'SCHEDULED'))
+    .filter((a) => !isJunk(a.productName))
     .sort((x, y) => rank(x.status) - rank(y.status))
     .map(auctionToRoom);
 }

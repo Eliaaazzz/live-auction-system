@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AuctionState, Lot } from '../lib/types';
 import { fmtMoney, fmtYuan, fmtClock } from '../lib/format';
+import { computeIncrement } from '../lib/pricing';
 import { ME } from '../lib/mockData';
 import { Icon } from './icons';
 import { ProductImg } from './components';
@@ -23,21 +24,25 @@ export function BidSheet({
 }) {
   const [amount, setAmount] = useState(nextMinBid);
   const iAmHighest = state.leader?.userId === ME.id;
+  // 动态加价幅度：按商品价值与在线人数算法计算，且不低于后端最小步进。
+  const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : state.currentPrice, state.participants, lot.increment));
+  // 封顶价为 0 表示「不封顶」（无限加价）；用 effCap 做钳制/校验，避免被当成 ¥0 封顶而禁用出价。
+  const effCap = lot.capPrice > 0 ? lot.capPrice : Number.MAX_SAFE_INTEGER;
 
   useEffect(() => {
     setAmount((a) => (a < nextMinBid ? nextMinBid : a));
   }, [nextMinBid]);
 
-  const dec = () => setAmount((a) => Math.max(nextMinBid, a - lot.increment));
-  const inc = () => setAmount((a) => Math.min(lot.capPrice, a + lot.increment));
+  const dec = () => setAmount((a) => Math.max(nextMinBid, a - dynStep));
+  const inc = () => setAmount((a) => Math.min(effCap, a + dynStep));
 
   const quicks = [
     { label: '+1档', value: nextMinBid },
     { label: '高于当前 ¥100', value: state.currentPrice + 100, hot: true },
-    { label: '直接封顶', value: lot.capPrice },
-  ].filter((q) => q.value >= nextMinBid && q.value <= lot.capPrice);
+    ...(lot.capPrice > 0 ? [{ label: '直接封顶', value: lot.capPrice }] : []),
+  ].filter((q) => q.value >= nextMinBid && q.value <= effCap);
 
-  const valid = amount >= nextMinBid && amount <= lot.capPrice;
+  const valid = amount >= nextMinBid && amount <= effCap;
 
   return (
     <div className="lm-mask" onClick={onClose}>
@@ -76,11 +81,11 @@ export function BidSheet({
             <small>¥</small>
             {fmtMoney(amount)}
           </div>
-          <button onClick={inc} disabled={amount >= lot.capPrice} aria-label="加">
+          <button onClick={inc} disabled={amount >= effCap} aria-label="加">
             <Icon name="plus" size={22} />
           </button>
         </div>
-        <div className="lm-incr-note">加价幅度 ¥{lot.increment} · 最低出价 {fmtYuan(nextMinBid)} · 封顶 {fmtYuan(lot.capPrice)}</div>
+        <div className="lm-incr-note">加价幅度 ¥{dynStep}（随热度动态） · 最低出价 {fmtYuan(nextMinBid)} · 封顶 {lot.capPrice > 0 ? fmtYuan(lot.capPrice) : '不封顶'}</div>
 
         <div className="lm-quickrow">
           {quicks.map((q) => (
@@ -99,7 +104,7 @@ export function BidSheet({
             <Icon name="bolt" size={13} /> 当前您已是最高价，确认继续超过自己？
           </div>
         )}
-        {amount >= lot.capPrice && (
+        {lot.capPrice > 0 && amount >= lot.capPrice && (
           <div className="lm-warn">
             <Icon name="gavel" size={13} /> 已达封顶价，出价即刻成交
           </div>

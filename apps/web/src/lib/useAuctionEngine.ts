@@ -30,6 +30,8 @@ interface Opts {
   startDelaySec?: number;
   running?: boolean;
   onEvent?: (e: EngineEvent) => void;
+  /** Backend identity. Buyers omit → per-device guest (deviceNickname); admin passes 'seller-demo' (owner). */
+  nickname?: string;
 }
 
 const WS_BASE = (import.meta as any).env?.VITE_WS_BASE || undefined;
@@ -77,7 +79,7 @@ function bidFromLeader(l: any, rank: number): Bid {
 }
 
 export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
-  const { running = true, onEvent } = opts;
+  const { running = true, onEvent, nickname } = opts;
   const auctionId = lot.id;
   const store = useAuctionStore();
   const clientRef = useRef<any>(null);
@@ -85,6 +87,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const onEventRef = useRef(onEvent);
   const lastEmitRef = useRef<string>('');
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
+  const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
   const autoMaxRef = useRef<number | null>(null);
   useEffect(() => { onEventRef.current = onEvent; });
 
@@ -97,7 +100,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
 
     (async () => {
       try {
-        const session = await ensureSession('demo');
+        const session = await ensureSession(nickname);
         if (!alive) return;
         st.setSelfUserId(session.userId);
       } catch { /* room retries with its own session */ }
@@ -117,6 +120,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
           winnerId: snap.winnerId ?? null,
           yourUserId: useAuctionStore.getState().yourUserId,
         });
+        if ((snap as any).livePlayUrl) setLivePlayUrl(String((snap as any).livePlayUrl));
       } catch { /* WS will rebuild from snapshot frame */ }
 
       try {
@@ -209,7 +213,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const leader = leaders.length ? bidFromLeader(leaders[0], 0) : null;
     const bids: Bid[] = (store.recentEvents ?? [])
       .filter((e: any) => e.type === EventType.BID_ACCEPTED && e.data?.amountCents)
-      .slice(0, 20)
+      .slice(0, 50)
       .map((e: any) => ({
         id: String(e.seq ?? e.ts ?? Math.random()),
         userId: e.data.userId,
@@ -265,7 +269,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     try { clientRef.current?.resync?.(); } catch { /* noop */ }
   }, []);
 
-  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart };
+  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, auctioneerText: (store as any).auctioneerText || '' };
 }
 
 function makeBidId(): string {

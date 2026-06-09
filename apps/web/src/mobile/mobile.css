@@ -261,3 +261,85 @@
 .lm-dots { position: absolute; right: 6px; top: 46%; transform: translateY(-50%); z-index: 22; display: flex; flex-direction: column; gap: 6px; }
 .lm-dots i { width: 4px; height: 14px; border-radius: 4px; background: rgba(255,255,255,0.3); transition: background 0.2s, height 0.2s; }
 .lm-dots i.on { background: #fff; height: 22px; }
+
+/* ---------- history: 当前领先 tag (50-row list) ---------- */
+.lm-hist-lead { flex-shrink: 0; font-size: 9.5px; font-weight: 800; color: var(--gold, #ffce54); background: rgba(255,206,84,0.16); border: 1px solid rgba(255,206,84,0.34); border-radius: 999px; padding: 1px 7px; }
+
+/* ---------- gift panel (Douyin style) ---------- */
+.lm-giftsheet {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 46;
+  max-height: 62%;
+  background: rgba(18,18,24,0.98); backdrop-filter: blur(16px);
+  border-top-left-radius: 18px; border-top-right-radius: 18px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 -12px 36px rgba(0,0,0,0.5);
+  padding-bottom: calc(12px + var(--safe-bottom, 0px));
+  display: flex; flex-direction: column;
+  animation: la-sheet-up 0.3s cubic-bezier(0.25,1,0.4,1);
+}
+.lm-gift-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 6px 14px 4px; overflow-y: auto; }
+.lm-gift-card {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 14px; padding: 12px 6px 9px; cursor: pointer; color: #fff;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+.lm-gift-card:active { transform: scale(0.96); }
+.lm-gift-card.on { background: rgba(254,44,85,0.16); border-color: rgba(254,44,85,0.55); box-shadow: 0 4px 16px rgba(254,44,85,0.25); }
+.lm-gift-card .em { font-size: 30px; line-height: 1; }
+.lm-gift-card .nm { font-size: 12px; font-weight: 700; }
+.lm-gift-card .co { font-size: 10.5px; color: var(--gold, #ffce54); font-weight: 700; }
+.lm-gift-send {
+  margin: 10px 14px 4px; height: 48px; border: none; border-radius: 14px;
+  background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff;
+  font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35);
+}
+.lm-gift-float {
+  position: absolute; left: 50%; bottom: 34%; z-index: 47; pointer-events: none;
+  font-size: 46px; line-height: 1; text-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  animation: lm-gift-rise 1.4s cubic-bezier(0.2,0.8,0.3,1) forwards;
+}
+@keyframes lm-gift-rise {
+  0% { transform: translate(-50%, 20px) scale(0.4); opacity: 0; }
+  18% { transform: translate(-50%, 0) scale(1.15); opacity: 1; }
+  70% { opacity: 1; }
+  100% { transform: translate(-50%, -240px) scale(0.85); opacity: 0; }
+}
+
+/* ---------- share modal (copy link) ---------- */
+.lm-share-mask { position: absolute; inset: 0; z-index: 48; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 0 28px; animation: la-rise 0.2s ease; }
+.lm-share-card { width: 100%; max-width: 320px; background: #1a1a22; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 18px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
+.lm-share-hd { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 800; margin-bottom: 14px; }
+.lm-share-url { width: 100%; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 11px 12px; color: rgba(255,255,255,0.82); font-size: 12.5px; outline: none; margin-bottom: 12px; box-sizing: border-box; }
+.lm-share-copy { width: 100%; height: 46px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14.5px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+.lm-share-hint { text-align: center; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 10px; line-height: 1.45; }
+
+/* ---------- shareable login-free order/result page (#/m?order=) ---------- */
+.ov-page { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px; padding: 54px 18px 28px; background: radial-gradient(120% 70% at 80% -10%, #2a1430 0%, #0b0b12 60%); overflow-y: auto; }
+.ov-top { display: flex; align-items: center; justify-content: space-between; }
+.ov-brand { font-size: 14px; font-weight: 800; color: #fff; }
+.ov-free { font-size: 10.5px; color: #ffce54; background: rgba(255,206,84,0.14); border: 1px solid rgba(255,206,84,0.3); border-radius: 999px; padding: 3px 9px; }
+.ov-card { background: rgba(20,20,28,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 18px; box-shadow: 0 16px 40px rgba(0,0,0,0.5); }
+.ov-status { display: inline-flex; align-items: center; gap: 6px; font-size: 19px; font-weight: 900; }
+.ov-sub { font-size: 12px; color: rgba(255,255,255,0.6); margin: 4px 0 14px; }
+.ov-lot { display: flex; gap: 12px; align-items: center; background: rgba(255,255,255,0.05); border-radius: 14px; padding: 12px; }
+.ov-img { width: 64px; height: 64px; flex-shrink: 0; }
+.ov-lot-meta { min-width: 0; }
+.ov-lot-title { font-size: 14px; font-weight: 800; color: #fff; line-height: 1.3; }
+.ov-lot-cat { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 4px; }
+.ov-pricebox { display: flex; justify-content: space-between; align-items: flex-end; margin: 14px 2px; }
+.ov-pricebox .k { font-size: 11px; color: rgba(255,255,255,0.5); }
+.ov-pricebox .v { font-size: 28px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.ov-pricebox .v2 { font-size: 16px; font-weight: 800; color: rgba(255,255,255,0.85); }
+.ov-steps { display: flex; align-items: center; gap: 6px; font-size: 11px; color: rgba(255,255,255,0.4); margin-bottom: 14px; flex-wrap: wrap; }
+.ov-steps span.on { color: #2fd6a8; font-weight: 700; }
+.ov-steps i { flex: 1; min-width: 10px; height: 1px; background: rgba(255,255,255,0.16); }
+.ov-cta { width: 100%; height: 48px; border: none; border-radius: 14px; background: linear-gradient(96deg,#ff5f7e,#fe2c55); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+.ov-note { font-size: 11px; color: rgba(255,255,255,0.45); line-height: 1.6; margin-top: 12px; }
+
+/* ---------- share-order button on win / hammer overlays ---------- */
+.lm-share-order { width: 100%; margin-top: 10px; height: 42px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.08); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* ---------- AI 主播实时解说气泡（真豆包 LLM 中文解说，AI_COMMENTARY 事件驱动） ---------- */
+.lm-aibubble { position: absolute; top: 108px; left: 12px; right: 116px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(20,20,28,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(127,214,255,0.38); color: #d6efff; border-radius: 12px; padding: 6px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: la-rise 0.3s ease; }
+.lm-aibubble .dot { width: 6px; height: 6px; border-radius: 50%; background: #7fd6ff; box-shadow: 0 0 8px #7fd6ff; flex-shrink: 0; animation: la-pulse-ring 1.6s infinite; }

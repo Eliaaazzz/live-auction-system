@@ -10,8 +10,38 @@
 //   fetch(..., { headers: { Authorization: `Bearer ${currentToken()}` } });
 
 const STORAGE_KEY = 'lumen.session';
+const NICK_KEY = 'lumen.nick';
 
 let _session = null;
+
+// ─── Minimal account system ───────────────────────────────────────
+// No real auth backend yet, but every DEVICE should be a DISTINCT user
+// (so two people on two phones aren't the same 'demo' account). We persist
+// a per-device nickname; the backend /api/login mints a stable userId from
+// it. Users can rename themselves (setNickname) to be recognizable.
+export function deviceNickname() {
+  try {
+    let n = localStorage.getItem(NICK_KEY);
+    if (!n) {
+      n = '买家' + Math.floor(1000 + Math.random() * 9000);
+      localStorage.setItem(NICK_KEY, n);
+    }
+    return n;
+  } catch {
+    return '买家' + Math.floor(1000 + Math.random() * 9000);
+  }
+}
+
+export function setNickname(n) {
+  const name = String(n || '').trim().slice(0, 16);
+  if (!name) return deviceNickname();
+  try {
+    localStorage.setItem(NICK_KEY, name);
+    localStorage.removeItem(STORAGE_KEY); // drop old-nickname token → re-login under new name
+  } catch { /* ignore */ }
+  _session = null;
+  return name;
+}
 
 function readStorage() {
   if (_session) return _session;
@@ -65,26 +95,34 @@ export function handleAuthFailure() {
 }
 
 /**
- * Mint or reuse a dev-login session. No-ops if a token is already cached.
- * @param {string} nickname — display name for the dev account.
+ * Mint or reuse a dev-login session for a given identity. Reuses the cached
+ * session only when the nickname matches; re-logs in otherwise.
+ * @param {string} [nickname] — identity; omit for the per-device guest.
  */
-export async function ensureSession(nickname = 'demo') {
-  if (currentToken()) return readStorage();
+export async function ensureSession(nickname) {
+  const want = nickname || deviceNickname();
+  const s = readStorage();
+  // Reuse the cached session ONLY if it's the SAME identity. Previously this
+  // returned any cached token regardless of nickname, so an admin asking for
+  // 'seller-demo' got a buyer's 'demo' token → cancel/own-only ops 403'd, and
+  // every device shared one account. Re-login when the identity differs.
+  if (s?.token && s.nickname === want) return s;
   let res = await fetch('/api/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname }),
+    body: JSON.stringify({ nickname: want }),
   });
   if (res.status === 404) {
     res = await fetch('/api/dev-login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ nickname }),
+      body: JSON.stringify({ nickname: want }),
     });
   }
   if (!res.ok) throw new Error(`login ${res.status}`);
   const session = await res.json();
-  // session = { userId, token, nickname }
+  // session = { userId, token, nickname }; backend may omit nickname — keep ours.
+  if (!session.nickname) session.nickname = want;
   writeStorage(session);
   return session;
 }

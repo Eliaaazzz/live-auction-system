@@ -5,6 +5,7 @@ import { SwipeHint } from './components';
 import { api } from '../backend/lib/api.js';
 import { auctionsToRooms } from '../lib/mapBackend';
 import type { Room } from '../lib/types';
+import OrderView from './OrderView';
 import './mobile.css';
 
 // Real buyer end: the room rail is driven by GET /api/auctions (LIVE/SCHEDULED).
@@ -13,7 +14,27 @@ import './mobile.css';
 // for offline design work — never used when the backend returns auctions.
 const USE_MOCK = String((import.meta as any).env?.VITE_USE_MOCK_DATA ?? 'false') === 'true';
 
+// #/m?order=<auctionId> → login-free shareable order/result page (send to a friend).
+function readOrderParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const q = window.location.hash.split('?')[1] || '';
+  return new URLSearchParams(q).get('order');
+}
+
+// #/m?room=<auctionId> → deep-link straight into a specific live room (share link).
+function readRoomParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const q = window.location.hash.split('?')[1] || '';
+  return new URLSearchParams(q).get('room');
+}
+
 export default function MobileApp() {
+  const orderId = readOrderParam();
+  if (orderId) return <OrderView auctionId={orderId} />;
+  return <BuyerRail />;
+}
+
+function BuyerRail() {
   const [rooms, setRooms] = useState<Room[] | null>(null);
   const [index, setIndex] = useState(0);
   const [dir, setDir] = useState<'up' | 'down'>('up');
@@ -27,6 +48,8 @@ export default function MobileApp() {
         const { auctions = [] } = await api.listAuctions();
         if (!alive) return;
         const mapped = auctionsToRooms(auctions);
+        const rp = readRoomParam();
+        if (rp) { const i = mapped.findIndex((r) => r.id === rp); if (i >= 0) setIndex(i); }
         setRooms(mapped.length ? mapped : (USE_MOCK ? ROOMS : []));
       } catch {
         if (alive) setRooms(USE_MOCK ? ROOMS : []);

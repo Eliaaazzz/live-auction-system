@@ -19,7 +19,10 @@ body,
 
 html,
 body {
-  background: #0d0d12;
+  /* NOTE: do NOT force a dark background here. The Showcase / live pages set
+     their own dark radial-gradient locally; forcing it globally leaked a black
+     gap below short admin pages. Keep a neutral default and let each surface
+     own its own background. */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -31,6 +34,31 @@ body {
 
 #root {
   min-height: 100%;
+}
+
+/* ------------------------------------------------------------
+   Thin, cross-platform scrollbar.
+   Windows ships fat (~17px) scrollbars that steal layout width and
+   can trigger spurious horizontal scroll; normalize to a slim,
+   subtle bar so layouts measure consistently on Win + macOS.
+   ------------------------------------------------------------ */
+* {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(120, 120, 130, 0.35) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(120, 120, 130, 0.35);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(120, 120, 130, 0.55);
 }
 
 /* Design tokens (Douyin / TikTok visual language) */

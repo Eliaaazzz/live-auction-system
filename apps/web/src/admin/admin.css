@@ -1,9 +1,19 @@
-.admin-root { height: 100%; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+.admin-root { min-height: 100vh; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+/* Dark sider must reach the very bottom of the viewport on every tab, even when
+   the page content is short. min-height 100vh keeps the dark column full-height. */
+.admin-root .ant-layout-sider { min-height: 100vh; }
+/* Inner light column fills remaining width; light bg means short pages show white,
+   never the dark body gradient leaking through. */
+.admin-root > .ant-layout { background: #f5f6f8; min-height: 100vh; }
 .admin-logo { height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 18px; color: #fff; font-weight: 800; font-size: 15px; letter-spacing: 0.2px; border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; overflow: hidden; }
 .admin-logo .mark { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg,#ff5f7e,#fe2c55); display: grid; place-items: center; font-size: 17px; flex-shrink: 0; }
 .admin-header { display: flex; align-items: center; gap: 14px; padding: 0 22px; background: #fff; border-bottom: 1px solid #f0f0f0; }
-.admin-header .title { font-size: 17px; font-weight: 700; }
-.admin-content { margin: 18px; padding: 20px; background: #fff; border-radius: 12px; min-height: 200px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.admin-header .title { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.admin-header .seller-name { font-size: 13px; color: #333; white-space: nowrap; }
+/* White card fills the remaining viewport so the frame is identical across tabs:
+   content sits at the top, extra space stays white (never black).
+   100vh - header(56) - vertical margins(18*2=36). box-sizing keeps padding inside. */
+.admin-content { margin: 18px; padding: 20px; background: #fff; border-radius: 12px; min-height: calc(100vh - 56px - 36px); box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .admin-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .admin-toolbar .spacer { flex: 1; }
 .prod-cell { display: flex; gap: 12px; align-items: flex-start; }
@@ -29,3 +39,28 @@
 .pub-phone .pub-img { width: 100%; height: 148px; object-fit: cover; border-radius: 12px; margin: 8px 0; display: block; }
 .pub-card { background: rgba(255,255,255,0.12); backdrop-filter: blur(8px); border-radius: 14px; padding: 12px; }
 .pub-cta { margin-top: 10px; background: linear-gradient(96deg,#ff5f7e,#fe2c55); border-radius: 12px; text-align: center; padding: 11px; font-weight: 800; }
+
+/* ============================================================
+   Responsive: keep the full-height frame intact on narrow screens
+   and stop wide tables/grids from forcing whole-page horizontal scroll.
+   ============================================================ */
+/* The content column owns its own horizontal scroll; the page never scrolls
+   sideways because of an oversized table or grid inside it. */
+.admin-root .ant-layout-content { max-width: 100%; overflow-x: hidden; }
+/* AntD tables scroll inside themselves rather than widening the layout. */
+.admin-content .ant-table-wrapper,
+.admin-content .ant-table-content { max-width: 100%; }
+.admin-content .ant-table-content { overflow-x: auto; }
+
+@media (max-width: 768px) {
+  /* Tighter chrome so the white card keeps maximum room on small screens. */
+  .admin-header { gap: 8px; padding: 0 12px; }
+  .admin-header .title { font-size: 15px; }
+  /* Hide the seller name on very narrow screens; avatar still identifies the user. */
+  .admin-header .seller-name { display: none; }
+  .admin-content { margin: 10px; padding: 12px; min-height: calc(100vh - 56px - 20px); border-radius: 10px; }
+  /* Single-column the two-up grids early so nothing overflows horizontally. */
+  .mon-grid,
+  .pub-grid { grid-template-columns: 1fr; gap: 14px; }
+  .pub-preview { position: static; }
+}

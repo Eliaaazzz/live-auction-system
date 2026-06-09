@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
 import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
+import { computeIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
@@ -15,9 +16,66 @@ export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
   const v = Form.useWatch([], form) || {};
-  const previewImg = CAT_IMG[v.category as string] ?? PROD.jadePendant;
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [fileList, setFileList] = useState<any[]>([]);
+  const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.jadePendant);
   const step = v.step ?? 50;
+
+  // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
+  const handleUpload = async (file: File): Promise<boolean> => {
+    if (!/image\/(png|jpe?g|webp|gif)/.test(file.type)) { message.error('仅支持 png / jpg / webp / gif'); return false; }
+    if (file.size > 5 * 1024 * 1024) { message.error('图片需 ≤ 5MB'); return false; }
+    setFileList([{ uid: file.name, name: file.name, status: 'uploading' }]);
+    try {
+      await ensureSession('seller-demo');
+      const { url } = await api.uploadImage(file);
+      setUploadedUrl(url);
+      setFileList([{ uid: file.name, name: file.name, status: 'done', url }]);
+      message.success('商品主图已上传');
+    } catch (e: any) {
+      setFileList([]); setUploadedUrl(null);
+      message.error('图片上传失败：' + (e?.message || e));
+    }
+    return false; // stop antd's built-in XHR; we upload via api.uploadImage
+  };
+
+  // ✨ AI 生成商品介绍：调用真实豆包多模态（/facts/draft），可能耗时 10-30s。
+  // 把返回的 facts 拼成中文介绍，附上高风险免责声明，写回「商品介绍」字段。
+  const onAiIntro = async () => {
+    const name = form.getFieldValue('name');
+    if (!name) { message.warning('请先填写商品名称'); return; }
+    setAiBusy(true);
+    try {
+      await ensureSession('seller-demo');
+      const { facts, highRiskFieldsDisclaimer } = await api.draftFacts({
+        productId: 'draft-preview',
+        title: name,
+        description: form.getFieldValue('intro') || '',
+        // AI 视觉需服务端可抓取的【绝对】URL；上传图是相对 /uploads/，补成同源绝对地址（公网回环可达，过 SSRF）。
+        imageUrls: [uploadedUrl ? (uploadedUrl.startsWith('http') ? uploadedUrl : location.origin + uploadedUrl) : (CAT_IMG[form.getFieldValue('category') as string] ?? PROD.jadePendant)],
+      });
+      let text = (facts ?? [])
+        .map((f: { value?: string }) => f.value)
+        .filter(Boolean)
+        .join('，');
+      if (highRiskFieldsDisclaimer) text += `（${highRiskFieldsDisclaimer}）`;
+      form.setFieldsValue({ intro: text.slice(0, 200) });
+      message.success('AI 已生成商品介绍');
+    } catch (e: any) {
+      message.error('AI 生成失败：' + (e?.message || e));
+    } finally {
+      setAiBusy(false);
+    }
+  };
+
+  // AI 推荐加价幅度：按封顶价（价值档）+ 基础热度推算一个「好看」的加价档位。
+  const onAiStep = () => {
+    const rec = computeIncrement(form.getFieldValue('cap') || 0, 1000, 1);
+    form.setFieldsValue({ step: rec, minStep: rec });
+    message.success('AI 推荐加价幅度 ¥' + rec);
+  };
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
   // The auction immediately appears in the buyer mobile rail and is biddable.
@@ -26,7 +84,7 @@ export default function AuctionPublish() {
       setBusy(true);
       try {
         await ensureSession('seller-demo');
-        const imageUrl = CAT_IMG[vals.category as string] ?? PROD.jadePendant;
+        const imageUrl = uploadedUrl || (CAT_IMG[vals.category as string] ?? PROD.jadePendant);
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -43,7 +101,8 @@ export default function AuctionPublish() {
           confirmedFacts: { description: vals.intro || '', category: vals.category || '' },
           rules: {
             mode: 'ENGLISH',
-            startPriceCents: yuanToCents(vals.start),
+            // 始终 0 元起拍 · 无保留价：忽略表单值，硬编码为 0。
+            startPriceCents: '0',
             incrementCents: yuanToCents(vals.step),
             capPriceCents: yuanToCents(vals.cap),
             durationSec,
@@ -69,9 +128,16 @@ export default function AuctionPublish() {
       <div className="pub-grid">
         <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, minStep: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, deposit: 200 }}>
           <Divider orientation="left" plain>商品信息</Divider>
-          <Form.Item label="商品主图" required>
-            <Upload listType="picture-card" beforeUpload={() => false} maxCount={4}>
-              <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>
+          <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）；未上传则使用所选分类的示例图">
+            <Upload
+              listType="picture-card"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              fileList={fileList}
+              maxCount={1}
+              beforeUpload={handleUpload}
+              onRemove={() => { setFileList([]); setUploadedUrl(null); }}
+            >
+              {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>}
             </Upload>
           </Form.Item>
           <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
@@ -85,20 +151,38 @@ export default function AuctionPublish() {
               <InputNumber min={0} step={50} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
           </Space>
-          <Form.Item label="商品介绍" name="intro">
+          <Form.Item
+            name="intro"
+            label={
+              <Space>
+                <span>商品介绍</span>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} loading={aiBusy} onClick={onAiIntro}>✨ AI 生成介绍</Button>
+              </Space>
+            }
+          >
             <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
           </Form.Item>
           <Divider orientation="left" plain>竞拍规则</Divider>
           <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="起拍价" name="start" style={{ flex: 1 }} tooltip="填 0 即 0 元起拍，人人可参与">
-              <InputNumber min={0} step={50} addonBefore="¥" style={{ width: '100%' }} />
+            <Form.Item label="起拍价" name="start" style={{ flex: 1 }} extra="0 元起拍（固定 · 无保留价）" tooltip="本场拍卖始终 0 元起拍，无保留价，人人可参与">
+              <InputNumber min={0} max={0} step={0} value={0} disabled addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="封顶价" name="cap" style={{ flex: 1 }} tooltip="出价达到封顶价立即成交">
               <InputNumber min={0} step={500} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
           </Space>
           <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="加价幅度（固定）" name="step" style={{ flex: 1 }} rules={[{ required: true }]}>
+            <Form.Item
+              name="step"
+              style={{ flex: 1 }}
+              rules={[{ required: true }]}
+              label={
+                <Space>
+                  <span>加价幅度（固定）</span>
+                  <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiStep}>AI 推荐</Button>
+                </Space>
+              }
+            >
               <InputNumber min={1} step={10} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="最低加价" name="minStep" style={{ flex: 1 }} tooltip="后台可控；须 ≥ 加价幅度，防止小额加价拖延成交" rules={[({ getFieldValue }) => ({ validator: (_, val) => (val == null || val >= (getFieldValue('step') ?? 0) ? Promise.resolve() : Promise.reject(new Error('最低加价须 ≥ 加价幅度'))) })]}>

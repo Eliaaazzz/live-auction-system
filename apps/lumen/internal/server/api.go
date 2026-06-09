@@ -205,6 +205,11 @@ func (s *Server) handleFactsDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	// The sidecar fetches imageUrls server-side to feed the VLM. A relative
+	// "/uploads/x" (sent by older/cached frontends) has no scheme → the fetch
+	// fails ("unsupported protocol scheme"). Rewrite same-origin relative URLs
+	// to absolute using the inbound Host so any frontend version works.
+	body = rewriteRelativeImageURLs(body, r)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.cfg.AISidecarURL+"/facts/draft", strings.NewReader(string(body)))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -220,6 +225,39 @@ func (s *Server) handleFactsDraft(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
+}
+
+// rewriteRelativeImageURLs upgrades same-origin relative imageUrls ("/uploads/x")
+// to absolute ("http://<host>/uploads/x") so the ai-sidecar's server-side image
+// fetch can resolve them. Leaves absolute URLs and a malformed body untouched.
+func rewriteRelativeImageURLs(body []byte, r *http.Request) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	urls, ok := m["imageUrls"].([]any)
+	if !ok {
+		return body
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	changed := false
+	for i, u := range urls {
+		if s, ok := u.(string); ok && strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") {
+			urls[i] = scheme + "://" + r.Host + s
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	m["imageUrls"] = urls
+	if out, err := json.Marshal(m); err == nil {
+		return out
+	}
+	return body
 }
 
 // POST /api/auctions {productId, rules} -> {auctionId}
