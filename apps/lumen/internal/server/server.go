@@ -1,5 +1,5 @@
 // Package server wires the lumen process. For T1 `--mode=all` runs api + WS
-gateway + bid-engine + persistence in one process; the mode switches keep the
+// gateway + bid-engine + persistence in one process; the mode switches keep the
 // seam so T5 can split gateway out horizontally.
 package server
 
@@ -134,7 +134,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 			go func() {
 				log.Printf("lumen: pprof (loopback forensics) on %s", addr)
 				if err := http.ListenAndServe(addr, nil); err != nil {
-					log.Printf("lumen: pprof listener on %s: %v", addr, err)
+					log.Printf("lumen: pprof listener on %s: %v", addr)
 				}
 			}()
 		}
@@ -213,7 +213,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 }
 
 // cacheImmutable marks responses as long-lived: upload names embed a
-timestamp + random token, so a URL's content never changes.
+// timestamp + random token, so a URL's content never changes.
 func cacheImmutable(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
