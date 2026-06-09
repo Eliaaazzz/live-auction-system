@@ -23,6 +23,7 @@ import (
 
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/advisor"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/auctioneer"
+	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/listing"
 	"github.com/Eliaaazzz/live-auction-system/apps/ai-sidecar/internal/vlm"
 )
 
@@ -41,6 +42,11 @@ func main() {
 	// canned-but-trigger-aware mock. Guardrail (length/URL/phone/money/
 	// banned-word) runs regardless of generator. See proto/ai-events.md.
 	mux.HandleFunc("POST /llm/auctioneer", auctioneer.HandlerFunc(auctioneer.Select()))
+	// AI 拍卖文案: drafts a title + selling points + opening script from the
+	// seller's product info. Shares LLM_* creds with the auctioneer real path,
+	// but remains advisory: seller edits before publishing, and bidding never
+	// waits on this endpoint.
+	mux.HandleFunc("POST /llm/listing", listing.HandlerFunc(listing.Select()))
 	// #111 (advisory, non-adjudicating): pricing / mode recommendation for the
 	// seller BEFORE freeze. advisoryOnly=true + disclaimer always; never writes
 	// auction state, bid path never waits on it. SEALED state + reserve
