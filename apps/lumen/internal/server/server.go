@@ -1,5 +1,5 @@
 // Package server wires the lumen process. For T1 `--mode=all` runs api + WS
-// gateway + bid-engine + persistence in one process; the mode switches keep the
+gateway + bid-engine + persistence in one process; the mode switches keep the
 // seam so T5 can split gateway out horizontally.
 package server
 
@@ -180,6 +180,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
+	mux.HandleFunc("POST /api/listing/draft", s.handleListingDraft)
 	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender
@@ -212,7 +213,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 }
 
 // cacheImmutable marks responses as long-lived: upload names embed a
-// timestamp + random token, so a URL's content never changes.
+timestamp + random token, so a URL's content never changes.
 func cacheImmutable(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
