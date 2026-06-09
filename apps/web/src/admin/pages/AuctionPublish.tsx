@@ -35,10 +35,8 @@ export default function AuctionPublish() {
         const durationSec = Number(vals.duration) || 80;
         const { auctionId } = await api.createDraft({
           productId,
-          // factsConfirmed: the seller signs off the (AI-drafted) product facts.
-          // The backend freeze gate (§spec) refuses to freeze/start until this is
-          // true on the stored auction — set it here so 发布开拍 reaches LIVE in
-          // one click. confirmedFacts carries the seller-entered description.
+          // factsConfirmed: the seller signs off the product facts entered here.
+          // The backend freeze gate refuses to start until facts are confirmed.
           factsConfirmed: true,
           confirmedFacts: { description: vals.intro || '', category: vals.category || '' },
           rules: {
@@ -67,7 +65,7 @@ export default function AuctionPublish() {
     <div className="admin-content">
       <Alert type="info" showIcon style={{ marginBottom: 18 }} message="发布即生成竞拍状态机：上架 → 竞拍中 → 截拍中 → 成交/流拍。规则一经有人出价不可再改，请提前配置好。" />
       <div className="pub-grid">
-        <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, minStep: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, deposit: 200 }}>
+        <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15 }}>
           <Divider orientation="left" plain>商品信息</Divider>
           <Form.Item label="商品主图" required>
             <Upload listType="picture-card" beforeUpload={() => false} maxCount={4}>
@@ -77,14 +75,9 @@ export default function AuctionPublish() {
           <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
             <Input placeholder="如：金镶玉平安扣·和田玉吊坠项链首饰" maxLength={60} showCount />
           </Form.Item>
-          <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="商品分类" name="category" style={{ flex: 1 }}>
-              <Select options={Object.keys(CAT_EMOJI).map((c) => ({ label: `${CAT_EMOJI[c]} ${c}`, value: c }))} />
-            </Form.Item>
-            <Form.Item label="保证金" name="deposit" style={{ flex: 1 }} tooltip="参与冻结，成交付款后退回；弃标扣除">
-              <InputNumber min={0} step={50} addonBefore="¥" style={{ width: '100%' }} />
-            </Form.Item>
-          </Space>
+          <Form.Item label="商品分类" name="category">
+            <Select options={Object.keys(CAT_EMOJI).map((c) => ({ label: `${CAT_EMOJI[c]} ${c}`, value: c }))} />
+          </Form.Item>
           <Form.Item label="商品介绍" name="intro">
             <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
           </Form.Item>
@@ -101,14 +94,11 @@ export default function AuctionPublish() {
             <Form.Item label="加价幅度（固定）" name="step" style={{ flex: 1 }} rules={[{ required: true }]}>
               <InputNumber min={1} step={10} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="最低加价" name="minStep" style={{ flex: 1 }} tooltip="后台可控；须 ≥ 加价幅度，防止小额加价拖延成交" rules={[({ getFieldValue }) => ({ validator: (_, val) => (val == null || val >= (getFieldValue('step') ?? 0) ? Promise.resolve() : Promise.reject(new Error('最低加价须 ≥ 加价幅度'))) })]}>
-              <InputNumber min={1} step={10} addonBefore="¥" style={{ width: '100%' }} />
-            </Form.Item>
-          </Space>
-          <Space size={16} style={{ display: 'flex', alignItems: 'flex-start' }}>
             <Form.Item label="竞拍时长（秒）" name="duration" style={{ flex: 1 }}>
               <InputNumber min={10} step={10} style={{ width: '100%' }} />
             </Form.Item>
+          </Space>
+          <Space size={16} style={{ display: 'flex', alignItems: 'flex-start' }}>
             <Form.Item label="结束前自动延时" name="extendSec" style={{ flex: 1 }} tooltip="结束前 10s 内有人出价则延长，10-30s">
               <InputNumber min={10} max={30} step={5} addonAfter="秒" style={{ width: '100%' }} disabled={v.autoExtend === false} />
             </Form.Item>
@@ -132,7 +122,7 @@ export default function AuctionPublish() {
                 <div><div style={{ fontSize: 10, opacity: 0.7 }}>{v.start === 0 ? '0 元起拍' : '起拍价'}</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(v.start ?? 0)}</div></div>
                 <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, opacity: 0.7 }}>加价幅度</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(step)}</div></div>
               </div>
-              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>封顶 ¥{fmtMoney(v.cap ?? 0)} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'} · 保证金 ¥{fmtMoney(v.deposit ?? 0)}</div>
+              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>封顶 ¥{fmtMoney(v.cap ?? 0)} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'}</div>
             </div>
             <div className="pub-cta">立即出价 ¥{fmtMoney((v.start ?? 0) + step)}</div>
           </div>
