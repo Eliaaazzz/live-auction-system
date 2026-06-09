@@ -222,7 +222,10 @@ function CountdownPill({ ms, ending, urgent, hidden }: { ms: number; ending: boo
 function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
   const [amt, setAmt] = useState(nextMinBid);
   const effCap = capPrice > 0 ? capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
-  useEffect(() => { setAmt((a) => (a < nextMinBid ? nextMinBid : a)); }, [nextMinBid]);
+  // #2 不随直播价「自己跳动」：别人出价时保持我设好的数字不变。价格涨过我的数字时
+  // 不静默改它，只在点「出价」那一刻按最新最低价钳制提交，并提示「价已涨」。
+  const bidAmt = Math.min(effCap, Math.max(amt, nextMinBid));
+  const staleLow = amt < nextMinBid;
 
   if (!joined) {
     return (<div className="lm-bidbar"><button className="lm-bidcta join" onClick={onJoin}><span><Icon name="gavel" size={18} /> 我要参与竞拍</span><span className="sub">同意服务条款后即可出价</span></button></div>);
@@ -243,7 +246,7 @@ function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, i
     <div className="lm-bidbar">
       {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtCompactYuan(gapv)}</div><div className="l">距第一名</div></div>)}
       <div className="lm-stepper"><button onClick={dec} aria-label="减"><Icon name="minus" size={18} /></button><span className="val tnum" onClick={onOpenSheet}>{fmtYuan(amt)}</span><button onClick={inc} aria-label="加"><Icon name="plus" size={18} /></button></div>
-      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(amt)}><span>{behind ? `反超第一 · ${fmtYuan(amt)}` : `立即出价 ${fmtYuan(amt)}`}</span><span className="sub">{behind ? `推荐反超 ¥${nextMinBid} 起` : `最低 ¥${nextMinBid} · 点价可多笔`}</span></button>
+      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? `反超第一 · ${fmtYuan(bidAmt)}` : `立即出价 ${fmtYuan(bidAmt)}`}</span><span className="sub">{staleLow ? `价已涨 · 按最低 ¥${nextMinBid} 出价` : (behind ? `推荐反超 ¥${nextMinBid} 起` : `最低 ¥${nextMinBid} · 点价可多笔`)}</span></button>
     </div>
   );
 }
