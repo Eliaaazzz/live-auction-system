@@ -226,6 +226,35 @@ export const api = {
     }
   },
 
+  /**
+   * Seller-side AI listing copy draft. Returns:
+   *   { title, sellingPoints, script, disclaimer, fallback, modelName }
+   *
+   * Advisory only: the seller edits before publishing. The bid path never calls
+   * this endpoint. Success/failure is also surfaced to the existing AI sidecar
+   * badge so demo operators can tell whether canned fallback was used.
+   */
+  draftListing: async ({ title, description, category, facts } = {}) => {
+    try {
+      const result = await request('/listing/draft', {
+        method: 'POST',
+        body: { title, description, category, facts },
+      });
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-ok'));
+      }
+      return result;
+    } catch (e) {
+      const isAbort = e?.name === 'AbortError' || e?.code === 'ABORT_ERR';
+      if (typeof window !== 'undefined' && !isAbort) {
+        window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-offline', {
+          detail: { status: e?.status ?? null, code: e?.code ?? null },
+        }));
+      }
+      throw e;
+    }
+  },
+
   // ---------- Evidence ----------
   /**
    * The design's `verifyChain()` POST does not exist on the backend.
