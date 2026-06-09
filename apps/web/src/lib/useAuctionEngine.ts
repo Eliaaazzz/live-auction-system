@@ -18,6 +18,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AuctionState, EngineEvent, Lot, RankRow, Bid, AuctionStatus } from './types';
 import { avatar } from './assets';
+import { useIdentity } from './identity';
 import { useAuctionStore } from '../backend/store/auction.js';
 import { RoomClient, buildRoomUrl } from '../backend/lib/ws.js';
 import { api } from '../backend/lib/api.js';
@@ -88,6 +89,9 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const lastEmitRef = useRef<string>('');
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
   const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
+  // 我的统一头像：与 LiveRoom 的 gifts/comments 同源（identity store，登录所选优先）。
+  // 用它覆盖所有「自己」行的头像，彻底消除「同一个我，出价/送礼头像不一样」(#3)。
+  const selfAvatar = useIdentity((s) => s.avatar);
   const autoMaxRef = useRef<number | null>(null);
   useEffect(() => { onEventRef.current = onEvent; });
 
@@ -206,11 +210,12 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const ranking: RankRow[] = leaders.map((l, i) => ({
       userId: l.userId,
       userName: l.displayName || l.userId || '匿名买家',
-      avatar: avatar(hashNum(l.userId ?? `u${i}`)),
+      avatar: (l.isYou && selfAvatar) ? selfAvatar : avatar(hashNum(l.userId ?? `u${i}`)),
       amount: yuan(l.cents),
       self: !!l.isYou,
     }));
     const leader = leaders.length ? bidFromLeader(leaders[0], 0) : null;
+    if (leader && leader.self && selfAvatar) leader.avatar = selfAvatar;
     const bids: Bid[] = (store.recentEvents ?? [])
       .filter((e: any) => e.type === EventType.BID_ACCEPTED && e.data?.amountCents)
       .slice(0, 50)
@@ -218,7 +223,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
         id: String(e.seq ?? e.ts ?? Math.random()),
         userId: e.data.userId,
         userName: e.data.displayName || e.data.userId || '匿名买家',
-        avatar: avatar(hashNum(e.data.userId ?? '')),
+        avatar: (store.yourUserId && e.data.userId === store.yourUserId && selfAvatar) ? selfAvatar : avatar(hashNum(e.data.userId ?? '')),
         amount: yuan(e.data.amountCents),
         ts: e.ts ?? Date.now(),
         self: !!(store.yourUserId && e.data.userId === store.yourUserId),
@@ -240,7 +245,13 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       lastEvent: null,
       bidCount: store.totalBidsCount ?? 0,
     };
-  }, [store, lot.durationSec]);
+  }, [store, lot.durationSec, selfAvatar]);
+
+  // True once THIS room's REST snapshot has initialised the (singleton) store —
+  // i.e. real price/bids/status are present, not the previous room's leftovers.
+  // LiveRoom uses it to drop the loading skeleton exactly when real data lands,
+  // so a swipe reveals live chrome with no stale-price flash.
+  const ready = store.auctionId === auctionId;
 
   const nextMinBid = useMemo(() => {
     const cur = yuan(store.currentCents);
@@ -269,7 +280,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     try { clientRef.current?.resync?.(); } catch { /* noop */ }
   }, []);
 
-  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, auctioneerText: (store as any).auctioneerText || '' };
+  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, selfAvatar, auctioneerText: (store as any).auctioneerText || '' };
 }
 
 function makeBidId(): string {

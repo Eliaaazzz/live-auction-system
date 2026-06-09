@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import LiveRoom from './LiveRoom';
 import { ROOMS } from '../lib/mockData';
 import { SwipeHint } from './components';
+import { LoginGate } from './account';
+import { useIdentity } from '../lib/identity';
 import { api } from '../backend/lib/api.js';
 import { auctionsToRooms } from '../lib/mapBackend';
 import type { Room } from '../lib/types';
@@ -28,15 +30,31 @@ function readRoomParam(): string | null {
   return new URLSearchParams(q).get('room');
 }
 
-export default function MobileApp() {
+export default function MobileApp({ startIndex = 0, autoGuest = false }: { startIndex?: number; autoGuest?: boolean } = {}) {
   const orderId = readOrderParam();
+  // #3/#4 unified identity: gate the buyer rail behind a lightweight nickname
+  // login. The login-free order page (#/m?order=) stays exempt above. The
+  // desktop Showcase passes autoGuest so its preview phones skip straight in
+  // (the real login lives on a phone at /m). A returning user is hydrated
+  // synchronously (no flash); resolve() just refreshes the backend userId.
+  const ready = useIdentity((s) => s.ready);
+  const resolve = useIdentity((s) => s.resolve);
+  const continueAsGuest = useIdentity((s) => s.continueAsGuest);
+  useEffect(() => {
+    if (ready) resolve();
+    else if (autoGuest) continueAsGuest();
+  }, [ready, autoGuest, resolve, continueAsGuest]);
+
   if (orderId) return <OrderView auctionId={orderId} />;
-  return <BuyerRail />;
+  if (!ready) return autoGuest ? <CenterMsg text="正在进入直播间…" sub="LOADING" /> : <LoginGate />;
+  return <BuyerRail startIndex={startIndex} />;
 }
 
-function BuyerRail() {
+function BuyerRail({ startIndex = 0 }: { startIndex?: number }) {
   const [rooms, setRooms] = useState<Room[] | null>(null);
-  const [index, setIndex] = useState(0);
+  // startIndex lets the Showcase open a second phone on a different live room.
+  // It's only the initial room; safeIndex below clamps it once rooms load.
+  const [index, setIndex] = useState(startIndex);
   const [dir, setDir] = useState<'up' | 'down'>('up');
   const cooldown = useRef(false);
   const touchY = useRef<number | null>(null);
@@ -64,6 +82,20 @@ function BuyerRail() {
     }, 15_000);
     return () => { alive = false; clearInterval(poll); };
   }, []);
+
+  // Preload the posters of the adjacent rooms so a swipe paints the next product
+  // instantly — VideoBackground's <img>/poster (same 900w variant) is already
+  // decoded — instead of a black frame while the image fetches. No extra WS/engine.
+  useEffect(() => {
+    const ls = rooms ?? [];
+    if (ls.length < 2) return;
+    for (const off of [1, -1]) {
+      const r = ls[(index + off + ls.length) % ls.length];
+      if (!r) continue;
+      const img = new Image();
+      img.src = r.lot.image.replace(/w=\d+/, 'w=900'); // match VideoBackground bgImg
+    }
+  }, [index, rooms]);
 
   const list = rooms ?? [];
   const go = (next: number, direction: 'up' | 'down') => {

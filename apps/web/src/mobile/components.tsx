@@ -69,7 +69,7 @@ export function VideoBackground({ lot, liveUrl }: { lot: Lot; liveUrl?: string }
   );
 }
 
-export function LiveHeader({ room, followed, onToggleFollow, onClose }: { room: Room; followed: boolean; onToggleFollow: () => void; onClose: () => void }) {
+export function LiveHeader({ room, followed, onToggleFollow, onClose, account }: { room: Room; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
   return (
     <div className="lm-header">
       <div className="lm-anchor">
@@ -78,6 +78,7 @@ export function LiveHeader({ room, followed, onToggleFollow, onClose }: { room: 
         <button className={'lm-follow' + (followed ? ' is-followed' : '')} onClick={onToggleFollow}>{followed ? (<><Icon name="check" size={13} stroke={2.6} /> 已关注</>) : ('关注')}</button>
       </div>
       <div className="lm-header-right">
+        {account}
         <div className="lm-viewers">
           <div className="lm-viewer-avs">
             <Avatar src={'https://i.pravatar.cc/40?img=11'} size={20} ring="rgba(0,0,0,0.35)" />

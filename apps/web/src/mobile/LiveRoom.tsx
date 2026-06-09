@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EngineEvent, Room } from '../lib/types';
 import { useAuctionEngine } from '../lib/useAuctionEngine';
-import { COMMENT_POOL, ENTER_POOL, BOT_USERS, ME, pick } from '../lib/mockData';
+import { COMMENT_POOL, ENTER_POOL, BOT_USERS, pick } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
 import { sfx, isMuted, setMuted, unlockAudio } from '../lib/sound';
@@ -10,12 +10,16 @@ import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
 import { BidSheet } from './BidSheet';
 import { StateOverlays } from './overlays';
 import { Icon } from './icons';
+import { ProfileButton, AccountSheet } from './account';
+import { useIdentity } from '../lib/identity';
 import './motion.css';
 
 interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; }
 
 export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true }: Props) {
   const lot = room.lot;
+  const ident = useIdentity();
+  const [acctOpen, setAcctOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [followed, setFollowed] = useState(() => localStorage.getItem('lf_follow_' + room.id) === '1');
   // localStorage join flag is a client cache; a future backend session/join API will reconcile it.
@@ -80,15 +84,36 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     }
   }, [flashFx, pushFeed, screenFlash, triggerShake]);
 
-  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running: running && !loading, onEvent });
+  // Boot the engine immediately (not gated on !loading) so this room's snapshot
+  // starts loading the moment it mounts — the skeleton then clears on `ready`, not
+  // a blind timer, so a swipe reveals live data as soon as it lands.
+  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined });
 
+  const revealed = useRef(false);
+  const reveal = useCallback(() => {
+    if (revealed.current) return;
+    revealed.current = true;
+    setLoading(false);
+    startedAt.current = Date.now();
+    prevPrice.current = lot.startPrice;
+  }, [lot.startPrice]);
+
+  // Reset on room change (runs before the ready-watcher below so a warm store still
+  // reveals instantly). Fallback cap: if the snapshot never lands (offline/slow),
+  // reveal anyway after 1.2s so the room is never stuck behind the skeleton.
   useEffect(() => {
     setLoading(true);
+    revealed.current = false;
     lastTickSec.current = -1;
     prevStatus.current = '';
-    const t = setTimeout(() => { setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 850);
+    const t = setTimeout(reveal, 1200);
     return () => clearTimeout(t);
-  }, [room.id, lot.startPrice]);
+  }, [room.id, lot.startPrice, reveal]);
+
+  // Reveal the chrome the instant the snapshot is in the store (real price/bids,
+  // no stale-price flash). The poster shows immediately behind the skeleton via
+  // VideoBackground, so the swipe is never a black frame.
+  useEffect(() => { if (ready) reveal(); }, [ready, reveal]);
 
   useEffect(() => {
     if (loading) return;
@@ -133,7 +158,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     if ((prev === 'live' || prev === 'ending') && (state.status === 'sold' || state.status === 'unsold')) {
       if (isMuted()) return;
       if (state.status === 'unsold') sfx.lose();
-      else { sfx.hammer(); if (state.leader?.userId === ME.id) setTimeout(() => sfx.win(), 260); }
+      else { sfx.hammer(); if (state.myRank === 1) setTimeout(() => sfx.win(), 260); }
     }
   }, [state.status, loading, state.leader]);
 
@@ -147,7 +172,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const toggleFollow = () => setFollowed((v) => { const nv = !v; localStorage.setItem('lf_follow_' + room.id, nv ? '1' : '0'); return nv; });
   const tapTab = (t: TabKey) => { setSheetTab((cur) => (cur === t ? null : t)); if (t === 'comments') setUnread(0); };
   const onJoin = () => { setJoined(true); try { localStorage.setItem('lj_join_' + room.id, '1'); } catch { /* ignore */ } pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
-  const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ME.avatar }); };
+  const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ident.avatar }); };
   const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
   const onReturn = useCallback(() => { setLoading(true); setTimeout(() => { restart(); setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 600); }, [restart, lot.startPrice]);
 
@@ -161,7 +186,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} />
+          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
           <LotChip lot={lot} />
           <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
@@ -188,7 +213,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
 
-          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ME.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
+          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ident.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
 
           <EmotionFX fx={fx} />
 
@@ -200,6 +225,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <GiftPanel roomId={room.id} open={giftOpen} onClose={() => setGiftOpen(false)} onSend={onSendGift} />
           <ShareModal roomId={room.id} open={shareOpen} onClose={() => setShareOpen(false)} />
+          <AccountSheet open={acctOpen} onClose={() => setAcctOpen(false)} />
         </>
       )}
       {loading && <RoomSkeleton />}
