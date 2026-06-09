@@ -14,7 +14,18 @@ export const PROD = {
   diamond: U('photo-1721103418939-5112f0ccfac8'), // 钻石首饰
   goldNecklace: U('photo-1664178266066-e37e0d25e6a1'), // 金饰
   chocolate: U('photo-1511381939415-e44015466834'), // 食品
+  artOil: U('photo-1578321272176-b7bbc0679853'), // 艺术品 · 古典油画
+  artLandscape: U('photo-1577720580479-7d839d829c73'), // 艺术品 · 风景油画
+  goldBars: U('photo-1610375461246-83df859d849d'), // 贵金属 · 投资金条
+  luxuryBag: U('photo-1584917865442-de89df76afd3'), // 二手奢侈品 · 名牌手提包
 };
+
+/**
+ * 直播间无真实推流时的兜底循环视频（自托管，同源由 lumen 从 WEB_DIR 提供）。
+ * 真实 HLS 推流地址 (rules.livePlayUrl) 优先；它为空时买家端播放此循环，
+ * 保证直播间始终是"动"的视频而非黑屏/静图。见 mapBackend.auctionToLot。
+ */
+export const LIVE_FALLBACK = '/media/live-loop.mp4';
 
 /** 真实人脸头像 */
 export const avatar = (n: number, size = 96): string => `https://i.pravatar.cc/${size}?img=${((Math.abs(n) - 1) % 70) + 1}`;

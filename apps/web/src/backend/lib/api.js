@@ -77,6 +77,9 @@ export const api = {
   /** Snapshot fallback used by LiveRoomRoute before the WS opens. */
   getAuction: (id) => request(`/auctions/${id}`),
 
+  /** Seller/owner: live-stream descriptor for 开始直播. Returns { streamKey, pushUrl, livePlayUrl }. */
+  getStream: (id) => request(`/auctions/${id}/stream`),
+
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 

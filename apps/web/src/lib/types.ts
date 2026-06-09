@@ -32,6 +32,7 @@ export interface Lot {
   title: string;
   subtitle: string;
   image: string;
+  live?: string; // optional live video stream URL (HLS .m3u8 / mp4/webm); falls back to `image`
   tone: string;
   tone2: string;
   startPrice: number;

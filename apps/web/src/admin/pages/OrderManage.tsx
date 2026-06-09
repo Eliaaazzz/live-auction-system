@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Table, Tag, Segmented, Input, Space, Button, Avatar, App as AntdApp } from 'antd';
+import { Table, Tag, Segmented, Input, Space, Button, Avatar, Drawer, Descriptions, Steps, App as AntdApp } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { fmtMoney } from '../../lib/format';
@@ -18,6 +18,9 @@ const STATUS_META: Record<OStatus, { text: string; color: string }> = {
   refunded: { text: '已退保证金', color: 'default' },
 };
 
+const FLOW_STEPS = ['拍下成交', '买家付款', '卖家发货', '交易完成'];
+const STEP_OF: Record<OStatus, number> = { pending: 0, paid: 1, shipped: 2, done: 3, refunded: 0 };
+
 const ORDERS: Order[] = [
   { key: '1', no: 'AUC20260608001', item: '金镶玉平安扣·和田玉吊坠项链', price: 9000, buyer: '黄***', deposit: 200, status: 'pending', time: '06-08 14:32' },
   { key: '2', no: 'AUC20260608002', item: '天然冰糯种翡翠手镯 56mm', price: 21600, buyer: '张***', deposit: 500, status: 'paid', time: '06-08 14:10' },
@@ -33,6 +36,7 @@ export default function OrderManage() {
   const { message } = AntdApp.useApp();
   const [seg, setSeg] = useState<OStatus | 'all'>('all');
   const [kw, setKw] = useState('');
+  const [detail, setDetail] = useState<Order | null>(null);
   const rows = useMemo(() => ORDERS.filter((o) => (seg === 'all' ? true : o.status === seg)).filter((o) => (kw ? o.no.includes(kw) || o.buyer.includes(kw) || o.item.includes(kw) : true)), [seg, kw]);
 
   const columns: ColumnsType<Order> = [
@@ -55,7 +59,7 @@ export default function OrderManage() {
       title: '操作', key: 'op', fixed: 'right', width: 160,
       render: (_, r) => (
         <Space size={4}>
-          <Button size="small" type="link" onClick={() => message.info(`查看订单 ${r.no}`)}>详情</Button>
+          <Button size="small" type="link" onClick={() => setDetail(r)}>详情</Button>
           {r.status === 'pending' && <Button size="small" type="link" onClick={() => message.success('已发送付款提醒')}>提醒付款</Button>}
           {r.status === 'paid' && <Button size="small" type="link" onClick={() => message.success('已标记发货')}>发货</Button>}
         </Space>
@@ -71,6 +75,101 @@ export default function OrderManage() {
         <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder="订单号 / 买家 / 拍品" style={{ width: 240 }} value={kw} onChange={(e) => setKw(e.target.value)} />
       </div>
       <Table<Order> columns={columns} dataSource={rows} scroll={{ x: 1180 }} pagination={{ pageSize: 8, showTotal: (t) => `共 ${t} 笔订单` }} size="middle" />
+
+      <Drawer
+        title="订单详情"
+        width={480}
+        open={detail !== null}
+        onClose={() => setDetail(null)}
+        footer={
+          detail && (
+            <Space>
+              {detail.status === 'pending' && (
+                <Button type="primary" onClick={() => message.success('已发送付款提醒')}>提醒付款</Button>
+              )}
+              {detail.status === 'paid' && (
+                <Button type="primary" onClick={() => message.success('已标记发货')}>标记发货</Button>
+              )}
+              {detail.status === 'shipped' && (
+                <Button type="primary" onClick={() => message.info('已查看物流')}>查看物流</Button>
+              )}
+              {detail.status === 'refunded' && (
+                <Button onClick={() => message.info('该笔为流拍订单，保证金已原路退回')}>退款记录</Button>
+              )}
+              <Button onClick={() => setDetail(null)}>关闭</Button>
+            </Space>
+          )
+        }
+      >
+        {detail && (
+          <div>
+            <Space align="start" style={{ marginBottom: 16 }}>
+              <Avatar shape="square" size={56} src={OIMG[detail.key]} />
+              <div>
+                <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{detail.item}</div>
+                <div style={{ color: '#888', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{detail.no}</div>
+              </div>
+            </Space>
+
+            <Descriptions column={1} bordered size="small" style={{ marginBottom: 20 }}>
+              <Descriptions.Item label="订单号">
+                <span style={{ fontVariantNumeric: 'tabular-nums' }}>{detail.no}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="拍品">{detail.item}</Descriptions.Item>
+              <Descriptions.Item label="成交价">
+                {detail.price === 0 ? <span style={{ color: '#bbb' }}>流拍</span> : <span className="num-red">¥{fmtMoney(detail.price)}</span>}
+              </Descriptions.Item>
+              <Descriptions.Item label="买家">{detail.buyer}</Descriptions.Item>
+              <Descriptions.Item label="保证金">
+                <span className="num-strong">¥{fmtMoney(detail.deposit)}</span>
+              </Descriptions.Item>
+              <Descriptions.Item label="状态">
+                <Tag color={STATUS_META[detail.status].color}>{STATUS_META[detail.status].text}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="成交时间">{detail.time}</Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ fontWeight: 600, marginBottom: 12 }}>履约进度</div>
+            {detail.status === 'refunded' ? (
+              <div style={{ color: '#999', marginBottom: 20, fontSize: 13 }}>
+                该拍品流拍，未产生成交，保证金 ¥{fmtMoney(detail.deposit)} 已原路退回买家，无履约流程。
+              </div>
+            ) : (
+              <Steps
+                direction="vertical"
+                size="small"
+                current={STEP_OF[detail.status]}
+                style={{ marginBottom: 20 }}
+                items={FLOW_STEPS.map((s) => ({ title: s }))}
+              />
+            )}
+
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>收货信息</div>
+            <div style={{ color: '#555', fontSize: 13, lineHeight: 1.9, marginBottom: 4 }}>
+              <div>收货人：{detail.buyer}（演示数据）</div>
+              <div>电话：138****{detail.key.padStart(4, '0')}</div>
+              <div>地址：北京市朝阳区 **** 街道 ** 号院（演示脱敏地址）</div>
+            </div>
+            <div style={{ color: '#bbb', fontSize: 12, marginBottom: 20 }}>* 收货信息为演示用模拟数据，实际以买家填写为准</div>
+
+            {(detail.status === 'shipped' || detail.status === 'done') && (
+              <>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>物流信息</div>
+                <div style={{ color: '#555', fontSize: 13, lineHeight: 1.9, marginBottom: 20 }}>
+                  <div>承运：顺丰速运</div>
+                  <div>快递单号：<span style={{ fontVariantNumeric: 'tabular-nums' }}>SF{detail.no.slice(-10)}</span>（演示）</div>
+                </div>
+              </>
+            )}
+
+            <div style={{ color: '#999', fontSize: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '10px 12px', lineHeight: 1.7 }}>
+              订单详情已同步至买家移动端 H5，买家可通过分享链接
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#555' }}> /order?no={detail.no} </span>
+              免登录查看。
+            </div>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

@@ -4,6 +4,28 @@ import { fmtYuan, fmtClock } from '../lib/format';
 import { Confetti, ProductImg, Avatar } from './components';
 import { Icon } from './icons';
 
+// Copy a login-free, shareable order link (#/m?order=<auctionId>) so the
+// winner/seller can forward the result to a friend over any IM — no login needed.
+function ShareOrderBtn({ lot }: { lot: Lot }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const url = `${location.origin}${location.pathname}#/m?order=${lot.id}`;
+    try { await navigator.clipboard.writeText(url); }
+    catch {
+      const i = document.createElement('input');
+      i.value = url; document.body.appendChild(i); i.select();
+      try { document.execCommand('copy'); } catch { /* noop */ }
+      document.body.removeChild(i);
+    }
+    setCopied(true); setTimeout(() => setCopied(false), 1800);
+  };
+  return (
+    <button className="lm-share-order" onClick={copy}>
+      <Icon name="share" size={14} /> {copied ? '链接已复制 · 发给好友' : '复制订单链接 · 发给好友'}
+    </button>
+  );
+}
+
 export function StateOverlays({
   state,
   lot,
@@ -52,7 +74,7 @@ function AboutToStart({ state, lot, reminded, onToggleRemind }: { state: Auction
           </div>
           <div>
             <div className="k">封顶价</div>
-            <div className="v tnum">{fmtYuan(lot.capPrice)}</div>
+            <div className="v tnum">{lot.capPrice > 0 ? fmtYuan(lot.capPrice) : '不封顶'}</div>
           </div>
         </div>
         <button className="lm-paybtn" style={reminded ? { background: 'rgba(255,255,255,0.16)', boxShadow: 'none' } : undefined} onClick={onToggleRemind}>
@@ -124,6 +146,7 @@ function WinSuccess({ state, lot, onReturn }: { state: AuctionState; lot: Lot; o
             <PayTimer />
           </>
         )}
+        <ShareOrderBtn lot={lot} />
       </div>
     </div>
   );
@@ -167,6 +190,7 @@ function HammerResult({ state, lot, room, onReturn }: { state: AuctionState; lot
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', marginTop: 3 }}>{room.anchorName} · 下一件马上开拍</div>
           </div>
         </div>
+        <ShareOrderBtn lot={lot} />
         <div className="lm-ended-progress">
           <i style={{ animationDuration: '6s' }} />
         </div>

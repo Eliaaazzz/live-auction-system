@@ -23,8 +23,8 @@ export default function Showcase() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ width: 44, height: 44, borderRadius: 13, background: 'linear-gradient(135deg,#ff5f7e,#fe2c55)', display: 'grid', placeItems: 'center', fontSize: 24 }}>🔨</div>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 800 }}>抖音直播竞拍全栈系统 · 前端设计稿</div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>实时竞拍大师 — 移动端（深度还原抖音直播） + PC 管理后台（Ant Design）</div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>抖音直播竞拍全栈系统</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>实时竞拍大师 · 移动端用户竞拍 + PC 商家 / 主播后台 · 毫秒级实时出价</div>
           </div>
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', gap: 10 }}>
@@ -69,8 +69,8 @@ export default function Showcase() {
       </div>
 
       <div style={{ maxWidth: 1340, margin: '20px auto 0', fontSize: 12.5, color: 'rgba(255,255,255,0.45)', lineHeight: 1.7 }}>
-        提示：移动端在手机/窄屏中直接访问 <code style={{ color: '#ff8fa3' }}>#/m</code> 获得原生全屏体验；后台访问 <code style={{ color: '#ff8fa3' }}>#/admin</code>。
-        实时数据由前端模拟竞拍引擎驱动（接真实后端时替换为 WebSocket 长连接即可，接口形态一致）。
+        移动端在手机 / 窄屏中直接访问 <code style={{ color: '#ff8fa3' }}>#/m</code> 获得全屏体验；商家后台访问 <code style={{ color: '#ff8fa3' }}>#/admin</code>。
+        全链路实时数据：JWT 鉴权 → REST 快照 → WebSocket 长连接，服务端原子裁决，毫秒级实时排名。
       </div>
     </div>
   );

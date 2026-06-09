@@ -51,8 +51,17 @@ export default function AdminApp() {
       }}
     >
       <AntdApp>
-        <Layout className="admin-root">
-          <Sider collapsible collapsed={collapsed} onCollapse={setCollapsed} width={216} theme="dark">
+        <Layout className="admin-root" style={{ minHeight: '100vh' }}>
+          <Sider
+            collapsible
+            collapsed={collapsed}
+            onCollapse={setCollapsed}
+            width={216}
+            collapsedWidth={64}
+            breakpoint="lg"
+            theme="dark"
+            style={{ minHeight: '100vh' }}
+          >
             <div className="admin-logo">
               <span className="mark">🔨</span>
               {!collapsed && <span>实时竞拍大师 · 后台</span>}
@@ -74,10 +83,16 @@ export default function AdminApp() {
               <Badge status="processing" text={<span style={{ color: '#fe2c55', fontWeight: 600 }}>直播中</span>} />
               <BellOutlined style={{ fontSize: 18, color: '#666' }} />
               <Avatar size={32} icon={<UserOutlined />} style={{ background: '#fe2c55' }} />
-              <span style={{ fontSize: 13, color: '#333' }}>马大瓜珠宝</span>
+              <span className="seller-name">马大瓜珠宝</span>
             </Header>
 
-            <Content style={{ overflow: 'auto' }}>
+            <Content
+              style={{
+                background: '#f5f6f8',
+                minHeight: 'calc(100vh - 56px)',
+                overflow: 'auto',
+              }}
+            >
               {page === 'dashboard' && <Dashboard onGo={(p) => setPage(p as PageKey)} />}
               {page === 'products' && <ProductManage />}
               {page === 'publish' && <AuctionPublish />}
