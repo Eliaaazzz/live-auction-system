@@ -38,6 +38,22 @@ export function defaultAvatarFor(seed: string): string {
   return avatar(hashNum(seed || 'me'));
 }
 
+/** A lightweight, fixed buyer identity — nickname + face — with no store/login. */
+export type SeatIdentity = { nickname: string; avatar: string };
+
+// Showcase seats: deterministic, visibly-DISTINCT buyers so the triptych shows
+// 买家A and 买家B as two genuinely separate accounts (their own nickname, face,
+// and — via auth.js seats — their own backend userId/token). Stable across
+// reloads so a returning viewer keeps the same two faces. Real /m never calls
+// this; it uses the full useIdentity login store above.
+const SEAT_IDENTITIES: Record<string, SeatIdentity> = {
+  A: { nickname: '买家A', avatar: avatar(15) },
+  B: { nickname: '买家B', avatar: avatar(33) },
+};
+export function seatIdentity(seat: string): SeatIdentity {
+  return SEAT_IDENTITIES[seat] ?? { nickname: '买家' + seat, avatar: defaultAvatarFor('seat-' + seat) };
+}
+
 function ls(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }

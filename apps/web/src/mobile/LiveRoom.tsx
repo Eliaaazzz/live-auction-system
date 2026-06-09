@@ -11,14 +11,17 @@ import { BidSheet } from './BidSheet';
 import { StateOverlays } from './overlays';
 import { Icon } from './icons';
 import { ProfileButton, AccountSheet } from './account';
-import { useIdentity } from '../lib/identity';
+import { useIdentity, type SeatIdentity } from '../lib/identity';
 import './motion.css';
 
-interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; }
+interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; onEnded?: () => void; seat?: string; identity?: SeatIdentity; }
 
-export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true }: Props) {
+export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true, onEnded, seat = '', identity }: Props) {
   const lot = room.lot;
-  const ident = useIdentity();
+  // Showcase seats (买家A/买家B) pass an explicit per-seat identity; real /m uses
+  // the global login store. Everything below reads `ident`, so it works for both.
+  const globalIdent = useIdentity();
+  const ident = identity ?? globalIdent;
   const [acctOpen, setAcctOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [followed, setFollowed] = useState(() => localStorage.getItem('lf_follow_' + room.id) === '1');
@@ -87,7 +90,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   // Boot the engine immediately (not gated on !loading) so this room's snapshot
   // starts loading the moment it mounts — the skeleton then clears on `ready`, not
   // a blind timer, so a swipe reveals live data as soon as it lands.
-  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined });
+  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined, seat, selfAvatar: ident.avatar || undefined });
 
   const revealed = useRef(false);
   const reveal = useCallback(() => {
@@ -174,7 +177,13 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const onJoin = () => { setJoined(true); try { localStorage.setItem('lj_join_' + room.id, '1'); } catch { /* ignore */ } pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
   const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ident.avatar }); };
   const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
-  const onReturn = useCallback(() => { setLoading(true); setTimeout(() => { restart(); setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 600); }, [restart, lot.startPrice]);
+  // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
+  // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
+  const onReturn = useCallback(() => {
+    if (onEnded) { onEnded(); return; }
+    setLoading(true);
+    setTimeout(() => { restart(); setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 600);
+  }, [onEnded, restart, lot.startPrice]);
 
   const live = state.status === 'live' || state.status === 'ending';
   const urgent = state.status === 'ending' && state.remainingMs <= 6000;
@@ -186,7 +195,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} />} />
+          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
           <LotChip lot={lot} />
           <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
@@ -225,7 +234,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <GiftPanel roomId={room.id} open={giftOpen} onClose={() => setGiftOpen(false)} onSend={onSendGift} />
           <ShareModal roomId={room.id} open={shareOpen} onClose={() => setShareOpen(false)} />
-          <AccountSheet open={acctOpen} onClose={() => setAcctOpen(false)} />
+          {!seat && <AccountSheet open={acctOpen} onClose={() => setAcctOpen(false)} />}
         </>
       )}
       {loading && <RoomSkeleton />}

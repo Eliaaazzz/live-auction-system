@@ -96,7 +96,7 @@ export default function Showcase() {
               <div style={{ width: PHONE_W }}>
                 <SectionLabel title="移动端 · 买家 A" desc="全屏视频 + 浮层竞拍 · 5 Tab · 上滑切换直播间" />
                 <IOSDevice dark width={PHONE_W} height={PHONE_H}>
-                  <MobileApp startIndex={0} autoGuest />
+                  <MobileApp startIndex={0} seat="A" />
                 </IOSDevice>
               </div>
 
@@ -112,7 +112,7 @@ export default function Showcase() {
               <div style={{ width: PHONE_W }}>
                 <SectionLabel title="移动端 · 买家 B" desc="同场竞价 · 出价与排名毫秒级实时同步" />
                 <IOSDevice dark width={PHONE_W} height={PHONE_H}>
-                  <MobileApp startIndex={1} autoGuest />
+                  <MobileApp startIndex={1} seat="B" />
                 </IOSDevice>
               </div>
             </div>
