@@ -134,7 +134,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 			go func() {
 				log.Printf("lumen: pprof (loopback forensics) on %s", addr)
 				if err := http.ListenAndServe(addr, nil); err != nil {
-					log.Printf("lumen: pprof listener on %s: %v", addr)
+					log.Printf("lumen: pprof listener on %s: %v", addr, err)
 				}
 			}()
 		}
