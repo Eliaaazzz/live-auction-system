@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -57,7 +58,12 @@ func ConfigFromEnv(prefix, defBaseURL, defModel string) Config {
 		BaseURL: envOr(prefix+"_BASE_URL", defBaseURL),
 		APIKey:  strings.TrimSpace(os.Getenv(prefix + "_API_KEY")),
 		Model:   envOr(prefix+"_MODEL", defModel),
-		Timeout: 8 * time.Second,
+		// 30s default: Doubao Seed-2.0 "thinking" models have high first-token
+		// latency (an 8s budget timed out cross-region). Both callers are OFF the
+		// bid hot path (auctioneer is dispatched async; VLM is a seller pre-freeze
+		// action), so a generous budget is safe. Override per prefix with
+		// {PREFIX}_TIMEOUT_MS (e.g. LLM_TIMEOUT_MS=12000 for a fast Lite model).
+		Timeout: envDurationMs(prefix+"_TIMEOUT_MS", 30*time.Second),
 	}
 }
 
@@ -189,4 +195,17 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDurationMs reads an integer-millisecond env var, falling back to def.
+func envDurationMs(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	ms, err := strconv.Atoi(v)
+	if err != nil || ms <= 0 {
+		return def
+	}
+	return time.Duration(ms) * time.Millisecond
 }
