@@ -44,7 +44,9 @@ export function StateOverlays({
   if (state.status === 'upcoming') return <AboutToStart state={state} lot={lot} reminded={reminded} onToggleRemind={onToggleRemind} />;
   if (state.status === 'unsold') return <EndedOverlay lot={lot} onReturn={onReturn} />;
   if (state.status === 'sold') {
-    const won = state.leader?.userId === 'me';
+    // 我是否拍中：用真实排名（成交时第 1 名即赢家）判断，不再用恒为 false 的
+    // `leader.userId === 'me'`（后端 userId 永不等于 'me'，导致赢家永远进不了庆祝页）。
+    const won = state.myRank === 1;
     return won ? <WinSuccess state={state} lot={lot} onReturn={onReturn} /> : <HammerResult state={state} lot={lot} room={room} onReturn={onReturn} />;
   }
   return null;
