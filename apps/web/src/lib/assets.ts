@@ -20,13 +20,6 @@ export const PROD = {
   luxuryBag: U('photo-1584917865442-de89df76afd3'), // 二手奢侈品 · 名牌手提包
 };
 
-/**
- * 直播间无真实推流时的兜底循环视频（自托管，同源由 lumen 从 WEB_DIR 提供）。
- * 真实 HLS 推流地址 (rules.livePlayUrl) 优先；它为空时买家端播放此循环，
- * 保证直播间始终是"动"的视频而非黑屏/静图。见 mapBackend.auctionToLot。
- */
-export const LIVE_FALLBACK = '/media/live-loop.mp4';
-
 /** 真实人脸头像 */
 export const avatar = (n: number, size = 96): string => `https://i.pravatar.cc/${size}?img=${((Math.abs(n) - 1) % 70) + 1}`;
 

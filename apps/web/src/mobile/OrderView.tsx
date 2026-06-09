@@ -83,7 +83,7 @@ export default function OrderView({ auctionId }: { auctionId: string }) {
           </div>
         )}
         <button className="ov-cta" onClick={enterRoom}>进入直播间 · 查看更多拍品</button>
-        <div className="ov-note">订单与后台「订单管理」实时同源；本页可直接转发给好友，无需登录即可查看。</div>
+        <div className="ov-note">本页展示该拍品的公开竞拍结果，可直接转发给好友，无需登录即可查看。</div>
       </div>
     </div>
   );

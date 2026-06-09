@@ -1,14 +1,42 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Table, Tag, Segmented, Input, Space, Button, Avatar, Drawer, Descriptions, Steps, App as AntdApp } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
+import { api } from '../../backend/lib/api.js';
+import { isJunk } from '../../lib/mapBackend';
 
 const OIMG: Record<string, string> = { '1': PROD.jadePendant, '2': PROD.jadeBangle, '3': PROD.watch, '4': PROD.teapot, '5': PROD.goldNecklace, '6': PROD.diamond, '7': PROD.jadePendant, '8': PROD.diamond };
 
 type OStatus = 'pending' | 'paid' | 'shipped' | 'done' | 'refunded';
-interface Order { key: string; no: string; item: string; price: number; buyer: string; deposit: number; status: OStatus; time: string; }
+interface Order { key: string; no: string; item: string; price: number; buyer: string; deposit: number; status: OStatus; time: string; img?: string; }
+
+const yuanOf = (c?: string | number | null): number => {
+  if (c == null || c === '') return 0;
+  try { return Math.round(Number(BigInt(String(c))) / 100); } catch { return Math.round(Number(c) / 100) || 0; }
+};
+
+// Map a terminal auction (+ its settlement order, when SOLD) to an 订单 row.
+// 成交→待支付/已支付（看 order.status），流拍/取消→已退保证金。
+function mapAuctionToOrder(a: any, order: any | null): Order {
+  const status: OStatus = a.status === 'CANCELLED' || a.status === 'NO_BID'
+    ? 'refunded'
+    : order?.status === 'paid' ? 'paid' : 'pending';
+  const nick = String(a.winnerId || '').replace(/^user_/, '');
+  const t = a.endAtMs || a.createdAtMs || 0;
+  return {
+    key: a.auctionId,
+    no: a.auctionId,
+    item: a.productName || '直播拍品',
+    price: a.status === 'NO_BID' ? 0 : yuanOf(a.currentPriceCents),
+    buyer: a.status === 'NO_BID' ? '—（流拍）' : (nick ? nick.slice(0, 1) + '***' : '匿名买家'),
+    deposit: 0,
+    status,
+    time: t ? new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
+    img: a.imageUrl || undefined,
+  };
+}
 
 const STATUS_META: Record<OStatus, { text: string; color: string }> = {
   pending: { text: '待支付', color: 'red' },
@@ -37,7 +65,38 @@ export default function OrderManage() {
   const [seg, setSeg] = useState<OStatus | 'all'>('all');
   const [kw, setKw] = useState('');
   const [detail, setDetail] = useState<Order | null>(null);
-  const rows = useMemo(() => ORDERS.filter((o) => (seg === 'all' ? true : o.status === seg)).filter((o) => (kw ? o.no.includes(kw) || o.buyer.includes(kw) || o.item.includes(kw) : true)), [seg, kw]);
+  const [realOrders, setRealOrders] = useState<Order[] | null>(null);
+
+  // Pull terminal auctions + their settlement orders from the backend. getOrder is
+  // a public read; we only call it for SOLD/ORDER_CREATED to learn paid-vs-unpaid
+  // (N is tiny in a demo). Polls so a fresh 成交 shows up without a manual refresh.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
+        const terminal = (auctions as any[]).filter(
+          (a) => a.auctionId && ['SOLD', 'ORDER_CREATED', 'CANCELLED', 'NO_BID'].includes(a.status) && !isJunk(a.productName),
+        );
+        const orders = await Promise.all(terminal.map(async (a) =>
+          (a.status === 'SOLD' || a.status === 'ORDER_CREATED')
+            ? api.getOrder(a.auctionId).catch(() => null)
+            : null,
+        ));
+        if (!alive) return;
+        setRealOrders(terminal.map((a, i) => mapAuctionToOrder(a, orders[i])).sort((x, y) => (y.no > x.no ? 1 : -1)));
+      } catch { if (alive) setRealOrders(null); }
+    };
+    load();
+    const t = setInterval(load, 15_000);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  // Real orders when the backend has any terminal auctions; else the demo seed so a
+  // fresh demo still shows a populated table (flagged 演示 in the toolbar).
+  const usingDemo = !(realOrders && realOrders.length);
+  const source = usingDemo ? ORDERS : (realOrders as Order[]);
+  const rows = useMemo(() => source.filter((o) => (seg === 'all' ? true : o.status === seg)).filter((o) => (kw ? o.no.includes(kw) || o.buyer.includes(kw) || o.item.includes(kw) : true)), [source, seg, kw]);
 
   const columns: ColumnsType<Order> = [
     { title: '订单号', dataIndex: 'no', width: 168, render: (t) => <span style={{ fontVariantNumeric: 'tabular-nums', color: '#555' }}>{t}</span> },
@@ -45,7 +104,7 @@ export default function OrderManage() {
       title: '拍品', dataIndex: 'item', width: 280,
       render: (_, r) => (
         <Space>
-          <Avatar shape="square" size={40} src={OIMG[r.key]} />
+          <Avatar shape="square" size={40} src={r.img || OIMG[r.key]} />
           <span style={{ maxWidth: 210, display: 'inline-block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>{r.item}</span>
         </Space>
       ),
@@ -71,6 +130,7 @@ export default function OrderManage() {
     <div className="admin-content">
       <div className="admin-toolbar">
         <Segmented value={seg} onChange={(val) => setSeg(val as OStatus | 'all')} options={[{ label: '全部', value: 'all' }, { label: '待支付', value: 'pending' }, { label: '已支付', value: 'paid' }, { label: '已发货', value: 'shipped' }, { label: '已完成', value: 'done' }, { label: '已退保证金', value: 'refunded' }]} />
+        {usingDemo ? <Tag color="default" style={{ marginLeft: 8 }}>演示数据 · 暂无真实成交订单</Tag> : <Tag color="green" style={{ marginLeft: 8 }}>● 实时订单（{source.length}）</Tag>}
         <div className="spacer" />
         <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder="订单号 / 买家 / 拍品" style={{ width: 240 }} value={kw} onChange={(e) => setKw(e.target.value)} />
       </div>
@@ -104,7 +164,7 @@ export default function OrderManage() {
         {detail && (
           <div>
             <Space align="start" style={{ marginBottom: 16 }}>
-              <Avatar shape="square" size={56} src={OIMG[detail.key]} />
+              <Avatar shape="square" size={56} src={detail.img || OIMG[detail.key]} />
               <div>
                 <div style={{ fontWeight: 600, lineHeight: 1.4 }}>{detail.item}</div>
                 <div style={{ color: '#888', fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{detail.no}</div>
@@ -163,8 +223,8 @@ export default function OrderManage() {
             )}
 
             <div style={{ color: '#999', fontSize: 12, background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '10px 12px', lineHeight: 1.7 }}>
-              订单详情已同步至买家移动端 H5，买家可通过分享链接
-              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#555' }}> /order?no={detail.no} </span>
+              成交结果可分享至买家移动端 H5，买家通过链接
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: '#555' }}> #/m?order={detail.no} </span>
               免登录查看。
             </div>
           </div>
