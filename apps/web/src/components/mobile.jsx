@@ -3,6 +3,7 @@ import { formatCentsCNY, formatCentsCNYCompact, formatCentsCNYShort, addCentsStr
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, BidConsole, HeatMeter, Leaderboard,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
+import { VoiceBidButton } from './VoiceBidButton.jsx';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, BidHistoryStrip, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
@@ -779,6 +780,14 @@ function MobileRoom({
                 shake={rejectShake}
                 onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
               />
+              <div style={{ marginTop: 8 }}>
+                <VoiceBidButton
+                  currentCents={currentCents}
+                  stepCents={stepCents}
+                  disabled={biddingLocked}
+                  onBid={(c) => { if (!biddingLocked && onBid) onBid(c); }}
+                />
+              </div>
               <div style={{
                 display: 'flex', justifyContent: 'space-between',
                 padding: '6px 4px 0', fontSize: 11, color: 'var(--douyin-ink-muted)',
