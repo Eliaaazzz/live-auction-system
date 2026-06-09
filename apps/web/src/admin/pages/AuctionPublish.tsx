@@ -35,6 +35,12 @@ export default function AuctionPublish() {
         const durationSec = Number(vals.duration) || 80;
         const { auctionId } = await api.createDraft({
           productId,
+          // factsConfirmed: the seller signs off the (AI-drafted) product facts.
+          // The backend freeze gate (§spec) refuses to freeze/start until this is
+          // true on the stored auction — set it here so 发布开拍 reaches LIVE in
+          // one click. confirmedFacts carries the seller-entered description.
+          factsConfirmed: true,
+          confirmedFacts: { description: vals.intro || '', category: vals.category || '' },
           rules: {
             mode: 'ENGLISH',
             startPriceCents: yuanToCents(vals.start),
