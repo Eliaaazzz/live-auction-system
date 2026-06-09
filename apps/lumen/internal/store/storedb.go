@@ -226,6 +226,22 @@ func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) erro
 	return nil
 }
 
+// SetLivePlayURL points a single auction's live feed at a new play URL without
+// touching any other rule field (开始直播: 上传准备好的视频自动直播). Targeted
+// UPDATE so it stays safe for a LIVE/frozen auction — no re-validation, no price
+// realignment, just the display-only feed URL the room snapshot reads back.
+func (s *Store) SetLivePlayURL(ctx context.Context, aid, url string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auction_rules SET live_play_url=? WHERE auction_id=?`, url, aid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AuctionListItem is a row in the auctions list (商家 商品管理 / 买家 竞拍浏览 /
 // 历史竞拍记录). Joined to the product for display name + image. Nullable
 // winner/end columns are zero-valued when absent.
