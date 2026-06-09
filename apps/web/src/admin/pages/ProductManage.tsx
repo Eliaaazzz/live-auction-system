@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Table, Tag, Button, Input, Space, Tabs, Dropdown, Checkbox, Tooltip, Popconfirm, Modal, Typography, App as AntdApp } from 'antd';
-import { ReloadOutlined, SearchOutlined, FilterOutlined, PlusOutlined, SoundOutlined, EllipsisOutlined, AppstoreOutlined, LinkOutlined, VideoCameraOutlined } from '@ant-design/icons';
+import { Table, Tag, Button, Input, Space, Tabs, Dropdown, Checkbox, Tooltip, Popconfirm, Modal, Typography, Upload, App as AntdApp } from 'antd';
+import { ReloadOutlined, SearchOutlined, FilterOutlined, PlusOutlined, SoundOutlined, EllipsisOutlined, AppstoreOutlined, LinkOutlined, VideoCameraOutlined, UploadOutlined, CheckCircleFilled } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
@@ -63,8 +63,9 @@ export default function ProductManage() {
   const [search, setSearch] = useState('');
   const [products, setProducts] = useState<Prod[]>([]);
   const [loading, setLoading] = useState(true);
-  const [streamInfo, setStreamInfo] = useState<{ name: string; push: string; play: string } | null>(null);
+  const [streamInfo, setStreamInfo] = useState<{ id: string; name: string; push: string; play: string; videoUrl?: string } | null>(null);
   const [liveStarted, setLiveStarted] = useState<Set<string>>(new Set());
+  const [uploadingVideo, setUploadingVideo] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,11 +99,39 @@ export default function ProductManage() {
       const key = s?.streamKey || '';
       const push = `rtmp://${location.hostname}:1935/live/${key}`;
       const play = s?.livePlayUrl || `${location.origin}/live/${key}.m3u8`;
-      setStreamInfo({ name: r.name, push, play });
+      // A previously-uploaded clip lives on as the auction's livePlayUrl (an
+      // /uploads/… path, not the .m3u8 push stream) — reflect it so re-opening
+      // 开始直播 shows "已设置直播视频" instead of a blank upload prompt.
+      const videoUrl = typeof s?.livePlayUrl === 'string' && s.livePlayUrl.includes('/uploads/') ? s.livePlayUrl : undefined;
+      setStreamInfo({ id: r.id, name: r.name, push, play, videoUrl });
       setLiveStarted((prev) => new Set(prev).add(r.id));
     } catch (e: any) {
       message.error('开始直播失败：' + (e?.message || e));
     }
+  };
+
+  // 用准备好的视频自动直播：把这一场的 livePlayUrl 指向上传的 mp4/webm，观众端
+  // 直播间会自动循环播放（无需 OBS 推流）。返回 false 阻止 antd 默认上传行为。
+  const onPickVideo = (file: File): boolean => {
+    const info = streamInfo;
+    if (!info) return false;
+    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
+    if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
+    setUploadingVideo(true);
+    (async () => {
+      try {
+        await ensureSession('seller-demo');
+        const res: any = await api.uploadStreamVideo(info.id, file);
+        const url = res?.livePlayUrl || '';
+        setStreamInfo((cur) => (cur && cur.id === info.id ? { ...cur, videoUrl: url } : cur));
+        message.success('直播视频已设置，观众进直播间将自动循环播放');
+      } catch (e: any) {
+        message.error('上传失败：' + (e?.message || e));
+      } finally {
+        setUploadingVideo(false);
+      }
+    })();
+    return false;
   };
 
   // 后台「直播商品」只显示在拍的（LIVE），历史已结束/已取消项不再堆积。
@@ -198,19 +227,48 @@ export default function ProductManage() {
         width={620}
       >
         <p style={{ color: '#52c41a', fontWeight: 600, marginTop: 0 }}>● 已开播 · 本场直播间已上线，观众可在移动端实时观看</p>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>推流地址（OBS / 抖音直播伴侣）</div>
-          <Typography.Paragraph copyable={{ text: streamInfo?.push }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.push}</Typography.Paragraph>
+
+        {/* 推荐路径：上传准备好的视频，观众端自动循环播放，无需 OBS。 */}
+        <div style={{ marginBottom: 18, padding: '14px 16px', background: '#fff7f8', border: '1px solid #ffd6dd', borderRadius: 10 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <VideoCameraOutlined style={{ color: '#fe2c55' }} /> 用准备好的视频直播 <Tag color="red" bordered={false} style={{ marginInlineStart: 2 }}>推荐 · 无需 OBS</Tag>
+          </div>
+          {streamInfo?.videoUrl ? (
+            <>
+              <div style={{ color: '#52c41a', fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <CheckCircleFilled /> 已设置直播视频 · 观众进直播间将自动循环播放
+              </div>
+              <Upload accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} disabled={uploadingVideo}>
+                <Button size="small" icon={<UploadOutlined />} loading={uploadingVideo}>更换视频</Button>
+              </Upload>
+            </>
+          ) : (
+            <>
+              <div style={{ color: '#666', fontSize: 13, marginBottom: 10 }}>上传一段 mp4 / webm（≤64MB），观众端直播间会自动循环播放你的视频，无需打开 OBS。</div>
+              <Upload accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} disabled={uploadingVideo}>
+                <Button type="primary" icon={<UploadOutlined />} loading={uploadingVideo}>选择视频上传</Button>
+              </Upload>
+            </>
+          )}
         </div>
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>播放地址（观众端 HLS）</div>
-          <Typography.Paragraph copyable={{ text: streamInfo?.play }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.play}</Typography.Paragraph>
-        </div>
-        <ol style={{ color: '#666', fontSize: 13, paddingLeft: 18, marginBottom: 0 }}>
-          <li>打开 OBS / 抖音直播伴侣 → 设置 → 推流 → 服务器填入上方「推流地址」；</li>
-          <li>点「开始推流」即把你的真实镜头（商品全方位）推上直播间；</li>
-          <li>观众在移动端直播间实时拉流观看，竞价同步进行。</li>
-        </ol>
+
+        {/* 备选路径：用 OBS / 直播伴侣 推真实镜头（保留原有能力）。 */}
+        <details>
+          <summary style={{ cursor: 'pointer', color: '#666', fontWeight: 600, marginBottom: 10 }}>或：用 OBS / 抖音直播伴侣 推真实镜头</summary>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>推流地址（OBS / 抖音直播伴侣）</div>
+            <Typography.Paragraph copyable={{ text: streamInfo?.push }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.push}</Typography.Paragraph>
+          </div>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>播放地址（观众端 HLS）</div>
+            <Typography.Paragraph copyable={{ text: streamInfo?.play }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.play}</Typography.Paragraph>
+          </div>
+          <ol style={{ color: '#666', fontSize: 13, paddingLeft: 18, marginBottom: 0 }}>
+            <li>打开 OBS / 抖音直播伴侣 → 设置 → 推流 → 服务器填入上方「推流地址」；</li>
+            <li>点「开始推流」即把你的真实镜头（商品全方位）推上直播间；</li>
+            <li>观众在移动端直播间实时拉流观看，竞价同步进行。</li>
+          </ol>
+        </details>
       </Modal>
     </div>
   );

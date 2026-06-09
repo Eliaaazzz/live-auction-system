@@ -187,6 +187,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/stream", s.handleGetAuctionStream)
+	mux.HandleFunc("POST /api/auctions/{id}/stream/video", s.handleUploadStreamVideo)
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)

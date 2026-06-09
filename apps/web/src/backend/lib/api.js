@@ -80,6 +80,33 @@ export const api = {
   /** Seller/owner: live-stream descriptor for 开始直播. Returns { streamKey, pushUrl, livePlayUrl }. */
   getStream: (id) => request(`/auctions/${id}/stream`),
 
+  /**
+   * Seller/owner: upload a prepared clip (multipart, ≤64MB, mp4/webm) to drive
+   * this auction's live feed without OBS. Points live_play_url at the file, so
+   * the room hands it to every viewer and auto-loops it. Returns { livePlayUrl }.
+   * Multipart: no JSON content-type header (browser sets the boundary).
+   */
+  uploadStreamVideo: async (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers = {};
+    const tok = currentToken();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/auctions/${id}/stream/video`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthFailure();
+      let code, message;
+      try {
+        const j = await res.json();
+        code = j.code; message = j.error || j.message;
+      } catch {
+        message = res.statusText;
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res.json();
+  },
+
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
