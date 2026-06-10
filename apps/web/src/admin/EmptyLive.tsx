@@ -1,30 +1,38 @@
+import type { ReactNode } from 'react';
 import { Button } from 'antd';
-import { VideoCameraOutlined, PlusOutlined } from '@ant-design/icons';
+import { VideoCameraOutlined, RightOutlined } from '@ant-design/icons';
 
 /**
- * Friendly empty state for 直播商品 / 实时竞拍监控 when nothing is live.
- * Replaces the bare antd spinner-over-grey-text with a warm "去直播吧" prompt.
+ * 行动导向空状态（直播商品 / 实时竞拍监控）：不说「暂无 X」，直接告诉卖家
+ * 下一步干嘛，并给一个跳「竞拍发布」的 CTA。文案与图标按页面语境定制：
+ * 商品列表 →「快去上架商品」，实时监控 →「快去直播」。
+ * 样式见 admin.css `.empty-live*`（呼吸光环 + 渐变 CTA，reduced-motion 自动关动画）。
  */
-export function EmptyLive({ onGo, title = '暂无商品直播', hint = '快去直播吧 :-)' }: { onGo?: () => void; title?: string; hint?: string }) {
+export function EmptyLive({
+  onGo,
+  icon = <VideoCameraOutlined />,
+  title = '快去直播吧',
+  hint = '发布一场竞拍，这里马上热闹起来',
+  cta = '去竞拍发布开拍',
+}: {
+  onGo?: () => void;
+  icon?: ReactNode;
+  title?: string;
+  hint?: string;
+  cta?: string;
+}) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 20px', textAlign: 'center' }}>
-      <div
-        style={{
-          width: 88, height: 88, borderRadius: '50%', marginBottom: 18,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'linear-gradient(135deg, #ffe3e9, #fff5f7)',
-          boxShadow: '0 6px 22px rgba(254,44,85,0.12)',
-        }}
-      >
-        <VideoCameraOutlined style={{ fontSize: 40, color: '#fe2c55' }} />
+    <div className="empty-live">
+      <div className="empty-live-badge">
+        {icon}
+        <span className="empty-live-spark s1">✨</span>
+        <span className="empty-live-spark s2">✨</span>
       </div>
-      <div style={{ fontSize: 17, fontWeight: 700, color: '#222', marginBottom: 6 }}>{title}</div>
-      <div style={{ color: '#9a9aa5', fontSize: 14, marginBottom: onGo ? 20 : 0 }}>
-        快去直播吧 <span style={{ color: '#fe2c55', fontWeight: 700 }}>:-)</span>
-      </div>
+      <div className="empty-live-title">{title}</div>
+      <div className="empty-live-hint">{hint}</div>
       {onGo && (
-        <Button type="primary" size="large" icon={<PlusOutlined />} onClick={onGo}>
-          去竞拍发布开拍
+        <Button className="empty-live-cta" type="primary" size="large" onClick={onGo}>
+          {cta} <RightOutlined style={{ fontSize: 12 }} />
         </Button>
       )}
     </div>

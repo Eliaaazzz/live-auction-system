@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Table, Tag, Button, Input, Space, Tabs, Dropdown, Checkbox, Tooltip, Popconfirm, Modal, Typography, Upload, App as AntdApp } from 'antd';
-import { ReloadOutlined, SearchOutlined, FilterOutlined, PlusOutlined, SoundOutlined, EllipsisOutlined, AppstoreOutlined, LinkOutlined, VideoCameraOutlined, UploadOutlined, CheckCircleFilled } from '@ant-design/icons';
+import { ReloadOutlined, SearchOutlined, FilterOutlined, PlusOutlined, SoundOutlined, EllipsisOutlined, AppstoreOutlined, AppstoreAddOutlined, LinkOutlined, VideoCameraOutlined, UploadOutlined, CheckCircleFilled } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
@@ -218,9 +218,9 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
         <div className="spacer" />
         <Button icon={<ReloadOutlined />} loading={loading} onClick={() => load()}>刷新列表</Button>
         <Button icon={<AppstoreOutlined />}>查看分组</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => message.info('请前往「竞拍发布」添加商品')}>添加商品</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => (onGo ? onGo('publish') : message.info('请前往「竞拍发布」添加商品'))}>添加商品</Button>
       </div>
-      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: <EmptyLive onGo={() => onGo?.('publish')} /> }} pagination={{ pageSize: 6, showTotal: (t) => `共 ${t} 件拍品` }} scroll={{ x: 1480 }} size="middle" />
+      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: <EmptyLive onGo={() => onGo?.('publish')} icon={<AppstoreAddOutlined />} title="快去上架商品吧" hint="发布第一件拍品，直播间立刻开拍" cta="去竞拍发布上架" /> }} pagination={{ pageSize: 6, showTotal: (t) => `共 ${t} 件拍品` }} scroll={{ x: 1480 }} size="middle" />
 
       <Modal
         open={!!streamInfo}

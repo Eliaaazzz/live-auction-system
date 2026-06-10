@@ -81,3 +81,49 @@
   .pub-grid { grid-template-columns: 1fr; gap: 14px; }
   .pub-preview { position: static; }
 }
+
+/* ============================================================
+   行动导向空状态（EmptyLive：直播商品 / 实时竞拍监控）
+   不说「暂无 X」，直接说下一步：快去直播 / 上架商品。
+   ============================================================ */
+.empty-live { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px 60px; text-align: center; }
+.empty-live-badge { position: relative; width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 20px; background: linear-gradient(135deg, #ffe3e9, #fff5f7); box-shadow: 0 10px 28px rgba(254, 44, 85, 0.14), inset 0 0 0 1px rgba(254, 44, 85, 0.08); }
+.empty-live-badge > .anticon { font-size: 38px; color: #fe2c55; }
+/* 两圈错峰呼吸光环：把空页讲成「即将开播」的期待感，而不是出错感。 */
+.empty-live-badge::before,
+.empty-live-badge::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(254, 44, 85, 0.32); animation: empty-pulse 2.8s ease-out infinite; pointer-events: none; }
+.empty-live-badge::after { animation-delay: 1.4s; }
+@keyframes empty-pulse { 0% { transform: scale(1); opacity: 0.55; } 70%, 100% { transform: scale(1.55); opacity: 0; } }
+.empty-live-spark { position: absolute; font-size: 15px; animation: empty-float 3.2s ease-in-out infinite alternate; }
+.empty-live-spark.s1 { top: -4px; right: -12px; }
+.empty-live-spark.s2 { bottom: 0; left: -14px; font-size: 12px; animation-delay: 0.9s; }
+@keyframes empty-float { from { transform: translateY(0); } to { transform: translateY(-7px); } }
+.empty-live-title { font-size: 18px; font-weight: 800; color: #1f1f28; letter-spacing: 0.3px; }
+.empty-live-hint { margin-top: 7px; color: #9a9aa5; font-size: 14px; }
+.empty-live .empty-live-cta.ant-btn { margin-top: 22px; height: 42px; padding-inline: 26px; border-radius: 21px; font-weight: 700; border: none; background: linear-gradient(96deg, #ff5f7e, #fe2c55); box-shadow: 0 8px 20px rgba(254, 44, 85, 0.28); transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.empty-live .empty-live-cta.ant-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(254, 44, 85, 0.36); }
+@media (prefers-reduced-motion: reduce) {
+  .empty-live-badge::before, .empty-live-badge::after, .empty-live-spark { animation: none; }
+}
+
+/* ============================================================
+   竞拍发布 · 草稿箱 —— 存草稿真的存下来，并且有一个地方看得到。
+   ============================================================ */
+.draft-box { margin-top: 28px; padding: 16px 16px 8px; border: 1px solid #ffe3e9; border-radius: 14px; background: linear-gradient(180deg, #fff8fa, #fff 56%); }
+.draft-box-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.draft-box-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 800; font-size: 14.5px; color: #1f1f28; }
+.draft-box-title .anticon { color: #fe2c55; font-size: 16px; }
+.draft-box-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; background: #fe2c55; color: #fff; font-size: 11.5px; font-weight: 700; }
+.draft-box-hint { margin-left: auto; color: #b9b9c2; font-size: 12px; }
+.draft-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 8px; background: #fff; border: 1px solid #f2f2f5; border-radius: 10px; transition: border-color 0.18s ease, box-shadow 0.18s ease; }
+.draft-item:hover { border-color: #ffd6df; box-shadow: 0 4px 14px rgba(254, 44, 85, 0.08); }
+.draft-item.editing { border-color: #fe2c55; box-shadow: 0 0 0 2px rgba(254, 44, 85, 0.10); }
+.draft-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #f0f0f0; flex-shrink: 0; }
+.draft-meta { flex: 1; min-width: 0; }
+.draft-name { font-weight: 700; font-size: 13.5px; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-sub { margin-top: 3px; color: #9a9aa5; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-time { color: #b9b9c2; font-size: 12px; white-space: nowrap; }
+@media (max-width: 768px) {
+  .draft-box-hint { display: none; }
+  .draft-time { display: none; }
+}
