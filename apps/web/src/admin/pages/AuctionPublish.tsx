@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, RocketOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined, HistoryOutlined, VideoCameraAddOutlined, CheckCircleFilled } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
-import { INTRO_TEMPLATES, defaultIntro, pickIntro } from '../../lib/intro';
+import { INTRO_TEMPLATES, defaultIntro, pickIntro, pickEstimate } from '../../lib/intro';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
+import { isJunk } from '../../lib/mapBackend';
 import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type AuctionDraft } from '../drafts';
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
@@ -27,8 +28,25 @@ export default function AuctionPublish() {
   const [fileList, setFileList] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<AuctionDraft[]>(() => listDrafts());
   const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
+  const [aiBusy, setAiBusy] = useState(false); // #261-12b AI 识图生成中
+  const [aiEstimate, setAiEstimate] = useState<number | null>(null); // #261-12b 识图估价（元）→ 推荐加价幅度
+  const [videoFile, setVideoFile] = useState<File | null>(null); // #261-12b 直播视频（发布后推流）
+  const [history, setHistory] = useState<any[]>([]); // #261-13 发布历史
   const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
+
+  // #261-13: 发布历史 — 主播看得到这场直播发过什么（10s 轮询，与商品管理同源）。
+  const loadHistory = useCallback(async () => {
+    try {
+      const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
+      setHistory((auctions as any[]).filter((a) => a.auctionId && !isJunk(a.productName)).slice(0, 10));
+    } catch { /* keep last good */ }
+  }, []);
+  useEffect(() => {
+    loadHistory();
+    const t = setInterval(loadHistory, 10_000);
+    return () => clearInterval(t);
+  }, [loadHistory]);
 
   // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
   const handleUpload = async (file: File): Promise<boolean> => {
@@ -48,55 +66,63 @@ export default function AuctionPublish() {
     return false; // stop antd's built-in XHR; we upload via api.uploadImage
   };
 
-  // ✨ AI 生成商品介绍 —— 秒出 + 后台真 AI 精修：
-  //   1) 点击【立刻】写入有人味的分类模板（lib/intro），卖家零等待、按钮不转圈、永不空白；
-  //   2) 同时【非阻塞】调真豆包多模态识图（/facts/draft）。同一个能读图的模型一次调用
-  //      直出 facts + intro 文案（sidecar 已做合规清洗），12s 内返回且卖家未改动就替换；
-  //      超时/失败/已被改动则保留模板。12s 按 doubao-seed-flash 档位给（通常 2~4s 返
-  //      回），thinking 系模型请直接换接入点而不是调大这里。
-  // 这样真模型再慢也不卡 demo，而 AI 仍真实在跑（不是假装）。
+  // ✨ AI 生成商品介绍 (#261-12b) —— 真图识别优先，不再模板先行：
+  //   点击后调真豆包多模态识图（/facts/draft），用上传的商品主图直出全中文、
+  //   有人味的介绍（sidecar 已做合规清洗 + 免责尾巴）。按钮转圈最多 15s；
+  //   仅当识图失败/超时才退回分类模板兜底（demo 不能空白），并明确提示。
   const onAiIntro = () => {
     const name = String(form.getFieldValue('name') || '').trim();
     if (!name) { message.warning('请先填写商品名称'); return; }
+    if (!uploadedUrl) { message.warning('请先上传商品主图 — AI 要看着真图写介绍'); return; }
     const category = form.getFieldValue('category') as string;
-    const tpl = (INTRO_TEMPLATES[category] ?? defaultIntro)(name).slice(0, 200);
-    form.setFieldsValue({ intro: tpl });
-    message.success('✨ 已生成商品介绍');
-
+    setAiBusy(true);
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 12000);
+    const timer = setTimeout(() => ctrl.abort(), 15000);
     void (async () => {
       try {
         await ensureSession('seller-demo');
         const resp = await api.draftFacts({
           productId: 'draft-preview',
           title: name,
-          description: tpl,
+          description: String(form.getFieldValue('intro') || ''),
           // AI 视觉需服务端可抓取的【绝对】URL。
-          imageUrls: [toAbsUrl(uploadedUrl || (CAT_IMG[category] ?? PROD.watch))],
+          imageUrls: [toAbsUrl(uploadedUrl)],
           signal: ctrl.signal,
         });
         const refined = pickIntro(name, resp);
-        // 仅当卖家没动过（仍等于模板）才用 AI 版覆盖，绝不抹掉卖家手改。
-        if (refined && form.getFieldValue('name') === name && form.getFieldValue('intro') === tpl) {
+        // 识图估价随手带回（给「AI 推荐」加价幅度用 — #261-12b 推荐识图化）。
+        const est = pickEstimate(resp);
+        if (est) setAiEstimate(est);
+        if (refined) {
           form.setFieldsValue({ intro: refined });
-          message.success('✨ AI 已看图重写介绍');
+          message.success(est ? `✨ AI 已看图写好介绍 · 识图估价约 ¥${fmtMoney(est)}` : '✨ AI 已看图写好介绍');
+          return;
         }
+        throw new Error('empty intro');
       } catch {
-        /* 超时/中止/失败：静默保留模板——demo 永不暴露 AI 慢或不可用。 */
+        // 识图失败/超时 → 模板兜底（明确告知，不冒充 AI）。
+        const tpl = (INTRO_TEMPLATES[category] ?? defaultIntro)(name).slice(0, 200);
+        form.setFieldsValue({ intro: tpl });
+        message.warning('AI 识图暂不可用，已先用通用文案 — 可点击重试');
       } finally {
         clearTimeout(timer);
+        setAiBusy(false);
       }
     })();
   };
 
-  // AI 推荐加价幅度：按封顶价（=价值上限）取 ≈2.5% 的「好看」档位。高价品给到有分量的
-  // 一档（劳力士封顶 5 万→¥1300，而非旧公式的 ¥250）。详见 lib/pricing.recommendIncrement。
+  // AI 推荐加价幅度（#261-12b 识图化）：优先用「AI 识图估价」（estimateCNY，
+  // 点过 AI 识图生成介绍后自动带回）取 ≈2.5% 的「好看」档位；没估价时退回
+  // 封顶价启发式。详见 lib/pricing.recommendIncrement。
   const onAiStep = () => {
     const cap = Number(form.getFieldValue('cap')) || 0;
-    const rec = recommendIncrement(cap);
-    form.setFieldsValue({ step: rec });
-    message.success(`AI 推荐加价幅度 ¥${rec}${cap ? '（按封顶价约 2.5%）' : ''}`);
+    const basis = aiEstimate ?? cap;
+    if (!basis) { message.warning('先点「AI 识图生成介绍」拿到估价，或填写封顶价'); return; }
+    const rec = recommendIncrement(basis);
+    form.setFieldsValue({ step: rec }); // minStep 字段已按 #255 移除（与后端 model.Rules 对齐）
+    message.success(aiEstimate
+      ? `AI 按图估价 ¥${fmtMoney(aiEstimate)} → 推荐加价幅度 ¥${rec}`
+      : `AI 推荐加价幅度 ¥${rec}（按封顶价约 2.5%）`);
   };
 
   // ---- 草稿箱：localStorage 持久化（demo 单卖家本机即可）。存/载/删，发布成功即消耗。 ----
@@ -139,14 +165,25 @@ export default function AuctionPublish() {
     message.success('草稿已删除');
   };
 
+  // #261-12b: 拖拽选直播视频（mp4/webm ≤64MB），发布后自动推到直播间循环播放。
+  const onPickVideo = (file: File): boolean => {
+    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
+    if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
+    setVideoFile(file);
+    message.success(`已选择直播视频「${file.name}」，发布后自动推流到直播间`);
+    return false; // 不走 antd 内建上传；发布拿到 auctionId 后再传
+  };
+
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
   // The auction immediately appears in the buyer mobile rail and is biddable.
   const onPublish = () => {
     form.validateFields().then(async (vals: any) => {
+      // #261-11: 开拍由「我自己上传的」图片/视频驱动 — 不再静默用预置示例图。
+      if (!uploadedUrl) { message.warning('请先上传商品主图（AI 介绍与买家端都用它）'); return; }
       setBusy(true);
       try {
         await ensureSession('seller-demo');
-        const imageUrl = toAbsUrl(uploadedUrl || (CAT_IMG[vals.category as string] ?? PROD.watch));
+        const imageUrl = toAbsUrl(uploadedUrl);
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -172,13 +209,28 @@ export default function AuctionPublish() {
           },
         });
         await api.freeze(auctionId, { factsConfirmed: true });
-        await api.startLive(auctionId, { durationMs: durationSec * 1000 });
+        // #261-12a: demoCrowd 开关随发布下发 — 服务端内置人气脚本（~9997 观众 +
+        // 按规则随机模拟出价）随开拍自动注入。
+        await api.startLive(auctionId, { durationMs: durationSec * 1000, demoCrowd: vals.demoCrowd !== false });
+        // #261-12b: 选了直播视频 → 发布成功后立刻推流（写入该场的 livePlayUrl，
+        // 买家端进房自动循环播放）。失败不回滚发布，单独提示可去直播商品页重传。
+        if (videoFile) {
+          try {
+            await api.uploadStreamVideo(auctionId, videoFile);
+            message.success('🎬 直播视频已推流，买家端进房自动播放');
+          } catch (ve: any) {
+            message.warning('视频推流失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || ve));
+          }
+        }
         message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
         // 发布后重置表单与已上传主图：否则 uploadedUrl 会被下一个商品沿用，
         // 导致「商品图片不反应商品变化」（新商品发上了上一个商品的图）。
         form.resetFields();
         setUploadedUrl(null);
         setFileList([]);
+        setVideoFile(null);
+        setAiEstimate(null);
+        loadHistory(); // 发布历史立即出现这一单（#261-13）
         // 从草稿载入的商品发布成功即消耗草稿：避免已上架的商品还躺在草稿箱里被重复发布。
         if (draftId) { setDrafts(removeDraft(draftId)); setDraftId(null); }
       } catch (e: any) {
@@ -193,9 +245,33 @@ export default function AuctionPublish() {
     <div className="admin-content">
       <Alert type="info" showIcon style={{ marginBottom: 18 }} message="发布即生成竞拍状态机：上架 → 竞拍中 → 截拍中 → 成交/流拍。规则一经有人出价不可再改，请提前配置好。" />
       <div className="pub-grid">
-        <Form form={form} layout="vertical" initialValues={{ category: '名表', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15 }}>
+        {/* #261-13: 发布历史 — 这场直播发过什么，一眼可见。 */}
+        <div className="pub-history">
+          <div className="pub-history-head">
+            <HistoryOutlined /> 发布历史
+            <span className="pub-history-count">{history.length}</span>
+          </div>
+          {history.length === 0 && <div className="pub-history-empty">还没有发布记录。<br />右侧填好商品，一键发布开拍。</div>}
+          {history.map((a) => {
+            const live = a.status === 'LIVE';
+            const sub = a.status === 'LIVE' ? `竞拍中 · 当前 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
+              : a.status === 'SOLD' || a.status === 'ORDER_CREATED' ? `已成交 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
+              : a.status === 'CANCELLED' ? '已下架' : a.status === 'NO_BID' ? '流拍' : '待开拍';
+            return (
+              <div key={a.auctionId} className={'pub-hist-item' + (live ? ' live' : '')}>
+                <img className="pub-hist-thumb" src={a.imageUrl || PROD.watch} alt="" loading="lazy" />
+                <div className="pub-hist-meta">
+                  <div className="pub-hist-name">{a.productName || '直播拍品'}</div>
+                  <div className="pub-hist-sub">{sub}{a.createdAtMs ? ` · ${new Date(a.createdAtMs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+                </div>
+                {live && <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>LIVE</Tag>}
+              </div>
+            );
+          })}
+        </div>
+        <Form form={form} layout="vertical" initialValues={{ category: '名表', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, demoCrowd: true }}>
           <Divider orientation="left" plain>商品信息</Divider>
-          <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）；未上传则使用所选分类的示例图">
+          <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）— AI 介绍按这张图识别生成，买家端也展示它">
             <Upload
               listType="picture-card"
               accept="image/png,image/jpeg,image/webp,image/gif"
@@ -206,6 +282,22 @@ export default function AuctionPublish() {
             >
               {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>}
             </Upload>
+          </Form.Item>
+          {/* #261-12b: 拖拽视频 → 发布后直接推流到直播间（买家端自动循环播放，无需 OBS）。 */}
+          <Form.Item label="直播视频（选填）" tooltip="拖入 mp4/webm（≤64MB）。发布开拍后自动作为本场直播画面推流，买家进直播间即自动播放">
+            <div className="pub-video-dragger">
+              <Upload.Dragger accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} maxCount={1}>
+                <p style={{ margin: '6px 0 2px' }}><VideoCameraAddOutlined style={{ fontSize: 26, color: '#fe2c55' }} /></p>
+                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里，发布后直接推流到直播间</p>
+                <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>mp4 / webm · ≤64MB · 买家端自动循环播放（也可发布后用 OBS 推真镜头）</p>
+              </Upload.Dragger>
+            </div>
+            {videoFile && (
+              <div className="pub-video-meta">
+                <CheckCircleFilled /> 已就绪：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）
+                <Button size="small" type="text" danger onClick={() => setVideoFile(null)}>移除</Button>
+              </div>
+            )}
           </Form.Item>
           <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
             <Input placeholder="如：百达翡丽年历计时腕表 玫瑰金蓝盘" maxLength={60} showCount />
@@ -218,7 +310,7 @@ export default function AuctionPublish() {
             label={
               <Space>
                 <span>商品介绍</span>
-                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiIntro}>✨ AI 生成介绍</Button>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} loading={aiBusy} onClick={onAiIntro}>{aiBusy ? 'AI 识图中…' : '✨ AI 识图生成介绍'}</Button>
               </Space>
             }
           >
@@ -257,6 +349,10 @@ export default function AuctionPublish() {
             </Form.Item>
             <Form.Item label="启用延时" name="autoExtend" valuePropName="checked">
               <Switch />
+            </Form.Item>
+            {/* #261-12a: 发布即人气 — 服务端自动注入 ~9997 观众 + 按规则随机模拟出价 */}
+            <Form.Item label="演示人气" name="demoCrowd" valuePropName="checked" tooltip="开拍后系统自动注入约 9997 名观众与按规则随机出价（封顶前自动停手，落锤留给真人）">
+              <Switch checkedChildren="自动" unCheckedChildren="关" />
             </Form.Item>
           </Space>
           <Space style={{ marginTop: 8 }}>

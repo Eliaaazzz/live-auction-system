@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { EngineEvent, Room } from '../lib/types';
+import type { EngineEvent, Room, SocialItem } from '../lib/types';
 import { useAuctionEngine } from '../lib/useAuctionEngine';
-import { COMMENT_POOL, ENTER_POOL, BOT_USERS, pick } from '../lib/mockData';
-import { fmtYuan, fmtCompactYuan, splitClock } from '../lib/format';
+import { COMMENT_POOL, ENTER_POOL, BOT_USERS } from '../lib/mockData';
+import { fmtYuan, fmtCompactYuan, fmtCompact, fmtMoney, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
-import { sfx, isMuted, setMuted, unlockAudio } from '../lib/sound';
-import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, type DanmakuItem, type FxToken, type GiftTier } from './components';
+import { sfx, isMuted, setMuted, unlockAudio, speak } from '../lib/sound';
+import { serverNow } from '../backend/lib/clock.js';
+import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, ProductImg, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
 import { BidSheet } from './BidSheet';
 import { StateOverlays } from './overlays';
@@ -13,6 +14,33 @@ import { Icon } from './icons';
 import { ProfileButton, AccountSheet } from './account';
 import { useIdentity, type SeatIdentity } from '../lib/identity';
 import './motion.css';
+
+// ── #261-7 弹幕跨端一致 ──────────────────────────────────────────
+// 氛围弹幕不再各端独立 Math.random()（两台手机各演各的），改为按「服务器时钟
+// 时间槽」确定性生成：同一个房间、同一个时间槽 → 两台手机算出同一条弹幕。
+// 真人评论/礼物/点赞则走服务端 ROOM_SOCIAL 广播，天然一致。
+function hashStr(s: string): number {
+  let h = 0;
+  for (let i = 0; i < (s || '').length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h;
+}
+function mulberry32(seed: number): () => number {
+  let a = seed | 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const AMBIENT_SLOT_MS = 3200;
+function ambientForSlot(roomId: string, slot: number): { kind: 'enter' | 'comment'; name?: string; text: string; color?: string; avatar?: string } | null {
+  const rnd = mulberry32(hashStr(roomId) ^ slot);
+  if (rnd() < 0.34) return null; // quiet slot — keep the rhythm organic
+  if (rnd() < 0.3) return { kind: 'enter', text: ENTER_POOL[Math.floor(rnd() * ENTER_POOL.length)] };
+  const u = BOT_USERS[Math.floor(rnd() * BOT_USERS.length)];
+  return { kind: 'comment', name: u.name, text: COMMENT_POOL[Math.floor(rnd() * COMMENT_POOL.length)], color: u.color, avatar: u.avatar };
+}
 
 interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; onEnded?: () => void; seat?: string; identity?: SeatIdentity; }
 
@@ -40,6 +68,13 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const [flash, setFlash] = useState<{ id: number; type: 'gold' | 'red' } | null>(null);
   const [gain, setGain] = useState<{ id: number; text: string } | null>(null);
   const [shake, setShake] = useState(false);
+  const [introOpen, setIntroOpen] = useState(false);
+  // #261-10 点赞：liked 是本端「我点过没」的开关（可取消），计数走服务端广播。
+  const likeKey = 'll_like_' + room.id + (seat ? '_' + seat : '');
+  const [liked, setLiked] = useState(() => localStorage.getItem(likeKey) === '1');
+  const [likeBurst, setLikeBurst] = useState(0); // 别人点赞时也飘心
+  const [giftFloats, setGiftFloats] = useState<{ id: number; emoji: string; x: number }[]>([]);
+  const giftFloatSeq = useRef(0);
 
   const feedSeq = useRef(0);
   const fxSeq = useRef(0);
@@ -76,21 +111,44 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     setTimeout(() => setShake(false), 420);
   }, []);
 
+  // #261-7/8/10: render a ROOM_SOCIAL broadcast (every client gets the same
+  // frame — both phones AND late joiners agree). Self rows render as 「我」.
+  const onSocial = useCallback((s: SocialItem) => {
+    const name = s.self ? '我' : (s.displayName || '观众');
+    if (s.kind === 'comment') {
+      pushFeed({ kind: 'comment', name, text: s.text || '', color: s.self ? '#fe2c55' : undefined, avatar: s.self ? ident.avatar : undefined });
+    } else if (s.kind === 'gift') {
+      pushFeed({ kind: 'comment', name, text: `送出 ${s.giftEmoji ?? '🎁'} ${s.giftName ?? '礼物'}`, color: '#ffce54', avatar: s.self ? ident.avatar : undefined });
+      if (!s.self) {
+        // 对方的礼物也要看得见 (#261-8)：飘大表情 + 音效（自己的那份动画由 GiftPanel 已即时播放）
+        const id = giftFloatSeq.current++;
+        setGiftFloats((f) => [...f, { id, emoji: s.giftEmoji ?? '🎁', x: (Math.random() - 0.5) * 120 }]);
+        setTimeout(() => setGiftFloats((f) => f.filter((x) => x.id !== id)), 1400);
+        if (!isMuted()) sfx.gift();
+      }
+    } else if (s.kind === 'like' && !s.self) {
+      setLikeBurst((n) => n + 1); // 对方点赞 → 本端也飘心 (#261-10 广播)
+    }
+  }, [pushFeed, ident.avatar]);
+
   const onEvent = useCallback((e: EngineEvent) => {
     switch (e.kind) {
-      case 'leading': flashFx('lead', '领先！第 1 名'); if (!isMuted()) sfx.lead(); screenFlash('gold'); break;
-      case 'outbid': flashFx('outbid', '被超越！'); if (!isMuted()) sfx.outbid(); screenFlash('red'); triggerShake(); break;
+      // #261-6: 领先/被反超/成交配中文语音播报（Web Speech，与音效同一静音开关）
+      case 'leading': flashFx('lead', '领先！第 1 名'); if (!isMuted()) { sfx.lead(); speak('恭喜，您已领先'); } screenFlash('gold'); break;
+      case 'outbid': flashFx('outbid', '被超越！'); if (!isMuted()) { sfx.outbid(); speak('您已被反超，快加价夺回'); } screenFlash('red'); triggerShake(); break;
       case 'extend': flashFx('extend', `倒计时延长 +${e.addSec}s`); if (!isMuted()) sfx.extend(); pushFeed({ kind: 'enter', text: `结束前有人出价，倒计时自动延长 ${e.addSec}s` }); break;
       case 'cap': pushFeed({ kind: 'enter', text: '触发封顶价，即将成交' }); break;
       case 'start': pushFeed({ kind: 'enter', text: '开拍啦，出价开始！' }); break;
+      case 'settle': if (!isMuted() && e.won) speak('恭喜您，竞拍成功'); break;
+      case 'social': onSocial(e.social); break;
       default: break;
     }
-  }, [flashFx, pushFeed, screenFlash, triggerShake]);
+  }, [flashFx, pushFeed, screenFlash, triggerShake, onSocial]);
 
   // Boot the engine immediately (not gated on !loading) so this room's snapshot
   // starts loading the moment it mounts — the skeleton then clears on `ready`, not
   // a blind timer, so a swipe reveals live data as soon as it lands.
-  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined, seat, selfAvatar: ident.avatar || undefined });
+  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, intro, ready, sendSocial, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined, seat, selfAvatar: ident.avatar || undefined });
 
   const revealed = useRef(false);
   const reveal = useCallback(() => {
@@ -118,14 +176,20 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   // VideoBackground, so the swipe is never a black frame.
   useEffect(() => { if (ready) reveal(); }, [ready, reveal]);
 
+  // #261-7: 氛围弹幕按服务器时钟时间槽确定性生成 — 买家A/买家B 两台设备同一
+  // 房间看到完全一致的弹幕流（真人评论/礼物另走服务端广播，天然一致）。
   useEffect(() => {
     if (loading) return;
+    let lastSlot = Math.floor(serverNow() / AMBIENT_SLOT_MS); // 进房不补播旧槽
     const t = setInterval(() => {
-      if (Math.random() < 0.3) pushFeed({ kind: 'enter', text: pick(ENTER_POOL) });
-      else { const u = pick(BOT_USERS); pushFeed({ kind: 'comment', name: u.name, text: pick(COMMENT_POOL), color: u.color, avatar: u.avatar }); }
-    }, 2600 + Math.random() * 1600);
+      const slot = Math.floor(serverNow() / AMBIENT_SLOT_MS);
+      if (slot === lastSlot) return;
+      lastSlot = slot;
+      const item = ambientForSlot(room.id, slot);
+      if (item) pushFeed(item);
+    }, 700);
     return () => clearInterval(t);
-  }, [loading, pushFeed]);
+  }, [loading, room.id, pushFeed]);
 
   const lastBidId = useRef<string | null>(null);
   useEffect(() => {
@@ -175,7 +239,18 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const toggleFollow = () => setFollowed((v) => { const nv = !v; localStorage.setItem('lf_follow_' + room.id, nv ? '1' : '0'); return nv; });
   const tapTab = (t: TabKey) => { setSheetTab((cur) => (cur === t ? null : t)); if (t === 'comments') setUnread(0); };
   const onJoin = () => { setJoined(true); try { localStorage.setItem('lj_join_' + room.id, '1'); } catch { /* ignore */ } pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
-  const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ident.avatar }); };
+  // #261-8: 礼物经服务端广播 — 自己的弹幕行从 echo 渲染（名字显示「我」），
+  // 两台手机看到同一条；GiftPanel 自带的飘屏动画保持即时反馈。
+  const onSendGift = (g: GiftTier) => { sendSocial({ kind: 'gift', giftId: g.id, giftName: g.name, giftEmoji: g.emoji }); };
+  // #261-7: 评论也走服务端广播（echo 渲染，跨端一致）。
+  const onSendComment = (t: string) => { sendSocial({ kind: 'comment', text: t }); };
+  // #261-10: 点赞可点可取消，计数服务端裁决并广播给所有端。
+  const onToggleLike = () => {
+    const next = !liked;
+    setLiked(next);
+    try { localStorage.setItem(likeKey, next ? '1' : '0'); } catch { /* ignore */ }
+    sendSocial({ kind: 'like', delta: next ? 1 : -1 });
+  };
   const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
   // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
   // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
@@ -195,9 +270,9 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
+          <LiveHeader room={room} viewers={state.participants} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
-          <LotChip lot={lot} />
+          <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
           <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
           {auctioneerText && <div className="lm-aibubble"><span className="dot" /> AI 主播 · {auctioneerText}</div>}
 
@@ -214,7 +289,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           {gain && <div key={gain.id} className="lm-gainfloat">{gain.text}</div>}
 
           <Danmaku items={danmaku} />
-          <ActionRail roomId={room.id} cartCount={lot.index} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
+          <ActionRail likes={state.likes} liked={liked} onToggleLike={onToggleLike} likeBurst={likeBurst} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
           <div className={shake ? 'lm-shake' : undefined}>
             <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
@@ -222,7 +297,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
 
-          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ident.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
+          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={onSendComment} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
 
           <EmotionFX fx={fx} />
 
@@ -235,7 +310,33 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
 
           <GiftPanel roomId={room.id} open={giftOpen} onClose={() => setGiftOpen(false)} onSend={onSendGift} />
+          {/* 对方礼物的飘屏（#261-8 — 自己的那份由 GiftPanel 即时播放） */}
+          {giftFloats.map((f) => (<span key={f.id} className="lm-gift-float" style={{ marginLeft: f.x }} aria-hidden>{f.emoji}</span>))}
           <ShareModal roomId={room.id} open={shareOpen} onClose={() => setShareOpen(false)} />
+          {/* #261-12b: 商品介绍（AI 识图生成）— 点商品卡打开 */}
+          {introOpen && intro && (
+            <>
+              <div className="lm-sheet-backdrop" onClick={() => setIntroOpen(false)} />
+              <div className="lm-introsheet">
+                <div className="lm-tabsheet-head">
+                  <div className="lm-tabsheet-grip" onClick={() => setIntroOpen(false)} />
+                  <span className="lm-tabsheet-title">宝贝介绍</span>
+                  <button className="lm-tabsheet-x" onClick={() => setIntroOpen(false)} aria-label="收起"><Icon name="chevronD" size={18} /></button>
+                </div>
+                <div className="lm-intro-body no-sb">
+                  <div className="lm-intro-prod">
+                    <ProductImg lot={lot} radius={10} className="lm-intro-img" />
+                    <div className="lm-intro-meta">
+                      <div className="t">{lot.title}</div>
+                      <div className="s">0 元起拍 · 加价 ¥{lot.increment} · {lot.capPrice > 0 ? `封顶 ${fmtCompactYuan(lot.capPrice)}` : '不封顶'}</div>
+                    </div>
+                  </div>
+                  <div className="lm-intro-text">{intro}</div>
+                  <div className="lm-intro-ai">✨ AI 识图生成 · 成色与瑕疵以卖家声明为准</div>
+                </div>
+              </div>
+            </>
+          )}
           {!seat && <AccountSheet open={acctOpen} onClose={() => setAcctOpen(false)} />}
         </>
       )}
@@ -255,6 +356,11 @@ function CountdownPill({ ms, ending, urgent, hidden }: { ms: number; ending: boo
     </div>
   );
 }
+
+// #261-3 移动端展示全貌：巨额出价（≥100万）用中文简写（¥2万亿），否则全量数字。
+// 反超第一/立即出价 CTA 不再被超长数字撑出手机框。
+const fmtBid = (n: number) => (n >= 1_000_000 ? fmtCompactYuan(n) : fmtYuan(n));
+const fmtBidNum = (n: number) => (n >= 1_000_000 ? fmtCompact(n) : fmtMoney(n));
 
 function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { ready: boolean; joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
   const [amt, setAmt] = useState(nextMinBid);
@@ -282,7 +388,7 @@ function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMi
   if (myRank === 1) {
     const rec = increment * 2;
     const recBid = Math.min(effCap, currentPrice + rec);
-    return (<div className="lm-bidbar"><div className="lm-bar-gap"><Icon name="lock" size={16} style={{ color: '#ffce54' }} /><div className="l">已锁第一</div></div><button className="lm-bidcta lead" onClick={() => onBid(recBid)}><span><Icon name="crown" size={16} fill /> 加固至 {fmtYuan(recBid)}</span><span className="sub">建议 +¥{rec} 拉开差距</span></button></div>);
+    return (<div className="lm-bidbar"><div className="lm-bar-gap"><Icon name="lock" size={16} style={{ color: '#ffce54' }} /><div className="l">已锁第一</div></div><button className="lm-bidcta lead" onClick={() => onBid(recBid)}><span><Icon name="crown" size={16} fill /> 加固至 {fmtBid(recBid)}</span><span className="sub">建议 +¥{fmtBidNum(rec)} 拉开差距</span></button></div>);
   }
   const behind = myRank != null && myRank >= 2;
   const gapv = myMax != null ? Math.max(0, currentPrice - myMax) : currentPrice;
@@ -291,8 +397,8 @@ function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMi
   return (
     <div className="lm-bidbar">
       {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtCompactYuan(gapv)}</div><div className="l">距第一名</div></div>)}
-      <div className="lm-stepper"><button onClick={dec} aria-label="减"><Icon name="minus" size={18} /></button><span className="val tnum" onClick={onOpenSheet}>{fmtYuan(amt)}</span><button onClick={inc} aria-label="加"><Icon name="plus" size={18} /></button></div>
-      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? `反超第一 · ${fmtYuan(bidAmt)}` : `立即出价 ${fmtYuan(bidAmt)}`}</span><span className="sub">{staleLow ? `价已涨 · 按最低 ¥${nextMinBid} 出价` : (behind ? `推荐反超 ¥${nextMinBid} 起` : `最低 ¥${nextMinBid} · 点价可多笔`)}</span></button>
+      <div className="lm-stepper"><button onClick={dec} aria-label="减"><Icon name="minus" size={18} /></button><span className="val tnum" onClick={onOpenSheet}>{fmtBid(amt)}</span><button onClick={inc} aria-label="加"><Icon name="plus" size={18} /></button></div>
+      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? `反超第一 · ${fmtBid(bidAmt)}` : `立即出价 ${fmtBid(bidAmt)}`}</span><span className="sub">{staleLow ? `价已涨 · 按最低 ¥${fmtBidNum(nextMinBid)} 出价` : (behind ? `推荐反超 ¥${fmtBidNum(nextMinBid)} 起` : `最低 ¥${fmtBidNum(nextMinBid)} · 点价可多笔`)}</span></button>
     </div>
   );
 }

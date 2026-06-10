@@ -56,13 +56,30 @@ export interface Room {
   lot: Lot;
 }
 
+/** One ROOM_SOCIAL frame (#261-7/8/10) — 弹幕/礼物/点赞 from ANY client in the room. */
+export interface SocialItem {
+  kind: 'comment' | 'gift' | 'like' | 'stats';
+  userId?: string;
+  displayName?: string;
+  text?: string;
+  giftId?: string;
+  giftName?: string;
+  giftEmoji?: string;
+  likeDelta?: number;
+  likeCount?: number;
+  viewerCount?: number;
+  /** true when the engine matched userId to this client's session (本机显示「我」). */
+  self?: boolean;
+}
+
 export type EngineEvent =
   | { kind: 'start' }
   | { kind: 'leading'; amount: number }
   | { kind: 'outbid'; by: string; amount: number }
   | { kind: 'extend'; addSec: number }
   | { kind: 'cap' }
-  | { kind: 'settle'; won: boolean; price: number };
+  | { kind: 'settle'; won: boolean; price: number }
+  | { kind: 'social'; social: SocialItem };
 
 export interface AuctionState {
   status: AuctionStatus;
@@ -74,6 +91,8 @@ export interface AuctionState {
   bids: Bid[];
   ranking: RankRow[];
   participants: number;
+  /** #261-10 server-authoritative room likes (synced across every client). */
+  likes: number;
   myMaxBid: number | null;
   myRank: number | null;
   extendedFlash: number;

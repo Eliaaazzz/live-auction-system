@@ -68,6 +68,32 @@ function noise(dur: number, gain: number, when = 0): void {
   src.start(c.currentTime + when);
 }
 
+// ── #261-6 语音播报（Web Speech API）─────────────────────────────
+// 领先 / 被反超 / 成交时用中文语音播报，与音效共用同一个静音开关。
+// speechSynthesis 缺失（旧 WebView）时静默降级为纯音效。每次播报前 cancel()
+// 排队中的旧播报：竞价高频反超时只读最新状态，不读历史。
+let lastSpeakAt = 0;
+let lastSpeakText = '';
+export function speak(text: string, minGapMs = 2500): void {
+  if (muted || typeof window === 'undefined') return;
+  const synth = window.speechSynthesis;
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined') return;
+  const now = Date.now();
+  // 同文案节流：自动出价连环反超时不会复读机；不同文案（领先→被反超）立即插播。
+  if (text === lastSpeakText && now - lastSpeakAt < minGapMs) return;
+  lastSpeakAt = now;
+  lastSpeakText = text;
+  try {
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN';
+    u.rate = 1.12;
+    u.pitch = 1.05;
+    u.volume = 0.95;
+    synth.speak(u);
+  } catch { /* ignore */ }
+}
+
 export const sfx = {
   /** 任意一笔新出价 —— 轻快短促 */
   bid: () => tone(760, 0.08, 'triangle', 0.1),

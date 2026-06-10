@@ -71,7 +71,8 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const { auctions = [] } = await api.listAuctions();
+      // limit 500 与 数据概览/实时监控 同参 — 三处看到同一份列表（#261-4b 一一对应）。
+      const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
       setProducts(auctions.filter((a: any) => !isJunk(a.productName)).map(toProd));
     } catch {
       // An empty/failed list is NOT an error toast — just leave the friendly empty state.

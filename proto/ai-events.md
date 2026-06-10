@@ -22,6 +22,8 @@ Response (T1 mock returns this shape with canned values):
 }
 ```
 
+`facts[].field == "estimateCNY"` (ADDITIVE, #261-12b): the vision call also estimates a market reference price from the image — `value` is a digits-only CNY integer, always `highRisk: true` with `confidence ≤ 0.5` (an estimate is never an objective fact). It feeds ONLY the seller console's 「AI 推荐加价幅度」(≈2.5% ladder of the estimate); it must never appear in buyer-facing copy (frontend `composeIntro` excludes it; the intro money-guardrail bans prices anyway). The mock generator ships `estimateCNY: "12000"` so the UI path works without credentials.
+
 `intro` (ADDITIVE, optional — absent from mock/canned responses): the same vision call that extracts facts also drafts a short human, sales-ready intro (≤120 runes), so one image-capable model covers 识图+文案 in a single round-trip. Sidecar-side sanitizer (`vlm.sanitizeIntro`) drops the WHOLE intro on any violation — banned word (保真/正品/升值/投资/假一赔十 …; compliant 「不保真」/「0元起拍」 whitelisted), URL, phone, or free-form price — facts survive independently. The intro carries NO disclaimer; the frontend appends the fixed 平台不保真 tail deterministically. Empty/absent intro → frontend keeps its instant template. The seller still confirms/edits the final text before freeze (V9 P3: non-authoritative).
 
 Rules (enforced from T7 in `internal`/sidecar): VLM image fetch uses an **SSRF allowlist** (no private net / IMDS, size+timeout limits, no redirect-follow); product text is treated as **untrusted data** (never as instructions) to block prompt injection; `highRiskFieldsDisclaimer` is always present. The seller must `confirm/edit` facts before `freeze_rules` — AI output never auto-enters the core auction.
