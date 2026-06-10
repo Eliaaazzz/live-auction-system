@@ -111,7 +111,12 @@ const (
 	// (`seq: null`), bid path NEVER awaits this. Spec lives in
 	// proto/ai-events.md §POST /llm/auctioneer.
 	TypeAICommentary = "AI_COMMENTARY"
-	TypePong         = "PONG"
+	// #261-7/8/10/12: room social broadcast (弹幕/礼物/点赞/人气). Same contract
+	// family as AI_COMMENTARY — additive under SchemaVersion 2, non-authoritative,
+	// no seq slot, never enters the Stream/evidence chain, and the bid path never
+	// reads or awaits it. Carries RoomSocialData.
+	TypeRoomSocial = "ROOM_SOCIAL"
+	TypePong       = "PONG"
 	// Auction-mode events (issue #114). Additive under SchemaVersion 2 — clients
 	// ignore unknown types. Sealed / hybrid / all-pay modes emit these.
 	TypeSealedBidReceived = "SEALED_BID_RECEIVED" // redacted: a sealed bid landed (count only, no amount)
@@ -305,8 +310,30 @@ type RoomSnapshotData struct {
 	WinnerID          string             `json:"winnerId"`
 	EndAtMs           int64              `json:"endAtMs"`
 	Seq               int64              `json:"seq"`
-	ViewerCount       int                `json:"viewerCount"` // live room occupancy (参与人数) at snapshot time
+	ViewerCount       int                `json:"viewerCount"`         // live room occupancy (参与人数) at snapshot time
+	LikeCount         int64              `json:"likeCount,omitempty"` // #261-10 running room likes at snapshot time (additive, display-only)
 	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
+}
+
+// RoomSocialData is the ROOM_SOCIAL payload (#261-7/8/10/12a). Display-only
+// social signals: comments (弹幕), gifts, like toggles, and the periodic crowd
+// stats tick (viewer count + running likes). Like AI_COMMENTARY it is broadcast
+// gateway-locally with no seq and never persisted — losing one is harmless, the
+// next like/stats frame re-ships the running totals.
+type RoomSocialData struct {
+	Kind        string `json:"kind"` // "comment" | "gift" | "like" | "stats"
+	UserID      string `json:"userId,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	Text        string `json:"text,omitempty"`      // comment body (sanitized, ≤60 runes)
+	GiftID      string `json:"giftId,omitempty"`    // gift: client tier id
+	GiftName    string `json:"giftName,omitempty"`  // gift: display name
+	GiftEmoji   string `json:"giftEmoji,omitempty"` // gift: emoji glyph
+	LikeDelta   int64  `json:"likeDelta,omitempty"` // like: +1 / -1 (取消点赞)
+	// Running totals. No omitempty on LikeCount: a like withdrawn back to 0 must
+	// still reach clients, or their counter sticks at 1.
+	LikeCount    int64 `json:"likeCount"`
+	ViewerCount  int   `json:"viewerCount,omitempty"` // stats: occupancy incl. crowd sim
+	ServerTimeMs int64 `json:"serverTimeMs"`
 }
 
 // RoomStatePatchData is the high-fanout room projection used when a large room

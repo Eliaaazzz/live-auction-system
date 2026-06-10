@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -111,6 +113,20 @@ func projectSold(ctx context.Context, st *store.Store, aid string, e store.Strea
 			return fmt.Errorf("%w: missing auction row for SOLD event %s", store.ErrPermanentOrderProjection, aid)
 		}
 		return err
+	}
+	// Persist the hammer outcome (final price + winner) onto the auctions row —
+	// bids only touch Redis, so without this the row shows the start price
+	// forever (#261-2 商品后台价格不同步). Outside the ORDER_CREATED guard on
+	// purpose: a worker restart re-sweeps every stream, which retro-fills rows
+	// projected before this fix. Idempotent (same values). A malformed payload
+	// is left to CreateOrderFromSold below, which already classifies it poison.
+	var sold model.AuctionSoldData
+	if jerr := json.Unmarshal([]byte(e.Payload), &sold); jerr == nil && sold.WinnerID != "" {
+		if amount, perr := strconv.ParseInt(sold.AmountCents, 10, 64); perr == nil {
+			if ferr := st.FinalizeAuctionSold(ctx, aid, sold.WinnerID, amount); ferr != nil {
+				return ferr // transient DB error → retry on the next sweep
+			}
+		}
 	}
 	if a.Status != model.StateOrderCreated {
 		if err := st.UpdateAuctionStatus(ctx, aid, model.StateSold); err != nil {

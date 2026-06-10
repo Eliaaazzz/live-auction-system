@@ -24,26 +24,6 @@ export function unlockAudio(): void {
   ac();
 }
 
-// 语音播报（#261-6）：用浏览器内置 Web Speech TTS，无需后端 / 音频文件，离线可用。
-// 受同一个静音开关控制；做节流避免连续出价时叠播。
-let lastSpeakAt = 0;
-export function speak(text: string): void {
-  if (muted) return;
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-  const now = Date.now();
-  if (now - lastSpeakAt < 1200) return;
-  lastSpeakAt = now;
-  try {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'zh-CN';
-    u.rate = 1.06;
-    u.volume = 0.9;
-    window.speechSynthesis.cancel(); // 抢占未播完的上一条，保证及时
-    window.speechSynthesis.speak(u);
-  } catch {
-    /* TTS 不可用则静默降级到提示音 */
-  }
-}
 export function isMuted(): boolean {
   return muted;
 }
@@ -87,6 +67,32 @@ function noise(dur: number, gain: number, when = 0): void {
   g.gain.value = gain;
   src.connect(g).connect(c.destination);
   src.start(c.currentTime + when);
+}
+
+// ── #261-6 语音播报（Web Speech API）─────────────────────────────
+// 领先 / 被反超 / 成交时用中文语音播报，与音效共用同一个静音开关。
+// speechSynthesis 缺失（旧 WebView）时静默降级为纯音效。每次播报前 cancel()
+// 排队中的旧播报：竞价高频反超时只读最新状态，不读历史。
+let lastSpeakAt = 0;
+let lastSpeakText = '';
+export function speak(text: string, minGapMs = 2500): void {
+  if (muted || typeof window === 'undefined') return;
+  const synth = window.speechSynthesis;
+  if (!synth || typeof SpeechSynthesisUtterance === 'undefined') return;
+  const now = Date.now();
+  // 同文案节流：自动出价连环反超时不会复读机；不同文案（领先→被反超）立即插播。
+  if (text === lastSpeakText && now - lastSpeakAt < minGapMs) return;
+  lastSpeakAt = now;
+  lastSpeakText = text;
+  try {
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN';
+    u.rate = 1.12;
+    u.pitch = 1.05;
+    u.volume = 0.95;
+    synth.speak(u);
+  } catch { /* ignore */ }
 }
 
 export const sfx = {

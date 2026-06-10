@@ -28,7 +28,7 @@ type WsEnvelope<T = unknown> = {
 
 | type | data | purpose |
 |---|---|---|
-| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }` |
+| `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, viewerCount, likeCount?, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs }`; `viewerCount`/`likeCount` are display-only social numbers (additive, #261) |
 | `ROOM_STATE_PATCH` | `{ fromSeq, seq, status, currentPriceCents, winnerId, winnerDisplayName, endAtMs, extendCount?, bidCountDelta, bidCountTotal, serverTimeMs }` | large-room coalesced public UI projection. It advances the client high-watermark to `seq` without promising that every intermediate `BID_ACCEPTED` frame was delivered. `bidCountTotal` is sourced from Lua's atomic accepted-bid counter. Direct bidder acks and Redis Stream evidence remain per-bid. Client-side leaderboard projection may show only the latest patch winner until the REST leaderboard refresh fills intermediate bidders. |
 | `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, bidCount?, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `bidCount` = Lua-authoritative accepted-bid count; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
@@ -36,6 +36,7 @@ type WsEnvelope<T = unknown> = {
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
 | `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
 | `AUCTION_CANCELLED` | `{ seq, status, serverTimeMs }` | terminal: seller/admin cancel (T3) |
+| `ROOM_SOCIAL` | `{ kind: "comment"\|"gift"\|"like"\|"stats", userId?, displayName?, text?, giftId?, giftName?, giftEmoji?, likeDelta?, likeCount, viewerCount?, serverTimeMs }` | **non-authoritative** room social broadcast (#261-7/8/10/12a): 弹幕/礼物/点赞 fan-out + the demo-crowd periodic stats tick. Same contract family as `AI_COMMENTARY` — additive under schemaVersion 2, **no `seq` slot** (exempt from the seq-guard), never written to the Stream/evidence chain, and the bid path never reads or awaits it. Source: `POST /api/auctions/{id}/social` (auth like the bid lane; comment ≤60 runes sanitized server-side; like `delta` clamped to ±1, total clamped ≥0) or the server crowd script. Per-gateway fan-out; like totals are in-process state (single-node demo; Redis INCR is the multi-gateway follow-up). |
 | `PONG` | `{}` | heartbeat response |
 
 `amountCents` is a **string** in every payload above (money-as-string boundary). Sequenced room frames carry a monotonic `seq`; clients apply them through the `seq-guard` (drop duplicates — the originating socket gets a direct `BID_ACCEPTED` ack and may also receive either a room broadcast or a `ROOM_STATE_PATCH` — and out-of-order frames). `ROOM_STATE_PATCH` is a projection high-watermark, not a proof that the client received every intermediate bid frame.

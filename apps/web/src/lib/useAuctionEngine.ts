@@ -17,7 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from 'zustand';
-import type { AuctionState, EngineEvent, Lot, RankRow, Bid, AuctionStatus } from './types';
+import type { AuctionState, EngineEvent, Lot, RankRow, Bid, AuctionStatus, SocialItem } from './types';
 import { avatar } from './assets';
 import { useAuctionStore, createAuctionStore } from '../backend/store/auction.js';
 import { RoomClient, buildRoomUrl } from '../backend/lib/ws.js';
@@ -43,12 +43,17 @@ const WS_BASE = (import.meta as any).env?.VITE_WS_BASE || undefined;
 const BID_HTTP_TIMEOUT_MS = 1_200;
 const ENDING_WINDOW_MS = 10_000;
 
-// stable pseudo-avatar from a backend userId (the backend has no avatar field).
+// stable pseudo-avatar (the backend has no avatar field). Hash the DISPLAY NAME,
+// not the userId: identity.defaultAvatarFor(nickname) uses the same hash, so
+// "买家A" gets the SAME face on their own phone (seat selfAvatar), on the other
+// buyer's pane, and on the admin monitor. userId-hashing gave one person two faces.
 function hashNum(s: string): number {
   let h = 0;
   for (let i = 0; i < (s || '').length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 70 + 1;
 }
+const peerAvatar = (displayName?: string | null, userId?: string | null): string =>
+  avatar(hashNum(displayName || userId || 'me'));
 const yuan = (cents: string | number | null | undefined): number => {
   if (cents == null) return 0;
   try { return Math.round(Number(BigInt(String(cents))) / 100); } catch { return Math.round(Number(cents) / 100) || 0; }
@@ -76,7 +81,7 @@ function bidFromLeader(l: any, rank: number): Bid {
     id: `${uid}-${l?.cents ?? 0}`,
     userId: uid,
     userName: l?.displayName || l?.userId || '匿名买家',
-    avatar: avatar(hashNum(uid)),
+    avatar: peerAvatar(l?.displayName, uid),
     amount: yuan(l?.cents),
     ts: Date.now(),
     self: !!l?.isYou,
@@ -102,6 +107,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const wasLeadingRef = useRef(false); // #261-3/6: 仅在「领先→被反超」跳变时报 outbid
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
   const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
+  const [intro, setIntro] = useState<string>(''); // 商品介绍 from REST snapshot (#261-12b — shown in the room)
   // selfAvatar 由调用方（LiveRoom）从身份层下传：真实 /m 用全局登录身份，Showcase 座位
   // 用该座位的固定头像。用它覆盖所有「自己」行的头像，消除「同一个我，出价/送礼头像不
   // 一样」(#3)，且让 买家A / 买家B 各自的自我头像互不串台。
@@ -136,8 +142,13 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
           endAtMs: snap.endAtMs ?? null,
           winnerId: snap.winnerId ?? null,
           yourUserId: storeApi.getState().yourUserId,
+          // #261-10/12a: REST first-paint carries the social numbers so the room
+          // shows the live crowd/likes before the WS snapshot lands.
+          viewerCount: (snap as any).viewerCount ?? 0,
+          likeCount: (snap as any).likeCount ?? 0,
         });
         if ((snap as any).livePlayUrl) setLivePlayUrl(String((snap as any).livePlayUrl));
+        if ((snap as any).description) setIntro(String((snap as any).description));
       } catch { /* WS will rebuild from snapshot frame */ }
 
       try {
@@ -152,6 +163,19 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
         getLastSeq: () => storeApi.getState().lastSeq,
         onState: (s: any) => storeApi.getState().setConn(s.status, s),
         onEvent: (env: any) => {
+          // #261-7/8/10: ROOM_SOCIAL is display-only (no seq) — route it to the
+          // social reducer + the room callback, NEVER through applyEvent (the
+          // seqguard/recentEvents path is for authoritative events only).
+          if (env?.type === EventType.ROOM_SOCIAL) {
+            const data = env.data ?? {};
+            storeApi.getState().applySocial(data);
+            const cb = onEventRef.current;
+            if (cb && (data.kind === 'comment' || data.kind === 'gift' || (data.kind === 'like' && data.likeDelta > 0))) {
+              const self = !!(storeApi.getState().yourUserId && data.userId === storeApi.getState().yourUserId);
+              cb({ kind: 'social', social: { ...data, self } as SocialItem });
+            }
+            return;
+          }
           storeApi.getState().applyEvent(env);
           emitEngineEvent(env);
           maybeRefreshLeaders(env);
@@ -231,7 +255,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const ranking: RankRow[] = leaders.map((l, i) => ({
       userId: l.userId,
       userName: l.displayName || l.userId || '匿名买家',
-      avatar: (l.isYou && selfAvatar) ? selfAvatar : avatar(hashNum(l.userId ?? `u${i}`)),
+      avatar: (l.isYou && selfAvatar) ? selfAvatar : peerAvatar(l.displayName, l.userId ?? `u${i}`),
       amount: yuan(l.cents),
       self: !!l.isYou,
     }));
@@ -244,7 +268,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
         id: String(e.seq ?? e.ts ?? Math.random()),
         userId: e.data.userId,
         userName: e.data.displayName || e.data.userId || '匿名买家',
-        avatar: (store.yourUserId && e.data.userId === store.yourUserId && selfAvatar) ? selfAvatar : avatar(hashNum(e.data.userId ?? '')),
+        avatar: (store.yourUserId && e.data.userId === store.yourUserId && selfAvatar) ? selfAvatar : peerAvatar(e.data.displayName, e.data.userId),
         amount: yuan(e.data.amountCents),
         ts: e.ts ?? Date.now(),
         self: !!(store.yourUserId && e.data.userId === store.yourUserId),
@@ -260,6 +284,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       bids,
       ranking,
       participants: store.viewerCount ?? 0,
+      likes: store.likeCount ?? 0,
       myMaxBid: store.yourCents ? yuan(store.yourCents) : null,
       myRank: myRankIdx >= 0 ? myRankIdx + 1 : null,
       extendedFlash: store.extendFlash ? (store.extendFlash.addedSec ?? 30) : 0,
@@ -301,7 +326,15 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     try { clientRef.current?.resync?.(); } catch { /* noop */ }
   }, []);
 
-  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, selfAvatar, auctioneerText: (store as any).auctioneerText || '' };
+  // #261-7/8/10: fire-and-forget social send under THIS seat's identity. The UI
+  // renders from the server's broadcast echo (sender included) so every client —
+  // both phones AND the admin monitor — sees the identical feed.
+  const sendSocial = useCallback((payload: { kind: string; text?: string; giftId?: string; giftName?: string; giftEmoji?: string; delta?: number }) => {
+    const token = seat ? currentToken(seat) : undefined;
+    void api.social(auctionId, payload, { token, seat }).catch(() => { /* display-only — drop on failure */ });
+  }, [auctionId, seat]);
+
+  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, intro, ready, selfAvatar, sendSocial, yourUserId: store.yourUserId ?? null, auctioneerText: (store as any).auctioneerText || '' };
 }
 
 function makeBidId(): string {

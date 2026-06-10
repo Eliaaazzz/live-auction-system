@@ -221,6 +221,19 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 	return err
 }
 
+// FinalizeAuctionSold persists the hammer outcome (final price + winner) onto the
+// auctions row when the persistence worker projects AUCTION_SOLD. Without it the
+// row keeps its creation-time current_price_cents forever — bids only ever touch
+// the Redis state Hash — so the auctions LIST (商品管理 / 买家浏览 / 历史记录)
+// would show the start price even after the hammer once the Redis state is gone.
+// Idempotent: re-projection rewrites the same values.
+func (s *Store) FinalizeAuctionSold(ctx context.Context, aid, winnerID string, amountCents int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE auctions SET current_price_cents = ?, winner_id = ?, updated_at = ? WHERE id = ?`,
+		amountCents, winnerID, time.Now().UTC(), aid)
+	return err
+}
+
 // SetParentAuction links a freshly-created formal auction to the sealed PREQUALIFY
 // parent it was seeded from (issue #114 phase 6). parent must already exist.
 func (s *Store) SetParentAuction(ctx context.Context, aid, parentAID string) error {
@@ -301,13 +314,19 @@ func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem,
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
+	// bidCount counts projected BID_ACCEPTED events: nothing in the codebase
+	// ever INSERTs into the `bids` table (schema-only leftover), so the old
+	// `COUNT(*) FROM bids` was a constant 0 and 商品管理「出价次数」never moved.
+	// auction_events is written by the persistence worker for every event, so
+	// the count is real (≤1 sweep behind, same freshness as the rest of the row).
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT a.id, COALESCE(p.name,''), COALESCE(p.image_url,''), a.status,
 		        a.current_price_cents, COALESCE(a.winner_id,''), a.end_at, a.created_at,
 		        COALESCE(ar.mode,'ENGLISH'), COALESCE(a.parent_auction_id,''),
 		        COALESCE(ar.start_price_cents,0), COALESCE(ar.increment_cents,0),
 		        COALESCE(ar.cap_price_cents,0),
-		        (SELECT COUNT(*) FROM bids b WHERE b.auction_id = a.id)
+		        (SELECT COUNT(*) FROM auction_events e
+		          WHERE e.auction_id = a.id AND e.event_type = 'BID_ACCEPTED')
 		   FROM auctions a
 		   LEFT JOIN products p ON a.product_id = p.id
 		   LEFT JOIN auction_rules ar ON ar.auction_id = a.id

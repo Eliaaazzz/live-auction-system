@@ -52,6 +52,30 @@
 .lm-lotchip-meta { min-width: 0; }
 .lm-lotchip-no { font-size: 9.5px; color: var(--gold, #ffce54); font-weight: 800; }
 .lm-lotchip-title { font-size: 11px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 134px; }
+.lm-lotchip.has-intro { cursor: pointer; }
+.lm-lotchip-more { font-size: 9px; color: rgba(255,255,255,0.65); display: inline-flex; align-items: center; gap: 1px; margin-top: 1px; }
+
+/* ---------- #261-12b 宝贝介绍（AI 识图生成）---------- */
+.lm-introsheet {
+  position: absolute; left: 0; right: 0; bottom: 116px; z-index: 30;
+  max-height: 62%;
+  background: rgba(18,18,24,0.98); backdrop-filter: blur(16px);
+  border-top-left-radius: 18px; border-top-right-radius: 18px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  box-shadow: 0 -12px 36px rgba(0,0,0,0.4);
+  display: flex; flex-direction: column;
+  animation: la-sheet-up 0.3s cubic-bezier(0.25,1,0.4,1);
+}
+.lm-intro-body { overflow-y: auto; padding: 8px 16px 16px; }
+.lm-intro-prod { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.lm-intro-img { width: 56px; height: 56px; flex-shrink: 0; object-fit: cover; }
+.lm-intro-meta .t { font-size: 13.5px; font-weight: 800; line-height: 1.35; }
+.lm-intro-meta .s { font-size: 11px; color: rgba(255,255,255,0.55); margin-top: 3px; }
+.lm-intro-text { font-size: 13px; line-height: 1.7; color: rgba(255,255,255,0.92); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 10px 12px; }
+.lm-intro-ai { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #7fd6ff; margin-top: 9px; }
+
+/* #261-4a: 排名卡是「我」时的强调描边 */
+.lm-rankcard.me { outline: 1.5px solid rgba(254,44,85,0.55); outline-offset: -1.5px; }
 
 /* ---------- countdown pill ---------- */
 .lm-cd { position: absolute; top: 122px; right: 12px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.42); backdrop-filter: blur(8px); border-radius: 999px; padding: 5px 11px; font-size: 13px; }
@@ -114,7 +138,9 @@
 .lm-sheet-backdrop { position: absolute; inset: 0; z-index: 23; background: rgba(0,0,0,0.32); animation: la-rise 0.2s ease; }
 .lm-tabsheet {
   position: absolute; left: 0; right: 0; bottom: 116px; z-index: 24;
-  max-height: 58%;
+  /* #261-1: 固定高度（不随条数伸缩）——出价历史/评论列表显示长度恒定，
+     超出部分在 .lm-tabsheet-body 内滚动（内置滚动条），面板不忽高忽低。 */
+  height: 58%;
   background: rgba(18,18,24,0.98); backdrop-filter: blur(16px);
   border-top-left-radius: 18px; border-top-right-radius: 18px;
   border-top: 1px solid rgba(255,255,255,0.08);

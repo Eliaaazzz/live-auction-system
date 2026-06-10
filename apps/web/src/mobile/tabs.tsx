@@ -85,18 +85,20 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
   const second = state.ranking[1];
   const iLead = state.myRank === 1;
   const gap = state.myMaxBid != null ? Math.max(0, state.currentPrice - state.myMaxBid) : state.currentPrice;
+  // #261-4/9: 第一/第二名是自己时显示「我」（本机视角），他人显示真名。
+  const nameOf = (r?: { userName: string; self?: boolean }) => (r ? (r.self ? '我' : r.userName) : '虚位以待');
   return (
     <div>
       <div className="lm-section-t"><Icon name="trophy" size={13} /> 实时排名 · 参与 {state.participants} 人 · 出价 {state.bidCount} 次</div>
       <div className="lm-podium">
         <div className={'lm-rankcard r1' + (first?.self ? ' me' : '')}>
-          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先{first?.self ? ' · 我' : ''}</div>
-          <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{first ? (first.self ? '我' : first.userName) : '虚位以待'}</span></div>
+          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先{first?.self ? ' · 是我' : ''}</div>
+          <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(first)}</span></div>
           <div className="lm-rank-amt tnum">{first ? fmtCompactYuan(first.amount) : fmtYuan(0)}</div>
         </div>
         <div className={'lm-rankcard r2' + (second?.self ? ' me' : '')}>
-          <div className="lm-rank-badge">2 · 第二名 · 紧追{second?.self ? ' · 我' : ''}</div>
-          <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{second ? (second.self ? '我' : second.userName) : '虚位以待'}</span></div>
+          <div className="lm-rank-badge">2 · 第二名 · 紧追{second?.self ? ' · 是我' : ''}</div>
+          <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(second)}</span></div>
           <div className="lm-rank-amt tnum">{second ? fmtCompactYuan(second.amount) : '—'}</div>
         </div>
       </div>

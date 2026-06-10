@@ -40,6 +40,33 @@ func TestMockGenerator_ShapeMatchesSpec(t *testing.T) {
 	}
 }
 
+// #261-12b: the mock ships an estimateCNY fact (识图估价 → 推荐加价幅度输入).
+// It must be numeric-only and highRisk (an estimate is never an objective fact).
+func TestMockGenerator_EstimateCNY(t *testing.T) {
+	resp, err := MockGenerator(context.Background(), Request{ProductID: "p1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range resp.Facts {
+		if f.Field != "estimateCNY" {
+			continue
+		}
+		if !f.HighRisk {
+			t.Error("estimateCNY must be highRisk (估价不可客观验证)")
+		}
+		if f.Confidence > 0.5 {
+			t.Errorf("estimateCNY confidence %v exceeds the ≤0.5 contract", f.Confidence)
+		}
+		for _, r := range f.Value {
+			if r < '0' || r > '9' {
+				t.Fatalf("estimateCNY value %q must be digits only", f.Value)
+			}
+		}
+		return
+	}
+	t.Fatal("mock response missing the estimateCNY fact")
+}
+
 // ─── HandlerFunc · 502 on generator error → ERR_AI_UNAVAILABLE ───────
 
 func TestHandlerFunc_502OnGeneratorError(t *testing.T) {
