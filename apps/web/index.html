@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0d0d12" />
     <title>抖音直播竞拍 · 实时竞拍大师</title>
+    <!-- hls.js (self-hosted, same-origin) so Chrome/Android can play the LL-HLS live stream; iOS Safari uses native HLS. -->
+    <script src="/hls.min.js"></script>
+    <!-- #260-6: the app uses HashRouter, but shared links say /m and /admin (#254).
+         The Go spaFileServer falls back to this file for any unmatched path, so a
+         bare /m lands here with an empty hash — rewrite it to the hash route the
+         router actually understands, preserving the query (?room=/?order=/?as=). -->
+    <script>
+      (function () {
+        var p = location.pathname;
+        if (p !== '/' && !location.hash) {
+          location.replace('/#' + p.replace(/\/+$/, '') + location.search);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

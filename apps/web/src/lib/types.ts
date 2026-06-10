@@ -32,6 +32,7 @@ export interface Lot {
   title: string;
   subtitle: string;
   image: string;
+  live?: string; // optional live video stream URL (HLS .m3u8 / mp4/webm); falls back to `image`
   tone: string;
   tone2: string;
   startPrice: number;
@@ -78,4 +79,6 @@ export interface AuctionState {
   extendedFlash: number;
   lastEvent: EngineEvent | null;
   bidCount: number;
+  /** Last server bid rejection (BID_REJECTED), localized — drives the buyer reject toast. */
+  lastReject?: { code: string; text: string; at: number } | null;
 }

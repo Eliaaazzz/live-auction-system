@@ -17,9 +17,12 @@ Response (T1 mock returns this shape with canned values):
     { "field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true }
   ],
   "highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
-  "modelName": "mock-vlm-T1"
+  "modelName": "mock-vlm-T1",
+  "intro": "灯下一汪润光，上手温凉贴肤——眼缘对了就别犹豫。"
 }
 ```
+
+`intro` (ADDITIVE, optional — absent from mock/canned responses): the same vision call that extracts facts also drafts a short human, sales-ready intro (≤120 runes), so one image-capable model covers 识图+文案 in a single round-trip. Sidecar-side sanitizer (`vlm.sanitizeIntro`) drops the WHOLE intro on any violation — banned word (保真/正品/升值/投资/假一赔十 …; compliant 「不保真」/「0元起拍」 whitelisted), URL, phone, or free-form price — facts survive independently. The intro carries NO disclaimer; the frontend appends the fixed 平台不保真 tail deterministically. Empty/absent intro → frontend keeps its instant template. The seller still confirms/edits the final text before freeze (V9 P3: non-authoritative).
 
 Rules (enforced from T7 in `internal`/sidecar): VLM image fetch uses an **SSRF allowlist** (no private net / IMDS, size+timeout limits, no redirect-follow); product text is treated as **untrusted data** (never as instructions) to block prompt injection; `highRiskFieldsDisclaimer` is always present. The seller must `confirm/edit` facts before `freeze_rules` — AI output never auto-enters the core auction.
 

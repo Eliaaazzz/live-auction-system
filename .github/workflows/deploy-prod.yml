@@ -324,6 +324,38 @@ jobs:
           cat > "$run_sidecar" <<'EOF_RUN_SIDECAR'
           #!/usr/bin/env bash
           set -euo pipefail
+          # Source infra/.env.prod and map the compose-style ARK_* names onto the
+          # sidecar's VLM_*/LLM_* env — the bare systemd path has no compose
+          # interpolation layer, so without this the sidecar silently runs the
+          # mock generators forever even with Ark credentials on the box.
+          # A missing env file degrades to mock instead of failing: lumen.service
+          # Requires= this unit, so a crash-loop here would take bidding down.
+          if [ -n "${LUMEN_SOURCE_DIR:-}" ] && [ -f "$LUMEN_SOURCE_DIR/infra/.env.prod" ]; then
+            cd "$LUMEN_SOURCE_DIR"
+            envfile=$(mktemp /tmp/lumen-sidecar-env.XXXXXX)
+            trap 'rm -f "$envfile"' EXIT
+            python3 - <<'PY' > "$envfile"
+          from pathlib import Path
+          import shlex
+          for line in Path('infra/.env.prod').read_text().splitlines():
+              if not line or line.lstrip().startswith('#') or '=' not in line:
+                  continue
+              key, value = line.split('=', 1)
+              if key.replace('_', '').isalnum():
+                  print(f'export {key}={shlex.quote(value)}')
+          PY
+            . "$envfile"
+            export VLM_API_KEY="${VLM_API_KEY:-${ARK_API_KEY:-}}"
+            export VLM_MODEL="${VLM_MODEL:-${ARK_VLM_MODEL:-}}"
+            export VLM_BASE_URL="${VLM_BASE_URL:-${ARK_VLM_BASE_URL:-${ARK_BASE_URL:-}}}"
+            export VLM_TIMEOUT_MS="${VLM_TIMEOUT_MS:-${ARK_VLM_TIMEOUT_MS:-}}"
+            export LLM_API_KEY="${LLM_API_KEY:-${ARK_API_KEY:-}}"
+            export LLM_MODEL="${LLM_MODEL:-${ARK_LLM_MODEL:-}}"
+            export LLM_BASE_URL="${LLM_BASE_URL:-${ARK_LLM_BASE_URL:-${ARK_BASE_URL:-}}}"
+            export LLM_TIMEOUT_MS="${LLM_TIMEOUT_MS:-${ARK_LLM_TIMEOUT_MS:-}}"
+          else
+            echo "lumen-sidecar: infra/.env.prod not found — running mock generators" >&2
+          fi
           export SIDECAR_ADDR=:8090
           exec /opt/lumen-runtime/bin/sidecar "$@"
           EOF_RUN_SIDECAR
@@ -333,7 +365,7 @@ jobs:
           rm -f "$run_lumen" "$run_sidecar"
 
           sidecar_unit="$(mktemp)"
-          cat > "$sidecar_unit" <<'EOF_SIDECAR_UNIT'
+          cat > "$sidecar_unit" <<EOF_SIDECAR_UNIT
           [Unit]
           Description=Lumen AI Sidecar
           After=network-online.target
@@ -342,6 +374,7 @@ jobs:
           [Service]
           Type=simple
           WorkingDirectory=/opt/lumen-runtime
+          Environment=LUMEN_SOURCE_DIR=$target
           ExecStart=/opt/lumen-runtime/run-sidecar.sh
           Restart=always
           RestartSec=3

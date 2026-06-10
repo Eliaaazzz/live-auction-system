@@ -135,7 +135,12 @@ export function ChromeWindow({
     >
       <ChromeTabBar tabs={tabs} activeIndex={activeIndex} />
       <ChromeToolbar url={url} />
-      <div style={{ flex: 1, background: '#fff', overflow: 'hidden' }}>{children}</div>
+      {/* Content area. Grid with a single minmax(0,1fr) row so the embedded app
+          (e.g. the admin Layout, wrapped by AntD <App> in a height:auto .ant-app
+          div) is STRETCHED to fill this fixed-height window and owns its own
+          internal scroll — instead of growing to natural height and being clipped
+          by overflow:hidden (which left the page bottom unreachable). */}
+      <div style={{ flex: 1, minHeight: 0, background: '#fff', overflow: 'hidden', display: 'grid', gridTemplateRows: 'minmax(0, 1fr)' }}>{children}</div>
     </div>
   );
 }

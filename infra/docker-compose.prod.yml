@@ -20,16 +20,25 @@ services:
       SIDECAR_ADDR: ":8090"
       # Real AI opt-in (火山方舟 / 豆包). Empty → canned generators (unchanged).
       # Set in infra/.env on the prod host: ARK_API_KEY + ARK_VLM_MODEL +
-      # ARK_LLM_MODEL (inference endpoint ids). One place flips VLM + auctioneer.
+      # ARK_LLM_MODEL. IMPORTANT: use TWO DIFFERENT inference endpoints (ep-…) —
+      # sharing one ep puts VLM facts/intro and the high-frequency auctioneer in
+      # the same rate-limit queue and the intro path inherits the auctioneer's
+      # backlog. VLM wants a FAST multimodal model (doubao-seed-1.6-flash class:
+      # reads the product image AND writes the intro copy in one call);
+      # thinking-class models burn seconds before the first token.
+      # Optional per-side overrides: ARK_{VLM,LLM}_BASE_URL (e.g. one side on
+      # Ollama), ARK_{VLM,LLM}_TIMEOUT_MS (sidecar default 30000).
       # VLM_MODE is a kill-switch only: set VLM_MODE=mock to force canned VLM
       # facts even with creds; otherwise key+model select the real VLM path.
       VLM_MODE: ${VLM_MODE:-}
       VLM_API_KEY: ${ARK_API_KEY:-}
       VLM_MODEL: ${ARK_VLM_MODEL:-}
-      VLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      VLM_BASE_URL: ${ARK_VLM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}}
+      VLM_TIMEOUT_MS: ${ARK_VLM_TIMEOUT_MS:-}
       LLM_API_KEY: ${ARK_API_KEY:-}
       LLM_MODEL: ${ARK_LLM_MODEL:-}
-      LLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      LLM_BASE_URL: ${ARK_LLM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}}
+      LLM_TIMEOUT_MS: ${ARK_LLM_TIMEOUT_MS:-}
     expose: ["8090"]
 
   lumen:
