@@ -215,6 +215,11 @@ export function createAuctionStore() {
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
           if (data.viewerCount != null) next.viewerCount = data.viewerCount; // 参与人数
+          // The snapshot is just as authoritative an owner signal as REST
+          // init(): claim the room here too, so if getAuction failed (WS-only
+          // rebuild path) useAuctionEngine's `ready` doesn't stay false
+          // forever with the bid UI dead despite live data.
+          if (env.auctionId != null) next.auctionId = env.auctionId;
 
           if (data.rules) {
             if (data.rules.stepCents != null) next.stepCents = data.rules.stepCents;
