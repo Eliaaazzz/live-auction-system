@@ -1570,7 +1570,11 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		}
 		// 参与人数 at join time (incl. self) + crowd-sim boost + running likes
 		// (#261-10/12a — display-only social numbers ride the snapshot).
-		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) + s.crowd.ViewerBoost(d.AuctionID)
+		// SimViewerCount self-declares the simulated share (#266 review 诚实边界)
+		// so the client badges 「模拟人气」 from the very first paint.
+		simViewers := s.crowd.ViewerBoost(d.AuctionID)
+		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) + simViewers
+		snap.SimViewerCount = simViewers
 		snap.LikeCount = s.social.likeCount(d.AuctionID)
 		if snap.Rules != nil {
 			s.hub.setMode(d.AuctionID, snap.Rules.Mode) // cache mode for the BID_PLACE hot path

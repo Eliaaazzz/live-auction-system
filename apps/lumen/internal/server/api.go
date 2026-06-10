@@ -674,7 +674,10 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	}
 	// #261-10/12a: REST first-paint carries the live social numbers too, so a
 	// fresh room shows the crowd/likes before the WS snapshot lands. Display-only.
-	snap.ViewerCount = s.hub.viewerCount(aid) + s.crowd.ViewerBoost(aid)
+	// SimViewerCount self-declares the simulated share (#266 review 诚实边界).
+	simViewers := s.crowd.ViewerBoost(aid)
+	snap.ViewerCount = s.hub.viewerCount(aid) + simViewers
+	snap.SimViewerCount = simViewers
 	snap.LikeCount = s.social.likeCount(aid)
 	// Surface the product (name / image / 介绍) so the room shows the real item
 	// and the VLM page can draft facts from its image. Best-effort: a missing

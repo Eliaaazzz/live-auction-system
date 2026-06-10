@@ -133,6 +133,7 @@ function HistoryTab({ state }: { state: AuctionState }) {
           <div className={'lm-hist-row' + (b.self ? ' self' : '')} key={b.id}>
             <Avatar src={b.avatar} size={26} />
             <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
+            {String(b.userId || '').startsWith('user_sim') && <span className="lm-hist-sim">模拟</span>}
             {i === 0 && <span className="lm-hist-lead">当前领先</span>}
             <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
             <span className="lm-hist-t">{ago(b.ts)}</span>

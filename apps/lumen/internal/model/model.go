@@ -305,14 +305,19 @@ type PubMessage struct {
 }
 
 type RoomSnapshotData struct {
-	Status            string             `json:"status"`
-	CurrentPriceCents string             `json:"currentPriceCents"`
-	WinnerID          string             `json:"winnerId"`
-	EndAtMs           int64              `json:"endAtMs"`
-	Seq               int64              `json:"seq"`
-	ViewerCount       int                `json:"viewerCount"`         // live room occupancy (参与人数) at snapshot time
-	LikeCount         int64              `json:"likeCount,omitempty"` // #261-10 running room likes at snapshot time (additive, display-only)
-	Rules             *RoomSnapshotRules `json:"rules,omitempty"`
+	Status            string `json:"status"`
+	CurrentPriceCents string `json:"currentPriceCents"`
+	WinnerID          string `json:"winnerId"`
+	EndAtMs           int64  `json:"endAtMs"`
+	Seq               int64  `json:"seq"`
+	ViewerCount       int    `json:"viewerCount"`         // live room occupancy (参与人数) at snapshot time
+	LikeCount         int64  `json:"likeCount,omitempty"` // #261-10 running room likes at snapshot time (additive, display-only)
+	// SimViewerCount is how many of ViewerCount are DEMO-CROWD SIMULATED viewers
+	// (#266 review 诚实边界): >0 ⇒ clients MUST render an explicit 「模拟人气」
+	// disclosure badge. The wire data self-declares the simulation so no UI can
+	// honestly present the crowd as real concurrency.
+	SimViewerCount int                `json:"simViewerCount,omitempty"`
+	Rules          *RoomSnapshotRules `json:"rules,omitempty"`
 }
 
 // RoomSocialData is the ROOM_SOCIAL payload (#261-7/8/10/12a). Display-only
@@ -331,9 +336,12 @@ type RoomSocialData struct {
 	LikeDelta   int64  `json:"likeDelta,omitempty"` // like: +1 / -1 (取消点赞)
 	// Running totals. No omitempty on LikeCount: a like withdrawn back to 0 must
 	// still reach clients, or their counter sticks at 1.
-	LikeCount    int64 `json:"likeCount"`
-	ViewerCount  int   `json:"viewerCount,omitempty"` // stats: occupancy incl. crowd sim
-	ServerTimeMs int64 `json:"serverTimeMs"`
+	LikeCount   int64 `json:"likeCount"`
+	ViewerCount int   `json:"viewerCount,omitempty"` // stats: occupancy incl. crowd sim
+	// SimViewerCount: the simulated share of ViewerCount (#266 review 诚实边界).
+	// Clients render the 「模拟人气」badge whenever this is >0.
+	SimViewerCount int   `json:"simViewerCount,omitempty"`
+	ServerTimeMs   int64 `json:"serverTimeMs"`
 }
 
 // RoomStatePatchData is the high-fanout room projection used when a large room
