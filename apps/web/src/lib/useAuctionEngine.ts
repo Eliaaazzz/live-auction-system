@@ -99,6 +99,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const rafRef = useRef<number>(0);
   const onEventRef = useRef(onEvent);
   const lastEmitRef = useRef<string>('');
+  const wasLeadingRef = useRef(false); // #261-3/6: 仅在「领先→被反超」跳变时报 outbid
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
   const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
   // selfAvatar 由调用方（LiveRoom）从身份层下传：真实 /m 用全局登录身份，Showcase 座位
@@ -199,8 +200,16 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     switch (env?.type) {
       case EventType.BID_ACCEPTED: {
         const self = s.yourUserId && env.data?.userId === s.yourUserId;
-        if (self) cb({ kind: 'leading', amount: yuan(env.data?.amountCents) });
-        else cb({ kind: 'outbid', by: env.data?.displayName || '竞拍者', amount: yuan(env.data?.amountCents) });
+        if (self) {
+          // 我的出价被接受 = 我现在领先
+          cb({ kind: 'leading', amount: yuan(env.data?.amountCents) });
+          wasLeadingRef.current = true;
+        } else {
+          // 别人出价被接受 = 他现在领先。仅当我此前领先才算「被反超」，
+          // 否则不再对每一笔他人出价误报 outbid（#261-3/6）。
+          if (wasLeadingRef.current) cb({ kind: 'outbid', by: env.data?.displayName || '竞拍者', amount: yuan(env.data?.amountCents) });
+          wasLeadingRef.current = false;
+        }
         break;
       }
       case EventType.AUCTION_EXTENDED:
