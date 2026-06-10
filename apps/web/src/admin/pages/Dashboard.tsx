@@ -67,7 +67,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
         <Col xs={12} md={6}>
           <Card>
             <Statistic title="在拍商品" value={hasReal ? live.length : 7} prefix={<ShoppingOutlined />} valueStyle={live.length ? { color: '#fe2c55' } : undefined} />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>{hasReal ? (live.length ? '正在直播竞拍' : '暂无在拍') : '待上架 1'}</div>
+            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>{hasReal ? (live.length ? '正在直播竞拍' : '快去开拍') : '待上架 1'}</div>
           </Card>
         </Col>
         <Col xs={12} md={6}>

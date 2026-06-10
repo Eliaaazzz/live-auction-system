@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
+import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, App as AntdApp } from 'antd';
+import { PlusOutlined, RocketOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
 import { INTRO_TEMPLATES, defaultIntro, pickIntro } from '../../lib/intro';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
+import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type AuctionDraft } from '../drafts';
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
 
@@ -20,6 +21,8 @@ export default function AuctionPublish() {
   const v = Form.useWatch([], form) || {};
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [fileList, setFileList] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<AuctionDraft[]>(() => listDrafts());
+  const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
   const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.jadePendant);
   const step = v.step ?? 50;
 
@@ -92,6 +95,46 @@ export default function AuctionPublish() {
     message.success(`AI 推荐加价幅度 ¥${rec}${cap ? '（按封顶价约 2.5%）' : ''}`);
   };
 
+  // ---- 草稿箱：localStorage 持久化（demo 单卖家本机即可）。存/载/删，发布成功即消耗。 ----
+  const onSaveDraft = () => {
+    const vals = form.getFieldsValue();
+    const name = String(vals.name || '').trim();
+    if (!name) { message.warning('先填写商品名称，才能存草稿'); return; }
+    const id = draftId ?? newDraftId();
+    setDrafts(upsertDraft({
+      id, savedAt: Date.now(), name,
+      category: vals.category, deposit: vals.deposit, intro: vals.intro,
+      cap: vals.cap, step: vals.step, minStep: vals.minStep,
+      duration: vals.duration, autoExtend: vals.autoExtend, extendSec: vals.extendSec,
+      imageUrl: uploadedUrl,
+    }));
+    setDraftId(id);
+    message.success(draftId ? '草稿已更新 · 见下方草稿箱' : '已存入下方草稿箱 📦');
+  };
+
+  const onLoadDraft = (d: AuctionDraft) => {
+    form.setFieldsValue({
+      name: d.name, category: d.category, deposit: d.deposit, intro: d.intro,
+      cap: d.cap, step: d.step, minStep: d.minStep,
+      duration: d.duration, autoExtend: d.autoExtend, extendSec: d.extendSec,
+    });
+    if (d.imageUrl) {
+      setUploadedUrl(d.imageUrl);
+      setFileList([{ uid: d.id, name: '草稿主图', status: 'done', url: d.imageUrl }]);
+    } else {
+      setUploadedUrl(null);
+      setFileList([]);
+    }
+    setDraftId(d.id);
+    message.success(`已载入草稿「${d.name}」，可继续编辑发布`);
+  };
+
+  const onDeleteDraft = (id: string) => {
+    setDrafts(removeDraft(id));
+    if (draftId === id) setDraftId(null);
+    message.success('草稿已删除');
+  };
+
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
   // The auction immediately appears in the buyer mobile rail and is biddable.
   const onPublish = () => {
@@ -134,6 +177,8 @@ export default function AuctionPublish() {
         form.resetFields();
         setUploadedUrl(null);
         setFileList([]);
+        // 从草稿载入的商品发布成功即消耗草稿：避免已上架的商品还躺在草稿箱里被重复发布。
+        if (draftId) { setDrafts(removeDraft(draftId)); setDraftId(null); }
       } catch (e: any) {
         message.error('发布失败：' + (e?.message || e));
       } finally {
@@ -222,8 +267,44 @@ export default function AuctionPublish() {
           </Space>
           <Space style={{ marginTop: 8 }}>
             <Button type="primary" size="large" icon={<RocketOutlined />} loading={busy} onClick={onPublish}>立即发布开拍</Button>
-            <Button size="large" icon={<SaveOutlined />} onClick={() => message.success('已存草稿')}>存草稿</Button>
+            <Button size="large" icon={<SaveOutlined />} onClick={onSaveDraft}>存草稿{drafts.length > 0 ? ` (${drafts.length})` : ''}</Button>
           </Space>
+
+          {/* 草稿箱：有草稿才出现，正好长在「存草稿」按钮下方——存完立刻看得见。 */}
+          {drafts.length > 0 && (
+            <div className="draft-box">
+              <div className="draft-box-head">
+                <span className="draft-box-title"><FolderOpenOutlined /> 草稿箱</span>
+                <span className="draft-box-count">{drafts.length}</span>
+                <span className="draft-box-hint">存在本机浏览器 · 载入即可继续编辑</span>
+              </div>
+              {drafts.map((d) => (
+                <div key={d.id} className={'draft-item' + (d.id === draftId ? ' editing' : '')}>
+                  <img
+                    className="draft-thumb"
+                    src={d.imageUrl || CAT_IMG[d.category ?? ''] || PROD.jadePendant}
+                    alt=""
+                    onError={(e) => { e.currentTarget.src = CAT_IMG[d.category ?? ''] ?? PROD.jadePendant; }}
+                  />
+                  <div className="draft-meta">
+                    <div className="draft-name">{d.name}</div>
+                    <div className="draft-sub">
+                      {CAT_EMOJI[d.category ?? ''] ? `${CAT_EMOJI[d.category ?? '']} ` : ''}{d.category || '未分类'} · 封顶 ¥{fmtMoney(d.cap ?? 0)} · 加价 ¥{fmtMoney(d.step ?? 0)} · {d.duration ?? 80}s
+                    </div>
+                  </div>
+                  <span className="draft-time">{fmtSavedAt(d.savedAt)}</span>
+                  {d.id === draftId ? (
+                    <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>编辑中</Tag>
+                  ) : (
+                    <Button size="small" type="primary" ghost onClick={() => onLoadDraft(d)}>载入</Button>
+                  )}
+                  <Popconfirm title="删除这条草稿？" okText="删除" cancelText="留着" okButtonProps={{ danger: true }} onConfirm={() => onDeleteDraft(d.id)}>
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除草稿" />
+                  </Popconfirm>
+                </div>
+              ))}
+            </div>
+          )}
         </Form>
         <div className="pub-preview">
           <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>移动端直播间预览</div>

@@ -63,7 +63,7 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
           style={{ minWidth: 340 }}
           onChange={setSelectedId}
           options={liveList.map((a) => ({ value: a.auctionId, label: a.productName || a.auctionId }))}
-          notFoundContent="暂无正在直播的竞拍"
+          notFoundContent="快去竞拍发布开拍"
         />
         <Tag color="red">共 {liveList.length} 件在拍</Tag>
       </div>
@@ -72,7 +72,7 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
         // key by id so switching pick remounts the engine cleanly.
         <MonitorView key={selected.auctionId} lot={auctionToLot(selected)} onCancelled={refresh} />
       ) : (
-        <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} /></Card>
+        <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} title="快去直播吧" hint="开播带拍后，这里实时跳动出价与人气" cta="去竞拍发布开拍" /></Card>
       )}
     </div>
   );
