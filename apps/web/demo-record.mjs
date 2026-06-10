@@ -24,7 +24,7 @@ async function recordAdmin(browser) {
     recordVideo: { dir: OUT, size: { width: 1440, height: 900 } },
   });
   const page = await ctx.newPage();
-  let auctionName = '【真拍】和田玉平安扣吊坠 · demo';
+  let auctionName = '【真拍】百达翡丽年历计时腕表 · demo';
   try {
     await page.goto(`${BASE}/#/admin`, { waitUntil: 'networkidle' });
     await sleep(1500); await shot(page, '01-admin-home');
@@ -32,7 +32,7 @@ async function recordAdmin(browser) {
     await page.getByText('竞拍发布', { exact: true }).first().click();
     await sleep(1200); await shot(page, '02-admin-publish-form');
     // fill 商品名称
-    const nameInput = page.getByPlaceholder(/金镶玉/).first();
+    const nameInput = page.getByPlaceholder(/百达翡丽/).first();
     await nameInput.click(); await nameInput.fill(auctionName);
     await sleep(400); await shot(page, '03-admin-filled');
     // publish → real createProduct→freeze→start→LIVE

@@ -9,8 +9,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	_ "net/http/pprof" // registers /debug/pprof on http.DefaultServeMux only — served on the loopback PPROF_ADDR below, never the public mux
 	"net/netip"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -74,7 +76,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 		cfg:        cfg,
 		st:         st,
 		hub:        newHub(),
-		httpClient: &http.Client{Timeout: 5 * time.Second},
+		httpClient: &http.Client{Timeout: 60 * time.Second}, // AI sidecar proxy: real Doubao VLM vision first-token can take 30-50s (off bid hot path); must exceed sidecar VLM_TIMEOUT_MS
 		metrics:    metrics.New(),
 	}
 	// T7 §4.2: AI auctioneer trigger hooks. Always initialized so any
@@ -186,6 +188,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/stream", s.handleGetAuctionStream)
+	mux.HandleFunc("POST /api/auctions/{id}/stream/video", s.handleUploadStreamVideo)
 	mux.HandleFunc("PATCH /api/auctions/{id}", s.handlePatchAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
@@ -204,6 +207,14 @@ func (s *Server) routes(mux *http.ServeMux) {
 	// Uploaded product media (see upload.go). Immutable names → long cache.
 	mux.Handle("GET /uploads/", cacheImmutable(
 		http.StripPrefix("/uploads/", http.FileServer(http.Dir(uploadDir())))))
+
+	// Live HLS (#121): reverse-proxy /live/* to the local SRS HTTP server (:8081).
+	// SRS stays localhost-only; the browser pulls the LL-HLS playlist same-origin on
+	// :80 — no extra public port / security-group change. Video is display-only and
+	// off the Redis/Lua bid hot path.
+	if liveTarget, perr := url.Parse("http://127.0.0.1:8081"); perr == nil {
+		mux.Handle("/live/", httputil.NewSingleHostReverseProxy(liveTarget))
+	}
 
 	webDir := os.Getenv("WEB_DIR")
 	if webDir == "" {

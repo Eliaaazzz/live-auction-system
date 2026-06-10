@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AuctionState, Lot } from '../lib/types';
 import { fmtYuan, fmtCompactYuan } from '../lib/format';
+import { computeIncrement } from '../lib/pricing';
 import { ME } from '../lib/mockData';
 import { Icon, type IconName } from './icons';
 import { Avatar } from './components';
@@ -72,7 +73,7 @@ export function TabSheet({ active, onClose, ...p }: SheetProps & { active: TabKe
           {active === 'history' && <HistoryTab state={p.state} />}
           {active === 'comments' && <CommentsTab comments={p.comments} onSend={p.onSendComment} />}
           {active === 'join' && (p.joined ? <AuctionTab {...p} /> : <ParticipateTab {...p} />)}
-          {active === 'rules' && <RulesTab lot={p.lot} />}
+          {active === 'rules' && <RulesTab lot={p.lot} online={p.state.participants} />}
         </div>
       </div>
     </>
@@ -117,28 +118,22 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
 }
 
 function HistoryTab({ state }: { state: AuctionState }) {
-  const recent = state.bids.slice(0, 3);
-  const rest = state.bids.slice(3, 24);
+  const rows = state.bids.slice(0, 50);
   const now = Date.now();
   const ago = (ts: number) => { const s = Math.max(0, Math.round((now - ts) / 1000)); return s < 60 ? `${s}s前` : `${Math.floor(s / 60)}m前`; };
   return (
     <div>
-      <div className="lm-section-t"><Icon name="clock" size={13} /> 出价历史 · 共 {state.bidCount} 次（最近 3 条）</div>
-      {recent.length === 0 && <div className="lm-empty">暂无出价，快来抢第一口</div>}
-      {recent.map((b, i) => (
+      <div className="lm-section-t"><Icon name="clock" size={13} /> 出价历史 · 共 {state.bidCount} 次（最近 50 条）</div>
+      {rows.length === 0 && <div className="lm-empty">暂无出价，快来抢第一口</div>}
+      {rows.map((b, i) => (
         <div className="lm-hist-row" key={b.id}>
           <Avatar src={b.avatar} size={26} />
-          <span className="lm-hist-nm">{b.self ? '我' : b.userName} {i === 0 && '· 当前领先'}</span>
+          <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
+          {i === 0 && <span className="lm-hist-lead">当前领先</span>}
           <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
           <span className="lm-hist-t">{ago(b.ts)}</span>
         </div>
       ))}
-      {rest.length > 0 && (
-        <>
-          <div className="lm-section-t" style={{ marginTop: 12 }}><Icon name="chevronR" size={12} /> 横向滑动查看更早出价</div>
-          <div className="lm-hist-strip no-sb">{rest.map((b) => (<div className="lm-hist-card" key={b.id}><div className="a tnum">{fmtCompactYuan(b.amount)}</div><div className="n">{b.self ? '我' : b.userName}</div></div>))}</div>
-        </>
-      )}
     </div>
   );
 }
@@ -185,18 +180,20 @@ function ParticipateTab({ lot, agreed, onAgree, onJoin }: SheetProps) {
 
 function AuctionTab(p: SheetProps) {
   const { lot, state, nextMinBid, placeBid, autoBidMax, setAutoBidMax, onOpenSheetBid } = p;
+  const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : state.currentPrice, state.participants, lot.increment));
+  const effCap = lot.capPrice > 0 ? lot.capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
   const [custom, setCustom] = useState('');
   const [autoOn, setAutoOn] = useState(autoBidMax != null);
   const [autoVal, setAutoVal] = useState(String(autoBidMax ?? state.currentPrice + lot.increment * 6));
   const [msg, setMsg] = useState<string | null>(null);
-  const ratios = [{ label: '+1档', value: nextMinBid }, { label: '+3档', value: state.currentPrice + lot.increment * 3 }, { label: '+5档', value: state.currentPrice + lot.increment * 5 }];
-  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `已出价 ${fmtYuan(v)}` : r.reason ?? '出价失败'); setTimeout(() => setMsg(null), 1600); };
+  const ratios = [{ label: '+1档', value: nextMinBid }, { label: '+3档', value: state.currentPrice + dynStep * 3 }, { label: '+5档', value: state.currentPrice + dynStep * 5 }];
+  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `已提交出价 ${fmtYuan(v)} · 等待服务端裁决` : r.reason ?? '出价失败'); setTimeout(() => setMsg(null), 1800); };
   const bidCustom = () => { const v = parseInt(custom, 10); if (!Number.isFinite(v)) { setMsg('请输入有效金额'); return; } tryBid(v); setCustom(''); };
   const toggleAuto = () => { const next = !autoOn; setAutoOn(next); setAutoBidMax(next ? parseInt(autoVal, 10) || null : null); };
   return (
     <div>
-      <div className="lm-section-t"><Icon name="bolt" size={13} /> 快捷出价 · 当前 <b className="tnum" style={{ color: '#fff' }}>{fmtYuan(state.currentPrice)}</b> · 加价幅度 ¥{lot.increment}</div>
-      <div className="lm-quickbids">{ratios.map((r) => (<div className="lm-chip" key={r.label} onClick={() => tryBid(Math.min(r.value, lot.capPrice))}><div className="x">{r.label}</div><div className="v tnum">{fmtYuan(Math.min(r.value, lot.capPrice))}</div></div>))}</div>
+      <div className="lm-section-t"><Icon name="bolt" size={13} /> 快捷出价 · 当前 <b className="tnum" style={{ color: '#fff' }}>{fmtYuan(state.currentPrice)}</b> · 加价幅度 ¥{dynStep} <span style={{ color: '#ff8fa3' }}>随热度动态</span></div>
+      <div className="lm-quickbids">{ratios.map((r) => (<div className="lm-chip" key={r.label} onClick={() => tryBid(Math.min(r.value, effCap))}><div className="x">{r.label}</div><div className="v tnum">{fmtYuan(Math.min(r.value, effCap))}</div></div>))}</div>
       <div className="lm-field">
         <label>自定义出价</label>
         <input className="lm-num tnum" inputMode="numeric" placeholder={`≥ ${nextMinBid}`} value={custom} onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, ''))} />
@@ -207,18 +204,19 @@ function AuctionTab(p: SheetProps) {
         <input className="lm-num tnum" inputMode="numeric" disabled={!autoOn} value={autoVal} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setAutoVal(v); if (autoOn) setAutoBidMax(parseInt(v, 10) || null); }} style={!autoOn ? { opacity: 0.4 } : undefined} />
         <div className={'lm-switch' + (autoOn ? ' on' : '')} onClick={toggleAuto}><i /></div>
       </div>
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>被超越时自动加价至上限（代理出价），守护第一名。</div>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>设定你愿意出到的最高价（上限）。出价不会超过此金额，帮你守住预算、理性竞拍。</div>
       <button className="lm-cta ghost" onClick={onOpenSheetBid}>精确出价 / 一次加多笔</button>
       {msg && <div className="lm-warn">{msg}</div>}
     </div>
   );
 }
 
-function RulesTab({ lot }: { lot: Lot }) {
+function RulesTab({ lot, online }: { lot: Lot; online: number }) {
+  const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : lot.startPrice, online, lot.increment));
   const rules: { ic: IconName; t: string; d: string }[] = [
     { ic: 'tag', t: lot.startPrice === 0 ? '0 元起拍' : `起拍价 ${fmtYuan(lot.startPrice)}`, d: '所有通过认证的用户均可参与出价。' },
-    { ic: 'bolt', t: `加价幅度 ¥${lot.increment}`, d: `每次出价须按固定幅度递增，最低加价 ¥${lot.minIncrement}（后台配置）。` },
-    { ic: 'gavel', t: `封顶价 ${fmtYuan(lot.capPrice)}`, d: '出价达到封顶价立即成交，竞拍结束。' },
+    { ic: 'bolt', t: `加价幅度 ¥${dynStep}`, d: `按商品价值与在线人数动态计算，最低 ¥${lot.minIncrement}。` },
+    { ic: 'gavel', t: lot.capPrice > 0 ? `封顶价 ${fmtYuan(lot.capPrice)}` : '不封顶（无限加价）', d: lot.capPrice > 0 ? '出价达到封顶价立即成交，竞拍结束。' : '本场不设封顶价，价高者得。' },
     { ic: 'clock', t: `自动延时 ${lot.extendSec}s`, d: `结束前 10 秒内有人出价，倒计时自动延长 ${lot.extendSec} 秒。` },
     { ic: 'shield', t: `保证金 ${fmtYuan(lot.deposit)}`, d: '参与即冻结，成交付款后退回；弃标扣除。' },
     { ic: 'bell', t: '异常取消', d: '主播 / 平台可对异常竞拍随时取消，保证金即时解冻。' },
