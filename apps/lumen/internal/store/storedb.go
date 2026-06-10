@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
@@ -38,6 +39,35 @@ func (s *Store) UserNickname(ctx context.Context, id string) (string, error) {
 		return "", nil
 	}
 	return nickname, err
+}
+
+// UserNicknames batch-resolves user ids to display nicknames (missing ids are
+// simply absent from the map). One IN query so the leaderboard endpoint can
+// enrich its ≤100 rows without an N+1 (#260-3: REST leaderboard rows otherwise
+// surface raw `user_xxx` ids for bidders the client never saw on the WS feed).
+func (s *Store) UserNicknames(ctx context.Context, ids []string) (map[string]string, error) {
+	out := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	q := `SELECT id, nickname FROM users WHERE id IN (?` + strings.Repeat(",?", len(ids)-1) + `)`
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, nickname string
+		if err := rows.Scan(&id, &nickname); err != nil {
+			return nil, err
+		}
+		out[id] = nickname
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL, description string) error {
@@ -223,6 +253,22 @@ func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) erro
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE auctions SET current_price_cents=?, updated_at=? WHERE id=? AND status IN ('DRAFT','SCHEDULED')`,
 		int64(r.StartPriceCents), time.Now().UTC(), aid)
+	return nil
+}
+
+// SetLivePlayURL points a single auction's live feed at a new play URL without
+// touching any other rule field (开始直播: 上传准备好的视频自动直播). Targeted
+// UPDATE so it stays safe for a LIVE/frozen auction — no re-validation, no price
+// realignment, just the display-only feed URL the room snapshot reads back.
+func (s *Store) SetLivePlayURL(ctx context.Context, aid, url string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE auction_rules SET live_play_url=? WHERE auction_id=?`, url, aid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
 	return nil
 }
 

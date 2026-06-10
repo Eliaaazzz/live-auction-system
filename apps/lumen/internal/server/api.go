@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -21,12 +22,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /api/login {nickname} -> {userId, token, nickname}. Public buyer login.
-// This keeps production dev-login disabled while still allowing browser users
-// to obtain a user-scoped bidding token. Seller/admin roles are not minted here.
+// POST /api/login {nickname, sellerKey?} -> {userId, token, nickname, role}.
+// Public buyer login; the plain path always mints a `user_*` id with role
+// "user" (a `role` field in the body is ignored — see login_prod_test).
+//
+// #260-4 seller path: with sellerKey present (and matching LUMEN_SELLER_KEY
+// when configured) the id is minted in the separate `seller_*` namespace.
+// That namespace — not a DB role column — is what creation endpoints trust
+// (requireSeller): the plain login derives ids as user_+slug(nickname), so any
+// nickname is publicly impersonable and a role attached to it would be too.
+// A seller_* id can only come out of this key-checked branch, and the JWT
+// signature keeps it unforgeable.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Nickname string `json:"nickname"`
+		Nickname  string `json:"nickname"`
+		SellerKey string `json:"sellerKey"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -36,8 +46,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "nickname required")
 		return
 	}
-	userID := "user_" + slug(nickname)
-	if err := s.st.UpsertUser(r.Context(), userID, nickname, "user"); err != nil {
+	role, prefix := "user", "user_"
+	if key := strings.TrimSpace(body.SellerKey); key != "" {
+		if s.cfg.SellerKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.SellerKey)) != 1 {
+			writeErr(w, http.StatusForbidden, "invalid seller key")
+			return
+		}
+		role, prefix = "seller", "seller_"
+	}
+	userID := prefix + slug(nickname)
+	if err := s.st.UpsertUser(r.Context(), userID, nickname, role); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -45,7 +63,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"userId":   userID,
 		"token":    auth.Token(s.cfg.JWTSecret, userID),
 		"nickname": nickname,
+		"role":     role,
 	})
+}
+
+// requireSeller gates creation endpoints behind the seller namespace when a
+// seller key is configured (#260-4). Unset key (default, dev/CI/loadtest) =
+// open mode: every authenticated user passes, today's flows keep working.
+func (s *Server) requireSeller(w http.ResponseWriter, userID string) bool {
+	if s.cfg.SellerKey == "" || strings.HasPrefix(userID, "seller_") {
+		return true
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow, "error": "seller login required"})
+	return false
 }
 
 // POST /api/auctions/{id}/bids {clientBidId, amountCents} -> BID_ACCEPTED/BID_REJECTED envelope.
@@ -182,6 +212,9 @@ func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if !s.requireSeller(w, userID) {
+		return
+	}
 	var body struct {
 		Name        string `json:"name"`
 		ImageURL    string `json:"imageUrl"`
@@ -205,6 +238,11 @@ func (s *Server) handleFactsDraft(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	// The sidecar fetches imageUrls server-side to feed the VLM. A relative
+	// "/uploads/x" (sent by older/cached frontends) has no scheme → the fetch
+	// fails ("unsupported protocol scheme"). Rewrite same-origin relative URLs
+	// to absolute using the inbound Host so any frontend version works.
+	body = rewriteRelativeImageURLs(body, r)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.cfg.AISidecarURL+"/facts/draft", strings.NewReader(string(body)))
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
@@ -222,11 +260,47 @@ func (s *Server) handleFactsDraft(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, io.LimitReader(resp.Body, 1<<20))
 }
 
+// rewriteRelativeImageURLs upgrades same-origin relative imageUrls ("/uploads/x")
+// to absolute ("http://<host>/uploads/x") so the ai-sidecar's server-side image
+// fetch can resolve them. Leaves absolute URLs and a malformed body untouched.
+func rewriteRelativeImageURLs(body []byte, r *http.Request) []byte {
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	urls, ok := m["imageUrls"].([]any)
+	if !ok {
+		return body
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	changed := false
+	for i, u := range urls {
+		if s, ok := u.(string); ok && strings.HasPrefix(s, "/") && !strings.HasPrefix(s, "//") {
+			urls[i] = scheme + "://" + r.Host + s
+			changed = true
+		}
+	}
+	if !changed {
+		return body
+	}
+	m["imageUrls"] = urls
+	if out, err := json.Marshal(m); err == nil {
+		return out
+	}
+	return body
+}
+
 // POST /api/auctions {productId, rules} -> {auctionId}
 func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !s.requireSeller(w, userID) {
 		return
 	}
 	var body struct {
@@ -1032,7 +1106,7 @@ func clampLeaderboardN(q string) int {
 	return v
 }
 
-// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, amountCents}]}.
+// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, displayName, amountCents}]}.
 // Top-n bidders by accepted max amount (Redis ZSET), money as string. n clamps to [1,100].
 // Requires a valid token: the bidder list (userId + amount) is room-scoped data, not
 // public the way the single current price is — so unlike GET /auctions/{id} it is gated.
@@ -1046,6 +1120,21 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// #260-3: label rows with nicknames. WS BID_ACCEPTED already carries
+	// displayName; without this the REST reconcile path showed raw `user_xxx`
+	// ids for bidders the client never saw live. Best-effort — on DB error the
+	// rows go out unlabeled (client falls back to userId), never a 500.
+	if len(lb) > 0 {
+		ids := make([]string, len(lb))
+		for i := range lb {
+			ids[i] = lb[i].UserID
+		}
+		if names, nerr := s.st.UserNicknames(r.Context(), ids); nerr == nil {
+			for i := range lb {
+				lb[i].DisplayName = names[lb[i].UserID]
+			}
+		}
 	}
 	// Stamp the response with the auction's current state seq so the client can
 	// reconcile by seq: it merge-MAXes the REST rows into its live board and never

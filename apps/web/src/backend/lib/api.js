@@ -21,10 +21,13 @@ export class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, signal, auth = true } = {}) {
+async function request(path, { method = 'GET', body, signal, auth = true, token, seat = '' } = {}) {
   const headers = { 'content-type': 'application/json' };
   if (auth) {
-    const tok = currentToken();
+    // An explicit `token` (a Showcase seat's own JWT) wins over the default-seat
+    // session, so 买家A/买家B bid under their OWN identity — not whichever seat
+    // logged in last. Omitted (single-room /m + /admin) → the device token.
+    const tok = token ?? currentToken();
     if (tok) headers.Authorization = `Bearer ${tok}`;
   }
   const res = await fetch(`${API_BASE}${path}`, {
@@ -46,7 +49,7 @@ async function request(path, { method = 'GET', body, signal, auth = true } = {})
     // session via the event — which couples this layer to UI flow.
     // Keeping the path observable + caller-driven is simpler.
     if (res.status === 401 && auth) {
-      handleAuthFailure();
+      handleAuthFailure(seat);
     }
     // Backend convention: { code: "ERR_...", message?: "..." } on error.
     let code, message;
@@ -77,12 +80,48 @@ export const api = {
   /** Snapshot fallback used by LiveRoomRoute before the WS opens. */
   getAuction: (id) => request(`/auctions/${id}`),
 
+  /** Seller/owner: live-stream descriptor for 开始直播. Returns { streamKey, pushUrl, livePlayUrl }. */
+  getStream: (id) => request(`/auctions/${id}/stream`),
+
+  /**
+   * Seller/owner: upload a prepared clip (multipart, ≤64MB, mp4/webm) to drive
+   * this auction's live feed without OBS. Points live_play_url at the file, so
+   * the room hands it to every viewer and auto-loops it. Returns { livePlayUrl }.
+   * Multipart: no JSON content-type header (browser sets the boundary).
+   */
+  uploadStreamVideo: async (id, file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers = {};
+    const tok = currentToken();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/auctions/${id}/stream/video`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthFailure();
+      let code, message;
+      try {
+        const j = await res.json();
+        code = j.code; message = j.error || j.message;
+      } catch {
+        message = res.statusText;
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res.json();
+  },
+
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
-  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable. */
-  placeBid: (id, payload, { signal } = {}) =>
-    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, signal }),
+  /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable.
+   *  opts: { signal?, token?, seat? } — `token`/`seat` let a Showcase seat bid under
+   *  its OWN identity (买家A/买家B). NB: a destructured default `({ signal, token,
+   *  seat = '' } = {})` makes TS infer the param as `{ seat? }` only (binding-default
+   *  gotcha) and reject the engine's `{ token, signal }` call (tsc --noEmit fails even
+   *  though it runs fine). Taking `opts` ({}-typed) accepts any caller object and
+   *  forwards signal/token/seat to request() unchanged. */
+  placeBid: (id, payload, opts = {}) =>
+    request(`/auctions/${id}/bids`, { method: 'POST', body: payload, ...opts }),
 
   /** Stub today (PR #34 fills the timeline + hash chain). */
   getEvidence: (id) => request(`/auctions/${id}/evidence`),
@@ -200,11 +239,12 @@ export const api = {
    * The bid path NEVER calls draftFacts, so AI-down does not affect
    * BID_PLACE / BID_ACCEPTED. V9 P3 invariant.
    */
-  draftFacts: async ({ productId, imageUrls, title, description }) => {
+  draftFacts: async ({ productId, imageUrls, title, description, signal }) => {
     try {
       const result = await request('/facts/draft', {
         method: 'POST',
         body: { productId, imageUrls, title, description },
+        signal,
       });
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('lumen:ai-sidecar-ok'));

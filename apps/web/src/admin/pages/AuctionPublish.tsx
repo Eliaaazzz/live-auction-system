@@ -1,23 +1,143 @@
 import { useState } from 'react';
-import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
+import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, App as AntdApp } from 'antd';
+import { PlusOutlined, RocketOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
+import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
+import { INTRO_TEMPLATES, defaultIntro, pickIntro } from '../../lib/intro';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
+import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type AuctionDraft } from '../drafts';
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
 
-const CAT_EMOJI: Record<string, string> = { 玉石珠宝: '🧿', 翡翠玉镯: '💚', 二手奢侈品: '⌚️', 文玩杂项: '🫖', 钱币邮票: '🪙', 艺术品: '🎴', 特色食品: '🍫' };
-const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠玉镯: PROD.jadeBangle, 二手奢侈品: PROD.watch, 文玩杂项: PROD.teapot, 钱币邮票: PROD.goldNecklace, 艺术品: PROD.diamond, 特色食品: PROD.chocolate };
+// 本地占位图（products/…）和上传图（/uploads/…）都是相对路径；发给 AI 识图、
+// 存进后端的 imageUrl 统一补成同源绝对地址（过 SSRF、跨端可取）。
+const toAbsUrl = (u: string): string => (u.startsWith('http') ? u : new URL(u, location.href).toString());
+
+const CAT_EMOJI: Record<string, string> = { 名表: '⌚️', 箱包: '👜', 服饰: '👗', 鞋履: '👟' };
+const CAT_IMG: Record<string, string> = { 名表: PROD.watch, 箱包: PROD.bag, 服饰: PROD.apparel, 鞋履: PROD.shoes };
 
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
   const v = Form.useWatch([], form) || {};
-  const previewImg = CAT_IMG[v.category as string] ?? PROD.jadePendant;
+  const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
+  const [fileList, setFileList] = useState<any[]>([]);
+  const [drafts, setDrafts] = useState<AuctionDraft[]>(() => listDrafts());
+  const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
+  const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
+
+  // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
+  const handleUpload = async (file: File): Promise<boolean> => {
+    if (!/image\/(png|jpe?g|webp|gif)/.test(file.type)) { message.error('仅支持 png / jpg / webp / gif'); return false; }
+    if (file.size > 5 * 1024 * 1024) { message.error('图片需 ≤ 5MB'); return false; }
+    setFileList([{ uid: file.name, name: file.name, status: 'uploading' }]);
+    try {
+      await ensureSession('seller-demo');
+      const { url } = await api.uploadImage(file);
+      setUploadedUrl(url);
+      setFileList([{ uid: file.name, name: file.name, status: 'done', url }]);
+      message.success('商品主图已上传');
+    } catch (e: any) {
+      setFileList([]); setUploadedUrl(null);
+      message.error('图片上传失败：' + (e?.message || e));
+    }
+    return false; // stop antd's built-in XHR; we upload via api.uploadImage
+  };
+
+  // ✨ AI 生成商品介绍 —— 秒出 + 后台真 AI 精修：
+  //   1) 点击【立刻】写入有人味的分类模板（lib/intro），卖家零等待、按钮不转圈、永不空白；
+  //   2) 同时【非阻塞】调真豆包多模态识图（/facts/draft）。同一个能读图的模型一次调用
+  //      直出 facts + intro 文案（sidecar 已做合规清洗），12s 内返回且卖家未改动就替换；
+  //      超时/失败/已被改动则保留模板。12s 按 doubao-seed-flash 档位给（通常 2~4s 返
+  //      回），thinking 系模型请直接换接入点而不是调大这里。
+  // 这样真模型再慢也不卡 demo，而 AI 仍真实在跑（不是假装）。
+  const onAiIntro = () => {
+    const name = String(form.getFieldValue('name') || '').trim();
+    if (!name) { message.warning('请先填写商品名称'); return; }
+    const category = form.getFieldValue('category') as string;
+    const tpl = (INTRO_TEMPLATES[category] ?? defaultIntro)(name).slice(0, 200);
+    form.setFieldsValue({ intro: tpl });
+    message.success('✨ 已生成商品介绍');
+
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    void (async () => {
+      try {
+        await ensureSession('seller-demo');
+        const resp = await api.draftFacts({
+          productId: 'draft-preview',
+          title: name,
+          description: tpl,
+          // AI 视觉需服务端可抓取的【绝对】URL。
+          imageUrls: [toAbsUrl(uploadedUrl || (CAT_IMG[category] ?? PROD.watch))],
+          signal: ctrl.signal,
+        });
+        const refined = pickIntro(name, resp);
+        // 仅当卖家没动过（仍等于模板）才用 AI 版覆盖，绝不抹掉卖家手改。
+        if (refined && form.getFieldValue('name') === name && form.getFieldValue('intro') === tpl) {
+          form.setFieldsValue({ intro: refined });
+          message.success('✨ AI 已看图重写介绍');
+        }
+      } catch {
+        /* 超时/中止/失败：静默保留模板——demo 永不暴露 AI 慢或不可用。 */
+      } finally {
+        clearTimeout(timer);
+      }
+    })();
+  };
+
+  // AI 推荐加价幅度：按封顶价（=价值上限）取 ≈2.5% 的「好看」档位。高价品给到有分量的
+  // 一档（劳力士封顶 5 万→¥1300，而非旧公式的 ¥250）。详见 lib/pricing.recommendIncrement。
+  const onAiStep = () => {
+    const cap = Number(form.getFieldValue('cap')) || 0;
+    const rec = recommendIncrement(cap);
+    form.setFieldsValue({ step: rec });
+    message.success(`AI 推荐加价幅度 ¥${rec}${cap ? '（按封顶价约 2.5%）' : ''}`);
+  };
+
+  // ---- 草稿箱：localStorage 持久化（demo 单卖家本机即可）。存/载/删，发布成功即消耗。 ----
+  const onSaveDraft = () => {
+    const vals = form.getFieldsValue();
+    const name = String(vals.name || '').trim();
+    if (!name) { message.warning('先填写商品名称，才能存草稿'); return; }
+    const id = draftId ?? newDraftId();
+    setDrafts(upsertDraft({
+      id, savedAt: Date.now(), name,
+      category: vals.category, intro: vals.intro,
+      cap: vals.cap, step: vals.step,
+      duration: vals.duration, autoExtend: vals.autoExtend, extendSec: vals.extendSec,
+      imageUrl: uploadedUrl,
+    }));
+    setDraftId(id);
+    message.success(draftId ? '草稿已更新 · 见下方草稿箱' : '已存入下方草稿箱 📦');
+  };
+
+  const onLoadDraft = (d: AuctionDraft) => {
+    form.setFieldsValue({
+      name: d.name, category: d.category, intro: d.intro,
+      cap: d.cap, step: d.step,
+      duration: d.duration, autoExtend: d.autoExtend, extendSec: d.extendSec,
+    });
+    if (d.imageUrl) {
+      setUploadedUrl(d.imageUrl);
+      setFileList([{ uid: d.id, name: '草稿主图', status: 'done', url: d.imageUrl }]);
+    } else {
+      setUploadedUrl(null);
+      setFileList([]);
+    }
+    setDraftId(d.id);
+    message.success(`已载入草稿「${d.name}」，可继续编辑发布`);
+  };
+
+  const onDeleteDraft = (id: string) => {
+    setDrafts(removeDraft(id));
+    if (draftId === id) setDraftId(null);
+    message.success('草稿已删除');
+  };
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
   // The auction immediately appears in the buyer mobile rail and is biddable.
@@ -26,7 +146,7 @@ export default function AuctionPublish() {
       setBusy(true);
       try {
         await ensureSession('seller-demo');
-        const imageUrl = CAT_IMG[vals.category as string] ?? PROD.jadePendant;
+        const imageUrl = toAbsUrl(uploadedUrl || (CAT_IMG[vals.category as string] ?? PROD.watch));
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -41,7 +161,8 @@ export default function AuctionPublish() {
           confirmedFacts: { description: vals.intro || '', category: vals.category || '' },
           rules: {
             mode: 'ENGLISH',
-            startPriceCents: yuanToCents(vals.start),
+            // 始终 0 元起拍 · 无保留价：忽略表单值，硬编码为 0。
+            startPriceCents: '0',
             incrementCents: yuanToCents(vals.step),
             capPriceCents: yuanToCents(vals.cap),
             durationSec,
@@ -53,6 +174,13 @@ export default function AuctionPublish() {
         await api.freeze(auctionId, { factsConfirmed: true });
         await api.startLive(auctionId, { durationMs: durationSec * 1000 });
         message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
+        // 发布后重置表单与已上传主图：否则 uploadedUrl 会被下一个商品沿用，
+        // 导致「商品图片不反应商品变化」（新商品发上了上一个商品的图）。
+        form.resetFields();
+        setUploadedUrl(null);
+        setFileList([]);
+        // 从草稿载入的商品发布成功即消耗草稿：避免已上架的商品还躺在草稿箱里被重复发布。
+        if (draftId) { setDrafts(removeDraft(draftId)); setDraftId(null); }
       } catch (e: any) {
         message.error('发布失败：' + (e?.message || e));
       } finally {
@@ -65,33 +193,58 @@ export default function AuctionPublish() {
     <div className="admin-content">
       <Alert type="info" showIcon style={{ marginBottom: 18 }} message="发布即生成竞拍状态机：上架 → 竞拍中 → 截拍中 → 成交/流拍。规则一经有人出价不可再改，请提前配置好。" />
       <div className="pub-grid">
-        <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15 }}>
+        <Form form={form} layout="vertical" initialValues={{ category: '名表', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15 }}>
           <Divider orientation="left" plain>商品信息</Divider>
-          <Form.Item label="商品主图" required>
-            <Upload listType="picture-card" beforeUpload={() => false} maxCount={4}>
-              <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>
+          <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）；未上传则使用所选分类的示例图">
+            <Upload
+              listType="picture-card"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              fileList={fileList}
+              maxCount={1}
+              beforeUpload={handleUpload}
+              onRemove={() => { setFileList([]); setUploadedUrl(null); }}
+            >
+              {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>}
             </Upload>
           </Form.Item>
           <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
-            <Input placeholder="如：金镶玉平安扣·和田玉吊坠项链首饰" maxLength={60} showCount />
+            <Input placeholder="如：百达翡丽年历计时腕表 玫瑰金蓝盘" maxLength={60} showCount />
           </Form.Item>
           <Form.Item label="商品分类" name="category">
             <Select options={Object.keys(CAT_EMOJI).map((c) => ({ label: `${CAT_EMOJI[c]} ${c}`, value: c }))} />
           </Form.Item>
-          <Form.Item label="商品介绍" name="intro">
+          <Form.Item
+            name="intro"
+            label={
+              <Space>
+                <span>商品介绍</span>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiIntro}>✨ AI 生成介绍</Button>
+              </Space>
+            }
+          >
             <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
           </Form.Item>
           <Divider orientation="left" plain>竞拍规则</Divider>
           <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="起拍价" name="start" style={{ flex: 1 }} tooltip="填 0 即 0 元起拍，人人可参与">
-              <InputNumber min={0} step={50} addonBefore="¥" style={{ width: '100%' }} />
+            <Form.Item label="起拍价" name="start" style={{ flex: 1 }} extra="0 元起拍（固定 · 无保留价）" tooltip="本场拍卖始终 0 元起拍，无保留价，人人可参与">
+              <InputNumber min={0} max={0} step={0} value={0} disabled addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="封顶价" name="cap" style={{ flex: 1 }} tooltip="出价达到封顶价立即成交">
               <InputNumber min={0} step={500} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
           </Space>
           <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="加价幅度（固定）" name="step" style={{ flex: 1 }} rules={[{ required: true }]}>
+            <Form.Item
+              name="step"
+              style={{ flex: 1 }}
+              rules={[{ required: true }]}
+              label={
+                <Space>
+                  <span>加价幅度（固定）</span>
+                  <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiStep}>AI 推荐</Button>
+                </Space>
+              }
+            >
               <InputNumber min={1} step={10} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
             <Form.Item label="竞拍时长（秒）" name="duration" style={{ flex: 1 }}>
@@ -108,8 +261,44 @@ export default function AuctionPublish() {
           </Space>
           <Space style={{ marginTop: 8 }}>
             <Button type="primary" size="large" icon={<RocketOutlined />} loading={busy} onClick={onPublish}>立即发布开拍</Button>
-            <Button size="large" icon={<SaveOutlined />} onClick={() => message.success('已存草稿')}>存草稿</Button>
+            <Button size="large" icon={<SaveOutlined />} onClick={onSaveDraft}>存草稿{drafts.length > 0 ? ` (${drafts.length})` : ''}</Button>
           </Space>
+
+          {/* 草稿箱：有草稿才出现，正好长在「存草稿」按钮下方——存完立刻看得见。 */}
+          {drafts.length > 0 && (
+            <div className="draft-box">
+              <div className="draft-box-head">
+                <span className="draft-box-title"><FolderOpenOutlined /> 草稿箱</span>
+                <span className="draft-box-count">{drafts.length}</span>
+                <span className="draft-box-hint">存在本机浏览器 · 载入即可继续编辑</span>
+              </div>
+              {drafts.map((d) => (
+                <div key={d.id} className={'draft-item' + (d.id === draftId ? ' editing' : '')}>
+                  <img
+                    className="draft-thumb"
+                    src={d.imageUrl || CAT_IMG[d.category ?? ''] || PROD.watch}
+                    alt=""
+                    onError={(e) => { e.currentTarget.src = CAT_IMG[d.category ?? ''] ?? PROD.watch; }}
+                  />
+                  <div className="draft-meta">
+                    <div className="draft-name">{d.name}</div>
+                    <div className="draft-sub">
+                      {CAT_EMOJI[d.category ?? ''] ? `${CAT_EMOJI[d.category ?? '']} ` : ''}{d.category || '未分类'} · 封顶 ¥{fmtMoney(d.cap ?? 0)} · 加价 ¥{fmtMoney(d.step ?? 0)} · {d.duration ?? 80}s
+                    </div>
+                  </div>
+                  <span className="draft-time">{fmtSavedAt(d.savedAt)}</span>
+                  {d.id === draftId ? (
+                    <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>编辑中</Tag>
+                  ) : (
+                    <Button size="small" type="primary" ghost onClick={() => onLoadDraft(d)}>载入</Button>
+                  )}
+                  <Popconfirm title="删除这条草稿？" okText="删除" cancelText="留着" okButtonProps={{ danger: true }} onConfirm={() => onDeleteDraft(d.id)}>
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除草稿" />
+                  </Popconfirm>
+                </div>
+              ))}
+            </div>
+          )}
         </Form>
         <div className="pub-preview">
           <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>移动端直播间预览</div>
@@ -122,7 +311,7 @@ export default function AuctionPublish() {
                 <div><div style={{ fontSize: 10, opacity: 0.7 }}>{v.start === 0 ? '0 元起拍' : '起拍价'}</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(v.start ?? 0)}</div></div>
                 <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, opacity: 0.7 }}>加价幅度</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(step)}</div></div>
               </div>
-              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>封顶 ¥{fmtMoney(v.cap ?? 0)} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'}</div>
+              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>{(v.cap ?? 0) > 0 ? `封顶 ¥${fmtMoney(v.cap)}` : '不封顶'} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'}</div>
             </div>
             <div className="pub-cta">立即出价 ¥{fmtMoney((v.start ?? 0) + step)}</div>
           </div>
