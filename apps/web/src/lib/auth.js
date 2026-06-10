@@ -1,8 +1,7 @@
 // src/lib/auth.js
 //
-// Session bootstrap. The Lumen backend ships a dev-login endpoint
-// (POST /api/dev-login) that mints a JWT signed with JWT_SECRET when
-// ENABLE_DEV_LOGIN=true. Production OTP / Doubao auth is post-MVP (P1).
+// Session bootstrap. Production services expose `POST /api/login`; legacy
+// deployments may still expose `POST /api/dev-login`.
 //
 // Usage:
 //   import { ensureSession, currentToken, currentUser } from '@/lib/auth';
@@ -65,18 +64,35 @@ export function handleAuthFailure() {
 }
 
 /**
- * Mint or reuse a dev-login session. No-ops if a token is already cached.
- * @param {string} nickname — display name for the dev account.
+ * Mint or reuse a session token. No-ops if a token is already cached.
+ * @param {string} nickname — display name for the account.
  */
 export async function ensureSession(nickname = 'demo') {
   if (currentToken()) return readStorage();
-  const res = await fetch('/api/dev-login', {
+  const payload = {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ nickname }),
-  });
-  if (!res.ok) throw new Error(`dev-login ${res.status}`);
+  };
+
+  const loginRes = await fetch('/api/login', payload).catch(() => null);
+  const fallbackRes =
+    loginRes?.ok
+      ? null
+      : await fetch('/api/dev-login', payload).catch(() => null);
+
+  const res = loginRes?.ok ? loginRes : fallbackRes;
+  if (!res?.ok) {
+    const loginStatus = loginRes ? String(loginRes.status) : 'failed';
+    const fallbackStatus = fallbackRes ? String(fallbackRes.status) : 'failed';
+    throw new Error(`login failed: /api/login ${loginStatus}; /api/dev-login ${fallbackStatus}`);
+  }
+
   const session = await res.json();
+  if (!session || typeof session.token !== 'string' || session.token.length === 0) {
+    throw new Error('login response missing token');
+  }
+
   // session = { userId, token, nickname }
   writeStorage(session);
   return session;

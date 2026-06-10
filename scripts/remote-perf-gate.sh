@@ -20,6 +20,9 @@ Environment thresholds:
   HAMMER_P95_MAX_MS=${HAMMER_P95_MAX_MS:-500}
   CATCHUP_P95_MAX_MS=${CATCHUP_P95_MAX_MS:-1000}
   CLIENT_CONNECT_FAIL_RATE_MAX_PCT=${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-}
+  MAX_TIMER_ERR_INTERNAL=${MAX_TIMER_ERR_INTERNAL:-}
+  MAX_TIMER_ERR_INTERNAL_KEY_TYPE=${MAX_TIMER_ERR_INTERNAL_KEY_TYPE:-}
+  MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH=${MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH:-}
   REQUIRE_HAMMER=${REQUIRE_HAMMER:-1}
   REQUIRE_CATCHUP=${REQUIRE_CATCHUP:-1}
   ROOM_STATE_PATCH_MIN_EMITTED=${ROOM_STATE_PATCH_MIN_EMITTED:-0}
@@ -47,9 +50,9 @@ normalize_bool() {
     1|true|yes|on)
       echo 1
       ;;
-    0|false|no|off)
-      echo 0
-      ;;
+  0|false|no|off)
+    echo 0
+    ;;
     *)
       echo "error: invalid boolean value '$1'; expected 0/1/true/false/yes/no/on/off" >&2
       exit 2
@@ -64,6 +67,18 @@ die() {
 
 need_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
+}
+
+copy_evidence_file() {
+  src="$1"
+  dst="$2"
+  if [ -z "$src" ] || [ -z "$dst" ]; then
+    return 1
+  fi
+  if [ "$src" = "$dst" ]; then
+    return 0
+  fi
+  cp "$src" "$dst"
 }
 
 json_num() {
@@ -169,6 +184,9 @@ BROADCAST_P95_MAX_MS="${BROADCAST_P95_MAX_MS:-150}"
 HAMMER_P95_MAX_MS="${HAMMER_P95_MAX_MS:-500}"
 CATCHUP_P95_MAX_MS="${CATCHUP_P95_MAX_MS:-1000}"
 CLIENT_CONNECT_FAIL_RATE_MAX_PCT="${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-}"
+MAX_TIMER_ERR_INTERNAL="${MAX_TIMER_ERR_INTERNAL:-}"
+MAX_TIMER_ERR_INTERNAL_KEY_TYPE="${MAX_TIMER_ERR_INTERNAL_KEY_TYPE:-}"
+MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH="${MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH:-}"
 REQUIRE_HAMMER="${REQUIRE_HAMMER:-1}"
 REQUIRE_CATCHUP="${REQUIRE_CATCHUP:-1}"
 ROOM_STATE_PATCH_MIN_EMITTED="${ROOM_STATE_PATCH_MIN_EMITTED:-0}"
@@ -234,6 +252,15 @@ fi
 if ! is_non_negative_int "$ROOM_STATE_PATCH_MIN_BIDS"; then
   die "ROOM_STATE_PATCH_MIN_BIDS must be a non-negative integer"
 fi
+if [ -n "$MAX_TIMER_ERR_INTERNAL" ] && ! is_non_negative_int "$MAX_TIMER_ERR_INTERNAL"; then
+  die "MAX_TIMER_ERR_INTERNAL must be a non-negative integer"
+fi
+if [ -n "$MAX_TIMER_ERR_INTERNAL_KEY_TYPE" ] && ! is_non_negative_int "$MAX_TIMER_ERR_INTERNAL_KEY_TYPE"; then
+  die "MAX_TIMER_ERR_INTERNAL_KEY_TYPE must be a non-negative integer"
+fi
+if [ -n "$MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH" ] && ! is_non_negative_int "$MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH"; then
+  die "MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH must be a non-negative integer"
+fi
 
 [ -n "$SERVER_METRICS" ] || usage
 [ -r "$SERVER_METRICS" ] || die "cannot read --server-metrics: $SERVER_METRICS"
@@ -254,9 +281,9 @@ SERVER_COPY="$OUT_DIR/server-metrics.json"
 GATE_TSV="$OUT_DIR/gate.tsv"
 SUMMARY_MD="$OUT_DIR/summary.md"
 CLIENT_TSV="$OUT_DIR/client-observed.tsv"
-cp "$SERVER_METRICS" "$SERVER_COPY"
+copy_evidence_file "$SERVER_METRICS" "$SERVER_COPY"
 if [ -n "$CLIENT_SUMMARY" ]; then
-  cp "$CLIENT_SUMMARY" "$OUT_DIR/client-summary.json"
+  copy_evidence_file "$CLIENT_SUMMARY" "$OUT_DIR/client-summary.json"
 fi
 
 if ! jq -e 'type == "object"' "$SERVER_COPY" >/dev/null 2>&1; then
@@ -278,6 +305,9 @@ SEQ_GAPS=$(json_num '.seqGapCount // .sequenceGapCount // .eventSeqGaps // .serv
 BACKPRESSURE_CLOSES=$(json_num '.backpressureForceClose // .backpressure_force_close // .ws.backpressureForceClose // .server.backpressureForceClose // .lumen.backpressureForceClose // .lumen_backpressure_force_close_total' "$SERVER_COPY")
 ROOM_PATCH_EMITTED=$(json_num '.roomStatePatchEmitted // .room_state_patch_emitted // .roomStatePatch' "$SERVER_COPY")
 ROOM_PATCH_BIDS=$(json_num '.roomStatePatchBids // .room_state_patch_bids // .roomStatePatchBids' "$SERVER_COPY")
+TIMER_ERR_INTERNAL=$(json_num '.timerErrInternal // .timer_err_internal // .server.timerErrInternal // .lumen.timerErrInternal' "$SERVER_COPY")
+TIMER_ERR_INTERNAL_KEY_TYPE=$(json_num '.timerErrInternalKeyType // .timer_err_internal_key_type // .server.timerErrInternalKeyType // .lumen.timerErrInternalKeyType' "$SERVER_COPY")
+TIMER_ERR_INTERNAL_SEQ_MISMATCH=$(json_num '.timerErrInternalSeqMismatch // .timer_err_internal_seq_mismatch // .server.timerErrInternalSeqMismatch // .lumen.timerErrInternalSeqMismatch' "$SERVER_COPY")
 
 if [ "${TARGET_CONNS:-0}" = "0" ]; then
   add_check "server_active_conns" "0" "$ACTIVE_CONNS" ">=" "0"
@@ -292,6 +322,9 @@ add_check "server_seq_gap_count" "1" "$SEQ_GAPS" "==" "0"
 add_check "server_backpressure_force_close" "0" "$BACKPRESSURE_CLOSES" "==" "0"
 add_check "server_room_state_patch_emitted" "$([ "$ROOM_STATE_PATCH_MIN_EMITTED" -gt 0 ] && echo 1 || echo 0)" "$ROOM_PATCH_EMITTED" ">=" "$ROOM_STATE_PATCH_MIN_EMITTED"
 add_check "server_room_state_patch_bids" "$([ "$ROOM_STATE_PATCH_MIN_BIDS" -gt 0 ] && echo 1 || echo 0)" "$ROOM_PATCH_BIDS" ">=" "$ROOM_STATE_PATCH_MIN_BIDS"
+add_check "server_timer_err_internal" "$([ -n "$MAX_TIMER_ERR_INTERNAL" ] && echo 1 || echo 0)" "$TIMER_ERR_INTERNAL" "<=" "$MAX_TIMER_ERR_INTERNAL"
+add_check "server_timer_err_internal_key_type" "$([ -n "$MAX_TIMER_ERR_INTERNAL_KEY_TYPE" ] && echo 1 || echo 0)" "$TIMER_ERR_INTERNAL_KEY_TYPE" "<=" "$MAX_TIMER_ERR_INTERNAL_KEY_TYPE"
+add_check "server_timer_err_internal_seq_mismatch" "$([ -n "$MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH" ] && echo 1 || echo 0)" "$TIMER_ERR_INTERNAL_SEQ_MISMATCH" "<=" "$MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH"
 
 if [ -n "$CLIENT_SUMMARY" ]; then
   CLIENT_COPY="$OUT_DIR/client-summary.json"
@@ -355,6 +388,15 @@ fi
   echo "- catchup_p95_ms <= $CATCHUP_P95_MAX_MS when REQUIRE_CATCHUP=$REQUIRE_CATCHUP"
   if [ -n "$CLIENT_CONNECT_FAIL_RATE_MAX_PCT" ]; then
     echo "- client_connect_failure_rate_pct <= $CLIENT_CONNECT_FAIL_RATE_MAX_PCT"
+  fi
+  if [ -n "$MAX_TIMER_ERR_INTERNAL" ]; then
+    echo "- timerErrInternal <= $MAX_TIMER_ERR_INTERNAL"
+  fi
+  if [ -n "$MAX_TIMER_ERR_INTERNAL_KEY_TYPE" ]; then
+    echo "- timerErrInternalKeyType <= $MAX_TIMER_ERR_INTERNAL_KEY_TYPE"
+  fi
+  if [ -n "$MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH" ]; then
+    echo "- timerErrInternalSeqMismatch <= $MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH"
   fi
   echo "- roomStatePatchEmitted >= $ROOM_STATE_PATCH_MIN_EMITTED if set (>0)"
   echo "- roomStatePatchBids >= $ROOM_STATE_PATCH_MIN_BIDS if set (>0)"

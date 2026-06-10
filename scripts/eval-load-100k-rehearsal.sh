@@ -11,6 +11,9 @@ Environment:
   MAX_OBSERVER_DIAL_ERRORS   max allowed observer dialErrors in summary checks (default: 0)
   MAX_SEQ_GAP                max allowed seqGapCount in summary checks (default: 0)
   MAX_BACKPRESSURE           max allowed backpressureForceClose in summary checks (default: 0)
+  MAX_WS_AUTH_UNAUTHORIZED   max allowed wsAuthUnauthorized in summary checks (default: 0)
+  MAX_WS_SCHEMA_MISMATCH     max allowed wsSchemaMismatch in summary checks (default: 0)
+  MAX_WS_UPGRADE_FAILED      max allowed wsUpgradeFailed in summary checks (default: 0)
   MIN_ACTIVE_CONNECTIONS_PEAK minimum required max active_connections across runs (default: 0)
   REQUIRE_CATCHUP            force catchup checks as required when summary was run with --catchup-smoke (default: auto)
   REQUIRE_WS_PRECHECK        force ws-precheck checks as required when summary was run with --ws-precheck (default: auto)
@@ -23,6 +26,9 @@ Options:
   --max-observer-dial-errors N
   --max-seq-gap N
   --max-backpressure N
+  --max-ws-auth-unauthorized N
+  --max-ws-schema-mismatch N
+  --max-ws-upgrade-failed N
   --min-active-connections-peak N
   --min-bid-sent N          minimum allowed bidder.sent per run (default: 1)
   --min-bid-acked N         minimum allowed bidder.acked per run (default: 1)
@@ -86,6 +92,9 @@ MAX_OBSERVER_READ_ERRORS="${MAX_OBSERVER_READ_ERRORS:-0}"
 MAX_OBSERVER_DIAL_ERRORS="${MAX_OBSERVER_DIAL_ERRORS:-0}"
 MAX_SEQ_GAP="${MAX_SEQ_GAP:-0}"
 MAX_BACKPRESSURE="${MAX_BACKPRESSURE:-0}"
+MAX_WS_AUTH_UNAUTHORIZED="${MAX_WS_AUTH_UNAUTHORIZED:-0}"
+MAX_WS_SCHEMA_MISMATCH="${MAX_WS_SCHEMA_MISMATCH:-0}"
+MAX_WS_UPGRADE_FAILED="${MAX_WS_UPGRADE_FAILED:-0}"
 MIN_BID_SENT="${MIN_BID_SENT:-1}"
 MIN_BID_ACKED="${MIN_BID_ACKED:-1}"
 MIN_ACTIVE_CONNECTIONS_PEAK="${MIN_ACTIVE_CONNECTIONS_PEAK:-0}"
@@ -129,6 +138,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-backpressure)
       MAX_BACKPRESSURE="$2"
+      shift 2
+      ;;
+    --max-ws-auth-unauthorized)
+      MAX_WS_AUTH_UNAUTHORIZED="$2"
+      shift 2
+      ;;
+    --max-ws-schema-mismatch)
+      MAX_WS_SCHEMA_MISMATCH="$2"
+      shift 2
+      ;;
+    --max-ws-upgrade-failed)
+      MAX_WS_UPGRADE_FAILED="$2"
       shift 2
       ;;
     --min-active-connections-peak)
@@ -198,6 +219,18 @@ fi
 
 if ! is_non_negative_int "$MAX_BACKPRESSURE"; then
   echo "error: --max-backpressure must be a non-negative integer"
+  exit 2
+fi
+if ! is_non_negative_int "$MAX_WS_AUTH_UNAUTHORIZED"; then
+  echo "error: --max-ws-auth-unauthorized must be a non-negative integer"
+  exit 2
+fi
+if ! is_non_negative_int "$MAX_WS_SCHEMA_MISMATCH"; then
+  echo "error: --max-ws-schema-mismatch must be a non-negative integer"
+  exit 2
+fi
+if ! is_non_negative_int "$MAX_WS_UPGRADE_FAILED"; then
+  echo "error: --max-ws-upgrade-failed must be a non-negative integer"
   exit 2
 fi
 if ! is_non_negative_int "$MIN_BID_SENT"; then
@@ -289,6 +322,9 @@ eval_output=$(awk -F '\t' \
   -v max_dial="$MAX_OBSERVER_DIAL_ERRORS" \
   -v max_seq="$MAX_SEQ_GAP" \
   -v max_back="$MAX_BACKPRESSURE" \
+  -v max_ws_auth_unauthorized="$MAX_WS_AUTH_UNAUTHORIZED" \
+  -v max_ws_schema_mismatch="$MAX_WS_SCHEMA_MISMATCH" \
+  -v max_ws_upgrade_failed="$MAX_WS_UPGRADE_FAILED" \
   -v min_bid_sent="$MIN_BID_SENT" \
   -v min_bid_acked="$MIN_BID_ACKED" \
   -v min_active_conn_peak="$MIN_ACTIVE_CONNECTIONS_PEAK" \
@@ -352,6 +388,9 @@ NR==1 {
   observer_dial_errors = col("observer_dial_errors", "") + 0
   seq_gap_count = col("seq_gap_count", "") + 0
   backpressure_force_close = col("backpressure_force_close", "") + 0
+  ws_auth_unauthorized = (("ws_auth_unauthorized" in h) ? col("ws_auth_unauthorized", "") + 0 : 0)
+  ws_schema_mismatch = (("ws_schema_mismatch" in h) ? col("ws_schema_mismatch", "") + 0 : 0)
+  ws_upgrade_failed = (("ws_upgrade_failed" in h) ? col("ws_upgrade_failed", "") + 0 : 0)
   bidder_sent = col("bidder_sent", "bid_sent") + 0
   bidder_acked = col("bidder_acked", "bid_acked") + 0
   active_connections = col("active_connections", "") + 0
@@ -374,6 +413,9 @@ NR==1 {
   total_dial += observer_dial_errors
   total_seq += seq_gap_count
   total_back += backpressure_force_close
+  total_ws_auth_unauthorized += ws_auth_unauthorized
+  total_ws_schema_mismatch += ws_schema_mismatch
+  total_ws_upgrade_failed += ws_upgrade_failed
   total_bid_sent += bidder_sent
   total_bid_acked += bidder_acked
 
@@ -396,6 +438,18 @@ NR==1 {
   if (backpressure_force_close > max_back) {
     ok = 0
     reasons = reasons (length(reasons) ? "; " : "") "backpressure_force_close=" backpressure_force_close
+  }
+  if (ws_auth_unauthorized > max_ws_auth_unauthorized) {
+    ok = 0
+    reasons = reasons (length(reasons) ? "; " : "") "ws_auth_unauthorized=" ws_auth_unauthorized
+  }
+  if (ws_schema_mismatch > max_ws_schema_mismatch) {
+    ok = 0
+    reasons = reasons (length(reasons) ? "; " : "") "ws_schema_mismatch=" ws_schema_mismatch
+  }
+  if (ws_upgrade_failed > max_ws_upgrade_failed) {
+    ok = 0
+    reasons = reasons (length(reasons) ? "; " : "") "ws_upgrade_failed=" ws_upgrade_failed
   }
   if (bidder_sent < min_bid_sent) {
     ok = 0
@@ -448,6 +502,7 @@ END {
   printf "rows=%d\tpass=%d\tfail=%d\n", total, pass, fail
   printf "totals\tobserver_read_errors=%d\tobserver_dial_errors=%d\tseq_gap_count=%d\tbackpressure_force_close=%d\n", total_read, total_dial, total_seq, total_back
   printf "totals\tbidder_sent=%d\tbidder_acked=%d\n", total_bid_sent, total_bid_acked
+  printf "totals\tws_auth_unauthorized=%d\tws_schema_mismatch=%d\tws_upgrade_failed=%d\n", total_ws_auth_unauthorized, total_ws_schema_mismatch, total_ws_upgrade_failed
   printf "totals\tactive_connections_peak=%d\n", active_connections_peak
   if (has_issue) {
     print "result=FAIL"

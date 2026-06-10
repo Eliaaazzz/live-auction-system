@@ -182,6 +182,9 @@ func perfSetupAuction(hc *http.Client, target string) (string, error) {
 // (skipping the duplicate broadcast copy of earlier bids).
 func waitForBidAccepted(c *websocket.Conn, amount string, d time.Duration) error {
 	_ = c.SetReadDeadline(time.Now().Add(d))
+	defer func() {
+		_ = c.SetReadDeadline(time.Time{})
+	}()
 	for {
 		var env model.Envelope
 		if err := c.ReadJSON(&env); err != nil {

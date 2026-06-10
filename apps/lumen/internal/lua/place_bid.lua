@@ -24,7 +24,7 @@ local function canonicalAuctionMode(mode)
   if mode == 'first' or mode == 'first_price' or mode == 'firstprice' then
     return 'first_price'
   end
-  if mode == 'second' or mode == 'second_price' or mode == 'secondprice' or mode == 'vickrey' then
+  if mode == 'second' or mode == 'second_price' or mode == 'secondprice' or mode == 'vickrey' or mode == 'auction2' or mode == '2' then
     return 'second_price'
   end
   return mode
@@ -119,7 +119,7 @@ if lastEntry[1] then
 end
 if lastStreamSeq ~= stateSeq then return {'ERR_INTERNAL', 'seq_stream_mismatch'} end
 
--- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard (ZADD GT keeps
+-- 6. ACCEPT. Single seq (HINCRBY), update price/winner, leaderboard (score update keeps
 -- each member's accepted max). Money is written as the canonical STRING so values
 -- up to MAX_MONEY stay exact (a Lua number arg would format via %.14g and lose
 -- precision past 14 digits). cap==0 means "no buy-now ceiling".
@@ -153,7 +153,11 @@ local extend = (not capHit) and extendWindowSec > 0 and extendSec > 0
 
 local seq = redis.call('HINCRBY', state_key, 'seq', 1)
 redis.call('HMSET', state_key, 'currentPriceCents', amountStr, 'winnerId', userId)
-redis.call('ZADD', lb_key, 'GT', amountStr, userId)
+local best = redis.call('ZSCORE', lb_key, userId)
+local bestNum = tonumber(best)
+if best == false or bestNum == nil or bestNum < amount then
+  redis.call('ZADD', lb_key, amountStr, userId)
+end
 
 local newEndAtMs = endAtMs
 local extendCount = 0

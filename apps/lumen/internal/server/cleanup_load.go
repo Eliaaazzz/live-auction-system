@@ -15,6 +15,7 @@ import (
 type CleanupLoadOptions struct {
 	AuctionIDs       []string
 	AuctionFile      string
+	AuctionPrefix    string
 	ScanLoadAuctions bool
 	DryRun           bool
 }
@@ -54,8 +55,12 @@ func RunCleanupLoad(ctx context.Context, cfg config.Config, opts CleanupLoadOpti
 		}
 	}
 
+	if opts.AuctionPrefix != "" && !opts.ScanLoadAuctions {
+		return fmt.Errorf("--auction-prefix requires --scan-load-auctions")
+	}
+
 	if opts.ScanLoadAuctions {
-		stateAIDs, err := st.ScanStateAIDs(ctx)
+		stateAIDs, err := scanStateAIDs(ctx, st, opts.AuctionPrefix)
 		if err != nil {
 			return fmt.Errorf("scan state auction ids: %w", err)
 		}
@@ -163,4 +168,37 @@ func parseRedisInt64(s string) int64 {
 		return 0
 	}
 	return n
+}
+
+func scanStateAIDs(ctx context.Context, st *store.Store, aidPrefix string) ([]string, error) {
+	pattern := "auction:{*}:state"
+	if strings.TrimSpace(aidPrefix) != "" {
+		pattern = fmt.Sprintf("auction:{%s*}:state", aidPrefix)
+	}
+
+	var aids []string
+	var cursor uint64
+	for {
+		keys, next, err := st.Redis().Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			return nil, err
+		}
+		for _, k := range keys {
+			if aid := extractAuctionIDFromStateKey(k); aid != "" {
+				aids = append(aids, aid)
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return aids, nil
+		}
+	}
+}
+
+func extractAuctionIDFromStateKey(key string) string {
+	const prefix, suffix = "auction:{", "}:state"
+	if !strings.HasPrefix(key, prefix) || !strings.HasSuffix(key, suffix) || len(key) <= len(prefix)+len(suffix) {
+		return ""
+	}
+	return key[len(prefix) : len(key)-len(suffix)]
 }

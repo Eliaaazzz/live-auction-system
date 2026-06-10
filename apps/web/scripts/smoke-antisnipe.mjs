@@ -20,29 +20,19 @@
 //        countdown)
 //
 // Usage (from repo root):
-//   make up && make seed     # for the dev-login + ai-sidecar
+//   make up && make seed     # for session bootstrap + ai-sidecar
 //   cd apps/web && node scripts/smoke-antisnipe.mjs
 //
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, login } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
-
-async function devLogin(nick) {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: nick }),
-  });
-  if (!r.ok) throw new Error(`dev-login ${r.status}`);
-  return r.json();
-}
 
 async function api(token, path, opts = {}) {
   const r = await fetch(`${HOST_HTTP}/api${path}`, {
@@ -62,8 +52,8 @@ async function api(token, path, opts = {}) {
 }
 
 // ─── Phase 0 — setup ────────────────────────────────────────
-console.log('[setup] seller dev-login');
-const seller = await devLogin('fari-antisnipe-seller');
+console.log('[setup] seller login');
+const seller = await login(HOST_HTTP, 'fari-antisnipe-seller');
 
 console.log('[setup] create product + draft (factsConfirmed=true, durationSec=8)');
 const { productId } = await api(seller.token, '/products', {
@@ -100,7 +90,7 @@ console.log('[setup] startLive → endAtMs=' + originalEndAtMs);
 must(typeof originalEndAtMs === 'number', `startLive: missing endAtMs (got ${JSON.stringify(st)})`);
 
 // ─── Phase 1 — buyer joins, observes the room ──────────────
-const buyer = await devLogin('fari-antisnipe-buyer');
+const buyer = await login(HOST_HTTP, 'fari-antisnipe-buyer');
 const events = [];
 let snapshotEndAtMs = null;
 let bidAcceptedEndAtMs = null;

@@ -47,6 +47,7 @@ import (
 //	LOAD_SHARDS            =   1    (auction rooms, each gets shard_i connections)
 //	LOAD_DURATION_SEC      =  60
 //	LOAD_BID_INTERVAL_MS   = 100    (per bidder; 50 × 10/s = 500 bid/s aggregate)
+//	LOAD_AUCTION_MODE      =   ""   (empty: first_price, any CanonicalAuctionMode alias)
 //	LOAD_ACK_P95_MS        =  80
 //	LOAD_BROADCAST_P95_MS  = 150
 //	LOAD_HAMMER_P95_MS     = 500    (only asserted if the auction hammered inside the window)
@@ -173,6 +174,7 @@ type loadConfig struct {
 	Shards             int
 	Duration           time.Duration
 	BidInterval        time.Duration
+	AuctionMode        string
 	AckP95Budget       time.Duration
 	BroadcastP95Budget time.Duration
 	CatchupP95Budget   time.Duration
@@ -194,6 +196,7 @@ func loadConfigFromEnv() loadConfig {
 		Shards:             shards,
 		Duration:           time.Duration(envInt("LOAD_DURATION_SEC", 60)) * time.Second,
 		BidInterval:        time.Duration(envInt("LOAD_BID_INTERVAL_MS", 100)) * time.Millisecond,
+		AuctionMode:        canonicalLoadAuctionMode(envString("LOAD_AUCTION_MODE", "")),
 		AckP95Budget:       time.Duration(envInt("LOAD_ACK_P95_MS", 80)) * time.Millisecond,
 		BroadcastP95Budget: time.Duration(envInt("LOAD_BROADCAST_P95_MS", 150)) * time.Millisecond,
 		CatchupP95Budget:   time.Duration(envInt("LOAD_CATCHUP_P95_MS", 1000)) * time.Millisecond,
@@ -205,9 +208,30 @@ func loadConfigFromEnv() loadConfig {
 	}
 }
 
+func canonicalLoadAuctionMode(rawMode string) string {
+	mode := strings.TrimSpace(rawMode)
+	if mode == "" {
+		return ""
+	}
+	return model.CanonicalAuctionMode(mode)
+}
+
 func envBool(key string, def bool) bool {
 	if v := os.Getenv(key); v != "" {
-		return v == "1" || strings.EqualFold(v, "true")
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "1", "true", "yes", "on":
+			return true
+		case "0", "false", "no", "off":
+			return false
+		}
+		return def
+	}
+	return def
+}
+
+func envString(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
 	return def
 }
@@ -251,6 +275,7 @@ func loadSetupAuction(hc *http.Client, target string, cfg loadConfig) ([]string,
 				DurationSec:     int64(cfg.AuctionDuration / time.Second),
 				ExtendWindowSec: 0,
 				ExtendSec:       0,
+				AuctionMode:     cfg.AuctionMode,
 			},
 			"factsConfirmed": true,
 		}
@@ -500,11 +525,19 @@ func (r loadReport) print() {
 	fmt.Printf("script    p50=%.1fms p95=%.1fms p99=%.1fms (count=%d, budget p99<%v)\n",
 		r.Post.ScriptTime.P50, r.Post.ScriptTime.P95, r.Post.ScriptTime.P99, r.Post.ScriptTime.Count,
 		r.Config.ScriptP99Budget)
-	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d backpressureForceClose=%d seqGapCount=%d streamLenMax=%d activeConns(end)=%d\n",
+	fmt.Printf("counters: bidsAccepted=%d bidsRejected=%d backpressureForceClose=%d wsAuthUnauthorized=%d wsSchemaMismatch=%d wsUpgradeFailed=%d seqGapCount=%d roomStatePatchEmitted=%d roomStatePatchBids=%d timerErrInternal=%d timerErrInternalKeyType=%d timerErrInternalSeqMismatch=%d streamLenMax=%d activeConns(end)=%d\n",
 		r.Post.BidsAccepted-r.Pre.BidsAccepted,
 		r.Post.BidsRejected-r.Pre.BidsRejected,
 		r.Post.BackpressureDrop-r.Pre.BackpressureDrop,
+		r.Post.WsAuthUnauthorized-r.Pre.WsAuthUnauthorized,
+		r.Post.WsSchemaMismatch-r.Pre.WsSchemaMismatch,
+		r.Post.WsUpgradeFailed-r.Pre.WsUpgradeFailed,
 		r.Post.SeqGap-r.Pre.SeqGap,
+		r.Post.RoomStatePatchEmitted-r.Pre.RoomStatePatchEmitted,
+		r.Post.RoomStatePatchBids-r.Pre.RoomStatePatchBids,
+		r.Post.TimerErrInternal-r.Pre.TimerErrInternal,
+		r.Post.TimerErrInternalKeyType-r.Pre.TimerErrInternalKeyType,
+		r.Post.TimerErrInternalSeqMismatch-r.Pre.TimerErrInternalSeqMismatch,
 		r.Post.StreamLenMax, r.Post.ActiveConns)
 }
 

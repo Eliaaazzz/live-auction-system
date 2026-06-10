@@ -7,7 +7,9 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -22,6 +24,17 @@ type Config struct {
 	AppEnv          string
 	EnableDevLogin  bool
 	EvidenceHMACKey string
+	// ROOM_STATE_PATCH_* controls websocket fanout coalescing.
+	RoomStatePatchMinViewers    int
+	RoomStatePatchMaxEvents     int
+	RoomStatePatchFlushInterval time.Duration
+	// ROOM_STATE_PATCH_ADAPTIVE enables the adaptive patching control plane.
+	// When true, ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS controls when adaptive
+	// enters for each room; defaults keep legacy static behavior.
+	RoomStatePatchAdaptiveEnabled bool
+	// ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS is the number of coalescible events
+	// required before adaptive mode emits ROOM_STATE_PATCH for a room.
+	RoomStatePatchAdaptiveMinBids int
 }
 
 const defaultJWTSecret = "change-me-local-only"
@@ -37,17 +50,23 @@ const defaultEvidenceKey = "change-me-evidence-local-only"
 // (so the process exits non-zero) when an unsafe combination is detected.
 func Load() (Config, error) {
 	c := Config{
-		HTTPAddr:        env("HTTP_ADDR", ":8080"),
-		AISidecarURL:    env("AI_SIDECAR_URL", "http://localhost:8090"),
-		JWTSecret:       env("JWT_SECRET", defaultJWTSecret),
-		FrontendOrigin:  env("FRONTEND_ORIGIN", "http://localhost:8080"),
-		AppEnv:          env("APP_ENV", "dev"),
-		EnableDevLogin:  env("ENABLE_DEV_LOGIN", "true") == "true",
-		EvidenceHMACKey: env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
-		RedisPassword:   env("REDIS_PASSWORD", ""),
+		HTTPAddr:                      env("HTTP_ADDR", ":8080"),
+		AISidecarURL:                  env("AI_SIDECAR_URL", "http://localhost:8090"),
+		JWTSecret:                     env("JWT_SECRET", defaultJWTSecret),
+		FrontendOrigin:                env("FRONTEND_ORIGIN", "http://localhost:8080"),
+		AppEnv:                        env("APP_ENV", "dev"),
+		EnableDevLogin:                env("ENABLE_DEV_LOGIN", "true") == "true",
+		EvidenceHMACKey:               env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
+		RedisPassword:                 env("REDIS_PASSWORD", ""),
+		RoomStatePatchMinViewers:      envInt("ROOM_STATE_PATCH_MIN_VIEWERS", 0),
+		RoomStatePatchMaxEvents:       envInt("ROOM_STATE_PATCH_MAX_EVENTS", 1),
+		RoomStatePatchFlushInterval:   envDurationMs("ROOM_STATE_PATCH_FLUSH_INTERVAL_MS", 120*time.Millisecond),
+		RoomStatePatchAdaptiveEnabled: envBool("ROOM_STATE_PATCH_ADAPTIVE", false),
+		RoomStatePatchAdaptiveMinBids: envInt("ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS", 0),
 	}
+	var redisPasswordFromURL string
 	var err error
-	c.RedisAddr, c.RedisUseTLS, redisPasswordFromURL, err := resolveRedisAddr()
+	c.RedisAddr, c.RedisUseTLS, redisPasswordFromURL, err = resolveRedisAddr()
 	if err != nil {
 		return c, err
 	}
@@ -127,6 +146,45 @@ func resolveRedisAddr() (string, bool, string, error) {
 	return "localhost:6379", false, "", nil
 }
 
+func envInt(key string, def int) int {
+	v := strings.TrimSpace(env(key, ""))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
+	}
+	return n
+}
+
+func envBool(key string, def bool) bool {
+	v := strings.TrimSpace(strings.ToLower(env(key, "")))
+	switch v {
+	case "1", "true", "t", "yes", "on":
+		return true
+	case "0", "false", "f", "no", "off":
+		return false
+	default:
+		return def
+	}
+}
+
+func envDurationMs(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(env(key, ""))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return def
+	}
+	if n == 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Millisecond
+}
+
 func normalizeRedisAddr(raw string) (string, bool, string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -186,7 +244,7 @@ func normalizeMySQLDSN(raw string) (string, error) {
 		q.Set("charset", "utf8mb4")
 	}
 	encoded := q.Encode()
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", user, password, net.JoinHostPort(host, port), db)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s)/%s", user, password, net.JoinHostPort(host, port), db)
 	if encoded == "" {
 		return dsn, nil
 	}

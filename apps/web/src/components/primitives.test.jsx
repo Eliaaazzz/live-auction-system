@@ -18,7 +18,7 @@ import {
   Countdown,
   ClockDriftIndicator,
 } from './primitives.jsx';
-import { bidRejectCopy as canonicalBidRejectCopy } from '../lib/types.js';
+import { bidRejectCopy as canonicalBidRejectCopy, ConnStatus } from '../lib/types.js';
 
 describe('bidRejectCopy should stay canonical', () => {
   it('re-exports the shared copy from lib/types.js', () => {
@@ -80,20 +80,99 @@ describe('ExtendBadge', () => {
 });
 
 describe('ConnectionBar', () => {
-  it('renders nothing on ok / open status', () => {
-    const { container } = render(<ConnectionBar status="ok"/>);
+  it('renders nothing on open status', () => {
+    const { container } = render(<ConnectionBar status={ConnStatus.OPEN}/>);
     // ConnectionBar typically hides itself when connection is healthy
     expect(container.textContent.length === 0 || !container.querySelector('[aria-hidden]')).toBeTruthy();
   });
 
   it('renders during reconnecting', () => {
-    const { container } = render(<ConnectionBar status="reconnecting"/>);
+    const { container } = render(<ConnectionBar status={ConnStatus.RECONNECTING}/>);
     expect(container.textContent.length).toBeGreaterThan(0);
   });
 
+  it('renders during connecting', () => {
+    const { container } = render(<ConnectionBar status={ConnStatus.CONNECTING}/>);
+    expect(container.textContent).toContain('连接中');
+  });
+
   it('renders during syncing with gap info', () => {
-    const { container } = render(<ConnectionBar status="syncing" gap={5}/>);
+    const { container } = render(<ConnectionBar status={ConnStatus.SYNCING} gap={5}/>);
     expect(container.textContent.length).toBeGreaterThan(0);
+  });
+
+  it('ignores numeric gap 0 as missing', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={0}
+    />);
+    expect(container.textContent).toContain('正在同步');
+    expect(container.textContent).not.toContain('#0');
+  });
+
+  it('renders syncing without undefined suffix when gap is missing', () => {
+    const { container } = render(<ConnectionBar status={ConnStatus.SYNCING} />);
+    expect(container.textContent).toContain('正在同步');
+    expect(container.textContent).not.toContain('undefined');
+  });
+
+  it('renders syncing gap from/to range when gap is structured', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: 1450, to: 1472 }}
+    />);
+    expect(container.textContent).toContain('#1450→#1472');
+  });
+
+  it('renders syncing gap when only start seq is known', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: 1450 }}
+    />);
+    expect(container.textContent).toContain('#1450→#?');
+  });
+
+  it('renders syncing gap when numeric strings are provided', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: '14921', to: '14998' }}
+    />);
+    expect(container.textContent).toContain('#14921→#14998');
+  });
+
+  it('renders #? when gap endpoints are invalid', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: 'x', to: null }}
+    />);
+    expect(container.textContent).toContain('正在同步');
+    expect(container.textContent).not.toContain('undefined');
+  });
+
+  it('ignores non-positive gap values as missing', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: 0, to: -1 }}
+    />);
+    expect(container.textContent).toContain('正在同步');
+    expect(container.textContent).not.toContain('#0');
+    expect(container.textContent).not.toContain('#-1');
+  });
+
+  it('renders schema mismatch state with explicit copy', () => {
+    const { container } = render(<ConnectionBar status={ConnStatus.SCHEMA} />);
+    expect(container.textContent).toContain('协议版本不匹配');
+  });
+
+  it('ignores boolean gap values as missing', () => {
+    const { container } = render(<ConnectionBar
+      status={ConnStatus.SYNCING}
+      gap={{ from: true, to: false }}
+    />);
+    expect(container.textContent).toContain('正在同步');
+    expect(container.textContent).not.toContain('#0');
+    expect(container.textContent).not.toContain('#1');
+    expect(container.textContent).not.toContain('undefined');
   });
 });
 

@@ -14,7 +14,7 @@ export function resolveAuctionMode(input) {
   if (normalized === 'english') {
     return 'first_price';
   }
-  if (normalized === 'second' || normalized === 'secondprice' || normalized === 'vickrey') {
+  if (normalized === 'second' || normalized === 'secondprice' || normalized === 'vickrey' || normalized === 'auction2' || normalized === '2') {
     return 'second_price';
   }
   if (normalized === 'first' || normalized === 'firstprice') {

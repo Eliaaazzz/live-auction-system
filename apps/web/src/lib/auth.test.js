@@ -90,7 +90,7 @@ describe('ensureSession', () => {
     expect(result.token).toBe('cached-tok');
   });
 
-  it('calls POST /api/dev-login with the nickname and caches the response', async () => {
+  it('calls POST /api/login with the nickname and caches the response', async () => {
     const session = { userId: 'u-fari', token: 'fresh-tok', nickname: 'fari' };
     vi.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
@@ -101,7 +101,7 @@ describe('ensureSession', () => {
     expect(got).toEqual(session);
     expect(currentToken()).toBe('fresh-tok');
     expect(global.fetch).toHaveBeenCalledWith(
-      '/api/dev-login',
+      '/api/login',
       expect.objectContaining({
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -110,12 +110,33 @@ describe('ensureSession', () => {
     );
   });
 
-  it('throws when dev-login responds non-OK', async () => {
-    vi.spyOn(global, 'fetch').mockResolvedValue({
-      ok: false,
-      status: 503,
-    });
-    await expect(ensureSession('boom')).rejects.toThrow(/dev-login 503/);
+  it('falls back to /api/dev-login when /api/login is unavailable', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 404 })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ userId: 'u-fallback', token: 'tok-2', nickname: 'fallback' }),
+      });
+
+    const got = await ensureSession('fari');
+    expect(got.token).toBe('tok-2');
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/login',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ nickname: 'fari' }) }),
+    );
+    expect(global.fetch).toHaveBeenNthCalledWith(
+      2,
+      '/api/dev-login',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ nickname: 'fari' }) }),
+    );
+  });
+
+  it('throws when both endpoints return non-OK', async () => {
+    vi.spyOn(global, 'fetch')
+      .mockResolvedValueOnce({ ok: false, status: 503 })
+      .mockResolvedValueOnce({ ok: false, status: 403 });
+    await expect(ensureSession('boom')).rejects.toThrow(/login failed: \/api\/login 503; \/api\/dev-login 403/);
     expect(currentToken()).toBeNull();
   });
 
@@ -126,7 +147,7 @@ describe('ensureSession', () => {
     });
     await ensureSession();
     expect(global.fetch).toHaveBeenCalledWith(
-      '/api/dev-login',
+      '/api/login',
       expect.objectContaining({ body: JSON.stringify({ nickname: 'demo' }) }),
     );
   });

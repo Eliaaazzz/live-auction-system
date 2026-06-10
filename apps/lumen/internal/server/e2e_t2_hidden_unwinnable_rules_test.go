@@ -46,3 +46,38 @@ func TestT2HiddenCreateAuctionRejectsNoCapFirstBidAboveMaxMoney(t *testing.T) {
 		t.Fatalf("create auction status=%d body=%s want 400", resp.StatusCode, string(data))
 	}
 }
+
+func TestT2HiddenCreateAuctionRejectsReserveAboveStartPrice(t *testing.T) {
+	target := os.Getenv("TARGET")
+	if target == "" {
+		target, _ = startTestServer(t)
+	}
+	hc := &http.Client{Timeout: 5 * time.Second}
+	seller, err := devLogin(hc, target, "Reserve Guard Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+
+	body := map[string]any{
+		"productId": productID,
+		"rules": model.Rules{
+			StartPriceCents: 10000,
+			ReserveCents:    15000,
+			IncrementCents:  1000,
+			CapPriceCents:   50000,
+			DurationSec:     60,
+		},
+		"factsConfirmed": true,
+	}
+	resp, data, err := postJSONRaw(hc, target+"/api/auctions", seller.Token, body)
+	if err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("create auction status=%d body=%s want 400", resp.StatusCode, string(data))
+	}
+}

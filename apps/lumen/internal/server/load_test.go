@@ -11,8 +11,10 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
@@ -101,11 +104,61 @@ func TestT8MetricsEndpointShapeIsStable(t *testing.T) {
 	for _, k := range []string{
 		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs", "catchupLatencyMs",
 		"placeBidScriptTimeMs", "bidsAccepted", "bidsRejected", "backpressureForceClose",
-		"seqGapCount", "streamLenMax", "activeConns",
+		"wsAuthUnauthorized", "wsSchemaMismatch", "wsUpgradeFailed",
+		"seqGapCount", "roomStatePatchEmitted", "roomStatePatchBids", "roomStatePatchSkippedPublic", "roomStatePatchLagMs",
+		"timerErrInternal", "timerErrInternalKeyType", "timerErrInternalSeqMismatch",
+		"streamLenMax", "activeConns",
 	} {
 		if _, ok := raw[k]; !ok {
 			t.Errorf("/metrics missing field %q (shape break)", k)
 		}
+	}
+}
+
+func TestT8MetricsResetEndpoint(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	srv.metrics.AckLatency.Observe(12 * time.Millisecond)
+	srv.metrics.BroadcastLatency.Observe(34 * time.Millisecond)
+	srv.metrics.HammerLatency.Observe(56 * time.Millisecond)
+	srv.metrics.CatchupLatency.Observe(78 * time.Millisecond)
+	srv.metrics.ScriptTime.Observe(90 * time.Millisecond)
+	srv.metrics.BidsAccepted.Inc()
+	srv.metrics.BidsRejected.Inc()
+	srv.metrics.BackpressureDrop.Inc()
+	srv.metrics.SeqGap.Inc()
+	srv.metrics.RoomStatePatchEmitted.Inc()
+	srv.metrics.RoomStatePatchBids.Inc()
+	srv.metrics.RoomStatePatchSkippedPublic.Inc()
+	srv.metrics.RoomStatePatchLag.Observe(10 * time.Millisecond)
+	srv.metrics.TimerErrInternal.Inc()
+	srv.metrics.StreamLenMax.Store(123)
+
+	pre := scrapeOrFatal(t, hc, target)
+	if pre.BidsAccepted == 0 {
+		t.Fatal("metrics not primed; reset test would be vacuous")
+	}
+
+	resp, err := hc.Post(target+"/metrics/reset", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		t.Fatalf("/metrics/reset -> %d %s", resp.StatusCode, string(body))
+	}
+	post := scrapeOrFatal(t, hc, target)
+	if post.Ack.Count != 0 || post.Broadcast.Count != 0 || post.Hammer.Count != 0 ||
+		post.Catchup.Count != 0 || post.ScriptTime.Count != 0 {
+		t.Fatalf("reset did not clear histograms: %+v", post)
+	}
+	if post.BidsAccepted != 0 || post.BidsRejected != 0 || post.BackpressureDrop != 0 ||
+		post.SeqGap != 0 || post.TimerErrInternal != 0 || post.TimerErrInternalKeyType != 0 ||
+		post.TimerErrInternalSeqMismatch != 0 || post.StreamLenMax != 0 ||
+		post.RoomStatePatchEmitted != 0 || post.RoomStatePatchBids != 0 || post.RoomStatePatchSkippedPublic != 0 ||
+		post.RoomStatePatchLagMs.Count != 0 {
+		t.Fatalf("reset did not clear counters/gauges: %+v", post)
 	}
 }
 
@@ -340,6 +393,46 @@ func TestT8EventServerTimeMsHandlesMalformedPayload(t *testing.T) {
 	}
 }
 
+func TestIsTimeoutClassifiesBenignObserverErrors(t *testing.T) {
+	cases := []struct {
+		err  error
+		want bool
+	}{
+		{err: &websocket.CloseError{Code: websocket.CloseNoStatusReceived}, want: true},
+		{err: &websocket.CloseError{Code: websocket.CloseAbnormalClosure}, want: true},
+		{err: &websocket.CloseError{Code: websocket.CloseNormalClosure}, want: true},
+		{err: &websocket.CloseError{Code: websocket.CloseGoingAway}, want: true},
+		{err: net.ErrClosed, want: true},
+		{err: errors.New("i/o timeout"), want: true},
+		{err: errors.New("use of closed network connection"), want: true},
+		{err: errors.New("boom"), want: false},
+	}
+
+	for _, c := range cases {
+		if got := isTimeout(c.err); got != c.want {
+			t.Fatalf("isTimeout(%T: %v) = %v want %v", c.err, c.err, got, c.want)
+		}
+	}
+}
+
+func TestIsRecoverableObserverPanic(t *testing.T) {
+	cases := []struct {
+		panicVal any
+		want     bool
+	}{
+		{panicVal: errors.New("repeated read on failed websocket connection"), want: true},
+		{panicVal: "repeated read on failed websocket connection: close 1000", want: true},
+		{panicVal: errors.New("use of closed network connection"), want: true},
+		{panicVal: errors.New("boom"), want: false},
+	}
+
+	for _, c := range cases {
+		if got := isRecoverableObserverPanic(c.panicVal); got != c.want {
+			t.Fatalf("isRecoverableObserverPanic(%v) = %v want %v", c.panicVal, got, c.want)
+		}
+	}
+}
+
 // TestT8LoadReportBreachesMatrix — the SLO assertion table is the only thing
 // between a silent perf regression and a red CI run. Exhaustively cover the
 // breach detectors so an off-by-one (using >= vs >, comparing ms vs ns) gets
@@ -470,6 +563,20 @@ func TestT8LoadSmokeRunsAndPasses(t *testing.T) {
 	}
 	if post.BidsAccepted == 0 {
 		t.Fatal("smoke: bidsAccepted counter never advanced")
+	}
+}
+
+func TestLoadConfigFromEnvReadsAuctionMode(t *testing.T) {
+	t.Setenv("LOAD_AUCTION_MODE", " VICKREY ")
+	cfg := loadConfigFromEnv()
+	if cfg.AuctionMode != model.AuctionModeSecondPrice {
+		t.Fatalf("LOAD_AUCTION_MODE=%q want=%q", cfg.AuctionMode, model.AuctionModeSecondPrice)
+	}
+
+	t.Setenv("LOAD_AUCTION_MODE", "")
+	cfg = loadConfigFromEnv()
+	if cfg.AuctionMode != "" {
+		t.Fatalf("LOAD_AUCTION_MODE=%q want empty default", cfg.AuctionMode)
 	}
 }
 

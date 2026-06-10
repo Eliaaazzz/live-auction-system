@@ -140,6 +140,51 @@ func TestNormalizeCreateAuctionRulesTrimsAuctionMode(t *testing.T) {
 	}
 }
 
+func TestHandleHealthAndVersionExposeBuildAndSchema(t *testing.T) {
+	target, _ := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	base := model.SchemaVersion
+
+	var h, v map[string]any
+	if err := getJSON(hc, target+"/healthz", &h); err != nil {
+		t.Fatalf("healthz: %v", err)
+	}
+	if err := getJSON(hc, target+"/version", &v); err != nil {
+		t.Fatalf("version: %v", err)
+	}
+
+	if got := h["status"]; got != "ok" {
+		t.Fatalf("health payload status=%v want ok", got)
+	}
+	if got := v["wsSchema"]; got != float64(base) {
+		t.Fatalf("version payload wsSchema=%v want %d", got, base)
+	}
+	if got := h["wsSchema"]; got != float64(base) {
+		t.Fatalf("wsSchema=%v want %d", got, base)
+	}
+
+	build, ok := h["build"].(map[string]any)
+	if !ok {
+		t.Fatalf("build=%T want map[string]any", h["build"])
+	}
+	buildVersion, ok := v["build"].(map[string]any)
+	if !ok {
+		t.Fatalf("version build=%T want map[string]any", v["build"])
+	}
+	if rev, ok := build["revision"].(string); !ok || rev == "" {
+		t.Fatalf("build.revision=%v want non-empty string", build["revision"])
+	}
+	if revV, ok := buildVersion["revision"].(string); !ok || revV == "" {
+		t.Fatalf("version build.revision=%v want non-empty string", buildVersion["revision"])
+	}
+	if ts, ok := build["time"].(string); !ok || ts == "" {
+		t.Fatalf("build.time=%v want non-empty string", build["time"])
+	}
+	if tsV, ok := buildVersion["time"].(string); !ok || tsV == "" {
+		t.Fatalf("version build.time=%v want non-empty string", buildVersion["time"])
+	}
+}
+
 func TestNormalizeCreateAuctionRulesPrefersCanonicalFields(t *testing.T) {
 	raw := json.RawMessage(`{
 		"startPriceCents":"12000000",
@@ -331,4 +376,170 @@ func TestT2AuctionDefaultsExposeFirstPriceInSnapshot(t *testing.T) {
 	if got, want := snap.Rules.AuctionMode, model.AuctionModeFirstPrice; got != want {
 		t.Fatalf("auctionMode=%q want=%q", got, want)
 	}
+}
+
+type reserveAdvisorResponse struct {
+	AuctionID         string  `json:"auctionId"`
+	Status            string  `json:"status"`
+	CurrentPriceCents string  `json:"currentPriceCents"`
+	WinnerID          string  `json:"winnerId"`
+	Advice            struct {
+		MinBidCents string  `json:"minBidCents"`
+		MaxBidCents string  `json:"maxBidCents"`
+		Confidence  float64 `json:"confidence"`
+		ReasonCode  string  `json:"reasonCode"`
+	} `json:"advice"`
+}
+
+func TestReserveAdvisorReturnsNotLiveReasonForDraftAuction(t *testing.T) {
+	target := os.Getenv("TARGET")
+	if target == "" {
+		target, _ = startTestServer(t)
+	}
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	seller, err := devLogin(hc, target, "Reserve Advisor Draft Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId": productID,
+		"rules": map[string]any{
+			"startPriceCents": "10000",
+			"incrementCents":  "1000",
+			"capPriceCents":   "20000",
+			"durationSec":     60,
+		},
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+
+	var out reserveAdvisorResponse
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID+"/reserve-advisor", &out); err != nil {
+		t.Fatalf("get reserve advisor: %v", err)
+	}
+	if out.AuctionID != created.AuctionID {
+		t.Fatalf("auctionId=%s want %s", out.AuctionID, created.AuctionID)
+	}
+	if got, want := out.Status, model.StateDraft; got != want {
+		t.Fatalf("status=%s want %s", got, want)
+	}
+	if got := out.Advice.ReasonCode; got != "AUCTION_NOT_LIVE" {
+		t.Fatalf("reasonCode=%q want AUCTION_NOT_LIVE", got)
+	}
+}
+
+func TestReserveAdvisorProvidesLiveRangeAndConfidence(t *testing.T) {
+	target := os.Getenv("TARGET")
+	if target == "" {
+		target, _ = startTestServer(t)
+	}
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	seller, err := devLogin(hc, target, "Reserve Advisor Seller", "seller")
+	if err != nil {
+		t.Fatalf("dev login: %v", err)
+	}
+	productID, err := createProduct(hc, target, seller.Token)
+	if err != nil {
+		t.Fatalf("create product: %v", err)
+	}
+	var created struct {
+		AuctionID string `json:"auctionId"`
+	}
+	if err := postJSON(hc, target+"/api/auctions", seller.Token, map[string]any{
+		"productId": productID,
+		"rules": map[string]any{
+			"startPriceCents": "10000",
+			"incrementCents":  "1000",
+			"capPriceCents":   "20000",
+			"durationSec":     60,
+		},
+		"factsConfirmed": true,
+	}, &created); err != nil {
+		t.Fatalf("create auction: %v", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/freeze", seller.Token, nil, model.CodeOKFrozen); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	if err := postExpectCode(hc, target+"/api/auctions/"+created.AuctionID+"/start", seller.Token, map[string]int64{"durationMs": 60000}, model.CodeOKLive); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	var out reserveAdvisorResponse
+	if err := getJSON(hc, target+"/api/auctions/"+created.AuctionID+"/reserve-advisor", &out); err != nil {
+		t.Fatalf("get reserve advisor: %v", err)
+	}
+	if got, want := out.Status, model.StateLive; got != want {
+		t.Fatalf("status=%s want %s", got, want)
+	}
+	if got, want := out.Advice.MinBidCents, "11000"; got != want {
+		t.Fatalf("minBidCents=%q want %q", got, want)
+	}
+	if got, want := out.Advice.MaxBidCents, "20000"; got != want {
+		t.Fatalf("maxBidCents=%q want %q", got, want)
+	}
+	if got, want := out.Advice.ReasonCode, "OK_CAP"; got != want {
+		t.Fatalf("reasonCode=%q want %q", got, want)
+	}
+	if out.Advice.Confidence < 0.5 {
+		t.Fatalf("confidence=%v want >= 0.5", out.Advice.Confidence)
+	}
+}
+
+func TestReserveAdvisorFromSnapshotReturnsNonLiveReason(t *testing.T) {
+	got := reserveAdvisorFromSnapshot(model.RoomSnapshotData{Status: model.StateDraft})
+	if got.ReasonCode != "AUCTION_NOT_LIVE" {
+		t.Fatalf("ReasonCode=%q want AUCTION_NOT_LIVE", got.ReasonCode)
+	}
+	if got.Confidence != 0 {
+		t.Fatalf("Confidence=%v want 0", got.Confidence)
+	}
+}
+
+func TestReserveAdvisorFromSnapshotReturnsInvalidStepReason(t *testing.T) {
+	got := reserveAdvisorFromSnapshot(model.RoomSnapshotData{
+		Status: model.StateLive,
+		Rules: &model.RoomSnapshotRules{
+			StepCents: "0",
+		},
+	})
+	if got.ReasonCode != "RULES_INVALID_STEP" {
+		t.Fatalf("ReasonCode=%q want RULES_INVALID_STEP", got.ReasonCode)
+	}
+	if got.Confidence != 0 {
+		t.Fatalf("Confidence=%v want 0", got.Confidence)
+	}
+}
+
+func TestReserveAdvisorFromSnapshotReturnsCapConstrainedRange(t *testing.T) {
+	got := reserveAdvisorFromSnapshot(model.RoomSnapshotData{
+		Status:            model.StateLive,
+		CurrentPriceCents: "9500",
+		Rules: &model.RoomSnapshotRules{
+			StepCents:   "2000",
+			CapCents:    ptr("9000"),
+		},
+	})
+	if got.ReasonCode != "OK_CAP" {
+		t.Fatalf("ReasonCode=%q want OK_CAP", got.ReasonCode)
+	}
+	if got.MinBidCents != "9000" {
+		t.Fatalf("MinBidCents=%q want 9000", got.MinBidCents)
+	}
+	if got.MaxBidCents != "9000" {
+		t.Fatalf("MaxBidCents=%q want 9000", got.MaxBidCents)
+	}
+}
+
+func ptr(s string) *string {
+	return &s
 }

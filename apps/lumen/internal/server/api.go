@@ -8,19 +8,58 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/auth"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/model"
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
-func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+var (
+	buildRevision  = "unknown"
+	buildTimeStamp = "unknown"
+)
+
+func init() {
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				buildRevision = s.Value
+			case "vcs.time":
+				buildTimeStamp = s.Value
+			}
+		}
+	}
 }
 
-// POST /api/dev-login {nickname, role?} -> {userId, token, nickname}. Dev only.
+func (s *Server) healthPayload() map[string]any {
+	return map[string]any{
+		"status":        "ok",
+		"appEnv":        s.cfg.AppEnv,
+		"wsSchema":      model.SchemaVersion,
+		"build": map[string]any{
+			"revision": buildRevision,
+			"time":     buildTimeStamp,
+			"utcNow":   time.Now().UTC().Format(time.RFC3339),
+		},
+	}
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.healthPayload())
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, s.healthPayload())
+}
+
+// POST /api/login (alias) and /api/dev-login {nickname, role?} ->
+// {userId, token, nickname}. /api/login is preferred; /api/dev-login is
+// retained for compatibility with legacy clients.
 func (s *Server) handleDevLogin(w http.ResponseWriter, r *http.Request) {
 	if !s.cfg.EnableDevLogin {
 		writeErr(w, http.StatusForbidden, "dev-login disabled")
@@ -175,6 +214,10 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 	if _, ok := raw["durationSec"]; ok {
 		hasDurationSec = true
 	}
+	hasReserve := false
+	if _, ok := raw["reserveCents"]; ok {
+		hasReserve = true
+	}
 	hasMode := false
 	if _, ok := raw["mode"]; ok {
 		hasMode = true
@@ -199,12 +242,6 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 				return rules, errors.New("invalid startCents")
 			}
 			rules.StartPriceCents = parsed
-		} else if cents, ok := raw["reserveCents"]; ok {
-			parsed, err := parseJSONCents(cents)
-			if err != nil {
-				return rules, errors.New("invalid reserveCents")
-			}
-			rules.StartPriceCents = parsed
 		}
 	} else if cents, ok := raw["startPriceCents"]; ok {
 		parsed, err := parseJSONCents(cents)
@@ -212,6 +249,19 @@ func normalizeCreateAuctionRules(rawRules json.RawMessage, rules model.Rules) (m
 			return rules, errors.New("invalid startPriceCents")
 		}
 		rules.StartPriceCents = parsed
+	}
+	if cents, ok := raw["reserveCents"]; ok {
+		parsed, err := parseJSONCents(cents)
+		if err != nil {
+			return rules, errors.New("invalid reserveCents")
+		}
+		rules.ReserveCents = parsed
+	}
+	if !hasReserve && rules.StartPriceCents > 0 && rules.ReserveCents == 0 {
+		rules.ReserveCents = rules.StartPriceCents
+	}
+	if !hasStartPrice && rules.StartPriceCents == 0 && rules.ReserveCents > 0 {
+		rules.StartPriceCents = rules.ReserveCents
 	}
 	if !hasStep {
 		if cents, ok := raw["stepCents"]; ok {
@@ -394,6 +444,133 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 		snap.Rules = &dto
 	}
 	writeJSON(w, http.StatusOK, snap)
+}
+
+type reserveAdvisorAdvice struct {
+	MinBidCents string  `json:"minBidCents"`
+	MaxBidCents string  `json:"maxBidCents"`
+	Confidence  float64 `json:"confidence"`
+	ReasonCode  string  `json:"reasonCode"`
+}
+
+// GET /api/auctions/{id}/reserve-advisor -> simple bidding advice for buyer UX.
+// The contract is advisory only: current room status + min/max legal bid window + a
+// confidence score + reason code, never authoring any state.
+func (s *Server) handleReserveAdvisor(w http.ResponseWriter, r *http.Request) {
+	aid := r.PathValue("id")
+	a, err := s.st.GetAuction(r.Context(), aid)
+	if err == store.ErrNotFound {
+		writeErr(w, http.StatusNotFound, "auction not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	snap, err := s.st.Snapshot(r.Context(), aid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if snap.Status == "" {
+		snap.Status = a.Status
+	}
+	if snap.Rules == nil {
+		rules, err := s.st.GetRules(r.Context(), aid)
+		if err == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "rules not found")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		dto := rules.RoomSnapshotRules()
+		snap.Rules = &dto
+	}
+
+	advice := reserveAdvisorFromSnapshot(snap)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auctionId":         aid,
+		"status":            snap.Status,
+		"currentPriceCents": snap.CurrentPriceCents,
+		"winnerId":          snap.WinnerID,
+		"advice":            advice,
+	})
+}
+
+func reserveAdvisorFromSnapshot(snap model.RoomSnapshotData) reserveAdvisorAdvice {
+	rules := snap.Rules
+	if snap.Status != model.StateLive {
+		return reserveAdvisorAdvice{
+			ReasonCode: "AUCTION_NOT_LIVE",
+			Confidence: 0,
+		}
+	}
+	if rules == nil {
+		return reserveAdvisorAdvice{
+			ReasonCode: "RULES_MISSING",
+			Confidence: 0,
+		}
+	}
+	step, err := strconv.ParseInt(rules.StepCents, 10, 64)
+	if err != nil || step <= 0 {
+		return reserveAdvisorAdvice{
+			ReasonCode: "RULES_INVALID_STEP",
+			Confidence: 0,
+		}
+	}
+	current, err := strconv.ParseInt(snap.CurrentPriceCents, 10, 64)
+	if err != nil || current < 0 {
+		return reserveAdvisorAdvice{
+			ReasonCode: "SNAPSHOT_INVALID_PRICE",
+			Confidence: 0,
+		}
+	}
+	required := current + step
+	maxBid := int64(model.MaxMoneyCents)
+	if rules.CapCents != nil {
+		capInt, err := strconv.ParseInt(*rules.CapCents, 10, 64)
+		if err != nil || capInt <= 0 {
+			return reserveAdvisorAdvice{
+				ReasonCode: "RULES_INVALID_CAP",
+				Confidence: 0,
+			}
+		}
+		if required > capInt {
+			required = capInt
+		}
+		maxBid = capInt
+	}
+	if required > maxBid {
+		return reserveAdvisorAdvice{
+			ReasonCode: "UNREACHABLE_BID_RANGE",
+			Confidence: 0,
+		}
+	}
+	if required <= 0 {
+		return reserveAdvisorAdvice{
+			ReasonCode: "RULES_INVALID_CALCULATION",
+			Confidence: 0,
+		}
+	}
+	reason := "OK"
+	if rules.CapCents != nil {
+		reason = "OK_CAP"
+	} else {
+		reason = "OK_NO_CAP"
+	}
+	confidence := 0.96
+	if snap.WinnerID == "" {
+		confidence = 0.91
+	}
+	return reserveAdvisorAdvice{
+		MinBidCents: strconv.FormatInt(required, 10),
+		MaxBidCents: strconv.FormatInt(maxBid, 10),
+		ReasonCode:  reason,
+		Confidence:  confidence,
+	}
 }
 
 // GET /api/auctions?status=... -> auction list for seller.

@@ -11,8 +11,28 @@
 import { create } from 'zustand';
 import { setClockOffset } from '../lib/clock.js';
 import { AuctionStatus, EventType, ConnStatus } from '../lib/types.js';
+import { resolveAuctionMode } from '../lib/auctionMode.js';
 
 const LEADERBOARD_CAP = 10;
+
+function normalizeDisplayName(displayName, fallbackId) {
+  if (typeof displayName === 'string' && displayName.trim() !== '') return displayName;
+  if (typeof fallbackId === 'string' && fallbackId.trim() !== '') return fallbackId;
+  return null;
+}
+
+function normalizeSeq(value) {
+  // ws-envelope.md §3: seq arrives as a JSON number. Anything else (e.g. a
+  // bigint from a custom parser) is malformed and must drop the event.
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) ? value : Number.NaN;
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const n = Number(value);
+    return Number.isSafeInteger(n) ? n : Number.NaN;
+  }
+  return Number.NaN;
+}
 
 const DEFAULT_STATE = {
   // identity
@@ -36,6 +56,9 @@ const DEFAULT_STATE = {
   stepCents:    '500000',
   capCents:     null,
   reserveCents: '0',
+  // Auction pricing contract for room display and user education. Defaults to first-price
+  // when backend snapshots omit the field.
+  auctionMode: 'first_price',
 
   // timing — backend canonical field is endAtMs (ws-envelope.md §3.5)
   endAtMs:      null,
@@ -117,7 +140,7 @@ export const useAuctionStore = create((set, get) => ({
   setLeaders: (leaders) => set((s) => ({
     leaders: leaders.map((l) => ({
       ...l,
-      displayName: l.displayName || l.userId,
+      displayName: normalizeDisplayName(l.displayName, l.userId),
       cents: l.cents ?? l.amountCents ?? '0',
       isYou: l.userId === s.yourUserId,
     })),
@@ -157,6 +180,12 @@ export const useAuctionStore = create((set, get) => ({
   // ── event reducer (from RoomClient.onEvent) ──────────────────
   applyEvent: (env) => {
     const { type, seq, serverTimeMs, data } = env;
+    const seqNum = normalizeSeq(seq);
+    const hasSeq = seq != null;
+    const normalizedDisplayName = normalizeDisplayName(data?.displayName, data?.userId);
+    const eventData = data && typeof data === 'object'
+      ? { ...data, ...(normalizedDisplayName == null ? {} : { displayName: normalizedDisplayName }) }
+      : data;
 
     // P4: every envelope updates clock offset (the WS hook also does this,
     // but applying here keeps the store reducer self-contained too).
@@ -165,13 +194,13 @@ export const useAuctionStore = create((set, get) => ({
     // ROOM_SNAPSHOT resets the seq watermark (it's the new ground truth).
     // All other events dedupe against lastSeq.
     if (type !== EventType.ROOM_SNAPSHOT) {
-      if (seq != null && seq <= get().lastSeq) return;
+      if (hasSeq && (!Number.isSafeInteger(seqNum) || seqNum <= get().lastSeq)) return;
     }
 
     set((s) => {
       const next = { ...s };
-      next.recentEvents = [{ seq, ts: serverTimeMs, type, data }, ...s.recentEvents].slice(0, 50);
-      if (seq != null) next.lastSeq = Math.max(s.lastSeq, seq);
+      next.recentEvents = [{ seq, ts: serverTimeMs, type, data: eventData }, ...s.recentEvents].slice(0, 50);
+      if (Number.isSafeInteger(seqNum)) next.lastSeq = Math.max(s.lastSeq, seqNum);
 
       switch (type) {
         case EventType.ROOM_SNAPSHOT: {
@@ -186,13 +215,18 @@ export const useAuctionStore = create((set, get) => ({
           next.currentCents   = data.currentPriceCents ?? '0';
           next.winnerId       = data.winnerId ?? null;
           next.endAtMs        = data.endAtMs ?? null;
-          next.lastSeq        = data.seq ?? 0;
+          const snapshotSeq = normalizeSeq(data?.seq);
+          next.lastSeq        = Number.isSafeInteger(snapshotSeq) ? snapshotSeq : 0;
           if (data.rules) {
             if (data.rules.stepCents != null) next.stepCents = data.rules.stepCents;
             if (hasOwn(data.rules, 'capCents')) next.capCents = data.rules.capCents;
             if (data.rules.reserveCents != null) {
               next.reserveCents = data.rules.reserveCents;
               next.startCents = data.rules.reserveCents;
+            }
+            const normalizedMode = resolveAuctionMode(data.rules);
+            if (normalizedMode != null) {
+              next.auctionMode = normalizedMode;
             }
           }
           break;
@@ -207,7 +241,7 @@ export const useAuctionStore = create((set, get) => ({
           next.currentCents      = data.amountCents;
           next.endAtMs           = data.endAtMs;           // post-extension if any
           next.winnerId          = data.userId;
-          next.winnerDisplayName = data.displayName;
+          next.winnerDisplayName = normalizedDisplayName;
           if (isSelf) next.yourCents = data.amountCents;
 
           // #53-M1 / #53-M2: cumulative counters. totalBidsCount climbs
@@ -222,7 +256,7 @@ export const useAuctionStore = create((set, get) => ({
           // Reconcile against GET /leaderboard at strategic points.
           next.leaders = mergeLeader(s.leaders, {
             userId:      data.userId,
-            displayName: data.displayName,
+            displayName: normalizeDisplayName(eventData?.displayName, data.userId),
             cents:       data.amountCents,
             isYou:       isSelf,
           });
@@ -251,6 +285,51 @@ export const useAuctionStore = create((set, get) => ({
           break;
         }
 
+        case EventType.ROOM_STATE_PATCH: {
+          if (typeof data?.status === 'string' && data.status !== '') {
+            next.status = data.status;
+          }
+          if (typeof data?.currentPriceCents === 'string') {
+            next.currentCents = data.currentPriceCents;
+          }
+          const patchWinnerId =
+            typeof data?.winnerId === 'string' && data.winnerId.trim() !== ''
+              ? data.winnerId
+              : null;
+          if (patchWinnerId) {
+            next.winnerId = patchWinnerId;
+            next.winnerDisplayName = normalizeDisplayName(data?.winnerDisplayName, patchWinnerId);
+          }
+          if (typeof data?.endAtMs === 'number') {
+            next.endAtMs = data.endAtMs;
+          }
+          if (typeof data?.extendCount === 'number') {
+            next.extendCount = data.extendCount;
+          }
+          if (patchWinnerId) {
+            if (typeof data.currentPriceCents === 'string') {
+              const isYou = patchWinnerId === s.yourUserId;
+              next.leaders = mergeLeader(s.leaders, {
+                userId:      patchWinnerId,
+                displayName: normalizeDisplayName(data?.winnerDisplayName, patchWinnerId),
+                cents:       data.currentPriceCents,
+                isYou,
+              });
+              if (isYou) next.yourCents = data.currentPriceCents;
+            }
+            if (!s.bidderIds.includes(patchWinnerId)) {
+              next.bidderIds = [...s.bidderIds, patchWinnerId];
+            }
+          }
+          if (typeof data?.bidCountDelta === 'number' && data.bidCountDelta > 0) {
+            next.totalBidsCount = s.totalBidsCount + data.bidCountDelta;
+          }
+          next.lastRejectCode = null;
+          next.lastRejectAt = null;
+          next.lastRejectSeq = 0;
+          break;
+        }
+
         case EventType.AUCTION_EXTENDED: {
           next.endAtMs     = data.endAtMs;
           next.extendCount = data.extendCount ?? (s.extendCount + 1);
@@ -258,11 +337,13 @@ export const useAuctionStore = create((set, get) => ({
         }
 
         case EventType.AUCTION_SOLD: {
+          const soldWinnerId = data.winnerId ?? s.winnerId;
+          next.winnerId = soldWinnerId;
           next.status            = AuctionStatus.SOLD;
           next.currentCents      = data.amountCents ?? s.currentCents;
-          next.winnerId          = data.winnerId ?? s.winnerId;
           next.hammerTrans       = true;
           next.hammerAt          = serverTimeMs;
+          next.winnerDisplayName = normalizeDisplayName(data?.winnerDisplayName, soldWinnerId) ?? s.winnerDisplayName;
           scheduleClear('hammerTrans', 2200);
           break;
         }
@@ -320,8 +401,12 @@ function hasOwn(obj, key) {
  * String-cents compare via BigInt — never parseFloat.
  */
 function mergeLeader(leaders, entry) {
+  const normalizedEntry = {
+    ...entry,
+    displayName: normalizeDisplayName(entry.displayName, entry.userId),
+  };
   const cleaned = leaders.filter((l) => l.userId !== entry.userId);
-  cleaned.push(entry);
+  cleaned.push(normalizedEntry);
   cleaned.sort((a, b) => {
     try {
       const av = BigInt(a.cents), bv = BigInt(b.cents);

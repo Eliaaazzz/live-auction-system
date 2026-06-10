@@ -169,6 +169,9 @@ jobs:
         timeout-minutes: 5
         run: |
           aimid="${VERIFY_AID:-$AUCTION_ID}"
+          if [ -z "$aimid" ] && [ -f .e2e-auction-id ]; then
+            aimid="$(cat .e2e-auction-id | tr -d '[:space:]')"
+          fi
           test -n "$aimid" || { echo "missing VERIFY_AID for frontend smoke scripts"; exit 1; }
           echo "frontend smoke VERIFY_AID=$aimid"
           make web-smoke WEB_SMOKE_AID="$aimid"

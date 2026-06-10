@@ -938,6 +938,31 @@ func TestLeaderboardTopN(t *testing.T) {
 	}
 }
 
+func TestLeaderboardKeepsPerUserMaxBid(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	aid := liveAuction(t, s, defaultRules(), 60_000)
+
+	// u1 bids high, then retries low; leaderboard keeps the maximum accepted bid.
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "a1", "15000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("first bid: code=%s err=%v", code, err)
+	}
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "a2", "12000", "U1"); err != nil || code != model.CodeErrTooLow {
+		t.Fatalf("lower bid should be rejected: code=%s err=%v", code, err)
+	}
+
+	lb, err := s.Leaderboard(ctx, aid, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lb) != 1 {
+		t.Fatalf("leaderboard len=%d want 1: %+v", len(lb), lb)
+	}
+	if lb[0].UserID != "u1" || lb[0].AmountCents != "15000" {
+		t.Fatalf("top=%+v want u1/15000 (not downgraded on lower bid)", lb[0])
+	}
+}
+
 // --- Pub/Sub fanout payloads (the wire the gateway subscriber consumes) ---
 
 func subscribePub(t *testing.T, s *Store, aid string) <-chan *redis.Message {

@@ -50,10 +50,17 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// them — the goroutines fire only on events from those modes, so
 	// idle modes have zero overhead.
 	s.auctioneer = NewAuctioneerHooks(cfg.AISidecarURL, s.hub, s.httpClient)
+	roomStatePatchCfg := roomStatePatchConfig{
+		minViewers:    cfg.RoomStatePatchMinViewers,
+		maxEvents:     cfg.RoomStatePatchMaxEvents,
+		flushInterval: cfg.RoomStatePatchFlushInterval,
+		adaptiveEnabled:     cfg.RoomStatePatchAdaptiveEnabled,
+		adaptiveMinBids:     cfg.RoomStatePatchAdaptiveMinBids,
+	}
 
 	switch mode {
 	case "all", "gateway":
-		go s.hub.subscribe(ctx, st, s.auctioneer, s.metrics)
+		go s.hub.subscribe(ctx, st, s.auctioneer, s.metrics, roomStatePatchCfg)
 	}
 	switch mode {
 	case "all", "pg-writer":
@@ -94,8 +101,10 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 
 func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /version", s.handleVersion)
 	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /metrics/reset", s.handleMetricsReset)
+	mux.HandleFunc("POST /api/login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
@@ -104,6 +113,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auctions/{id}", s.handleGetAuction)
 	mux.HandleFunc("GET /api/auctions/{id}/events-count", s.handleEventsCount)
 	mux.HandleFunc("GET /api/auctions/{id}/leaderboard", s.handleLeaderboard)
+	mux.HandleFunc("GET /api/auctions/{id}/reserve-advisor", s.handleReserveAdvisor)
 	mux.HandleFunc("GET /api/auctions/{id}/evidence", s.handleEvidence)
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)

@@ -18,7 +18,7 @@ local function canonicalAuctionMode(mode)
   mode = string.gsub(mode, '%s', '_')
   mode = string.gsub(mode, '-', '_')
   if mode == 'first' or mode == 'first_price' or mode == 'firstprice' then return 'first_price' end
-  if mode == 'second' or mode == 'second_price' or mode == 'secondprice' or mode == 'vickrey' then
+  if mode == 'second' or mode == 'second_price' or mode == 'secondprice' or mode == 'vickrey' or mode == 'auction2' or mode == '2' then
     return 'second_price'
   end
   return mode

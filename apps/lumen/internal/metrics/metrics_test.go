@@ -129,6 +129,70 @@ func TestHistogramConcurrent(t *testing.T) {
 	}
 }
 
+func TestHistogramResetClearsSamples(t *testing.T) {
+	h := NewHistogram(16)
+	for i := 0; i < 25; i++ {
+		h.Observe(time.Duration(i+1) * time.Millisecond)
+	}
+	if got := h.Snapshot().Count; got != 25 {
+		t.Fatalf("pre-reset count=%d want=25", got)
+	}
+	h.Reset()
+	if got := h.Snapshot().Count; got != 0 {
+		t.Fatalf("post-reset count=%d want=0", got)
+	}
+	s := h.Snapshot()
+	if s.P50 != 0 || s.P95 != 0 || s.P99 != 0 || s.Max != 0 {
+		t.Fatalf("post-reset percentiles=%+v want all zero", s)
+	}
+}
+
+func TestRegistryResetForLoadRun(t *testing.T) {
+	r := New()
+	r.AckLatency.Observe(10 * time.Millisecond)
+	r.BroadcastLatency.Observe(20 * time.Millisecond)
+	r.HammerLatency.Observe(30 * time.Millisecond)
+	r.CatchupLatency.Observe(40 * time.Millisecond)
+	r.ScriptTime.Observe(50 * time.Millisecond)
+	r.BidsAccepted.Inc()
+	r.BidsRejected.Inc()
+	r.BackpressureDrop.Inc()
+	r.SeqGap.Inc()
+	r.WsAuthUnauthorized.Inc()
+	r.WsSchemaMismatch.Inc()
+	r.WsUpgradeFailed.Inc()
+	r.RoomStatePatchEmitted.Inc()
+	r.RoomStatePatchBids.Inc()
+	r.RoomStatePatchSkippedPublic.Inc()
+	r.RoomStatePatchLag.Observe(10 * time.Millisecond)
+	r.ObserveStreamLen(99)
+
+	r.ResetForLoadRun()
+
+	got := r.Snapshot()
+	if got.Ack.Count != 0 || got.Broadcast.Count != 0 || got.Hammer.Count != 0 || got.Catchup.Count != 0 || got.ScriptTime.Count != 0 {
+		t.Fatalf("post-reset histogram count not zero: %+v", got)
+	}
+	if got.BidsAccepted != 0 || got.BidsRejected != 0 || got.BackpressureDrop != 0 || got.SeqGap != 0 {
+		t.Fatalf("post-reset counters not zero: %+v", got)
+	}
+	if got.WsAuthUnauthorized != 0 || got.WsSchemaMismatch != 0 || got.WsUpgradeFailed != 0 {
+		t.Fatalf("ws handshake counters not zero: %+v", got)
+	}
+	if got.RoomStatePatchEmitted != 0 || got.RoomStatePatchBids != 0 || got.RoomStatePatchSkippedPublic != 0 {
+		t.Fatalf("post-reset room patch counters not zero: %+v", got)
+	}
+	if got.RoomStatePatchLagMs.Count != 0 {
+		t.Fatalf("post-reset room patch lag count not zero: %+v", got)
+	}
+	if got.StreamLenMax != 0 {
+		t.Fatalf("StreamLenMax=%d want=0", got.StreamLenMax)
+	}
+	if got.TimerErrInternal != 0 || got.TimerErrInternalKeyType != 0 || got.TimerErrInternalSeqMismatch != 0 {
+		t.Fatalf("timer err-internal counters not cleared: %+v", got)
+	}
+}
+
 // TestCounterAtomic asserts Counter accumulates correctly across goroutines.
 // Race detector run catches the unsafe-mutation regression separately.
 func TestCounterAtomic(t *testing.T) {
@@ -208,7 +272,10 @@ func TestSnapshotJSONShape(t *testing.T) {
 		"ackLatencyMs", "broadcastLatencyMs", "hammerLatencyMs",
 		"catchupLatencyMs", "placeBidScriptTimeMs",
 		"bidsAccepted", "bidsRejected", "backpressureForceClose",
-		"seqGapCount", "streamLenMax", "activeConns",
+		"wsAuthUnauthorized", "wsSchemaMismatch", "wsUpgradeFailed",
+		"seqGapCount", "roomStatePatchEmitted", "roomStatePatchBids", "roomStatePatchSkippedPublic", "roomStatePatchLagMs",
+		"timerErrInternal", "timerErrInternalKeyType", "timerErrInternalSeqMismatch",
+		"streamLenMax", "activeConns",
 	}
 	for _, k := range required {
 		if _, ok := got[k]; !ok {

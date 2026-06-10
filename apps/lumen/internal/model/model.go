@@ -44,6 +44,7 @@ const (
 	TypeAuctionSold      = "AUCTION_SOLD"      // terminal: cap-hit / hammer
 	TypeAuctionNoBid     = "AUCTION_NO_BID"    // terminal: timer closed with no bids (T3)
 	TypeAuctionCancelled = "AUCTION_CANCELLED" // terminal: seller/admin cancel (T3)
+	TypeRoomStatePatch   = "ROOM_STATE_PATCH"
 	// T7 §4.2: AI commentary broadcast. Non-authoritative, no seq slot
 	// (`seq: null`), bid path NEVER awaits this. Spec lives in
 	// proto/ai-events.md §POST /llm/auctioneer.
@@ -181,6 +182,21 @@ type AuctionCancelledData struct {
 	ServerTimeMs int64  `json:"serverTimeMs"`
 }
 
+// RoomStatePatchData is a coalescing projection for fanout scale.
+// It intentionally omits full history and carries advisory room state deltas.
+// It is a non-authoritative supplement to Stream replay/snapshot.
+type RoomStatePatchData struct {
+	Seq              int64  `json:"seq"`
+	Status           string `json:"status"`
+	CurrentPriceCents string `json:"currentPriceCents"`
+	WinnerID         string `json:"winnerId"`
+	EndAtMs          int64  `json:"endAtMs"`
+	ExtendCount      int64  `json:"extendCount"`
+	WinnerDisplayName string `json:"winnerDisplayName"`
+	BidCountDelta    int64  `json:"bidCountDelta"`
+	ServerTimeMs     int64  `json:"serverTimeMs"`
+}
+
 // PubMessage is the Pub/Sub fanout envelope written by the Lua hot-path scripts
 // and consumed by the gateway subscriber. It carries the wire type so one
 // channel can fan out BID_ACCEPTED / AUCTION_EXTENDED / AUCTION_SOLD without the
@@ -204,7 +220,7 @@ type RoomSnapshotData struct {
 type RoomSnapshotRules struct {
 	StepCents string  `json:"stepCents"`
 	CapCents  *string `json:"capCents"`
-	// ReserveCents mirrors StartPriceCents until a separate reserve rule lands.
+	// ReserveCents is the effective reserve floor for the auction.
 	ReserveCents      string `json:"reserveCents"`
 	AuctionMode       string `json:"auctionMode"`
 	MaxExtensions     int64  `json:"maxExtensions"`
@@ -269,6 +285,9 @@ func (c Cents) Value() (driver.Value, error) { return int64(c), nil }
 
 type Rules struct {
 	StartPriceCents Cents `json:"startPriceCents"`
+	// Optional reserve floor for second-price settlement. If zero, StartPriceCents
+	// is used as the fallback reserve in snapshots and settlement.
+	ReserveCents    Cents `json:"reserveCents"`
 	IncrementCents  Cents `json:"incrementCents"`
 	CapPriceCents   Cents `json:"capPriceCents"`
 	DurationSec     int64 `json:"durationSec"`
@@ -286,6 +305,10 @@ type Rules struct {
 }
 
 func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
+	reserveCents := r.ReserveCents
+	if reserveCents <= 0 {
+		reserveCents = r.StartPriceCents
+	}
 	var capCents *string
 	if r.CapPriceCents > 0 {
 		c := strconv.FormatInt(int64(r.CapPriceCents), 10)
@@ -294,7 +317,7 @@ func (r Rules) RoomSnapshotRules() RoomSnapshotRules {
 	return RoomSnapshotRules{
 		StepCents:         strconv.FormatInt(int64(r.IncrementCents), 10),
 		CapCents:          capCents,
-		ReserveCents:      strconv.FormatInt(int64(r.StartPriceCents), 10),
+		ReserveCents:      strconv.FormatInt(int64(reserveCents), 10),
 		AuctionMode:       r.AuctionModeOrDefault(),
 		MaxExtensions:     r.MaxExtensions,
 		AntiSnipeWindowMs: r.ExtendWindowSec * 1000,
@@ -310,11 +333,14 @@ func CanonicalAuctionMode(mode string) string {
 	if mode == "" {
 		return AuctionModeFirstPrice
 	}
+	mode = strings.ReplaceAll(mode, " ", "_")
 	mode = strings.ReplaceAll(mode, "-", "_")
 	switch mode {
 	case AuctionModeFirstPrice, "first", "firstprice":
 		return AuctionModeFirstPrice
-	case AuctionModeSecondPrice, "vickrey", "second", "secondprice":
+	case "english":
+		return AuctionModeFirstPrice
+	case AuctionModeSecondPrice, "vickrey", "second", "secondprice", "auction2", "2":
 		return AuctionModeSecondPrice
 	default:
 		return mode
@@ -333,9 +359,14 @@ func (r Rules) Validate() error {
 	switch {
 	case r.StartPriceCents < 0:
 		return fmt.Errorf("startPriceCents must be >= 0")
+	case r.ReserveCents < 0:
+		return fmt.Errorf("reserveCents must be >= 0")
 	case r.IncrementCents <= 0:
 		// increment 0 would let bids "win" at the current price (no real raise).
 		return fmt.Errorf("incrementCents must be > 0")
+	case r.ReserveCents > 0 && r.ReserveCents > r.StartPriceCents:
+		// Reserve is a floor; it cannot exceed the published start price.
+		return fmt.Errorf("reserveCents must be <= startPriceCents")
 	case r.CapPriceCents < 0:
 		return fmt.Errorf("capPriceCents must be >= 0")
 	case r.CapPriceCents > 0 && r.CapPriceCents <= r.StartPriceCents:

@@ -4,8 +4,8 @@
 package store
 
 import (
-	"crypto/tls"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -76,7 +76,10 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err := s.ensureColumn(ctx, "auction_rules", "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
-	return s.ensureColumn(ctx, "auction_rules", "auction_mode", "VARCHAR(32) NOT NULL DEFAULT 'first_price'")
+	if err := s.ensureColumn(ctx, "auction_rules", "auction_mode", "VARCHAR(32) NOT NULL DEFAULT 'first_price'"); err != nil {
+		return err
+	}
+	return s.ensureColumn(ctx, "auction_rules", "reserve_cents", "BIGINT NOT NULL DEFAULT 0")
 }
 
 // ensureColumn adds table.column with the given DDL if it is absent. table,
@@ -319,6 +322,11 @@ func (s *Store) StartAuction(ctx context.Context, aid string, durationMs int64) 
 // Redis TIME so a stale score only costs a retry, never a premature hammer.
 const activeKey = "auction:active"
 
+const (
+	closeErrInternalKeyType     = "key_type"
+	closeErrInternalSeqMismatch = "seq_stream_mismatch"
+)
+
 // TrackActive registers/refreshes an auction in the Timer Worker index.
 func (s *Store) TrackActive(ctx context.Context, aid string, endAtMs int64) error {
 	return s.rdb.ZAdd(ctx, activeKey, redis.Z{Score: float64(endAtMs), Member: aid}).Err()
@@ -349,15 +357,25 @@ func (s *Store) RedisNowMs(ctx context.Context) (int64, error) {
 // ERR_NOT_DUE, the current endAtMs so the caller can refresh the active score
 // (anti-snipe may have moved it forward since the scan).
 func (s *Store) CloseAuction(ctx context.Context, aid string) (string, int64, error) {
+	code, _, endAtMs, err := s.CloseAuctionWithReason(ctx, aid)
+	return code, endAtMs, err
+}
+
+// CloseAuctionWithReason extends CloseAuction to return the Lua-reported reason
+// when code == ERR_INTERNAL (e.g. key_type / seq_stream_mismatch).
+func (s *Store) CloseAuctionWithReason(ctx context.Context, aid string) (string, string, int64, error) {
 	arr, err := s.eval(ctx, s.shaClose, []string{stateKey(aid), streamKey(aid), lbKey(aid)}, PubChannel(aid))
 	if err != nil {
-		return "", 0, err
+		return "", "", 0, err
 	}
 	c := luaStr(arr[0])
 	if c == model.CodeErrNotDue && len(arr) >= 2 {
-		return c, luaInt(arr[1]), nil
+		return c, "", luaInt(arr[1]), nil
 	}
-	return c, 0, nil
+	if c == model.CodeErrInternal && len(arr) >= 2 {
+		return c, luaStr(arr[1]), 0, nil
+	}
+	return c, "", 0, nil
 }
 
 // CancelAuction runs cancel_auction.lua (seller/admin cancel of SCHEDULED/LIVE).
@@ -479,6 +497,19 @@ type StreamEvent struct {
 	Seq     int64
 	Type    string
 	Payload string
+}
+
+// ReconcileSnapshot returns only the minimal fields needed by the Timer reconcile
+// sweep, avoiding Snapshot()'s full HGETALL in high-live-count scenarios.
+func (s *Store) ReconcileSnapshot(ctx context.Context, aid string) (status string, endAtMs int64, winnerID, currentPriceCents string, suppressionUntilMs int64, err error) {
+	values, err := s.rdb.HMGet(ctx, stateKey(aid), "status", "endAtMs", "winnerId", "currentPriceCents", "timerErrInternalSuppressUntilMs").Result()
+	if err != nil {
+		return "", 0, "", "", 0, err
+	}
+	if len(values) < 5 {
+		return "", 0, "", "", 0, nil
+	}
+	return luaStr(values[0]), luaInt(values[1]), luaStr(values[2]), luaStr(values[3]), luaInt(values[4]), nil
 }
 
 // StreamLen returns XLEN of the auction's event Stream. T8 observability: the

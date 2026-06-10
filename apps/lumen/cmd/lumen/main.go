@@ -101,12 +101,14 @@ func main() {
 		fs := flag.NewFlagSet("cleanup-load", flag.ExitOnError)
 		auctions := fs.String("auction", "", "comma-separated explicit auction ids to clean (e.g. a1,a2)")
 		auctionFile := fs.String("auction-file", "", "file path with auction ids (line separated)")
+		auctionPrefix := fs.String("auction-prefix", "", "only scan state keys with this auction-id prefix (e.g. auc_load_)")
 		scan := fs.Bool("scan-load-auctions", false, "scan Redis state keys and clean auctions matching load rules")
 		dryRun := fs.Bool("dry-run", false, "report matched ids only; do not delete Redis keys")
 		_ = fs.Parse(os.Args[2:])
 		opts := server.CleanupLoadOptions{
 			AuctionIDs:       parseAuctionIDs(*auctions),
 			AuctionFile:      *auctionFile,
+			AuctionPrefix:    *auctionPrefix,
 			ScanLoadAuctions: *scan,
 			DryRun:           *dryRun,
 		}

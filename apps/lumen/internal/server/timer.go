@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
@@ -21,6 +23,7 @@ const timerScanInterval = 100 * time.Millisecond
 // orphan an auction from the hammer permanently.
 const reconcileInterval = 5 * time.Second
 const timerErrInternalSuppressionInterval = 30 * time.Minute
+const timerErrInternalSuppressedUntilField = "timerErrInternalSuppressUntilMs"
 
 var (
 	timerErrInternalSuppressMu    sync.Mutex
@@ -91,7 +94,7 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 	// metric — never block the close.
 	var endAtMs int64
 	if m != nil {
-		if _, snapEndAtMs, _, _, err := st.ReconcileSnapshot(ctx, aid); err == nil {
+		if _, snapEndAtMs, _, _, _, err := st.ReconcileSnapshot(ctx, aid); err == nil {
 			endAtMs = snapEndAtMs
 		}
 	}
@@ -146,7 +149,7 @@ func closeDue(ctx context.Context, st *store.Store, aid string, m *metrics.Regis
 			}
 		}
 		log.Printf("ERROR timer close %s: ERR_INTERNAL (state/stream corruption); untracking to stop the 100ms retry loop, reconcile will re-probe in %s", aid, reconcileInterval)
-		markErrInternalSuppression(aid)
+		markErrInternalSuppression(ctx, st, aid)
 		if err := st.UntrackActive(ctx, aid); err != nil {
 			log.Printf("timer untrack %s after ERR_INTERNAL: %v", aid, err)
 		}
@@ -167,12 +170,12 @@ func reconcileActive(ctx context.Context, st *store.Store, auctioneer *Auctionee
 		return
 	}
 	for _, aid := range aids {
-		status, endAtMs, winnerID, currentPriceCents, err := st.ReconcileSnapshot(ctx, aid)
+		status, endAtMs, winnerID, currentPriceCents, suppressUntilMs, err := st.ReconcileSnapshot(ctx, aid)
 		if err != nil {
 			continue
 		}
 		if status == model.StateLive && endAtMs > 0 {
-			if isErrInternalSuppressed(aid) {
+			if isErrInternalSuppressed(aid, suppressUntilMs) {
 				continue
 			}
 			if err := st.TrackActive(ctx, aid, endAtMs); err != nil {
@@ -190,7 +193,17 @@ func reconcileActive(ctx context.Context, st *store.Store, auctioneer *Auctionee
 	}
 }
 
-func isErrInternalSuppressed(aid string) bool {
+func isErrInternalSuppressed(aid string, suppressUntilMs int64) bool {
+	if suppressUntilMs > 0 {
+		suppressUntil := time.UnixMilli(suppressUntilMs)
+		if suppressUntil.After(time.Now()) {
+			timerErrInternalSuppressMu.Lock()
+			timerErrInternalSuppressUntil[aid] = suppressUntil
+			timerErrInternalSuppressMu.Unlock()
+			return true
+		}
+	}
+
 	timerErrInternalSuppressMu.Lock()
 	defer timerErrInternalSuppressMu.Unlock()
 	expireAt, ok := timerErrInternalSuppressUntil[aid]
@@ -204,8 +217,16 @@ func isErrInternalSuppressed(aid string) bool {
 	return true
 }
 
-func markErrInternalSuppression(aid string) {
+func markErrInternalSuppression(ctx context.Context, st *store.Store, aid string) {
+	expireAt := time.Now().Add(timerErrInternalSuppressionInterval)
 	timerErrInternalSuppressMu.Lock()
 	defer timerErrInternalSuppressMu.Unlock()
-	timerErrInternalSuppressUntil[aid] = time.Now().Add(timerErrInternalSuppressionInterval)
+	timerErrInternalSuppressUntil[aid] = expireAt
+	if st == nil {
+		return
+	}
+	stateKey := fmt.Sprintf("auction:{%s}:state", aid)
+	if err := st.Redis().HSet(ctx, stateKey, timerErrInternalSuppressedUntilField, strconv.FormatInt(expireAt.UnixMilli(), 10)).Err(); err != nil {
+		log.Printf("timer close %s: persist err-internal suppression failed: %v", aid, err)
+	}
 }

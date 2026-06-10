@@ -15,21 +15,11 @@
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, resolveAuctionId, login } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-catchup' });
-
-async function devLogin(nick) {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: nick }),
-  });
-  if (!r.ok) throw new Error(`dev-login ${r.status}`);
-  return r.json();
-}
 
 function openRoom(token, auctionId, lastSeq, onEvent) {
   return new Promise((resolve, reject) => {
@@ -60,7 +50,7 @@ const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
 
 // ─── Phase 1 — initial session ─────────────────────────────
-const { token, userId } = await devLogin('fari-catchup');
+const { token, userId } = await login(HOST_HTTP, 'fari-catchup');
 console.log('login → userId=' + userId);
 
 let snapshotSeq = null;

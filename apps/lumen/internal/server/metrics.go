@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/metrics"
 )
@@ -17,4 +19,30 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.metrics.Snapshot())
+}
+
+// handleMetricsReset resets in-process metrics for a clean harness run.
+//
+// This endpoint is intentionally constrained to APP_ENV=dev so production
+// deployments do not expose a writable observability control path.
+func (s *Server) handleMetricsReset(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.AppEnv != "dev" {
+		http.Error(w, "metrics reset forbidden", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.metrics == nil {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+	resetToken := strings.TrimSpace(os.Getenv("LUMEN_METRICS_RESET_TOKEN"))
+	if resetToken != "" && strings.TrimSpace(r.Header.Get("X-Lumen-Metrics-Reset")) != resetToken {
+		http.Error(w, "bad reset token", http.StatusUnauthorized)
+		return
+	}
+	s.metrics.ResetForLoadRun()
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
 }

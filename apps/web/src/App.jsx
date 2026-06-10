@@ -11,7 +11,7 @@ import { DesktopShell } from './components/DesktopShell.jsx';
 import { MobileRoom, MobileHammer, MobileEvidence } from './components/mobile.jsx';
 import { AdminVLMFacts, AdminConsole } from './components/admin.jsx';
 import { AdminPublish, AdminOrders, AdminCancelModal } from './components/adminExtra.jsx';
-import { MiniProgramStub, ConnReconnecting, ConnSyncing, ConnSchema } from './components/misc.jsx';
+import { MiniProgramStub, ConnConnecting, ConnReconnecting, ConnSyncing, ConnSchema } from './components/misc.jsx';
 import { TweaksPanel } from './components/TweaksPanel.jsx';
 
 import { LiveRoomRoute } from './routes/LiveRoomRoute.jsx';
@@ -44,6 +44,7 @@ export default function App() {
       <Route path="/preview/evidence"      element={<MobileFrame><MobileEvidence/></MobileFrame>}/>
       <Route path="/preview/evidence/broken" element={<MobileFrame><MobileEvidence chainBreak breakAtSeq={14834}/></MobileFrame>}/>
       <Route path="/preview/mp"            element={<MobileFrame><MiniProgramStub/></MobileFrame>}/>
+      <Route path="/preview/conn/connect"    element={<MobileFrame><ConnConnecting/></MobileFrame>}/>
       <Route path="/preview/conn/reconnect" element={<MobileFrame><ConnReconnecting/></MobileFrame>}/>
       <Route path="/preview/conn/sync"      element={<MobileFrame><ConnSyncing/></MobileFrame>}/>
       <Route path="/preview/conn/schema"    element={<MobileFrame><ConnSchema/></MobileFrame>}/>

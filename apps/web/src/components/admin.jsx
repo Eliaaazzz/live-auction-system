@@ -9,6 +9,8 @@ import { RoomClient, buildRoomUrl } from '../lib/ws.js';
 import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
 import { resolveAuctionMode } from '../lib/auctionMode.js';
+import { ConnStatus } from '../lib/types.js';
+import { normalizeSyncStartSeq, makeSyncGap } from '../lib/connState.js';
 
 const WS_BASE = import.meta.env.VITE_WS_BASE || undefined;
 
@@ -752,6 +754,7 @@ function AdminConsole() {
   const leaderboardAtMsRef = React.useRef(0);
   const pendingLeaderBumpRef = React.useRef(0);
   const leaderboardFlightRef = React.useRef(false);
+  const syncStartSeqRef = React.useRef(0);
   const maybeRefreshLeaders = React.useCallback(async (opts) => {
     if (!auctionId) return;
     const now = Date.now();
@@ -777,10 +780,12 @@ function AdminConsole() {
     s.applyEvent(env);
 
     if (env?.type === 'BID_ACCEPTED') {
-      pendingLeaderBumpRef.current += 1;
-      if (pendingLeaderBumpRef.current >= 3) {
-        pendingLeaderBumpRef.current = 0;
-        void maybeRefreshLeaders({ force: false });
+      if (syncStartSeqRef.current <= 0) {
+        pendingLeaderBumpRef.current += 1;
+        if (pendingLeaderBumpRef.current >= 3) {
+          pendingLeaderBumpRef.current = 0;
+          void maybeRefreshLeaders({ force: false });
+        }
       }
       return;
     }
@@ -792,8 +797,33 @@ function AdminConsole() {
       env?.type === 'ROOM_SNAPSHOT'
     ) {
       pendingLeaderBumpRef.current = 0;
+      if (syncStartSeqRef.current <= 0) {
+        void maybeRefreshLeaders({ force: true });
+      }
+    }
+  }, [maybeRefreshLeaders]);
+
+  const handleConnState = React.useCallback((connState) => {
+    const status = connState?.status;
+    const nextState = { ...connState };
+
+    if (status === ConnStatus.SYNCING) {
+      const lastSeq = connState?.lastSeq;
+      syncStartSeqRef.current = normalizeSyncStartSeq(lastSeq);
+      pendingLeaderBumpRef.current = 0;
+      nextState.gap = null;
+      useAuctionStore.getState().setConn(status, nextState);
+      return;
+    }
+
+    if (status === ConnStatus.OPEN && syncStartSeqRef.current > 0) {
+      const gap = makeSyncGap(syncStartSeqRef.current, useAuctionStore.getState().lastSeq);
+      if (gap) nextState.gap = gap;
+      syncStartSeqRef.current = 0;
       void maybeRefreshLeaders({ force: true });
     }
+
+    useAuctionStore.getState().setConn(status, nextState);
   }, [maybeRefreshLeaders]);
 
   // Broadcaster-side WS subscription: same RoomClient + store as the buyer
@@ -806,6 +836,10 @@ function AdminConsole() {
     let alive = true;
     let client;
     (async () => {
+      syncStartSeqRef.current = 0;
+      pendingLeaderBumpRef.current = 0;
+      leaderboardAtMsRef.current = 0;
+
       try {
         await ensureSession('seller-demo');
         useAuctionStore.getState().setSelfUserId(null); // broadcaster, not a bidder
@@ -849,13 +883,17 @@ function AdminConsole() {
       client = new RoomClient({
         url, auctionId,
         getLastSeq: () => useAuctionStore.getState().lastSeq,
-        onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
+        onState:    handleConnState,
         onEvent:    handleEvent,
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
       client.connect();
     })();
-    return () => { alive = false; client?.leave(); };
+    return () => {
+      alive = false;
+      syncStartSeqRef.current = 0;
+      client?.leave();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auctionId]);
 

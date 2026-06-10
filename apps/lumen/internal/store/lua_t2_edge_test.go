@@ -186,6 +186,38 @@ func TestPlaceBid_CapHit_InsideExtendWindow_SoldNotExtended(t *testing.T) {
 	}
 }
 
+func TestPlaceBid_CapHit_SecondPricePaysRunnerUp(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	r := defaultRules()
+	r.AuctionMode = model.AuctionModeSecondPrice
+	r.CapPriceCents = 20000
+	aid := liveAuction(t, s, r, 60_000)
+
+	if code, _, _, err := s.PlaceBid(ctx, aid, "u1", "cb1", "11000", "U1"); err != nil || code != model.CodeOKAccepted {
+		t.Fatalf("bid u1: code=%s err=%v", code, err)
+	}
+	code, _, _, err := s.PlaceBid(ctx, aid, "u2", "cb2", "20000", "U2")
+	if err != nil || code != model.CodeOKSold {
+		t.Fatalf("bid u2: code=%s err=%v", code, err)
+	}
+
+	events, _, _ := s.ReadEventsAfter(ctx, aid, "")
+	if len(events) != 2 {
+		t.Fatalf("events=%d want 2", len(events))
+	}
+	var sold model.AuctionSoldData
+	if err := json.Unmarshal([]byte(events[1].Payload), &sold); err != nil {
+		t.Fatal(err)
+	}
+	if sold.AmountCents != "11000" {
+		t.Fatalf("auction sold amount=%s want runner-up 11000", sold.AmountCents)
+	}
+	if sold.WinnerID != "u2" {
+		t.Fatalf("winner=%s want u2", sold.WinnerID)
+	}
+}
+
 // --- 4. endAtMs boundary precision ---
 
 // TestPlaceBid_AtExactlyEndAtMs_RejectedAsAfterEnd: bid arrives with Redis TIME

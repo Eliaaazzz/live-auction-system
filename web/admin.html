@@ -10,14 +10,16 @@
     #log { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; height: 320px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: 13px; }
     .ok { color: #4ade80; } .err { color: #f87171; }
     a { color: #2563eb; }
+    #advisor { background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; }
   </style>
 </head>
 <body>
   <h1>Admin — seller flow (T1)</h1>
-  <p>Runs: dev-login → product → AI facts (mock) → auction → freeze → start. Then open the room link in two tabs.</p>
+  <p>Runs: login → product → AI facts (mock) → auction → freeze → start. Then open the room link in two tabs.</p>
   <button id="run">Run full seller flow</button>
   <button id="cancel" disabled>Cancel current auction</button>
   <p id="roomlink"></p>
+  <div id="advisor"></div>
   <div id="log"></div>
 
   <script>
@@ -30,6 +32,27 @@
       el.scrollTop = el.scrollHeight;
     };
 
+    async function login(nickname, role) {
+      const payload = { nickname, role };
+      const headers = { 'Content-Type': 'application/json' };
+      const loginRes = await fetch('/api/login', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      if (loginRes && loginRes.ok) return loginRes.json();
+
+      const fallbackRes = await fetch('/api/dev-login', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+      if (!fallbackRes || !fallbackRes.ok) {
+        throw new Error('/api/login ' + (loginRes ? loginRes.status : 'failed') + '; /api/dev-login ' + (fallbackRes ? fallbackRes.status : 'failed'));
+      }
+      return fallbackRes.json();
+    }
+
     async function api(path, token, body) {
       const res = await fetch(path, {
         method: 'POST',
@@ -41,10 +64,38 @@
       return data;
     }
 
+    async function apiGet(path, token) {
+      const res = await fetch(path, {
+        method: 'GET',
+        headers: { ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error('GET ' + path + ' -> ' + res.status + ' ' + JSON.stringify(data));
+      return data;
+    }
+
+    function showAdvisor(payload) {
+      const adv = payload?.advice || {};
+      const container = document.getElementById('advisor');
+      container.textContent = '';
+      const lines = [
+        'reserve-advisor status=' + (payload?.status || 'unknown'),
+        'reason=' + (adv.reasonCode || 'n/a'),
+        'current=' + (payload?.currentPriceCents || 'n/a'),
+        'bidRange=' + (adv.minBidCents || 'n/a') + '…' + (adv.maxBidCents || 'n/a'),
+        'confidence=' + (typeof adv.confidence === 'number' ? (adv.confidence * 100).toFixed(1) + '%' : 'n/a'),
+      ];
+      lines.forEach((line) => {
+        const div = document.createElement('div');
+        div.textContent = line;
+        container.appendChild(div);
+      });
+    }
+
     document.getElementById('run').onclick = async () => {
       try {
-        const s = await api('/api/dev-login', '', { nickname: 'Seller ' + Date.now(), role: 'seller' });
-        log('dev-login: ' + s.userId, 'ok');
+        const s = await login('Seller ' + Date.now(), 'seller');
+        log('login: ' + s.userId, 'ok');
         const p = await api('/api/products', s.token, { name: 'Vintage Watch', imageUrl: 'https://example.com/w.jpg', description: 'demo' });
         log('product: ' + p.productId, 'ok');
         const facts = await api('/api/facts/draft', s.token, { productId: p.productId, imageUrls: ['https://example.com/w.jpg'] });
@@ -60,8 +111,14 @@
         log('auction: ' + a.auctionId, 'ok');
         const f = await api('/api/auctions/' + a.auctionId + '/freeze', s.token);
         log('freeze: ' + f.code, 'ok');
+        const advisorBeforeStart = await apiGet('/api/auctions/' + a.auctionId + '/reserve-advisor', s.token);
+        showAdvisor(advisorBeforeStart);
+        log('reserve-advisor (pre-start): ' + JSON.stringify(advisorBeforeStart.advice || {}), 'ok');
         const st = await api('/api/auctions/' + a.auctionId + '/start', s.token, { durationMs: 60000 });
         log('start: ' + st.code + ' endAtMs=' + st.endAtMs, 'ok');
+        const advisorAfterStart = await apiGet('/api/auctions/' + a.auctionId + '/reserve-advisor', s.token);
+        showAdvisor(advisorAfterStart);
+        log('reserve-advisor (live): ' + JSON.stringify(advisorAfterStart.advice || {}), 'ok');
         const url = '/room.html?auction=' + a.auctionId;
         document.getElementById('roomlink').innerHTML =
           'Room link (open in 2 tabs): <a href="' + url + '" target="_blank">' + url + '</a>';

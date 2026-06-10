@@ -8,8 +8,10 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -90,6 +92,29 @@ func TestT2HiddenWSDispatchRejectsOversizedClientBidIDBeforeStoreCall(t *testing
 	assertHiddenRejected(t, got, model.CodeErrBadInput)
 }
 
+func TestT2HiddenWSDispatchRejectsRateLimitedBidPlace(t *testing.T) {
+	s := &Server{}
+	c := &Conn{
+		send:        make(chan []byte, 1),
+		aid:         "auc_hidden",
+		userID:      "hidden_user",
+		displayName: "Hidden User",
+		lastBidAt:   time.Now(),
+	}
+
+	data := mustJSON(t, model.BidPlaceData{
+		ClientBidID: "cb_rate",
+		AmountCents: "11000",
+	})
+
+	got := dispatchHiddenWSWithConn(t, s, c, model.Envelope{
+		Type:         model.TypeBidPlace,
+		ServerTimeMs: time.Now().UnixMilli(),
+		Data:         data,
+	})
+	assertHiddenRejected(t, got, model.CodeErrRateLimited)
+}
+
 func TestT2HiddenWSFrameLimitConstants(t *testing.T) {
 	if maxWSFrameBytes != 32*1024 {
 		t.Fatalf("maxWSFrameBytes=%d want 32768", maxWSFrameBytes)
@@ -103,12 +128,13 @@ func TestT2HiddenWSFrameLimitConstants(t *testing.T) {
 }
 
 func TestT2HiddenWSRejectsSchemaMismatchWithProtocolClose(t *testing.T) {
-	target, _ := startTestServer(t)
+	target, srv := startTestServer(t)
 	hc := &http.Client{Timeout: 5 * time.Second}
 	buyer, err := devLogin(hc, target, "Schema Buyer", "user")
 	if err != nil {
 		t.Fatal(err)
 	}
+	pre := srv.metrics.WsSchemaMismatch.Load()
 	c := dialRaw(t, target, buyer.Token)
 	defer c.Close()
 
@@ -138,12 +164,89 @@ func TestT2HiddenWSRejectsSchemaMismatchWithProtocolClose(t *testing.T) {
 	if closeErr.Code != schemaMismatchCloseCode {
 		t.Fatalf("close code=%d want %d", closeErr.Code, schemaMismatchCloseCode)
 	}
+	if got := srv.metrics.WsSchemaMismatch.Load() - pre; got != 1 {
+		t.Fatalf("wsSchemaMismatch counter delta=%d want 1", got)
+	}
+}
+
+func TestT2HiddenWSUnauthorizedIncrementsMetric(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+
+	pre := srv.metrics.WsAuthUnauthorized.Load()
+	resp, err := hc.Get(target + "/ws?token=not-a-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("/ws unauthorized -> %d want %d", resp.StatusCode, http.StatusUnauthorized)
+	}
+	if got := srv.metrics.WsAuthUnauthorized.Load() - pre; got != 1 {
+		t.Fatalf("wsAuthUnauthorized counter delta=%d want 1", got)
+	}
+}
+
+func TestT2HiddenWSUpgradeFailureIncrementsMetric(t *testing.T) {
+	target, srv := startTestServer(t)
+	hc := &http.Client{Timeout: 5 * time.Second}
+	buyer, err := devLogin(hc, target, "Upgrade Buyer", "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pre := srv.metrics.WsUpgradeFailed.Load()
+
+	u, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheme := "ws"
+	if u.Scheme == "https" {
+		scheme = "wss"
+	}
+	wsURL := fmt.Sprintf("%s://%s/ws?token=%s", scheme, u.Host, url.QueryEscape(buyer.Token))
+
+	header := make(http.Header)
+	header.Set("Origin", "http://forbidden.local")
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if err == nil {
+		t.Fatal("expected handshake failure with disallowed Origin")
+	}
+	if resp == nil {
+		t.Fatal("expected HTTP response on handshake failure")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("upgrade failed with %d want %d", resp.StatusCode, http.StatusForbidden)
+	}
+	if got := srv.metrics.WsUpgradeFailed.Load() - pre; got != 1 {
+		t.Fatalf("wsUpgradeFailed counter delta=%d want 1", got)
+	}
 }
 
 func dispatchHiddenWS(t *testing.T, aid string, env model.Envelope) model.Envelope {
 	t.Helper()
 	s := &Server{}
 	c := &Conn{send: make(chan []byte, 1), aid: aid, userID: "hidden_user", displayName: "Hidden User"}
+	s.dispatchWS(context.Background(), c, env)
+	select {
+	case raw := <-c.send:
+		var out model.Envelope
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode pushed envelope: %v; raw=%s", err, string(raw))
+		}
+		return out
+	default:
+		t.Fatalf("dispatchWS did not push a rejection")
+		return model.Envelope{}
+	}
+}
+
+func dispatchHiddenWSWithConn(t *testing.T, s *Server, c *Conn, env model.Envelope) model.Envelope {
+	t.Helper()
 	s.dispatchWS(context.Background(), c, env)
 	select {
 	case raw := <-c.send:

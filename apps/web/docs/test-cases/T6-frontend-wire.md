@@ -20,7 +20,7 @@
 
 | ID | 标题 | 验证方式 | P |
 |---|---|---|---|
-| TC-T6-001 | `POST /api/dev-login` 返回 `{ userId, token, nickname }` | smoke (login → object shape) | P0 |
+| TC-T6-001 | `POST /api/login`（兼容回退 `POST /api/dev-login`）返回 `{ userId, token, nickname }` | smoke (login → object shape) | P0 |
 | TC-T6-002 | JWT 缓存到 localStorage,reload 后复用,不重复登录 | code-verify `lib/auth.js`;手测 | P0 |
 | TC-T6-003 | REST 请求自动带 `Authorization: Bearer <jwt>` 头 | code-verify `lib/api.js`;backend `handleEvidence` 验证 401 路径 | P0 |
 | TC-T6-004 | WS 连接 URL 形态 `ws://host/ws?auction=<id>&token=<jwt>` (`?auction` 不被后端读但保留为 debug 标记) | smoke (WS open succeeds) + code-verify backend `handleWS` line 297 | P0 |
@@ -154,11 +154,11 @@ cd <repo-root> && make web-smoke-vickrey-prepare
 
 ## 1. 覆盖型用例
 
-### TC-T6-001 — `POST /api/dev-login` 返回 `{ userId, token, nickname }`
+### TC-T6-001 — `POST /api/login`（fallback `/api/dev-login`）返回 `{ userId, token, nickname }`
 
 - **前置条件**:backend up,`ENABLE_DEV_LOGIN=true`
 - **测试步骤**:
-  1. `fetch('/api/dev-login', { method: 'POST', body: JSON.stringify({ nickname: 'fari-smoke' }) })`
+  1. `fetch('/api/login', { method: 'POST', body: JSON.stringify({ nickname: 'fari-smoke' }) })`（若失败，再 `POST /api/dev-login`）
   2. 解析 response JSON
 - **输入数据**:`{ "nickname": "fari-smoke" }`
 - **预期结果**:HTTP 200;body `{ userId: 'user_fari_smoke', token: 'user_fari_smoke.<hex64>', nickname: 'fari-smoke' }`;token 长度 80(`<userId>.<hex64>`)
@@ -170,10 +170,10 @@ cd <repo-root> && make web-smoke-vickrey-prepare
 - **前置条件**:已运行过 TC-T6-001
 - **测试步骤**:
   1. `ensureSession('demo')`,等待 resolve
-  2. `localStorage.getItem('lumen.session')` 非空,JSON parse 得到 `{ userId, token, nickname }`
-  3. reload 页面
-  4. 再 `ensureSession('demo')`(不传或传不同 nickname)
-- **预期结果**:第二次调用不发起新的 `/api/dev-login` 请求(network 0 calls),直接 resolve cached session
+ 2. `localStorage.getItem('lumen.session')` 非空,JSON parse 得到 `{ userId, token, nickname }`
+ 3. reload 页面
+ 4. 再 `ensureSession('demo')`(不传或传不同 nickname)
+- **预期结果**:第二次调用不发起新的登录请求(network 0 calls),直接 resolve cached session
 - **优先级**:P0
 - **状态**:✅ code-verified(`lib/auth.js currentToken()` 先读 cache)
 

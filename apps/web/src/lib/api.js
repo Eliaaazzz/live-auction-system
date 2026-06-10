@@ -4,7 +4,7 @@
 // (apps/lumen/internal/server/api.go).
 //
 // Authoritative endpoint list: project-blueprint.md §4.1.
-// Auth: JWT bearer minted by POST /api/dev-login. See lib/auth.js.
+// Auth: JWT bearer minted by POST /api/login first, fallback to /api/dev-login.
 //
 // IMPORTANT: backend uses `/api/...` (NOT `/api/v1/...`). The Vite proxy
 // in vite.config.js forwards `/api/*` to VITE_API_BASE.
@@ -99,10 +99,10 @@ export const api = {
    *   } }
    *
    * Notes:
-   * - duration may be supplied as milliseconds (`durationMs`) by older callers,
-   *   but the current canonical key is `durationSec`.
+ * - duration may be supplied as milliseconds (`durationMs`) by older callers,
+ *   but the current canonical key is `durationSec`.
  * - Auction mode: `first_price` (default) or `second_price`. Legacy callers may
- *   also send `mode` (`ENGLISH`/`VICKREY`) which is normalized to the same
+ *   also send `mode` (`ENGLISH`/`VICKREY`/`auction2`/`2`) which is normalized to the same
  *   canonical values on the backend.
  */
   createDraft: (payload) => request('/auctions', { method: 'POST', body: payload }),

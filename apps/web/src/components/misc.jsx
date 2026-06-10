@@ -1,5 +1,5 @@
 import React from 'react';
-import { CURRENT_SCHEMA_VERSION } from '../lib/types.js';
+import { CURRENT_SCHEMA_VERSION, ConnStatus } from '../lib/types.js';
 
 // lumen-misc.jsx — Mini-program stub landing + Connection states demo
 
@@ -159,12 +159,12 @@ function MiniProgramStub() {
 }
 
 // ───────────────────────────────────────────────────────────────
-// Connection states — three small artboards in one row
+// Connection states — four small artboards in one row
 // Visualizes §4 P7: silent reconnect is forbidden.
 // ───────────────────────────────────────────────────────────────
 
 function ConnReconnecting() {
-  return <ConnStateFrame status="reconnecting" title="WebSocket 中断 · 正在重连"
+  return <ConnStateFrame status={ConnStatus.RECONNECTING} title="WebSocket 中断 · 正在重连"
     sub="Heartbeat 超时 → 退避重连 · 第 2 次尝试"
     detail={[
       ['attempts', '2 / 5'],
@@ -176,8 +176,22 @@ function ConnReconnecting() {
   />;
 }
 
+function ConnConnecting() {
+  return <ConnStateFrame status={ConnStatus.CONNECTING} title="连接中"
+    sub="WebSocket 握手中 · 正在拉起直播间"
+    detail={[
+      ['phase', 'handshake'],
+      ['wsBase', '已配置 · waiting'],
+      ['attempts', '1 / 5'],
+      ['hint', '网络成功后立即切到同步 / 开播态'],
+    ]}
+    color="var(--douyin-cyan)"
+    progress={0.18}
+  />;
+}
+
 function ConnSyncing() {
-  return <ConnStateFrame status="syncing" title="正在同步遗漏事件"
+  return <ConnStateFrame status={ConnStatus.SYNCING} title="正在同步遗漏事件"
     sub="ROOM_JOIN(lastSeq=14921) → XRANGE 14922→14998"
     detail={[
       ['gap', '#14922 → #14998 · 77 events'],
@@ -191,7 +205,7 @@ function ConnSyncing() {
 }
 
 function ConnSchema() {
-  return <ConnStateFrame status="schema" title="协议版本不匹配"
+  return <ConnStateFrame status={ConnStatus.SCHEMA} title="协议版本不匹配"
     sub={`server.schemaVersion=${CURRENT_SCHEMA_VERSION + 1} · client.schemaVersion=${CURRENT_SCHEMA_VERSION}`}
     detail={[
       ['code', 'WS_SCHEMA_MISMATCH'],
@@ -318,7 +332,7 @@ function ConnStateFrame({ status, title, sub, detail, color, progress, danger })
           color: danger ? '#fff' : color, fontFamily: 'inherit',
           fontSize: 12, fontWeight: 600, border: '1px solid ' + (danger ? color : color + '40'),
         }}>
-          {danger ? '刷新页面' : status === 'reconnecting' ? '取消并退出' : '后台等待'}
+          {danger ? '刷新页面' : status === ConnStatus.RECONNECTING ? '取消并退出' : '后台等待'}
         </button>
       </div>
 
@@ -330,6 +344,7 @@ function ConnStateFrame({ status, title, sub, detail, color, progress, danger })
 
 export {
   MiniProgramStub,
+  ConnConnecting,
   ConnReconnecting,
   ConnSyncing,
   ConnSchema

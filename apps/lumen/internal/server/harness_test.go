@@ -39,7 +39,7 @@ func startTestServer(t *testing.T) (string, *Server) {
 	// keeps the path inert. Real Server.Serve wires a fresh one.
 	srv.auctioneer = nil
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.hub.subscribe(ctx, st, srv.auctioneer, srv.metrics)
+	go srv.hub.subscribe(ctx, st, srv.auctioneer, srv.metrics, roomStatePatchConfig{})
 	go runPersistenceWorker(ctx, st)
 	go runTimerWorker(ctx, st, srv.auctioneer, srv.metrics)
 

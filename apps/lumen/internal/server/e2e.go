@@ -99,8 +99,15 @@ type session struct {
 
 func devLogin(hc *http.Client, target, nickname, role string) (session, error) {
 	var s session
-	err := postJSON(hc, target+"/api/dev-login", "", map[string]string{"nickname": nickname, "role": role}, &s)
-	return s, err
+	payload := map[string]string{"nickname": nickname, "role": role}
+	var primaryErr error
+	if primaryErr = postJSON(hc, target+"/api/login", "", payload, &s); primaryErr == nil {
+		return s, nil
+	}
+	if err := postJSON(hc, target+"/api/dev-login", "", payload, &s); err != nil {
+		return s, fmt.Errorf("both login paths failed: /api/login=%v; /api/dev-login=%v", primaryErr, err)
+	}
+	return s, nil
 }
 
 func createProduct(hc *http.Client, target, token string) (string, error) {
@@ -162,6 +169,14 @@ func assertFactsMock(hc *http.Client, target, token, productID string) error {
 }
 
 func dialAndJoin(target, token, aid string) (*websocket.Conn, error) {
+	return dialAndJoinWithQuery(target, token, aid, "")
+}
+
+func dialAndJoinForLoad(target, token, aid string) (*websocket.Conn, error) {
+	return dialAndJoinWithQuery(target, token, aid, loadClientQueryFlag+"=1")
+}
+
+func dialAndJoinWithQuery(target, token, aid string, query string) (*websocket.Conn, error) {
 	u, err := url.Parse(target)
 	if err != nil {
 		return nil, err
@@ -171,6 +186,9 @@ func dialAndJoin(target, token, aid string) (*websocket.Conn, error) {
 		scheme = "wss"
 	}
 	wsURL := fmt.Sprintf("%s://%s/ws?token=%s", scheme, u.Host, url.QueryEscape(token))
+	if query != "" {
+		wsURL += "&" + query
+	}
 	c, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return nil, err

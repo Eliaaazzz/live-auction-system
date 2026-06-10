@@ -164,7 +164,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		}
 		return 30 * time.Second
 	}
-	invCtx := buildInvariantContext(ctx, rec, parseDeadline(cfg.Phase.RecoveryDeadline()))
+	invCtx := buildInvariantContext(ctx, rec, cfg.Phase, parseDeadline(cfg.Phase.RecoveryDeadline()))
 	invEnv := invariants.Env{
 		LumenBaseURL:        cfg.LumenBaseURL,
 		AuctionID:           cfg.TargetAID,
@@ -203,7 +203,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 // buildInvariantContext stuffs the pre/post snapshots + during-events tally
 // into a context for invariants to read. Keeps the invariant interface
 // dependency-light.
-func buildInvariantContext(parent context.Context, rec *artifact.Recorder, recoveryDeadline time.Duration) context.Context {
+func buildInvariantContext(parent context.Context, rec *artifact.Recorder, phase phases.Phase, recoveryDeadline time.Duration) context.Context {
 	c := parent
 	if rec.PreSnapshot != nil {
 		c = context.WithValue(c, snapKey("pre", "seq"), rec.PreSnapshot.Seq)
@@ -234,8 +234,21 @@ func buildInvariantContext(parent context.Context, rec *artifact.Recorder, recov
 	c = context.WithValue(c, recKey("during", "uninject_at"), rec.UninjectedAt)
 	c = context.WithValue(c, "recovery_deadline", recoveryDeadline)
 	c = context.WithValue(c, latencyKey("during"), rec.AckLatencies)
-	c = context.WithValue(c, toleranceKey("during"), 200*time.Millisecond) // TODO: per-phase tolerance
+	c = context.WithValue(c, toleranceKey("during"), phaseDuringTolerance(phase))
 	return c
+}
+
+func phaseDuringTolerance(phase phases.Phase) time.Duration {
+	switch phase.Kind() {
+	case "network":
+		// Network partitions are expected to amplify bid acceptance latency during
+		// chaos drills, so widen the envelope to avoid false failures while
+		// still asserting eventual continuity and recovery.
+		return 5 * time.Second
+	default:
+		// Most process/data/client drills should keep the normal floor.
+		return 200 * time.Millisecond
+	}
 }
 
 // Tiny helpers so the keys here match invariants/*.go.

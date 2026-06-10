@@ -119,7 +119,8 @@ api.listAuctions({ status })                      // GET  /api/auctions?status=â
 
 ### Session / Auth Â· `src/lib/auth.js`
 
-Backend mints JWTs via `POST /api/dev-login { nickname }`. Client caches the
+Backend mints JWTs via `POST /api/login { nickname }`, with `POST /api/dev-login`
+as a compatibility fallback. Client caches the
 token in `localStorage` and attaches it as:
 
 - `Authorization: Bearer <jwt>` on REST calls

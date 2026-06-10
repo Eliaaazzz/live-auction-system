@@ -130,11 +130,19 @@ type roomStatePatchConfig struct {
 	minViewers    int
 	maxEvents     int
 	flushInterval time.Duration
+	adaptiveEnabled bool
+	adaptiveMinBids int
+}
+
+type roomStatePatchAdaptiveState struct {
+	enabled           bool
+	coalescibleBids   int
 }
 
 type roomStatePatch struct {
 	patch      model.RoomStatePatchData
 	eventCount int
+	skippedPublic int64
 	hasPending bool
 }
 
@@ -147,6 +155,12 @@ func normalizeRoomStatePatchConfig(cfg roomStatePatchConfig) roomStatePatchConfi
 	}
 	if cfg.flushInterval <= 0 {
 		cfg.flushInterval = 120 * time.Millisecond
+	}
+	if cfg.adaptiveMinBids <= 0 {
+		cfg.adaptiveMinBids = 1
+	}
+	if !cfg.adaptiveEnabled {
+		cfg.adaptiveMinBids = 0
 	}
 	return cfg
 }
@@ -162,6 +176,26 @@ func (h *Hub) roomSize(aid string) int {
 
 func shouldUseRoomStatePatch(cfg roomStatePatchConfig, roomSize int) bool {
 	return cfg.minViewers > 0 && roomSize >= cfg.minViewers
+}
+
+func shouldUseRoomStatePatchAdaptive(cfg roomStatePatchConfig, roomSize int, st *roomStatePatchAdaptiveState) bool {
+	if !cfg.adaptiveEnabled {
+		return shouldUseRoomStatePatch(cfg, roomSize)
+	}
+	return shouldUseRoomStatePatch(cfg, roomSize) && st != nil && st.enabled
+}
+
+func ensureAdaptiveState(states map[string]*roomStatePatchAdaptiveState, aid string) *roomStatePatchAdaptiveState {
+	st, ok := states[aid]
+	if !ok {
+		st = &roomStatePatchAdaptiveState{}
+		states[aid] = st
+	}
+	return st
+}
+
+func clearAdaptiveState(states map[string]*roomStatePatchAdaptiveState, aid string) {
+	delete(states, aid)
 }
 
 func isTerminalRoomEvent(eventType string) bool {
@@ -234,6 +268,13 @@ func emitRoomStatePatch(h *Hub, m *metrics.Registry, aid string, state *roomStat
 	if state == nil || !state.hasPending {
 		return
 	}
+	if m != nil {
+		m.RoomStatePatchEmitted.Inc()
+		m.RoomStatePatchBids.Add(state.patch.BidCountDelta)
+		if state.skippedPublic > 0 {
+			m.RoomStatePatchSkippedPublic.Add(state.skippedPublic)
+		}
+	}
 	env, err := model.NewEnvelope(model.TypeRoomStatePatch, aid, state.patch.Seq, state.patch)
 	if err != nil {
 		return
@@ -245,9 +286,11 @@ func emitRoomStatePatch(h *Hub, m *metrics.Registry, aid string, state *roomStat
 	h.broadcast(aid, b)
 	if m != nil && state.patch.ServerTimeMs > 0 {
 		m.BroadcastLatency.Observe(time.Since(time.UnixMilli(state.patch.ServerTimeMs)))
+		m.RoomStatePatchLag.Observe(time.Since(time.UnixMilli(state.patch.ServerTimeMs)))
 	}
 	state.patch = model.RoomStatePatchData{}
 	state.eventCount = 0
+	state.skippedPublic = 0
 	state.hasPending = false
 }
 
@@ -323,12 +366,31 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 
 	lastSeq := make(map[string]int64)
 	roomStatePatches := make(map[string]*roomStatePatch)
+	roomStatePatchModes := make(map[string]*roomStatePatchAdaptiveState)
 
 	getRoomStatePatch := func(aid string) *roomStatePatch {
 		state, ok := roomStatePatches[aid]
 		if !ok {
 			state = &roomStatePatch{}
 			roomStatePatches[aid] = state
+		}
+		return state
+	}
+
+	getAdaptiveState := func(aid string) *roomStatePatchAdaptiveState {
+		if !cfg.adaptiveEnabled {
+			return nil
+		}
+		return ensureAdaptiveState(roomStatePatchModes, aid)
+	}
+
+	getAdaptiveStateForMode := func(aid string) *roomStatePatchAdaptiveState {
+		if !cfg.adaptiveEnabled {
+			return nil
+		}
+		state, ok := roomStatePatchModes[aid]
+		if !ok {
+			return nil
 		}
 		return state
 	}
@@ -397,10 +459,25 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			if m != nil && lastSeq[aid] > 0 && e.Seq > lastSeq[aid]+1 {
 				m.SeqGap.Add(e.Seq - lastSeq[aid] - 1)
 			}
-			usePatch := shouldUseRoomStatePatch(cfg, h.roomSize(aid))
+			roomSize := h.roomSize(aid)
+			staticUsePatch := shouldUseRoomStatePatch(cfg, roomSize)
+			adaptiveState := getAdaptiveStateForMode(aid)
+			usePatch := shouldUseRoomStatePatchAdaptive(cfg, roomSize, adaptiveState)
 
-			if !usePatch {
+			if !staticUsePatch {
 				emitRoomStatePatchIfAny(aid)
+				clearAdaptiveState(roomStatePatchModes, aid)
+			}
+
+			if cfg.adaptiveEnabled && canCoalesceRoomEvent(e.Type) && staticUsePatch {
+				adaptiveState = getAdaptiveState(aid)
+				if adaptiveState != nil && !adaptiveState.enabled {
+					adaptiveState.coalescibleBids++
+					if adaptiveState.coalescibleBids >= cfg.adaptiveMinBids {
+						adaptiveState.enabled = true
+					}
+				}
+				usePatch = shouldUseRoomStatePatchAdaptive(cfg, roomSize, adaptiveState)
 			}
 
 			// Terminal states always go through immediately and always clear patch state.
@@ -418,15 +495,15 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 				if auctioneer != nil {
 					dispatchAuctioneer(ctx, auctioneer, aid, st, e)
 				}
-				if usePatch {
-					clearRoomStatePatch(aid)
-				}
+				clearRoomStatePatch(aid)
+				clearAdaptiveState(roomStatePatchModes, aid)
 				continue
 			}
 
 			if usePatch && canCoalesceRoomEvent(e.Type) {
 				state := getRoomStatePatch(aid)
 				if mergeRoomStatePatch(state, e, time.Now().UnixMilli()) {
+					state.skippedPublic++
 					if state.eventCount >= cfg.maxEvents {
 						emitRoomStatePatchIfAny(aid)
 					}
@@ -463,13 +540,14 @@ func (h *Hub) subscribe(ctx context.Context, st *store.Store, auctioneer *Auctio
 			if state == nil || !state.hasPending {
 				continue
 			}
-			if shouldUseRoomStatePatch(cfg, h.roomSize(aid)) {
+			if shouldUseRoomStatePatchAdaptive(cfg, h.roomSize(aid), getAdaptiveStateForMode(aid)) {
 				emitRoomStatePatch(h, m, aid, state)
 				continue
 			}
 			// Room went below threshold: cancel pending patch and continue with
 			// direct event mode for canonical updates.
 			clearRoomStatePatch(aid)
+			clearAdaptiveState(roomStatePatchModes, aid)
 		}
 	}
 
@@ -777,11 +855,17 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	userID, err := auth.Verify(s.cfg.JWTSecret, r.URL.Query().Get("token"))
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.WsAuthUnauthorized.Inc()
+		}
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		if s.metrics != nil {
+			s.metrics.WsUpgradeFailed.Inc()
+		}
 		return // upgrader already wrote the error
 	}
 	// §8 WS hardening: bound inbound frame size. Client messages (BID_PLACE,
@@ -837,6 +921,9 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if frame.SchemaVersion != model.SchemaVersion {
+			if c.metrics != nil {
+				c.metrics.WsSchemaMismatch.Inc()
+			}
 			// Write the protocol close frame and tear down immediately so callers
 			// can reliably observe the intended close code and reason.
 			_ = ws.WriteMessage(

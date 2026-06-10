@@ -10,7 +10,7 @@
 //   VERIFY_AID=<auction-id> (or AUCTION_ID=<auction-id>) BURST_MS=10 TIMEOUT_MS=8000 node scripts/smoke-ratelimit.mjs
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, resolveAuctionId, login } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
@@ -28,21 +28,6 @@ function must(cond, msg) {
   }
 }
 
-async function devLogin(nick) {
-  let r;
-  try {
-    r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ nickname: nick }),
-    });
-  } catch (err) {
-    throw new Error(`dev-login failed for ${HOST_HTTP}: ${err.message}`);
-  }
-  must(r.ok, `dev-login ${r.status}`);
-  return r.json();
-}
-
 const send = (ws, type, data, auctionId = AUCTION_ID) => {
   const env = {
     schemaVersion: SCHEMA_VERSION,
@@ -54,7 +39,7 @@ const send = (ws, type, data, auctionId = AUCTION_ID) => {
   ws.send(JSON.stringify(env));
 };
 
-const { token } = await devLogin('fari-ratelimit');
+const { token } = await login(HOST_HTTP, 'fari-ratelimit');
 console.log('login ok, token len=', token.length);
 
 const results = {

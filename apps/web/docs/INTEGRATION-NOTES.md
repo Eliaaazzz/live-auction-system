@@ -18,7 +18,7 @@ envelope. The actual backend ships:
 - REST under `/api/*` (no `/v1/`)
 - A single envelope shape `{ schemaVersion, type, data, serverTimeMs, ... }`
   with `type` in SCREAMING_SNAKE (per `proto/ws-envelope.md`)
-- JWT bearer auth via `POST /api/dev-login` (no cookies)
+- JWT bearer auth via `POST /api/login` (compatibility fallback: `POST /api/dev-login`)
 - Slightly different field names (`endAtMs` not `endTs`, `clientBidId` not
   `requestId`, `winnerId` string not `winner` object)
 
@@ -30,7 +30,7 @@ were made — every screen renders identically; only the data layer differs.
 | `src/lib/types.js` | rewrote | Envelope constants + `ClientFrameType` (SCREAMING_SNAKE); split EventType into wire-broadcast vs evidence-only |
 | `src/lib/ws.js` | rewrote | `RoomClient` now speaks the real envelope; derives clock offset from every `serverTimeMs`; schema check is client-side |
 | `src/lib/api.js` | rewrote | `/api/*` base; bearer auth from `currentToken()`; mapped design's `schedule`/`getVlmDraft`/`verifyChain` to actual backend endpoints (or noted N/A) |
-| `src/lib/auth.js` | **NEW** | `ensureSession()` → `POST /api/dev-login` → localStorage-cached `{ userId, token, nickname }` |
+| `src/lib/auth.js` | **NEW** | `ensureSession()` → `POST /api/login` (fallback `POST /api/dev-login`) → localStorage-cached `{ userId, token, nickname }` |
 | `src/store/auction.js` | rewrote | Field renames (`endTs`→`endAtMs`); leaders maintained client-side (backend doesn't ship `data.leaders` on BID_ACCEPTED); BigInt-safe jump-bid detection |
 | `src/routes/LiveRoomRoute.jsx` | rewrote | Boot order: ensureSession → snapshot → leaderboard seed → ROOM_JOIN WS; `buildRoomUrl()` for canonical `ws://host/ws?auction=…&token=…` |
 | `src/components/mobile.jsx` | fix | Removed duplicate `padding` key in inline style (esbuild warning) |
@@ -57,12 +57,12 @@ For maintainers diffing against the design's original `ws.js` / `api.js`:
 | BID_ACCEPTED `data.leaders[]` shipped from server | Not shipped — client maintains via `mergeLeader()` helper from BID_ACCEPTED stream | `store/auction.js` |
 | `Date.now()` heartbeat for clock offset | Every envelope's `serverTimeMs` (more frequent calibration) | `lib/ws.js` per-message hook |
 | REST base `/api/v1/` | `/api/` | `lib/api.js` |
-| `credentials: 'include'` cookie auth | `Authorization: Bearer <jwt>` from `/api/dev-login` | `lib/auth.js` + `lib/api.js` |
+| `credentials: 'include'` cookie auth | `Authorization: Bearer <jwt>` from `POST /api/login` (fallback `POST /api/dev-login`) | `lib/auth.js` + `lib/api.js` |
 | `api.schedule(id, when)` future-dated start | Not in backend — seller publishes, freezes, starts manually | Removed; doc note added |
 | `api.getVlmDraft(auctionId)` GET | `POST /api/facts/draft { productId, imageUrls, title, description }` returns one-shot draft | `lib/api.js` `draftFacts()` |
 | `api.confirmFact(auctionId, factId, edited)` PATCH per fact | Not in backend; seller edits kept client-side, persisted atomically on `api.freeze(id)` | `lib/api.js` doc note |
 | `api.verifyChain(auctionId)` POST | Not exposed as REST today (CLI `make verify-evidence` only); use `chainVerified` boolean from `api.getEvidence()` | `lib/api.js` doc note |
-| `api.me()` GET | Not in backend; use `currentUser()` from `lib/auth.js` (cached from dev-login response) | `lib/auth.js` |
+| `api.me()` GET | Not in backend; use `currentUser()` from `lib/auth.js` (cached from login response) | `lib/auth.js` |
 
 ---
 

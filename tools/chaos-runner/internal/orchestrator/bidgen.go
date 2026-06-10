@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -16,7 +16,7 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/tools/chaos-runner/internal/artifact"
 )
 
-// steadyBidder is a real WS bidder (per PDGGK PR #24 CR): it dev-logins to get
+// steadyBidder is a real WS bidder (per PDGGK PR #24 CR): it logins to get
 // a token, opens a WS connection, joins the room, then fires `rate` BID_PLACE
 // messages per second and records every ack/reject + WS round-trip latency.
 //
@@ -39,7 +39,7 @@ func newSteadyBidder(baseURL, aid string, rate int, rec *artifact.Recorder) *ste
 	}
 }
 
-// Run dev-logins, opens WS, joins room, then loops bidding until ctx done.
+// Run logins, opens WS, joins room, then loops bidding until ctx done.
 // On any setup error it logs and exits — drill invariants will fail on the
 // "no OK_ACCEPTED" signal which is the correct outcome (Eliaaazzz PR #24 CR
 // 🟠 #3: don't pass with zero samples).
@@ -132,28 +132,52 @@ func (s *steadyBidder) Run(ctx context.Context) {
 }
 
 func (s *steadyBidder) devLogin(ctx context.Context, nickname string) (string, error) {
-	body, _ := json.Marshal(map[string]string{"nickname": nickname, "role": "user"})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost,
-		s.baseURL+"/api/dev-login", strings.NewReader(string(body)))
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.hc.Do(req)
+	body, err := json.Marshal(map[string]string{"nickname": nickname, "role": "user"})
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("build login payload: %w", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("dev-login status %d", resp.StatusCode)
+
+	login := func(path string) (string, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.baseURL+path, bytes.NewReader(body))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := s.hc.Do(req)
+		if err != nil {
+			return "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("%s status %d", path, resp.StatusCode)
+		}
+
+		var r struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+			return "", err
+		}
+		if r.Token == "" {
+			return "", fmt.Errorf("%s returned empty token", path)
+		}
+		return r.Token, nil
 	}
-	var r struct {
-		Token string `json:"token"`
+
+	token, err := login("/api/login")
+	if err == nil {
+		return token, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
-		return "", err
+
+	slog.WarnContext(ctx, "bidgen.login_fallback", "primary", "/api/login", "err", err)
+	fallbackErr := err
+	token, err = login("/api/dev-login")
+	if err != nil {
+		return "", fmt.Errorf("both login paths failed: /api/login=%v; /api/dev-login=%v", fallbackErr, err)
 	}
-	if r.Token == "" {
-		return "", fmt.Errorf("dev-login returned empty token")
-	}
-	return r.Token, nil
+
+	return token, nil
 }
 
 func (s *steadyBidder) dialAndJoin(ctx context.Context, token string) (*websocket.Conn, error) {

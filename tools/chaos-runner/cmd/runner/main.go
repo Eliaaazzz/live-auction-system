@@ -70,7 +70,7 @@ func main() {
 		outDir     = flag.String("out", "docs/demo/chaos-recordings", "artifact output directory")
 		composeURL = flag.String("compose-base", "http://localhost:8080", "lumen base URL (T1 single-binary topology)")
 		toxiURL    = flag.String("toxiproxy", "http://localhost:8474", "toxiproxy admin API (network-level faults)")
-		allowProd  = flag.Bool("allow-non-local-target", false, "ALLOW running drills against non-localhost targets (DANGEROUS — runs dev-login + bids against the supplied host)")
+		allowProd  = flag.Bool("allow-non-local-target", false, "ALLOW running drills against non-localhost targets (DANGEROUS — runs login + bids against the supplied host)")
 	)
 	flag.Parse()
 
@@ -79,7 +79,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	// PDGGK PR #24 CR P1-4: chaos-runner dev-logins + drives BID_PLACE against
+	// PDGGK PR #24 CR P1-4: chaos-runner logins + drives BID_PLACE against
 	// whatever host you point it at. Server-side EnableDevLogin=false is a
 	// backstop, but the runner itself should refuse to point at anything
 	// non-local without an explicit opt-in flag. Prevents the "I forgot to

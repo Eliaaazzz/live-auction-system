@@ -165,6 +165,7 @@ func TestRulesValidate(t *testing.T) {
 		t.Fatalf("cap-below-first-increment rules rejected: %v", err)
 	}
 	bad := map[string]Rules{
+		"reserve above start": {StartPriceCents: 10000, ReserveCents: 15000, IncrementCents: 1000, DurationSec: 60},
 		"negative start":      {StartPriceCents: -1, IncrementCents: 1000, DurationSec: 60},
 		"zero increment":      {StartPriceCents: 10000, IncrementCents: 0, DurationSec: 60},
 		"negative increment":  {StartPriceCents: 10000, IncrementCents: -5, DurationSec: 60},
@@ -202,8 +203,34 @@ func TestAuctionModeDefaultsAndValidation(t *testing.T) {
 	if got := (Rules{AuctionMode: "second-price"}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
 		t.Fatalf("auctionMode second-price should normalize to second_price, got %q", got)
 	}
+	if got := (Rules{AuctionMode: "auction2"}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
+		t.Fatalf("auctionMode auction2 should normalize to second_price, got %q", got)
+	}
+	if got := (Rules{AuctionMode: "2"}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
+		t.Fatalf("auctionMode 2 should normalize to second_price, got %q", got)
+	}
+	if got := (Rules{AuctionMode: "SECOND_PRICE"}).AuctionModeOrDefault(); got != AuctionModeSecondPrice {
+		t.Fatalf("auctionMode SECOND_PRICE should normalize to second_price, got %q", got)
+	}
+	if got := (Rules{AuctionMode: "ENGLISH"}).AuctionModeOrDefault(); got != AuctionModeFirstPrice {
+		t.Fatalf("auctionMode ENGLISH should normalize to first_price, got %q", got)
+	}
 	if err := (Rules{StartPriceCents: 10000, IncrementCents: 1000, DurationSec: 60, AuctionMode: "INVALID_MODE"}).Validate(); err == nil {
 		t.Fatal("invalid auctionMode should fail Validate")
+	}
+}
+
+func TestRulesRoomSnapshotRulesUsesExplicitReserveCents(t *testing.T) {
+	rules := Rules{StartPriceCents: 10000, ReserveCents: 8000, IncrementCents: 1000}
+	snap := rules.RoomSnapshotRules()
+	if got := snap.ReserveCents; got != "8000" {
+		t.Fatalf("explicit reserve should be used in snapshot: got %q want 8000", got)
+	}
+
+	implicit := Rules{StartPriceCents: 10000, IncrementCents: 1000}
+	snap = implicit.RoomSnapshotRules()
+	if got := snap.ReserveCents; got != "10000" {
+		t.Fatalf("implicit reserve should fall back to start price: got %q want 10000", got)
 	}
 }
 

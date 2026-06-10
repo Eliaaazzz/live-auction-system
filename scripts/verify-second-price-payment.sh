@@ -38,7 +38,7 @@ normalize_mode() {
     ""|"first"|"first_price"|"firstprice")
       printf 'first_price'
       ;;
-    "second"|"second_price"|"secondprice"|"vickrey")
+    "second"|"second_price"|"secondprice"|"vickrey"|"auction2"|"2")
       printf 'second_price'
       ;;
     *)
@@ -118,7 +118,7 @@ emit_row() {
 check_auction_payment() {
   local aid="$1"
   local snapshot evidence
-  local mode reserve start fallback
+  local mode raw_mode reserve start fallback
   local sold_amount expected_payment
   local -A top_by_user=()
   local -a sorted_amounts
@@ -131,7 +131,13 @@ check_auction_payment() {
     return 0
   fi
 
-  mode="$(normalize_mode "$(jq -r '.rules.auctionMode // empty' <<<"$snapshot")")"
+  raw_mode="$(jq -r '.rules.auctionMode // .rules.mode // .mode // .auctionMode // empty' <<<"$snapshot")"
+  if [[ -z "$raw_mode" ]]; then
+    ((skipped_count+=1))
+    emit_row "$aid\tSKIP\t-\t-\t-\t-\tmissing auctionMode/mode in snapshot"
+    return 0
+  fi
+  mode="$(normalize_mode "$raw_mode")"
   if [[ "$mode" != "second_price" ]]; then
     ((skipped_count+=1))
     emit_row "$aid\tSKIP\t-\t-\t$mode\t-\tnon-second-price mode in snapshot"
@@ -350,16 +356,64 @@ declare -a TARGET_AUCTIONS=()
 if [[ -n "$AUCTION_IDS" ]]; then
   append_csv_targets "$AUCTION_IDS"
 else
-  while IFS=$'\t' read -r _run _status _rc _run_dir _log_file _metrics_file auction_id auction_ids auction_mode _rest; do
-    if [[ "$_run" == "#run" || -z "$_run" ]]; then
-      continue
+  read -r summary_header < "$SUMMARY_PATH"
+  summary_header="${summary_header//$'\r'/}"
+  summary_header="${summary_header#$'\xef\xbb\xbf'}"
+  if [[ "$summary_header" == "#run"* ]]; then
+    IFS=$'\t' read -r -a header_cols <<< "$summary_header"
+    idx_run=-1
+    idx_auction_id=-1
+    idx_auction_ids=-1
+    idx_auction_mode=-1
+
+    for i in "${!header_cols[@]}"; do
+      header_cols[$i]="$(trim "${header_cols[$i]}")"
+      case "${header_cols[$i]}" in
+        run) idx_run="$i" ;;
+        auction_id) idx_auction_id="$i" ;;
+        auction_ids) idx_auction_ids="$i" ;;
+        auction_mode|mode|auctionMode) [[ "$idx_auction_mode" == "-1" ]] && idx_auction_mode="$i" ;;
+      esac
+    done
+
+    if (( idx_auction_id < 0 || idx_auction_ids < 0 || idx_auction_mode < 0 || idx_run < 0 )); then
+      echo "error: summary header missing required columns" >&2
+      exit 2
     fi
-    if [[ "$(normalize_mode "$auction_mode")" != "second_price" ]]; then
-      continue
-    fi
-    append_target_id "$auction_id"
-    append_csv_targets "$auction_ids"
-  done < "$SUMMARY_PATH"
+
+    while IFS=$'\t' read -r -a row; do
+      if (( ${#row[@]} == 0 )); then
+        continue
+      fi
+      _run="${row[$idx_run]:-}"
+      _run="${_run//$'\r'/}"
+      if [[ "$_run" == "#run" || -z "$_run" ]]; then
+        continue
+      fi
+      auction_id="$(trim "${row[$idx_auction_id]:-}")"
+      auction_ids="$(trim "${row[$idx_auction_ids]:-}")"
+      auction_mode="$(trim "${row[$idx_auction_mode]:-}")"
+      if [[ -z "$auction_id" ]]; then
+        continue
+      fi
+      if [[ "$(normalize_mode "$auction_mode")" != "second_price" ]]; then
+        continue
+      fi
+      append_target_id "$auction_id"
+      append_csv_targets "$auction_ids"
+    done < <(tail -n +2 "$SUMMARY_PATH")
+  else
+    while IFS=$'\t' read -r _run _status _rc _run_dir _log_file _metrics_file auction_id auction_ids auction_mode _rest; do
+      if [[ "$_run" == "#run" || -z "$_run" ]]; then
+        continue
+      fi
+      if [[ "$(normalize_mode "$auction_mode")" != "second_price" ]]; then
+        continue
+      fi
+      append_target_id "$auction_id"
+      append_csv_targets "$auction_ids"
+    done < "$SUMMARY_PATH"
+  fi
 fi
 
 if (( ${#TARGET_AUCTIONS[@]} == 0 )); then

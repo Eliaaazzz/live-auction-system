@@ -111,7 +111,7 @@ Lumen Auction is structured around 9 frozen architectural boundaries (Plan V9 §
 - `POST /api/facts/draft` (VLM)
 - `GET /api/auctions/:id/evidence` (post-hammer)
 - `GET /api/auctions/:id/leaderboard` (top-N snapshot)
-- `POST /api/dev-login` (session bootstrap)
+- `POST /api/login` (session bootstrap), fallback `POST /api/dev-login` for compatibility
 
 ---
 
@@ -141,7 +141,7 @@ Frontend work was scoped after T3 merged. **On 2026-05-26 a comprehensive 13-scr
 | FE Phase | Maps to backend T | Status | Surface |
 |---|---|---|---|
 | **FE-T0** (design pass) | — | ✅ landed 2026-05-26 — All 13 screens shipped as visual mockups (see §3) including bridge palette (A↔B crossfade), every atmosphere effect (F01–F15+), VLM Facts hero, Live Console mission control, Cancel 2-step modal, Publish form, Orders & GMV dashboard, Mini-program stub, all connection states |
-| **FE-T6 wired** | T6 (room) | ✅ Room route `/room/:auctionId` wired end-to-end (dev-login → snapshot → leaderboard → ROOM_JOIN + WS); seqguard + clock-skew + reconnect all working |
+| **FE-T6 wired** | T6 (room) | ✅ Room route `/room/:auctionId` wired end-to-end (`/api/login` → fallback `/api/dev-login`, snapshot → leaderboard → ROOM_JOIN + WS); seqguard + clock-skew + reconnect all working |
 | **FE-T4 wired** | T4 (evidence card) | 🟡 UI ready — `<MobileEvidence>` renders CHAIN VERIFIED / BROKEN variants from static data; needs `api.getEvidence()` call on route mount. **Timeline auto-populates after PR #34 merges** |
 | **FE-T5a wired** | (admin standalone) | 🟡 UI ready — `<AdminVLMFacts>`, `<AdminConsole>`, `<AdminCancelModal>`, `<AdminPublish>` all exist; need `api.draftFacts` / `api.freeze` / `api.startLive` / `api.cancel` wiring on the route handlers |
 | **FE-T5b wired** | (admin CRUD) | 🟡 UI ready — `<AdminOrders>` renders from static `ORDER_ROWS`; need `api.listAuctions` once backend ships it (P1 — currently mock-only) |
@@ -189,7 +189,7 @@ Required functionality, in order of dependence:
 
 | Capability | Wire dependency | Status |
 |---|---|---|
-| Bootstrap dev-login session | `POST /api/dev-login` | ✅ |
+| Bootstrap session | `POST /api/login` (fallback `POST /api/dev-login`) | ✅ |
 | Open WS connection with auth | `WS /ws?auction=...&token=...` | ✅ |
 | Send `ROOM_JOIN` with optional `lastSeq` | client→server | ✅ |
 | Receive `ROOM_SNAPSHOT` and initialize | server→client | ✅ |
@@ -203,7 +203,7 @@ Required functionality, in order of dependence:
 | "Overtaken" banner when was-self displaced | F07 | ✅ |
 | Shake + toast on `BID_REJECTED` | F08 + `bidRejectCopy[code]` | ✅ |
 | Light-sweep + extendCount badge on `AUCTION_EXTENDED` | F02 — P5 trust signal | ✅ |
-| Leaderboard with TOP-3 halos + FLIP animation | F11 + F12, `GET /leaderboard` | ✅ (manual refresh; auto-fetch on rebroadcast = TODO) |
+| Leaderboard with TOP-3 halos + FLIP animation | F11 + F12, `GET /leaderboard` | ✅ (auto-fetch on catchup/reconnect + periodic rebalance) |
 | AI bubble visible during LIVE (placeholder text) | T7 LLM stream (currently stubbed) | ✅ scaffold only |
 | AI bubble offline degrade badge | F19 + P3 — first-class | ✅ |
 | Hammer overlay on `AUCTION_SOLD` | F23 — A→B accent flip | ✅ |
@@ -346,10 +346,10 @@ All endpoints served by `apps/lumen` on `:8080`. Vite proxy at `/api/*` routes t
 
 | Method · path | Auth | Body / Query | Response | FE usage |
 |---|---|---|---|---|
-| `POST /api/dev-login` | no | `{ nickname }` | `{ userId, token, nickname }` | Session bootstrap |
+| `POST /api/login` | no | `{ nickname }` | `{ userId, token, nickname }` | Session bootstrap (compat: `POST /api/dev-login`) |
 | `POST /api/products` | seller | `{ title, description, imageUrls[] }` | `{ productId }` | Admin: create |
 | `POST /api/facts/draft` | seller | `{ productId, imageUrls, title, description }` | VLM facts object (§4.5) | Admin: VLM page (proxied to ai-sidecar in T7) |
-| `POST /api/auctions` | seller | `{ productId, rules{} }` (`auctionMode` 可选：`first_price` / `second_price`, 默认 `first_price`) | `{ auctionId }` | Admin: publish |
+| `POST /api/auctions` | seller | `{ productId, rules{} }` (`auctionMode` 可选：`first_price` / `second_price`，默认 `first_price`；兼容 `mode` 的别名如 `ENGLISH` / `VICKREY` / `first` / `second` / `vickrey` / `auction2` / `2`) | `{ auctionId }` | Admin: publish |
 | `GET /api/auctions/:id` | any | — | `RoomSnapshot` | Pre-LIVE preview, snapshot fallback |
 | `POST /api/auctions/:id/freeze` | owner | — | `{ code }` (`OK_FROZEN` / `ERR_FACTS_NOT_CONFIRMED` / `ERR_BAD_STATE`) | Admin: DRAFT → SCHEDULED |
 | `POST /api/auctions/:id/start` | owner | `{ durationMs? }` | `{ code, endAtMs }` | Admin: SCHEDULED → LIVE |
@@ -448,7 +448,7 @@ type EvidenceCard = {
 ### §4.7 Auth + session
 
 ```
-1. Frontend → POST /api/dev-login { nickname }
+1. Frontend → POST /api/login (fallback `POST /api/dev-login`) { nickname }
 2. Backend ← { userId, token, nickname } (JWT signed with JWT_SECRET)
 3. Frontend stores token; opens WS with `?token=<jwt>`
 4. Frontend includes Authorization: Bearer <jwt> on REST calls requiring auth

@@ -31,7 +31,7 @@
 //   cd apps/web && node scripts/smoke-snapshot-fallback.mjs
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, login } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
@@ -39,16 +39,6 @@ const TARGET_GAP = 220; // > 200 boundary
 
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
-
-async function devLogin(nick) {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: nick }),
-  });
-  if (!r.ok) throw new Error(`dev-login ${r.status}`);
-  return r.json();
-}
 
 async function api(token, path, opts = {}) {
   const r = await fetch(`${HOST_HTTP}/api${path}`, {
@@ -65,8 +55,8 @@ async function api(token, path, opts = {}) {
 }
 
 // ─── Phase 0 — setup a long-duration auction ──────────────
-console.log('[setup] seller dev-login');
-const seller = await devLogin('fari-snap-seller');
+console.log('[setup] seller login');
+const seller = await login(HOST_HTTP, 'fari-snap-seller');
 
 console.log('[setup] create product + draft (durationSec=120)');
 const { productId } = await api(seller.token, '/products', {
@@ -96,9 +86,9 @@ await api(seller.token, `/auctions/${auctionId}/start`, { method: 'POST' });
 // Multiple buyer sessions so each can submit bids in parallel without
 // hitting the dedupe Hash (keyed by userId).
 const buyers = await Promise.all([
-  devLogin('fari-snap-b1'),
-  devLogin('fari-snap-b2'),
-  devLogin('fari-snap-b3'),
+  login(HOST_HTTP, 'fari-snap-b1'),
+  login(HOST_HTTP, 'fari-snap-b2'),
+  login(HOST_HTTP, 'fari-snap-b3'),
 ]);
 
 // ─── Phase 1 — observe initial snapshot, record starting seq ──

@@ -37,13 +37,14 @@ that proves it**, and the assertable signal to point at.
 | 1 | 卖家上传商品图，VLM 抽取事实 | "AI 抽取品牌/成色/瑕疵，高风险字段标注『卖家声明·AI 未验证』" | `make e2e-dummy-bid` (step: facts draft + factsConfirmed gate) | `highRiskFieldsDisclaimer` present; create-auction **forbidden** until confirmed |
 | 2 | 卖家 confirm/edit facts + 配规则 | "起拍价 / 加价步长 / 时长 / 反狙击窗口，卖家最终背书" | same e2e (freeze → `CodeOKFrozen`) | freeze returns `OK_FROZEN`; rules locked |
 | 3 | 开拍，多观众实时出价，AI 冒泡 | "开拍/跳涨/冷场30s/落锤四触发，AI 是旁路、非裁决" | same e2e (start → `OK_LIVE` → multi-WS bid → broadcast) | bidder **and** observer both get `BID_ACCEPTED` |
-| 3.5 | 结算规则（可选） | "可切二价模式：赢者支付第二高价（Vickrey）" | `admin` 端新建拍品规则栏 `rules.mode`（`ENGLISH` / `VICKREY`，或 `first_price` / `second_price`、`first` / `second` / `vickrey`） | 秒表现场强调：终态成交价由 `close_auction` 的规则 `auctionMode` 决定 |
+| 3.5 | 结算模式（可选） | "可切二价模式：赢者支付第二高价（Vickrey）" | `admin` 端新建拍品规则栏 `rules.mode`（`ENGLISH` / `VICKREY`；兼容别名 `first` / `second` / `auction1` / `auction2` / `1` / `2` / `first_price` / `second_price`） | 秒表现场强调：终态成交价由 `rules.mode` / 兼容别名的策略决定 |
 | 4 | 末 N 秒反狙击，倒计时延长 | "最后时刻出价自动延时，反阻击" | `make web-smoke-antisnipe` **or** UI (live) + `AUCTION_EXTENDED` event | `extendCount` badge increments — 反狙击窗口生效 |
 | 5 | 落锤 → 证据卡 | "成交即生成证据卡：图/价/timeline + `events_hash`" | `make verify-evidence` | exit 0; no `hash_break` — chain recomputes clean |
 | 6 | Replay Verifier consistent | "Stream / Redis / MySQL 三方一致 + hash 链校验" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
 | 7 | 监控面板 500/50 | "500 在线 + 50 活跃出价，ack/broadcast p95 达标，**seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
-| 7.5 | 规模演练（非 P0，可选） | "企业级并发边界盘查：10万级压测用于瓶颈归档，不作为演示硬闸" | `make load-100k-rehearse` 的 `LOAD_100K_REHEARSAL_ARGS` 可传 `--base-ws-url`（如网关走独立 WS 域名时，不要加 `/ws`），例如：`LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label superstretch-$(date +%Y%m%d) --base-ws-url wss://ws.example.com" make load-100k-rehearse`（演练机） | `seqGapCount`、回放一致性与断线重连回放 (`catchup`) 与 schema 前置检查（可加 `--ws-precheck`）重点；请保留 `manifest.json` / `summary.tsv` / `runs/<run>/catchup.log` / `runs/<run>/ws-schema-precheck.log` 作为容量边界证据 |
-| 7.6 | 远端演练边界 | 按 [deploy rehearsal 卡片](deploy-rehearsal-card.md) 执行，或直接用 `make deploy-perf-rehearsal BASE_URL=<https://domain> BASE_WS_URL=<wss://ws.domain> DEPLOY_REHEARSAL_REQUIRE_HTTPS=1 [DEPLOY_REHEARSAL_AID=<auction>] [PERF_GATE_CLIENT_SUMMARY=<k6_summary.json>]`（证据-only时加 `DEPLOY_REHEARSAL_REPORT_ONLY=1`）；如为 10万级复盘可用 `make deploy-perf-rehearsal-100k BASE_WS_URL=<wss://ws.domain> DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 [DEPLOY_REHEARSAL_100K_REPORT_ONLY=1]`；二价 lane 用 `make deploy-perf-rehearsal-second-price ...` 或 `make deploy-perf-rehearsal-100k-second-price ...`，提前把演练房间配置为 `rules.mode: VICKREY`（或 `second_price` / `vickrey`） |  | 服务器端 SLO 与 client-observed 证据边界分离，避免把 WAN 延迟误判为后端瓶颈 |
+| 7.5 | 规模演练（非 P0，可选） | "企业级并发边界盘查：10万级压测用于瓶颈归档，不作为演示硬闸" | `make load-100k-rehearse` 的 `LOAD_100K_REHEARSAL_ARGS` 可传 `--base-ws-url`（如网关走独立 WS 域名时，不要加 `/ws`），例如：`LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label superstretch-$(date +%Y%m%d) --base-ws-url wss://ws.example.com" make load-100k-rehearse`（演练机）<br/>单房间极值压测可用 `LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --auction-mode VICKREY --shards 1 --label superstretch-single-room-$(date +%Y%m%d)" make load-100k-single-room-rehearsal-gate`（别名同 `make load-100k-single-room-second-price-gate`） | `seqGapCount`、回放一致性与断线重连回放 (`catchup`) 与 schema 前置检查（可加 `--ws-precheck`）重点；请保留 `manifest.json` / `summary.tsv` / `runs/<run>/catchup.log` / `runs/<run>/ws-schema-precheck.log` 作为容量边界证据 |
+| 7.6 | 远端演练边界 | 按 [deploy rehearsal 卡片](deploy-rehearsal-card.md) 执行，或直接用 `make deploy-perf-rehearsal BASE_URL=<https://domain> BASE_WS_URL=<wss://ws.domain> DEPLOY_REHEARSAL_REQUIRE_HTTPS=1 [DEPLOY_REHEARSAL_AID=<auction>] [PERF_GATE_CLIENT_SUMMARY=<k6_summary.json>]`（证据-only时加 `DEPLOY_REHEARSAL_REPORT_ONLY=1`）；如为 10万级复盘可用 `make deploy-perf-rehearsal-100k BASE_WS_URL=<wss://ws.domain> DEPLOY_REHEARSAL_100K_REQUIRE_HTTPS=1 [DEPLOY_REHEARSAL_100K_REPORT_ONLY=1]`；二价 lane 用 `make deploy-perf-rehearsal-second-price ...` 或 `make deploy-perf-rehearsal-100k-second-price ...`，提前把演练房间配置为 `rules.mode: VICKREY`（兼容别名同模板） |  | 服务器端 SLO 与 client-observed 证据边界分离，避免把 WAN 延迟误判为后端瓶颈 |
+| 7.7 | 远端单房间边界（10万） | 使用 `make deploy-perf-rehearsal-100k-single-room-second-price BASE_URL=<https://domain> BASE_WS_URL=<wss://ws.domain>`（先配置好二价模式）或 `make deploy-perf-rehearsal-100k-single-room` 验证远端单房间 10万并发；本地参数链路可用 `LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --auction-mode VICKREY --shards 1" make load-100k-single-room-rehearsal-gate`（或 `...-second-price-gate`） |  | `roomStatePatchEmitted` / `roomStatePatchBids` 可用于 coalesced 载荷约束 |
 | 8 | 故障演练 30s ×5 | "MySQL/WS/Timer/AI/Redis 各挂一段，证明降级 + 自愈" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; AI 挂时出价继续 (V9 P3) |
 
 > `make demo` runs nodes 1–3 (`e2e-dummy-bid`), 5 (`verify-evidence`), 6 (`verify`),
@@ -92,6 +93,18 @@ drive an `AUCTION_EXTENDED`. Show node 4 one of two ways:
 > the live + late-bid + `AUCTION_EXTENDED` assertion path, and keep the UI
 > demonstration as the on-camera fallback.
 
+If you need to visibly exercise state patching during rehearsal (for judges asking
+for coalescing on-wire, especially when using small-room smoke), set
+`ROOM_STATE_PATCH_MIN_VIEWERS=10` in the rehearsal shell before `make demo` so
+the room patch path is triggered sooner without changing production defaults.
+
+If you're specifically validating the adaptive fanout behavior:
+- `ROOM_STATE_PATCH_ADAPTIVE=true`
+- `ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS=1` (or more, to defer coalescing until the room has seen N bid/extend events)
+
+Use adaptive mode when you want big-room bursts to be coalesced but still keep small
+rooms in direct-broadcast mode at first.
+
 ---
 
 ## 4. Fallback ladder · 兜底梯度
@@ -125,11 +138,33 @@ Pre-record so rung 3 is complete (each is independently playable):
 
 ## 6. Pre-demo checklist · 演示前检查
 
+- [ ] 演练闭环模板已填（`docs/rehearsal-closure-checklist.md`）并附上签名时间与 commit
+- [ ] 若新建复盘 Issue，已在模板 `rehearsal-closure` 中同步同一清单
+- [ ] 复盘 issue 的第一段已固定包含以下字段：Owner / Owner deadline / 并发规模 / 目标 URL / Evidence dir / Commit / 时间戳，减少口头约定
+- [ ] 证据目录口径按 `docs/rehearsal-closure-checklist.md` 固定：
+  - 远端演练：填写 `DEPLOY_REHEARSAL_OUT_DIR`（默认 `.deploy-rehearsal-<timestamp>`）
+  - 本地 10万演练：填写 `.load-100k-rehearsals/<label>`
+  - 单房间二价门禁（固定 1 房间、10万压测）：固定标注 `single-room`，并给出 `make load-100k-single-room-rehearsal-gate` 结论
+  - 建议正文可直接粘贴：
+
+    ```text
+    - Owner: PDGGK
+    - Owner deadline: 2026-06-07
+    - 并发规模: 10k (2k×4 shards)
+    - 目标: https://... / auc_...
+    - Evidence dir: .deploy-rehearsal-20260609-090000 / .load-100k-rehearsals/superstretch-20260609
+    - Commit: <git sha>
+    - 复盘时间戳: 2026-06-07T08:00:00Z
+    - 单房间二价门禁: PASS（`make load-100k-single-room-rehearsal-gate`）
+    - 单房间门禁参数: `--shards 1 --auction-mode VICKREY`
+    - 关键二价核验: winner_pay = runner_up_pay
+    ```
+
 - [ ] `make demo` green on the presenter laptop (full path) — **2026-06-09**
 - [ ] `make demo-smoke` green in CI (orchestration wiring intact)
 - [ ] Public deploy health-green + seeded + one manual bid (T-10 min)
 - [ ] Backup recording + 5 chaos clips on local disk (not only cloud)
 - [ ] Grafana panel bookmarked + datasource live (`infra/grafana`, `infra/prometheus`)
-- [ ] **选做（演练）**  `make load-100k`（外部压测机）或 `make deploy-perf-rehearsal-100k` 并归档《super-stretch》结果（非 P0）
+- [ ] **选做（演练）** `make load-100k`（外部压测机）或 `make load-100k-single-room-rehearsal-gate` 或 `make deploy-perf-rehearsal-100k`，并归档《super-stretch》结果（非 P0）
 - [ ] Two browser tabs pre-opened (admin + room), sound on for AI/auctioneer audio
 - [ ] `AI uses Doubao, demo runs mock` line ready (the key was deprovisioned; mock path is honest + reproducible)

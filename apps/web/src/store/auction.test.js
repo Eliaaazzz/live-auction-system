@@ -60,6 +60,20 @@ describe('applyEvent · seqguard dedup', () => {
     expect(useAuctionStore.getState().currentCents).toBe('11500000');
     expect(useAuctionStore.getState().lastSeq).toBe(6);
   });
+
+  it('ignores malformed non-number seq and avoids throwing', () => {
+    const apply = useAuctionStore.getState().applyEvent;
+    const before = useAuctionStore.getState().currentCents;
+
+    expect(() => apply(env({
+      type: EventType.BID_ACCEPTED,
+      seq: 5n,
+      data: { status: 'LIVE', amountCents: '12000000', userId: 'u_bad', displayName: 'Bad' },
+    }))).not.toThrow();
+
+    expect(useAuctionStore.getState().currentCents).toBe(before);
+    expect(useAuctionStore.getState().lastSeq).toBe(0);
+  });
 });
 
 describe('applyEvent · BID_ACCEPTED', () => {
@@ -76,6 +90,25 @@ describe('applyEvent · BID_ACCEPTED', () => {
     expect(s.winnerDisplayName).toBe('海风_2024');
     expect(s.leaders[0]).toMatchObject({ userId: 'u_other', cents: '11000000', isYou: false });
     expect(s.leadingToast).toBe(false);
+  });
+
+  it('falls back winnerDisplayName to userId when displayName is empty', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'u_other', displayName: '', endAtMs: Date.now() + 28_000 },
+    }));
+    const s = useAuctionStore.getState();
+    expect(s.winnerDisplayName).toBe('u_other');
+  });
+
+  it('stores normalized displayName in recentEvents for ticker rendering', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'u_other', displayName: '   ', endAtMs: Date.now() + 28_000 },
+    }));
+    const s = useAuctionStore.getState();
+
+    expect(s.recentEvents[0].data.displayName).toBe('u_other');
   });
 
   it('fires leadingToast when the bidder is self', () => {
@@ -176,6 +209,83 @@ describe('applyEvent · cumulative counters (#64-M1/M2)', () => {
   });
 });
 
+describe('applyEvent · ROOM_STATE_PATCH', () => {
+  beforeEach(RESET);
+
+  it('applies advisory room state fields and clears active reject state', () => {
+    useAuctionStore.getState().applyReject({
+      type: EventType.BID_REJECTED,
+      requestId: 'r-1',
+      data: { code: 'ERR_RATE_LIMITED' },
+    });
+
+    const patchData = {
+      status: 'LIVE',
+      currentPriceCents: '13000000',
+      winnerId: 'u_patch',
+      winnerDisplayName: 'Patch Winner',
+      endAtMs: Date.now() + 40_000,
+      extendCount: 3,
+      bidCountDelta: 2,
+    };
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.ROOM_STATE_PATCH,
+      seq: 9,
+      serverTimeMs: Date.now(),
+      data: patchData,
+    });
+
+    const s = useAuctionStore.getState();
+    expect(s.status).toBe('LIVE');
+    expect(s.currentCents).toBe('13000000');
+    expect(s.winnerId).toBe('u_patch');
+    expect(s.winnerDisplayName).toBe('Patch Winner');
+    expect(s.extendCount).toBe(3);
+    expect(s.totalBidsCount).toBe(2);
+    expect(s.leaders[0]).toMatchObject({
+      userId: 'u_patch',
+      cents: '13000000',
+      isYou: false,
+    });
+    expect(s.bidderIds).toEqual(['u_patch']);
+    expect(s.lastRejectCode).toBeNull();
+    expect(s.lastRejectAt).toBeNull();
+  });
+
+  it('falls back winnerDisplayName to winnerId and does not replace winner without winnerId', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      data: {
+        status: 'LIVE',
+        amountCents: '12000000',
+        userId: 'u_seed',
+        displayName: 'Seed',
+        endAtMs: Date.now() + 28_000,
+      },
+    }));
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.ROOM_STATE_PATCH,
+      seq: 2,
+      serverTimeMs: Date.now(),
+      data: {
+        winnerId: '',
+        winnerDisplayName: '   ',
+        currentPriceCents: '12500000',
+        status: 'LIVE',
+        bidCountDelta: 1,
+      },
+    });
+
+    const s = useAuctionStore.getState();
+    expect(s.currentCents).toBe('12500000');
+    expect(s.winnerId).toBe('u_seed');
+    expect(s.winnerDisplayName).toBe('Seed');
+    expect(s.totalBidsCount).toBe(2);
+  });
+});
+
 describe('applyEvent · AUCTION_EXTENDED', () => {
   beforeEach(RESET);
 
@@ -237,6 +347,58 @@ describe('applyEvent · ROOM_SNAPSHOT', () => {
           maxExtensions: 5,
           antiSnipeWindowMs: 10000,
           auctionMode: 'second_price',
+        },
+      },
+    });
+
+    expect(useAuctionStore.getState().auctionMode).toBe('second_price');
+  });
+
+  it('accepts legacy rules.mode values and normalizes vickrey to second_price', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.ROOM_SNAPSHOT,
+      seq: 9,
+      serverTimeMs: Date.now(),
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '13000000',
+        winnerId: 'u1',
+        endAtMs: Date.now() + 38_000,
+        seq: 9,
+        rules: {
+          stepCents: '250000',
+          capCents: null,
+          reserveCents: '10000000',
+          maxExtensions: 5,
+          antiSnipeWindowMs: 10000,
+          mode: 'vickrey',
+        },
+      },
+    });
+
+    expect(useAuctionStore.getState().auctionMode).toBe('second_price');
+  });
+
+  it('normalizes legacy alias mode=second to second_price', () => {
+    useAuctionStore.getState().applyEvent({
+      schemaVersion: 1,
+      type: EventType.ROOM_SNAPSHOT,
+      seq: 9,
+      serverTimeMs: Date.now(),
+      data: {
+        status: 'LIVE',
+        currentPriceCents: '13000000',
+        winnerId: 'u1',
+        endAtMs: Date.now() + 38_000,
+        seq: 9,
+        rules: {
+          stepCents: '250000',
+          capCents: null,
+          reserveCents: '10000000',
+          maxExtensions: 5,
+          antiSnipeWindowMs: 10000,
+          mode: 'second',
         },
       },
     });
@@ -311,6 +473,26 @@ describe('setLeaders · REST normalization', () => {
     });
   });
 
+  it('normalizes blank displayName to fallback id in REST leaderboard payload', () => {
+    useAuctionStore.getState().setLeaders([
+      { userId: 'alice', amountCents: '12000000', displayName: '   ' },
+      { userId: 'bob', cents: '13000000', displayName: '' },
+    ]);
+
+    const s = useAuctionStore.getState();
+    expect(s.leaders).toHaveLength(2);
+    expect(s.leaders[0]).toMatchObject({
+      userId: 'alice',
+      displayName: 'alice',
+      cents: '12000000',
+    });
+    expect(s.leaders[1]).toMatchObject({
+      userId: 'bob',
+      displayName: 'bob',
+      cents: '13000000',
+    });
+  });
+
   it('marks current user as self even when displayName is missing', () => {
     useAuctionStore.getState().setSelfUserId('alice');
     useAuctionStore.getState().setLeaders([
@@ -358,6 +540,25 @@ describe('applyEvent · terminal states', () => {
     expect(s.currentCents).toBe('12000000');
     expect(s.winnerId).toBe('winner_paid');
     expect(s.hammerTrans).toBe(true);
+  });
+
+  it('AUCTION_SOLD normalizes winnerDisplayName with fallback', () => {
+    useAuctionStore.getState().applyEvent(env({
+      seq: 1,
+      type: EventType.BID_ACCEPTED,
+      data: { status: 'LIVE', amountCents: '11000000', userId: 'legacy_other', displayName: 'Legacy', endAtMs: Date.now() + 28_000 },
+    }));
+
+    useAuctionStore.getState().applyEvent(env({
+      seq: 2,
+      type: EventType.AUCTION_SOLD,
+      data: { winnerId: 'winner_paid', winnerDisplayName: '', amountCents: '12000000' },
+    }));
+
+    const s = useAuctionStore.getState();
+    expect(s.winnerId).toBe('winner_paid');
+    expect(s.winnerDisplayName).toBe('winner_paid');
+    expect(s.currentCents).toBe('12000000');
   });
 
   it('AUCTION_SOLD keeps existing price/winner when amount or winnerId is absent', () => {

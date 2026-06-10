@@ -44,12 +44,14 @@ CREATE TABLE IF NOT EXISTS auction_rules (
   id                BIGINT AUTO_INCREMENT PRIMARY KEY,
   auction_id        VARCHAR(64) NOT NULL,
   start_price_cents BIGINT NOT NULL,
+  reserve_cents      BIGINT NOT NULL DEFAULT 0,
   increment_cents   BIGINT NOT NULL,
   cap_price_cents   BIGINT NOT NULL,
   duration_sec      BIGINT NOT NULL,
   extend_window_sec BIGINT NOT NULL DEFAULT 0,
   extend_sec        BIGINT NOT NULL DEFAULT 0,
   max_extensions    BIGINT NOT NULL DEFAULT 0, -- 0 = unlimited anti-snipe extensions
+  auction_mode      VARCHAR(32) NOT NULL DEFAULT 'first_price',
   frozen_at         DATETIME NULL,
   UNIQUE KEY uq_rules_auction (auction_id)
 );

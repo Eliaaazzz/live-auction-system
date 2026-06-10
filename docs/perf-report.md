@@ -70,7 +70,7 @@ broadcast p50=<ms> p95=<ms> p99=<ms> max=<ms> (count=<N>, budget p95<150ms)
 hammer    p50=<ms> p95=<ms> p99=<ms> (count=<N>, budget p95<500ms)
 catchup   p50=<ms> p95=<ms> p99=<ms> (count=<N>)
 script    p50=<ms> p95=<ms> p99=<ms> (count=<N>, budget p99<5ms)
-counters: bidsAccepted=<N> bidsRejected=<N> backpressureForceClose=<N> seqGapCount=0 streamLenMax=<N> activeConns(end)=<N>
+counters: bidsAccepted=<N> bidsRejected=<N> backpressureForceClose=<N> wsAuthUnauthorized=<N> wsSchemaMismatch=<N> wsUpgradeFailed=<N> seqGapCount=0 roomStatePatchEmitted=<N> roomStatePatchBids=<N> timerErrInternal=<N> timerErrInternalKeyType=<N> timerErrInternalSeqMismatch=<N> streamLenMax=<N> activeConns(end)=<N>
 load: PASS
 ```
 
@@ -115,7 +115,30 @@ Super-stretch（100k / 2k / 4-shards）目标：
 LOAD_100K_CONFIRM=1 make load-100k   # or true / yes / on
 ```
 说明：100k 演练默认会做非 P0 自检门槛；仅在明确确认时执行（见 `LOAD_100K_CONFIRM`）。
-如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=VICKREY`（或 `LOAD_AUCTION_MODE=second_price` / `LOAD_AUCTION_MODE=second price` / `LOAD_AUCTION_MODE=second` / `LOAD_AUCTION_MODE=vickrey`）。  
+
+如需**单房间** 10w 演练（固定到一个拍卖间，便于单-room fanout 极值压测）：
+```bash
+LOAD_100K_CONFIRM=1 make load-100k-single-room
+```
+对应二价模式：
+```bash
+LOAD_100K_CONFIRM=1 make load-100k-single-room-second-price
+# 或
+LOAD_100K_CONFIRM=1 make load-100k-single-room-vickrey
+```
+
+演练后可直接用产物目录做复核：
+
+```bash
+scripts/eval-load-100k-rehearsal.sh \
+  --pack-dir .load-100k-rehearsals/<label> \
+  --report .load-100k-rehearsals/<label>/eval-load-100k-rehearsal-summary.tsv
+```
+
+输出会给出每个 run 的 pass/fail 与汇总（包括 observer/seq/backpressure 是否越线、每轮 bidder sent/acked 下限是否达标），便于将
+`summary.tsv` 与复盘清单打通。`--report` 会把同样的汇总结果持久化为固定文件。
+
+如需演练二价（Vickrey）模式，可设置 `LOAD_AUCTION_MODE=VICKREY`（或 `LOAD_AUCTION_MODE=second_price` / `LOAD_AUCTION_MODE=second price` / `LOAD_AUCTION_MODE=second` / `LOAD_AUCTION_MODE=vickrey` / `LOAD_AUCTION_MODE=auction2` / `LOAD_AUCTION_MODE=2`）。
 如需显式一价（English）模式，可设置 `LOAD_AUCTION_MODE=ENGLISH`（或 `LOAD_AUCTION_MODE=first_price` / `LOAD_AUCTION_MODE=first price` / `LOAD_AUCTION_MODE=first` / `LOAD_AUCTION_MODE=firstprice`）。
 `load-100k` 也支持该变量，`load-100k-rehearse` 会沿用该变量透传，例如：
 ```bash
@@ -132,6 +155,23 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
   make load-100k-second-price-rehearse
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
   make load-100k-vickrey-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-rehearsal-second-price
+```
+对应的单房间复盘可直接走固定别名（会覆盖为 `--shards 1`）：
+```bash
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-single-room-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-single-room-second-price-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d)" \
+  make load-100k-single-room-vickrey-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
+  make load-100k-single-room-second-price-gate
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
+  make load-100k-single-room-vickrey-gate
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
+  make load-100k-single-room-rehearsal-gate
 ```
 日常可直接执行：
 ```bash
@@ -141,6 +181,8 @@ make load-100k-vickrey          # super-stretch, Vickrey alias
 对应脚本写法可直接加参数：
 ```bash
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY" \
+  make load-100k-rehearse
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(date +%Y%m%d) --auction-mode VICKREY --shards 1" \
   make load-100k-rehearse
 ```
 若后端 REST 与 WebSocket 入口不共用域名（如域名前置/回源不同），可同时覆盖 WS 地址：
@@ -167,10 +209,12 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --label superstretch-$(d
 ```
 脚本会落库存为：
 - `manifest.json`
+- `preflight/status.tsv`（包含 `ulimit` / `ip_local_port_range` / `result`）
 - `summary.tsv`
 - `health-start.json` / `health-end.json`
 - 每次运行的 `runs/<run-id>/load.log` + `runs/<run-id>/metrics.txt`
 - `manifest.json` 内会保留每次演练的参数预算（`budgets_ms`/`observer_stagger_ms`/`attempt_interval_sec`）以及运行元信息（命令行、仓库 commit、主机）、`auction_mode`（`first_price` / `second_price`，其中别名如 `ENGLISH` / `VICKREY` 会先归一化成对应 canonical 值）用于后续对账时避免“同参数复用”误差。
+- `summary.tsv` 的每行会补齐该次 run 的 `run_dir`、`log_file`、`metrics_file`，可直接跳到对应文件（`runs/<run-id>/...`）确认每次指标与原始输出。
 
 如需把断线回放校验并入同一套打点，可加 `--catchup-smoke`：
 
@@ -179,7 +223,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label 
   make load-100k-rehearse
 ```
 
-开启后每个 run 会额外产出 `runs/<run-id>/catchup.log`，并在 `summary.tsv` / `manifest.json` 里记录 `catchup_status` / `catchup_rc` / `catchup_checks`。
+开启后每个 run 会额外产出 `runs/<run-id>/catchup.log`，并在 `summary.tsv` / `manifest.json` 里记录 `catchup_status` / `catchup_rc` / `catchup_log`，以及 `catchup_checks` 汇总字段。
 
 便于后续并发证明归档。
 
@@ -192,7 +236,7 @@ LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --catchup-smoke --label 
 ```
 
 如需显示固定版本号，可加 `WS_PRECHECK_SCHEMA=<n>`（缺省从 `SCHEMA_VERSION` 读取）；如需 Token 鉴权场景，可再加 `WS_PRECHECK_TOKEN=<token>` 与 `WS_PRECHECK_TIMEOUT_MS=<ms>`；如需强制用某个拍卖做前置检查可加 `--ws-precheck-auction <auction-id>`。  
-`--ws-precheck` 也可独立运行（不加 `--catchup-smoke` 时只做 schema 前置校验、并产出 `runs/<run-id>/ws-schema-precheck.log`）。
+  `--ws-precheck` 也可独立运行（不加 `--catchup-smoke` 时只做 schema 前置校验、并产出 `runs/<run-id>/ws-schema-precheck.log`，`summary.tsv` 会记录 `ws_precheck_status` / `ws_precheck_rc` / `ws_precheck_log` 与 `manifest.json` 的 `ws_precheck_checks`）。
 
 Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
@@ -204,6 +248,10 @@ For repeated local load-smoke checks with one summary artifact:
 
 ```sh
 REPEAT_LOAD_SMOKE_ARGS="--attempts 3 --interval 5 --json --strict" \
+  make load-smoke-repeat
+
+# Optional: auto-clean `auc_load_*` IDs after each run (dry-run recommended first)
+REPEAT_LOAD_SMOKE_ARGS="--attempts 3 --interval 5 --json --cleanup-load --cleanup-load-dry-run --cleanup-load-scan-suffix auc_load_" \
   make load-smoke-repeat
 ```
 
@@ -217,6 +265,15 @@ BASE_URL="https://your-domain" \
   DEPLOY_REHEARSAL_AID=auc_demo \
   PERF_GATE_CLIENT_SUMMARY=./client-summary.json \
   PERF_GATE_OUT_DIR=./rehearsal-perf
+```
+
+After the rehearsal, run a lightweight catchup/smoke handshake witness:
+
+```sh
+WEB_SMOKE_AID="auc_demo" \
+WEB_SMOKE_BASE_URL="$BASE_URL" \
+BASE_WS_URL="$BASE_WS_URL" \
+make web-smoke-catchup
 ```
 
 If the rehearsal room is already second-price, use:
@@ -300,13 +357,26 @@ LOAD_100K_REHEARSAL_LABEL="${RUN_LABEL}" \
 LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json" \
   make load-100k-rehearsal-gate
 
-# Step 2: 该目标会自动读取 ${RUN_LABEL} 下最近一次 run 的 metrics.txt 做服务端门控；
-# 需要观测证据可补充：
+# Step 2: 该目标会自动读取 ${RUN_LABEL} 下最近一次 run 的 metrics.txt 做服务端门控，并继续执行 summary 复核；
+# 二价模式固定入口（目标房间已按二价模式配置）：
+RUN_LABEL="superstretch-v2-$(date +%Y%m%dT%H%M%SZ)"
+LOAD_100K_REHEARSAL_LABEL="${RUN_LABEL}" \
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --auction-mode VICKREY" \
+  make load-100k-rehearsal-gate-second-price
+RUN_LABEL="superstretch-single-room-v2-$(date +%Y%m%dT%H%M%SZ)"
+LOAD_100K_REHEARSAL_LABEL="${RUN_LABEL}" \
+LOAD_100K_REHEARSAL_ARGS="--confirm --attempts 1 --json --auction-mode VICKREY" \
+  make load-100k-single-room-rehearsal-gate
+# 若要单独复核 summary，可直接运行：
+# LOAD_100K_REHEARSAL_EVAL_LABEL="${RUN_LABEL}" make load-100k-eval
+# 观测证据可补充：
 # LOAD_100K_REHEARSAL_CLIENT_SUMMARY=/path/to/client-summary.json
 ```
 
 说明：
 - `load-100k-rehearsal-gate` 会读取最新 run 的 `metrics.txt`，把 `ackLatencyMs` / `broadcastLatencyMs` 等服务端指标做后端硬闸。
+- 可选：设置 `LOAD_100K_REHEARSAL_MAX_TIMER_ERR_INTERNAL` / `LOAD_100K_REHEARSAL_MAX_TIMER_ERR_INTERNAL_KEY_TYPE` / `LOAD_100K_REHEARSAL_MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH` 为非空整数（例如 `0`）可把对应 timer 异常计数列入本地 `load-100k` 门禁。
+- `load-100k-eval` 会顺序复核 `summary.tsv` 行级指标（如 readErrors、dialErrors、seqGap、backpressure）与可选重放检查状态。
 - `LOAD_100K_REHEARSAL_CLIENT_SUMMARY` 可接入 k6/wsload/jMeter 观测摘要；缺失时只做服务端硬闸，仍可通过。
 - 演练打包默认落到 `.load-100k-rehearsals/${RUN_LABEL}`（含 `manifest.json`、`summary.tsv`、`runs/*/metrics.txt`）。
 - `LOAD_100K_REHEARSAL_GATE_OUT_DIR` 可覆盖 `remote-perf-gate.sh` 输出目录（默认同目录下 `perf-gate`）。
@@ -322,7 +392,8 @@ make load            # 500/50/60s + post-load verify (~90 s including build)
 # repeated load smoke run + aggregate summary (recommended for trend checks)
 REPEAT_LOAD_SMOKE_ARGS="--attempts 5 --interval 2 --json" \
   make load-smoke-repeat
-# (JSON output includes seqGapCount and backpressureForceClose totals in `totals`)
+# JSON output includes seqGapCount/backpressureForceClose, websocket counters,
+# and timer corruption counters (`timerErrInternal*`) in `totals`.
 
 # CI-cheap regression smoke (same code, smaller N)
 make load-smoke      # 25/5/10s + post-load verify (~25 s)

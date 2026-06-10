@@ -92,6 +92,21 @@ call_api() {
   CALL_BODY="$payload"
 }
 
+login() {
+  local nick="$1"
+  local role="$2"
+  local body
+
+  body="{\"nickname\":\"${nick}\",\"role\":\"${role}\"}"
+
+  call_api POST /api/login "" "$body"
+  if [[ "$CALL_STATUS" == "200" ]]; then
+    return 0
+  fi
+
+  call_api POST /api/dev-login "" "$body"
+}
+
 assert_status() {
   local got="$1" want="$2" msg="$3"
   if [[ "$got" -ne "$want" ]]; then
@@ -127,18 +142,18 @@ trap cleanup EXIT
 echo "backend ready: ${BASE_URL}"
 
 echo "auth: seed seller and buyer identities"
-call_api POST /api/dev-login "" "{\"nickname\":\"seller-pr103-smoke-$(date +%s)\",\"role\":\"seller\"}"
+login "seller-pr103-smoke-$(date +%s)" "seller"
 seller_token="$(jq -r '.token // empty' <<<"$CALL_BODY")"
 if [[ -z "$seller_token" || "$seller_token" == "null" ]]; then
-  echo "FAIL: dev-login failed for seller"
+  echo "FAIL: login failed for seller (api/login + api/dev-login fallback)"
   echo "status=${CALL_STATUS} body=${CALL_BODY}"
   exit 1
 fi
 
-call_api POST /api/dev-login "" "{\"nickname\":\"buyer-pr103-smoke-$(date +%s)\",\"role\":\"user\"}"
+login "buyer-pr103-smoke-$(date +%s)" "user"
 buyer_token="$(jq -r '.token // empty' <<<"$CALL_BODY")"
 if [[ -z "$buyer_token" || "$buyer_token" == "null" ]]; then
-  echo "FAIL: dev-login failed for buyer"
+  echo "FAIL: login failed for buyer (api/login + api/dev-login fallback)"
   echo "status=${CALL_STATUS} body=${CALL_BODY}"
   exit 1
 fi

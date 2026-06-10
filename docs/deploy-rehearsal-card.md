@@ -48,6 +48,7 @@ Before each run, capture owner/deadline metadata for auditability:
 - Evidence directory:
 - Hard close conditions (must be satisfied before final close):
   - preflight: public route checks PASS and manifest/status captured (`manifest.txt`, `status.tsv`, route artifacts)
+  - preflight: if `EXPECTED_BUILD_REVISION` is set, `version_revision_check` in `deploy-rehearsal-check` must pass
   - remote/perf gate: PASS (or explicit FAIL-REPORTED only when report-only)
   - load/rehearsal pack: `summary.tsv` + `manifest.json` + run `load.log` + `metrics.txt` + health snapshots present
   - ws schema: schema precheck PASS when required, or explicitly documented as out of scope
@@ -82,15 +83,24 @@ Before each run, capture owner/deadline metadata for auditability:
    AID="${AID:-auc_demo}" \
    OUT_DIR="$PREFLIGHT_OUT" \
    REQUIRE_HTTPS=1 \
+   EXPECTED_BUILD_REVISION="$(git rev-parse HEAD)" \
    scripts/deploy-preflight.sh
    ```
 
    Retain `manifest.txt`, `status.tsv`, route response artifacts, and
    `metrics-summary.json`. The helper reads public endpoints:
-   `/healthz`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
+   `/healthz`, `/version`, `/metrics`, `/admin.html`, `/room.html?auction=$AID`,
    and `/ws`. By default it expects auth-gated response `401/403`; if `WS_PRECHECK_TOKEN=<token>`
    is set it also accepts a valid upgrade `101` for token-authenticated endpoints. If you want
    a strict handshake-only check, set `REQUIRE_WS_UPGRADE=true` (or `1`/`yes`/`on`) as well.
+   When `EXPECTED_BUILD_REVISION` is provided, preflight also verifies `/version`
+   build revision and prints a summary line `version check: PASS/FAIL`, while
+   `manifest.txt` records `version_revision_actual`, `version_revision_match`, and
+   `version_revision_result`.
+   Optional: set `EXPECTED_WS_SCHEMA="${SCHEMA_VERSION:-1}"` (or explicit number) to
+   fail the preflight when `/version`'s `wsSchema` drifts; this writes
+   `version_ws_schema_actual`, `version_ws_schema_match`, and
+   `version_ws_schema_result` to `manifest.txt`.
 
    Optional schema precheck:
 
@@ -113,6 +123,22 @@ Before each run, capture owner/deadline metadata for auditability:
 
    For super-stretch paths, `make deploy-perf-rehearsal-100k` enables this check
    by default (`DEPLOY_REHEARSAL_100K_REQUIRE_WS_SCHEMA_CHECK=1`).
+
+   Optional hard acceptance smoke (recommended before/after large-scale runs) to
+   directly capture `ROOM_JOIN -> BID_PLACE -> BID_ACCEPTED`:
+
+   ```sh
+   cd apps/web
+   WEB_SMOKE_AID="auction-id-under-test" \
+   HOST_HTTP="$BASE_URL" \
+   HOST_WS="${BASE_WS_URL:-wss://ws.example.com}" \
+   npm run -s smoke:catchup | tee "./live-bid-smoke.log"
+   ```
+
+   - `HOST_WS` is the websocket base host (for example `wss://ws.example.com`).
+     Do not append `/ws`.
+   - PASS is `TC-T6-102 catchup smoke PASSED` and a zero exit code.
+   - Mark this as evidence in the closure checklist before `overall` passes.
 
 3. Decide whether SRS is in scope.
 
@@ -246,6 +272,9 @@ not inject bid mode itself.
    TARGET_CONNS="${DEPLOY_REHEARSAL_100K_TARGET:-${DEPLOY_REHEARSAL_TARGET:-500}}" \
    PERF_GATE_CLIENT_SUMMARY="${PERF_GATE_CLIENT_SUMMARY:-}" \
    CLIENT_CONNECT_FAIL_RATE_MAX_PCT="${CLIENT_CONNECT_FAIL_RATE_MAX_PCT:-${DEPLOY_REHEARSAL_CONNECT_FAIL_RATE_MAX_PCT:-}}" \
+   MAX_TIMER_ERR_INTERNAL="${DEPLOY_REHEARSAL_MAX_TIMER_ERR_INTERNAL:-}" \
+   MAX_TIMER_ERR_INTERNAL_KEY_TYPE="${DEPLOY_REHEARSAL_MAX_TIMER_ERR_INTERNAL_KEY_TYPE:-}" \
+   MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH="${DEPLOY_REHEARSAL_MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH:-}" \
    PERF_GATE_OUT_DIR="${PERF_GATE_OUT_DIR:-${DEPLOY_REHEARSAL_OUT_DIR:-.deploy-rehearsal}/perf-gate}" \
    scripts/remote-perf-gate.sh \
      --server-metrics "$SERVER_METRICS" \
@@ -260,7 +289,10 @@ not inject bid mode itself.
    hammer and catchup p95 metrics, or the run must explicitly document why those
    checks were not required. For remote proof runs that also track client
    connect outcome, set `CLIENT_CONNECT_FAIL_RATE_MAX_PCT` (for example
-   `0.1` for 0.1%).
+   `0.1` for 0.1%). Optionally set `MAX_TIMER_ERR_INTERNAL`,
+   `MAX_TIMER_ERR_INTERNAL_KEY_TYPE`, and
+   `MAX_TIMER_ERR_INTERNAL_SEQ_MISMATCH` to gate timer corruption errors at
+   the same pass/fail boundary (set any to `0` for no regressions).
 
    In operator runs with evidence-only mode (`DEPLOY_REHEARSAL_REPORT_ONLY=1` for
    500/50 or `DEPLOY_REHEARSAL_100K_REPORT_ONLY=1` for super-stretch),
@@ -364,7 +396,30 @@ not inject bid mode itself.
    - `ws_precheck`（如 `manifest.json` 启用时必须 `PASS`）
    - `overall`（最终结论）
 
-7. Run teardown.
+7. 清理本地 load 遗留拍品（建议在演练结尾、销毁资源前）
+
+   演练后建议先清理 `auc_load_*` 的遗留状态，避免旧状态污染下一次压测。
+
+   ```sh
+   # 先 dry-run，确认扫描到的对象
+   LOAD_CLEANUP_SCAN_AUCTIONS=1 LOAD_CLEANUP_DRY_RUN=1 make cleanup-load-auctions
+
+   # 按前缀扫描（适合大规模压测，避免全量扫描）
+   LOAD_CLEANUP_AUCTION_PREFIX="auc_load_" LOAD_CLEANUP_DRY_RUN=1 make cleanup-load-auctions
+
+   # 按 ids 清理
+   LOAD_CLEANUP_AUCTION_IDS="auc_load_1,auc_load_2" make cleanup-load-auctions
+
+   # 从文件读取 id 并清理
+   LOAD_CLEANUP_AUCTION_FILE="/path/to/auction-ids.txt" make cleanup-load-auctions
+   ```
+
+   `LOAD_CLEANUP_SCAN_AUCTIONS` 与 `LOAD_CLEANUP_DRY_RUN` 支持
+   `1|true|yes|on`（启用）和 `0|false|no|off`（禁用）。
+
+   `LOAD_CLEANUP_AUCTION_PREFIX` 可用于缩小扫描范围（例如 `auc_load_`），当设置时会自动走扫描路径。
+
+8. Run teardown.
 
    Follow the #154 teardown/cost checklist after the evidence has been copied to
    its durable location. Record which remote resources were stopped or deleted.

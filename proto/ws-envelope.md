@@ -31,6 +31,7 @@ type WsEnvelope<T = unknown> = {
 | `ROOM_SNAPSHOT` | `{ status, currentPriceCents, winnerId, endAtMs, seq, rules? }` | room state on join; `rules` is `{ stepCents, capCents, reserveCents, maxExtensions, antiSnipeWindowMs, auctionMode }` |
 | `BID_ACCEPTED` | `{ seq, userId, displayName, amountCents, endAtMs, status, serverTimeMs }` | accepted ack (`endAtMs` is post-extension; `status` = `SOLD` on cap-hit else `LIVE`; `serverTimeMs` = Redis-TIME at adjudication) |
 | `BID_REJECTED` | `{ code }` | machine-readable (see `error-codes.md`) |
+| `ROOM_STATE_PATCH` | `{ seq, status, currentPriceCents, winnerId, winnerDisplayName, endAtMs, extendCount, bidCountDelta, serverTimeMs }` | coalescing projection for high-traffic rooms; advisory only. Contains the latest in-frame state snapshot for the same room; final state is authoritative from `ROOM_SNAPSHOT` + Stream replay |
 | `AUCTION_EXTENDED` | `{ seq, endAtMs, extendCount }` | anti-snipe extension (event, **not** a state) — T2 |
 | `AUCTION_SOLD` | `{ seq, winnerId, amountCents, status }` | terminal SOLD: cap-hit/buy-now (T2), Timer hammer (T3) |
 | `AUCTION_NO_BID` | `{ seq, status, serverTimeMs }` | terminal: Timer closed a live auction with no bids (T3) |
@@ -46,6 +47,7 @@ type WsEnvelope<T = unknown> = {
 ## Semantics / known limitations (T2)
 
 - **`displayName`** is resolved from the user's nickname **once at WS connect** and cached on the connection. If a profile-rename endpoint lands later, in-flight connections keep the connect-time name in their `BID_ACCEPTED` events until they reconnect (no mid-auction rename today; flagged so evidence-card name drift isn't a surprise).
+- **`ROOM_STATE_PATCH` is a coalescing projection for broadcast scale** (not a separate canonical source). The canonical winner/leaderboard evidence remains in REST leaderboard and Stream replay; patched snapshots can lag very recent WS state transitions until the next join/snapshot/catchup.
 - **`capPriceCents == 0` = no buy-now ceiling** (open-ended auction). The admin UI must treat a blank cap field deliberately (explicit "no cap" vs. "unspecified") so a seller doesn't unintentionally create an unbounded auction — UI default-value polish is T10.
 - **`ROOM_SNAPSHOT.rules.capCents == null` = no buy-now ceiling**. The rules block is additive under schemaVersion 1; old clients can ignore it, new clients should prefer it over local fallback defaults.
 - **`ROOM_SNAPSHOT.rules.reserveCents` currently mirrors `startPriceCents`** because the backend rule schema does not yet persist a separate reserve price.

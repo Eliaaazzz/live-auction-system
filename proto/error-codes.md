@@ -18,6 +18,7 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 | `ERR_AFTER_END` | place_bid | `now >= endAtMs` (lost race to close) | `BID_REJECTED {code: ERR_AFTER_END}` |
 | `ERR_TOO_LOW` | place_bid | `amount < current+increment` **or** `amount > cap` | `BID_REJECTED {code: ERR_TOO_LOW}` |
 | `ERR_AUCTION_PAUSED` | place_bid | Redis-back recovery in progress | `BID_REJECTED {code: ERR_AUCTION_PAUSED}` |
+| `ERR_RATE_LIMITED` | WS gateway | too many `BID_PLACE` from one connection | `BID_REJECTED {code: ERR_RATE_LIMITED}` |
 | `ERR_NOT_DUE` | close_auction (T3) | called before expiry | engine retries (not surfaced) |
 | `ERR_ALREADY_TERMINAL` | close/cancel (T3) | already terminal | engine no-op (not surfaced) |
 | `ERR_NOT_ALLOWED` | place_bid (seller self-bid, T2) / cancel_auction (T3) | seller bidding own auction, or caller not owner/admin | `BID_REJECTED {code: ERR_NOT_ALLOWED}` (bid) / `OPERATION_REJECTED {code: ERR_NOT_ALLOWED}` (cancel) |
@@ -34,6 +35,6 @@ Two namespaces (per V9 §6). Lua returns **internal** codes to the Go dispatcher
 
 T1 uses: `OK_FROZEN`, `OK_LIVE`, `OK_ACCEPTED`, `DUPLICATE`, `ERR_NOT_LIVE`, `ERR_AFTER_END`, `ERR_TOO_LOW`, `ERR_AUCTION_PAUSED`, `ERR_BAD_STATE`, `ERR_INTERNAL`, `ERR_FACTS_NOT_CONFIRMED`, `ERR_BAD_INPUT`.
 
-**T2 adds** `OK_EXTENDED` (anti-snipe) and `OK_SOLD` (cap-hit / buy-now) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive / `> MaxMoneyCents` (2^53-1) `amountCents` (validated + canonicalized at the gateway before the Lua call); below-required / over-cap / over-MaxMoneyCents remain `ERR_TOO_LOW` (Lua defensive boundary). `place_bid` also surfaces `ERR_NOT_ALLOWED` (seller self-bid → `BID_REJECTED`) and `ERR_INTERNAL{'seq_stream_mismatch'}` (stream/state desync preflight).
+**T2 adds** `OK_EXTENDED` (anti-snipe), `OK_SOLD` (cap-hit / buy-now), and `ERR_RATE_LIMITED` (per-connection WS bid burst control) to `place_bid`. Both still ack the bid as `BID_ACCEPTED` on the originating socket; the extension/terminal event reaches the room as `AUCTION_EXTENDED` / `AUCTION_SOLD` (see `ws-envelope.md`). `ERR_BAD_INPUT` now also covers a non-numeric / non-positive / `> MaxMoneyCents` (2^53-1) `amountCents` (validated + canonicalized at the gateway before the Lua call); below-required / over-cap / over-MaxMoneyCents remain `ERR_TOO_LOW` (Lua defensive boundary). `place_bid` also surfaces `ERR_NOT_ALLOWED` (seller self-bid → `BID_REJECTED`) and `ERR_INTERNAL{'seq_stream_mismatch'}` (stream/state desync preflight).
 
 **T3 implements** `OK_NO_BID` / `OK_CANCELLED` (close_auction / cancel_auction → `AUCTION_NO_BID` / `AUCTION_CANCELLED`), `ERR_NOT_DUE` + `ERR_ALREADY_TERMINAL` (close/cancel engine control, not surfaced to clients), and `ERR_NOT_ALLOWED` for cancel (non-owner → `OPERATION_REJECTED`/403). The hammer-race oracle is pinned: at `now >= endAtMs`, `place_bid` → `ERR_AFTER_END` and `close_auction` → `OK_SOLD`.

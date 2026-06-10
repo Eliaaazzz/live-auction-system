@@ -7,9 +7,21 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { MobileEvidence, MobileRoom } from './mobile.jsx';
 import { PullToResync } from './PullToResync.jsx';
-import { BidErrorCode, bidRejectCopy } from '../lib/types.js';
+import { BidErrorCode, bidRejectCopy, ConnStatus } from '../lib/types.js';
 
 describe('MobileRoom · TerminalOverlay (TC-T6-104/105)', () => {
+  it('forwards syncing gap to ConnectionBar', () => {
+    const { container } = render(
+      <MobileRoom
+        status="LIVE"
+        connStatus={ConnStatus.SYNCING}
+        connGap={{ from: 1450, to: 1472 }}
+        leaders={[]}
+      />,
+    );
+    expect(container.textContent).toContain('正在同步 #1450→#1472');
+  });
+
   it('does NOT render the overlay during LIVE status', () => {
     const { container } = render(<MobileRoom status="LIVE" leaders={[]}/>);
     // Should not include the NO_BID / CANCELLED copy

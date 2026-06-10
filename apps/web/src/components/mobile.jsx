@@ -3,6 +3,7 @@ import { formatCentsCNY, addCentsStr, bidRejectCopy,
   PriceDisplay, Countdown, StatusBadge, ExtendBadge,
   AIBubble, Leaderboard, BidButton, QuickBidChips, HeatMeter,
   ConnectionBar, ClockDriftIndicator } from './primitives.jsx';
+import { ConnStatus } from '../lib/types.js';
 import { LeadingToast, OvertakenSlam, MyPositionGap,
   BidTickerStream, HeartbeatVignette, SpeakerToggle,
   SandHourglass, PulseWaves, LongPressBidWheel,
@@ -46,7 +47,8 @@ function MobileRoom({
   aiTrigger = 'open',
   aiText = '当前价 ¥128,800 · 还有 30 秒，机会留给最果断的人。',
   aiStreaming = false,
-  connStatus = 'ok',
+  connStatus = ConnStatus.OPEN,
+  connGap,
   showColorRamp = false,
   expressive = true,
   showOwnFlash = false,
@@ -112,7 +114,7 @@ function MobileRoom({
       <PulseWaves active={warn && showPulseWaves && expressive}/>
 
       {/* Conn bar */}
-      <ConnectionBar status={connStatus} />
+      <ConnectionBar status={connStatus} gap={connGap} />
 
       {/* Bid ticker stream */}
       {expressive && ticker.length > 0 && <BidTickerStream items={ticker}/>}

@@ -526,7 +526,7 @@ preflight_status_exists=0
 
 auction_mode_label="${LOAD_AUCTION_MODE_NORMALIZED}"
 auction_mode_label="${auction_mode_label:-first_price}"
-echo -n "#run\tstatus\trc\trun_dir\tlog_file\tmetrics_file\tauction_id\tauction_ids\tauction_mode\tactive_connections\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tpanic_present\tcatchup_status\tcatchup_rc\tcatchup_log\tws_precheck_status\tws_precheck_rc\tws_precheck_log" > "$summary_file"
+echo -n "#run\tstatus\trc\trun_dir\tlog_file\tmetrics_file\tauction_id\tauction_ids\tauction_mode\tactive_connections\tobserver_read_errors\tobserver_dial_errors\tbid_sent\tbid_acked\tbid_rejected\tbid_errors\tseq_gap_count\tbackpressure_force_close\tws_auth_unauthorized\tws_schema_mismatch\tws_upgrade_failed\tpanic_present\tcatchup_status\tcatchup_rc\tcatchup_log\tws_precheck_status\tws_precheck_rc\tws_precheck_log" > "$summary_file"
 echo >> "$summary_file"
 
 HEALTHZ_URL="${BASE_URL}/healthz"
@@ -616,6 +616,9 @@ total_bid_rejected=0
 total_bid_errors=0
 total_seq_gap_count=0
 total_backpressure_force_close=0
+total_ws_auth_unauthorized=0
+total_ws_schema_mismatch=0
+total_ws_upgrade_failed=0
 total_peak_active_connections=0
 total_panic_runs=0
 total_catchup_runs=0
@@ -688,6 +691,9 @@ while (( run_idx < ATTEMPTS )); do
   counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
   seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
   backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
+  ws_auth_unauthorized="$(extract_metric "$counter_line" wsAuthUnauthorized)"
+  ws_schema_mismatch="$(extract_metric "$counter_line" wsSchemaMismatch)"
+  ws_upgrade_failed="$(extract_metric "$counter_line" wsUpgradeFailed)"
 
   if grep -q 'panic:' "$log_file"; then
     run_panic=1
@@ -732,6 +738,9 @@ while (( run_idx < ATTEMPTS )); do
   total_bid_errors=$((total_bid_errors + bidder_errors))
   total_seq_gap_count=$((total_seq_gap_count + seq_gap_count))
   total_backpressure_force_close=$((total_backpressure_force_close + backpressure_force_close))
+  total_ws_auth_unauthorized=$((total_ws_auth_unauthorized + ws_auth_unauthorized))
+  total_ws_schema_mismatch=$((total_ws_schema_mismatch + ws_schema_mismatch))
+  total_ws_upgrade_failed=$((total_ws_upgrade_failed + ws_upgrade_failed))
   if (( run_panic > 0 )); then
     total_panic_runs=$((total_panic_runs + 1))
   fi
@@ -811,18 +820,20 @@ while (( run_idx < ATTEMPTS )); do
   fi
 
   if [ -n "${auction_id:-}" ]; then
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
       "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "$auction_id" "${auction_ids:-}" \
       "$auction_mode_label" \
       "$active_connections" "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
+      "$seq_gap_count" "$backpressure_force_close" "$ws_auth_unauthorized" "$ws_schema_mismatch" "$ws_upgrade_failed" "$run_panic" \
+      "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   else
-    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
+    printf '%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s' \
       "$run_idx" "$run_status" "$rc" "$run_dir" "$log_file" "$metrics_file" "-" "-" \
       "$auction_mode_label" \
       "$active_connections" "$observer_read_errors" "$observer_dial_errors" "$bidder_sent" "$bidder_acked" "$bidder_rejected" "$bidder_errors" \
-      "$seq_gap_count" "$backpressure_force_close" "$run_panic" "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
+      "$seq_gap_count" "$backpressure_force_close" "$ws_auth_unauthorized" "$ws_schema_mismatch" "$ws_upgrade_failed" "$run_panic" \
+      "$catchup_status" "$catchup_rc" "$catchup_log" "$ws_precheck_status" "$ws_precheck_rc" "$ws_precheck_log" >> "$summary_file"
     printf '\n' >> "$summary_file"
   fi
 
@@ -832,7 +843,7 @@ while (( run_idx < ATTEMPTS )); do
     failed=$((failed + 1))
   fi
 
-  echo "run ${run_idx}: status=${run_status} rc=${rc} activeConns=${active_connections} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
+  echo "run ${run_idx}: status=${run_status} rc=${rc} activeConns=${active_connections} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.sent=${bidder_sent} bidder.acked=${bidder_acked} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close} wsAuthUnauthorized=${ws_auth_unauthorized} wsSchemaMismatch=${ws_schema_mismatch} wsUpgradeFailed=${ws_upgrade_failed}"
 
   run_obj="$(jq -nc \
     --arg run "${run_idx}" \
@@ -850,6 +861,9 @@ while (( run_idx < ATTEMPTS )); do
     --arg bidder_errors "$bidder_errors" \
     --arg seq_gap_count "$seq_gap_count" \
     --arg backpressure_force_close "$backpressure_force_close" \
+    --arg ws_auth_unauthorized "$ws_auth_unauthorized" \
+    --arg ws_schema_mismatch "$ws_schema_mismatch" \
+    --arg ws_upgrade_failed "$ws_upgrade_failed" \
     --arg panic "$run_panic" \
     --arg catchup_status "$catchup_status" \
     --arg catchup_rc "$catchup_rc" \
@@ -865,7 +879,7 @@ while (( run_idx < ATTEMPTS )); do
   --arg log "$log_file" \
   --arg metrics "$metrics_file" \
   --arg active_connections "$active_connections" \
-  '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), run_dir: $run_dir, auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), active_connections: ($active_connections|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
+  '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), run_dir: $run_dir, auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), observer_frames: ($observer_frames|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), ws_auth_unauthorized: ($ws_auth_unauthorized|tonumber), ws_schema_mismatch: ($ws_schema_mismatch|tonumber), ws_upgrade_failed: ($ws_upgrade_failed|tonumber), active_connections: ($active_connections|tonumber), panic_present: ($panic == "1"), catchup: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == "1" or ($run_catchup_enabled|tostring|ascii_downcase) == "true"), status: $catchup_status, rc: (if $catchup_rc == "-" then null else ($catchup_rc|tonumber) end), log: $catchup_log}, ws_precheck: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == "1" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == "true"), status: $ws_precheck_status, rc: (if $ws_precheck_rc == "-" then null else ($ws_precheck_rc|tonumber) end), schema: (if $ws_precheck_schema == "" then null else ($ws_precheck_schema|tonumber) end), token_set: (if $ws_precheck_token_set == "true" then true else false end), auction_override: $ws_precheck_auction, log: $ws_precheck_log}, log: $log, metrics: $metrics}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -932,6 +946,9 @@ jq -cn \
   --arg total_bid_errors "$total_bid_errors" \
   --arg total_seq_gap_count "$total_seq_gap_count" \
   --arg total_backpressure_force_close "$total_backpressure_force_close" \
+  --arg total_ws_auth_unauthorized "$total_ws_auth_unauthorized" \
+  --arg total_ws_schema_mismatch "$total_ws_schema_mismatch" \
+  --arg total_ws_upgrade_failed "$total_ws_upgrade_failed" \
   --arg min_peak_active_connections "$MIN_PEAK_ACTIVE_CONNECTIONS" \
   --arg run_catchup_enabled "$RUN_CATCHUP_SMOKE" \
   --arg run_ws_precheck_enabled "$RUN_WS_SCHEMA_PRECHECK" \
@@ -952,7 +969,7 @@ jq -cn \
   --arg health_start "$health_start_file" \
   --arg health_end "$health_end_file" \
   --rawfile runs "$json_payload" \
-  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), min_peak_active_connections: ($min_peak_active_connections|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber), max_active_connections: ($total_peak_active_connections|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, preflight: {dir: $preflight_dir, status_file: (if $preflight_status_exists == "1" then $preflight_status else "-"), status_exists: (($preflight_status_exists|tonumber) == 1)}, runs: ($runs|fromjson)}' > "$manifest_file"
+  '{pack_dir: $pack_dir, pack_dir_base: $pack_dir_base, pack_label: $label, command_line: $command_line, run_metadata: {script: $run_script, git_head: $git_head, host: $run_host, user: $run_user, captured_at_utc: $now, base_url: $base_url, ws_url: $base_ws_url}, started_at: $start, finished_at: $end, params: {observers: ($load_observers|tonumber), bidders: ($load_bidders|tonumber), shards: ($load_shards|tonumber), duration_sec: ($load_duration|tonumber), bid_interval_ms: ($load_bid_interval|tonumber), auction_mode: $load_auction_mode, auction_dur_sec: ($load_auction_dur|tonumber), attempt_interval_sec: ($interval|tonumber), budgets_ms: {ack_p95: ($load_ack_p95|tonumber), broadcast_p95: ($load_broadcast_p95|tonumber), script_p99: ($load_script_p99|tonumber), hammer_p95: ($load_hammer_p95|tonumber), catchup_p95: ($load_catchup_p95|tonumber)}, observer_stagger_ms: ($load_observer_stagger_ms|tonumber), min_peak_active_connections: ($min_peak_active_connections|tonumber), confirm: ((($load_100k_confirm|tostring|ascii_downcase) == \"1\" or ($load_100k_confirm|tostring|ascii_downcase) == \"true\" or ($load_100k_confirm|tostring|ascii_downcase) == \"yes\" or ($load_100k_confirm|tostring|ascii_downcase) == \"on\")), allow_low_ulimit: ((($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ulimit|tostring|ascii_downcase) == \"on\")), allow_low_ephemeral: ((($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"1\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"true\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"yes\" or ($load_100k_allow_low_ephemeral|tostring|ascii_downcase) == \"on\")), attempts: {total: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate_pct: ($pass_rate|tonumber)}, orchestration: {ensure_up: ((($ensure_up|tostring|ascii_downcase) == \"1\" or ($ensure_up|tostring|ascii_downcase) == \"true\"), cleanup_stack: ((($cleanup_stack|tostring|ascii_downcase) == \"1\" or ($cleanup_stack|tostring|ascii_downcase) == \"true\") )}, totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber), ws_auth_unauthorized: ($total_ws_auth_unauthorized|tonumber), ws_schema_mismatch: ($total_ws_schema_mismatch|tonumber), ws_upgrade_failed: ($total_ws_upgrade_failed|tonumber), max_active_connections: ($total_peak_active_connections|tonumber)}, catchup_checks: {enabled: ((($run_catchup_enabled|tostring|ascii_downcase) == \"1\" or ($run_catchup_enabled|tostring|ascii_downcase) == \"true\"), runs: ($catchup_runs|tonumber), pass: ($catchup_pass|tonumber), failed: ($catchup_failed|tonumber)}, ws_precheck_checks: {enabled: ((($run_ws_precheck_enabled|tostring|ascii_downcase) == \"1\" or ($run_ws_precheck_enabled|tostring|ascii_downcase) == \"true\"), runs: ($ws_precheck_runs|tonumber), pass: ($ws_precheck_pass|tonumber), failed: ($ws_precheck_failed|tonumber), schema: (if $ws_precheck_schema == \"\" then null else ($ws_precheck_schema|tonumber) end), timeout_ms: ($ws_precheck_timeout_ms|tonumber), token_set: (if $ws_precheck_token_set == \"true\" then true else false end), auction_override: $ws_precheck_auction}, health: {start_file: $health_start, end_file: $health_end}, preflight: {dir: $preflight_dir, status_file: (if $preflight_status_exists == "1" then $preflight_status else "-"), status_exists: (($preflight_status_exists|tonumber) == 1)}, runs: ($runs|fromjson)}' > "$manifest_file"
 
 if [[ "$OUTPUT_JSON" == "1" ]]; then
   cat "$manifest_file"

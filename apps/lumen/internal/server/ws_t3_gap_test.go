@@ -256,8 +256,85 @@ func TestT3CloseDueErrInternalReconcileSuppressed(t *testing.T) {
 		t.Fatal("closeDue must untrack on ERR_INTERNAL")
 	}
 
+	if suppressionUntil, err := st.Redis().HGet(ctx, stateK, timerErrInternalSuppressedUntilField).Result(); err != nil || suppressionUntil == "" {
+		t.Fatalf("expected persistent err-internal suppression marker on state hash: v=%q err=%v", suppressionUntil, err)
+	}
+
+	timerErrInternalSuppressMu.Lock()
+	delete(timerErrInternalSuppressUntil, aid)
+	timerErrInternalSuppressMu.Unlock()
 	reconcileActive(ctx, st, nil)
 	if inActive(t, st, aid) {
 		t.Fatal("reconcileActive must skip auctions recently suppressed after ERR_INTERNAL")
+	}
+}
+
+func TestT3CloseDueErrInternalReconcileResumesAfterSuppressionCleared(t *testing.T) {
+	st := fullStore(t)
+	ctx := context.Background()
+	aid := fmt.Sprintf("test_errinternal_recover_%d", time.Now().UnixNano())
+	m := metrics.New()
+	stateK := fmt.Sprintf("auction:{%s}:state", aid)
+	t.Cleanup(func() {
+		c := context.Background()
+		st.Redis().Del(c, stateK, fmt.Sprintf("auction:{%s}:events", aid), fmt.Sprintf("auction:{%s}:leaderboard", aid), fmt.Sprintf("auction:{%s}:dedupe:u", aid))
+		_ = st.UntrackActive(c, aid)
+		timerErrInternalSuppressMu.Lock()
+		delete(timerErrInternalSuppressUntil, aid)
+		timerErrInternalSuppressMu.Unlock()
+	})
+
+	if code, err := st.FreezeRules(ctx, aid, "seller_x", reconcileRules()); err != nil || code != model.CodeOKFrozen {
+		t.Fatalf("freeze: %s %v", code, err)
+	}
+	if code, _, err := st.StartAuction(ctx, aid, 3600_000); err != nil || code != model.CodeOKLive {
+		t.Fatalf("start: %s %v", code, err)
+	}
+	if !inActive(t, st, aid) {
+		t.Fatal("precondition: StartAuction should have tracked the auction")
+	}
+	if err := st.Redis().HSet(ctx, stateK, "seq", 5, "endAtMs", 1).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	closeDue(ctx, st, aid, m)
+	if inActive(t, st, aid) {
+		t.Fatal("closeDue must untrack on first ERR_INTERNAL")
+	}
+	if got := m.TimerErrInternal.Load(); got != 1 {
+		t.Fatalf("first closeDue should increment timer err internal count to 1, got=%d", got)
+	}
+
+	// The suppression marker and in-memory cache should block immediate re-track.
+	if suppressionUntil, err := st.Redis().HGet(ctx, stateK, timerErrInternalSuppressedUntilField).Result(); err != nil || suppressionUntil == "" {
+		t.Fatalf("expected suppression marker after first ERR_INTERNAL: v=%q err=%v", suppressionUntil, err)
+	}
+	reconcileActive(ctx, st, nil)
+	if inActive(t, st, aid) {
+		t.Fatal("reconcileActive must skip while suppress marker exists")
+	}
+
+	// Clear suppression and allow one reconcile cycle; the room should be re-tracked.
+	if err := st.Redis().HDel(ctx, stateK, timerErrInternalSuppressedUntilField).Err(); err != nil {
+		t.Fatal(err)
+	}
+	timerErrInternalSuppressMu.Lock()
+	delete(timerErrInternalSuppressUntil, aid)
+	timerErrInternalSuppressMu.Unlock()
+	reconcileActive(ctx, st, nil)
+	if !inActive(t, st, aid) {
+		t.Fatal("reconcileActive should track again after suppression marker is cleared")
+	}
+
+	before := m.TimerErrInternal.Load()
+	closeDue(ctx, st, aid, m)
+	if got := m.TimerErrInternal.Load() - before; got != 1 {
+		t.Fatalf("second closeDue after suppression should also increment timer err internal count by 1, got=%d", got)
+	}
+	if inActive(t, st, aid) {
+		t.Fatal("re-probed ERR_INTERNAL auction should be untracked again")
+	}
+	if snap, _ := st.Snapshot(ctx, aid); snap.Status != model.StateLive {
+		t.Fatalf("status=%s want LIVE (ERR_INTERNAL should not terminalize)", snap.Status)
 	}
 }

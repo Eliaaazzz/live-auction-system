@@ -25,6 +25,12 @@ Options:
   --json             emit JSON summary at the end
   --up               run `make up` before first attempt (if stack not healthy)
   --down             stop stack after all attempts complete
+  --cleanup-load     run `make cleanup-load-auctions` for auction ids from each run
+  --cleanup-load-dry-run
+                     report matched auction ids but do not delete Redis state
+  --cleanup-load-scan-suffix PREFIX
+                     when no auction id is present in the load log, scan and
+                     cleanup auctions whose id matches prefix (default: auc_load_)
   --no-clean-logs    keep raw logs beyond this run directory
   -h, --help         show this help
 EOF
@@ -37,17 +43,40 @@ OUTPUT_JSON=0
 ENSURE_UP=0
 CLEAN_LOGS=1
 CLEANUP_STACK=0
+RUN_CLEANUP_LOAD=0
+CLEANUP_LOAD_DRY_RUN=0
+CLEANUP_LOAD_SCAN_PREFIX="auc_load_"
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 BASE_URL="${BASE_URL%/}"
 
 POSITIONAL=()
+require_arg() {
+  if [[ -z "${2-}" ]]; then
+    echo "$1"
+    usage
+    exit 2
+  fi
+}
+
+require_non_negative_int() {
+  if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+    echo "$1"
+    usage
+    exit 2
+  fi
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --attempts)
+      require_arg "--attempts requires an argument" "${2-}"
+      require_non_negative_int "attempts must be a non-negative integer" "$2"
       ATTEMPTS="$2"
       shift 2
       ;;
     --interval)
+      require_arg "--interval requires an argument" "${2-}"
+      require_non_negative_int "interval must be a non-negative integer" "$2"
       INTERVAL="$2"
       shift 2
       ;;
@@ -67,7 +96,22 @@ while [[ $# -gt 0 ]]; do
       CLEANUP_STACK=1
       shift
       ;;
+    --cleanup-load)
+      RUN_CLEANUP_LOAD=1
+      shift
+      ;;
+    --cleanup-load-dry-run)
+      CLEANUP_LOAD_DRY_RUN=1
+      shift
+      ;;
+    --cleanup-load-scan-suffix)
+      require_arg "--cleanup-load-scan-suffix requires a prefix argument" "${2-}"
+      CLEANUP_LOAD_SCAN_PREFIX="$2"
+      RUN_CLEANUP_LOAD=1
+      shift 2
+      ;;
     --base-url)
+      require_arg "--base-url requires a URL" "${2-}"
       BASE_URL="$2"
       BASE_URL="${BASE_URL%/}"
       shift 2
@@ -179,6 +223,12 @@ total_bid_acked=0
 total_bid_rejected=0
 total_seq_gap_count=0
 total_backpressure_force_close=0
+total_ws_auth_unauthorized=0
+total_ws_schema_mismatch=0
+total_ws_upgrade_failed=0
+total_timer_err_internal=0
+total_timer_err_internal_key_type=0
+total_timer_err_internal_seq_mismatch=0
 total_panic_runs=0
 
 json_payload=$(mktemp)
@@ -224,6 +274,12 @@ while (( run_idx < ATTEMPTS )); do
   counter_line="$(grep -n '^counters:' "$log_file" | tail -n1 | sed 's/^.*counters: //')"
   seq_gap_count="$(extract_metric "$counter_line" seqGapCount)"
   backpressure_force_close="$(extract_metric "$counter_line" backpressureForceClose)"
+  ws_auth_unauthorized="$(extract_metric "$counter_line" wsAuthUnauthorized)"
+  ws_schema_mismatch="$(extract_metric "$counter_line" wsSchemaMismatch)"
+  ws_upgrade_failed="$(extract_metric "$counter_line" wsUpgradeFailed)"
+  timer_err_internal="$(extract_metric "$counter_line" timerErrInternal)"
+  timer_err_internal_key_type="$(extract_metric "$counter_line" timerErrInternalKeyType)"
+  timer_err_internal_seq_mismatch="$(extract_metric "$counter_line" timerErrInternalSeqMismatch)"
 
   total_read_errors=$((total_read_errors + observer_read_errors))
   total_dial_errors=$((total_dial_errors + observer_dial_errors))
@@ -233,17 +289,63 @@ while (( run_idx < ATTEMPTS )); do
   total_bid_rejected=$((total_bid_rejected + bidder_rejected))
   total_seq_gap_count=$((total_seq_gap_count + seq_gap_count))
   total_backpressure_force_close=$((total_backpressure_force_close + backpressure_force_close))
+  total_ws_auth_unauthorized=$((total_ws_auth_unauthorized + ws_auth_unauthorized))
+  total_ws_schema_mismatch=$((total_ws_schema_mismatch + ws_schema_mismatch))
+  total_ws_upgrade_failed=$((total_ws_upgrade_failed + ws_upgrade_failed))
+  total_timer_err_internal=$((total_timer_err_internal + timer_err_internal))
+  total_timer_err_internal_key_type=$((total_timer_err_internal_key_type + timer_err_internal_key_type))
+  total_timer_err_internal_seq_mismatch=$((total_timer_err_internal_seq_mismatch + timer_err_internal_seq_mismatch))
 
   status="PASS"
   if (( rc != 0 )) || [ -z "${auction_id:-}" ] || ! grep -q '^load: PASS$' "$log_file" \
     || (( observer_read_errors > 0 )) || (( seq_gap_count > 0 )) || (( backpressure_force_close > 0 )) || (( panic_present > 0 )); then
     status="FAIL"
-    failed=$((failed + 1))
-  else
-    pass=$((pass + 1))
   fi
   if (( panic_present > 0 )); then
     total_panic_runs=$((total_panic_runs + 1))
+  fi
+
+  if (( RUN_CLEANUP_LOAD == 1 )); then
+    cleanup_log="${log_file}.cleanup-load.log"
+    set +e
+    if [ -n "${auction_id:-}" ]; then
+      if (( CLEANUP_LOAD_DRY_RUN == 1 )); then
+        make cleanup-load-auctions LOAD_CLEANUP_AUCTION_IDS="${auction_id}" LOAD_CLEANUP_DRY_RUN=1 2>&1 | tee "$cleanup_log"
+      else
+        make cleanup-load-auctions LOAD_CLEANUP_AUCTION_IDS="${auction_id}" 2>&1 | tee "$cleanup_log"
+      fi
+      cleanup_rc="${PIPESTATUS[0]}"
+    elif [ -n "${CLEANUP_LOAD_SCAN_PREFIX}" ]; then
+      if (( CLEANUP_LOAD_DRY_RUN == 1 )); then
+        make cleanup-load-auctions \
+          LOAD_CLEANUP_SCAN_AUCTIONS=1 \
+          LOAD_CLEANUP_AUCTION_PREFIX="${CLEANUP_LOAD_SCAN_PREFIX}" \
+          LOAD_CLEANUP_DRY_RUN=1 2>&1 | tee "$cleanup_log"
+      else
+        make cleanup-load-auctions \
+          LOAD_CLEANUP_SCAN_AUCTIONS=1 \
+          LOAD_CLEANUP_AUCTION_PREFIX="${CLEANUP_LOAD_SCAN_PREFIX}" 2>&1 | tee "$cleanup_log"
+      fi
+      cleanup_rc="${PIPESTATUS[0]}"
+    else
+      cleanup_rc=0
+      echo "run ${run_idx}: skip cleanup-load (no auction_id in log and CLEANUP_LOAD_SCAN_PREFIX not set)"
+    fi
+    set -e
+    if (( cleanup_rc != 0 )); then
+      status="FAIL"
+      if [ -n "${auction_id:-}" ]; then
+        echo "run ${run_idx}: cleanup-load-auctions failed for auction_id=${auction_id} (see ${cleanup_log})"
+      else
+        echo "run ${run_idx}: cleanup-load-auctions failed for scan prefix='${CLEANUP_LOAD_SCAN_PREFIX}' (see ${cleanup_log})"
+      fi
+    fi
+  fi
+
+  if [[ "$status" == "PASS" ]]; then
+    pass=$((pass + 1))
+  else
+    failed=$((failed + 1))
   fi
 
   load_accept_rate="N/A"
@@ -251,7 +353,7 @@ while (( run_idx < ATTEMPTS )); do
     load_accept_rate="$(awk -v s="$bidder_sent" -v a="$bidder_acked" 'BEGIN { printf "%.2f", (a*100)/s }')%"
   fi
 
-  echo "run ${run_idx}: status=${status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.accept_rate=${load_accept_rate} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close}"
+  echo "run ${run_idx}: status=${status} rc=${rc} observer.readErrors=${observer_read_errors} observer.dialErrors=${observer_dial_errors} bidder.accept_rate=${load_accept_rate} seqGapCount=${seq_gap_count} backpressureForceClose=${backpressure_force_close} wsAuthUnauthorized=${ws_auth_unauthorized} wsSchemaMismatch=${ws_schema_mismatch} wsUpgradeFailed=${ws_upgrade_failed} timerErrInternal=${timer_err_internal} timerErrInternalKeyType=${timer_err_internal_key_type} timerErrInternalSeqMismatch=${timer_err_internal_seq_mismatch}"
 
   run_obj="$(jq -nc \
     --arg run "${run_idx}" \
@@ -268,11 +370,17 @@ while (( run_idx < ATTEMPTS )); do
     --arg bidder_errors "$bidder_errors" \
     --arg seq_gap_count "$seq_gap_count" \
     --arg backpressure_force_close "$backpressure_force_close" \
+    --arg ws_auth_unauthorized "$ws_auth_unauthorized" \
+    --arg ws_schema_mismatch "$ws_schema_mismatch" \
+    --arg ws_upgrade_failed "$ws_upgrade_failed" \
+    --arg timer_err_internal "$timer_err_internal" \
+    --arg timer_err_internal_key_type "$timer_err_internal_key_type" \
+    --arg timer_err_internal_seq_mismatch "$timer_err_internal_seq_mismatch" \
     --arg logfile "$log_file" \
     --arg accept_rate "$load_accept_rate" \
     --arg panic "$panic_present" \
     --arg ts "$ts" \
-    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
+    '{run: ($run|tonumber), status: $status, rc: ($rc|tonumber), auction_id: $auction_id, auction_ids: ($auction_ids | split(",") | map(select(length > 0))), observer_frames: ($observer_frames|tonumber), observer_read_errors: ($observer_read_errors|tonumber), observer_dial_errors: ($observer_dial_errors|tonumber), bidder_sent: ($bidder_sent|tonumber), bidder_acked: ($bidder_acked|tonumber), bidder_rejected: ($bidder_rejected|tonumber), bidder_errors: ($bidder_errors|tonumber), seq_gap_count: ($seq_gap_count|tonumber), backpressure_force_close: ($backpressure_force_close|tonumber), ws_auth_unauthorized: ($ws_auth_unauthorized|tonumber), ws_schema_mismatch: ($ws_schema_mismatch|tonumber), ws_upgrade_failed: ($ws_upgrade_failed|tonumber), timer_err_internal: ($timer_err_internal|tonumber), timer_err_internal_key_type: ($timer_err_internal_key_type|tonumber), timer_err_internal_seq_mismatch: ($timer_err_internal_seq_mismatch|tonumber), panic_present: ($panic == "1"), accept_rate: $accept_rate, log: $logfile, timestamp: $ts}')"
 
   if (( run_idx > 1 )); then
     printf ',' >> "$json_payload"
@@ -292,7 +400,7 @@ if (( ATTEMPTS > 0 )); then
 fi
 
 echo "summary: pass=${pass}/${ATTEMPTS} fail=${failed}/${ATTEMPTS} pass_rate=${pass_pct}%"
-echo "totals: observer.readErrors=${total_read_errors}, observer.dialErrors=${total_dial_errors}, panicRuns=${total_panic_runs}, bidder.sent=${total_bid_sents}, bidder.acked=${total_bid_acked}, bidder.rejected=${total_bid_rejected}, bidder.errors=${total_bid_errors}, seqGapCount=${total_seq_gap_count}, backpressureForceClose=${total_backpressure_force_close}"
+echo "totals: observer.readErrors=${total_read_errors}, observer.dialErrors=${total_dial_errors}, panicRuns=${total_panic_runs}, bidder.sent=${total_bid_sents}, bidder.acked=${total_bid_acked}, bidder.rejected=${total_bid_rejected}, bidder.errors=${total_bid_errors}, seqGapCount=${total_seq_gap_count}, backpressureForceClose=${total_backpressure_force_close}, wsAuthUnauthorized=${total_ws_auth_unauthorized}, wsSchemaMismatch=${total_ws_schema_mismatch}, wsUpgradeFailed=${total_ws_upgrade_failed}, timerErrInternal=${total_timer_err_internal}, timerErrInternalKeyType=${total_timer_err_internal_key_type}, timerErrInternalSeqMismatch=${total_timer_err_internal_seq_mismatch}"
 
 if (( OUTPUT_JSON == 1 )); then
   jq -cn --arg attempts "$ATTEMPTS" --arg failed "$failed" --arg pass "$pass" \
@@ -302,9 +410,15 @@ if (( OUTPUT_JSON == 1 )); then
     --arg total_bid_sents "$total_bid_sents" --arg total_bid_acked "$total_bid_acked" \
     --arg total_bid_rejected "$total_bid_rejected" --arg total_bid_errors "$total_bid_errors" \
     --arg total_seq_gap_count "$total_seq_gap_count" \
-    --arg total_backpressure_force_close "$total_backpressure_force_close" \
-    --rawfile runs "$json_payload" \
-    '{attempts: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate: ($pass_pct|tonumber), totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber)}, runs: ($runs|fromjson)}'
+  --arg total_backpressure_force_close "$total_backpressure_force_close" \
+  --arg total_ws_auth_unauthorized "$total_ws_auth_unauthorized" \
+  --arg total_ws_schema_mismatch "$total_ws_schema_mismatch" \
+  --arg total_ws_upgrade_failed "$total_ws_upgrade_failed" \
+  --arg total_timer_err_internal "$total_timer_err_internal" \
+  --arg total_timer_err_internal_key_type "$total_timer_err_internal_key_type" \
+  --arg total_timer_err_internal_seq_mismatch "$total_timer_err_internal_seq_mismatch" \
+  --rawfile runs "$json_payload" \
+    '{attempts: ($attempts|tonumber), pass: ($pass|tonumber), failed: ($failed|tonumber), pass_rate: ($pass_pct|tonumber), totals: {observer_read_errors: ($total_read_errors|tonumber), observer_dial_errors: ($total_dial_errors|tonumber), panic_runs: ($total_panic_runs|tonumber), bidder_sent: ($total_bid_sents|tonumber), bidder_acked: ($total_bid_acked|tonumber), bidder_rejected: ($total_bid_rejected|tonumber), bidder_errors: ($total_bid_errors|tonumber), seq_gap_count: ($total_seq_gap_count|tonumber), backpressure_force_close: ($total_backpressure_force_close|tonumber), ws_auth_unauthorized: ($total_ws_auth_unauthorized|tonumber), ws_schema_mismatch: ($total_ws_schema_mismatch|tonumber), ws_upgrade_failed: ($total_ws_upgrade_failed|tonumber), timer_err_internal: ($total_timer_err_internal|tonumber), timer_err_internal_key_type: ($total_timer_err_internal_key_type|tonumber), timer_err_internal_seq_mismatch: ($total_timer_err_internal_seq_mismatch|tonumber)}, runs: ($runs|fromjson)}'
 fi
 
 if [[ "$CLEANUP_STACK" == "1" ]]; then

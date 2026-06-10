@@ -40,7 +40,7 @@ func newMySQLStore(t *testing.T) *Store {
 	if rerr != nil || derr != nil || perr != nil {
 		t.Skipf("mysql store unavailable (redis=%v mysql_open=%v ping=%v)", rerr, derr, perr)
 	}
-	s, err := New(context.Background(), redisAddr, dsn, "test-evidence-key")
+	s, err := New(context.Background(), redisAddr, dsn, "", "test-evidence-key", false)
 	if err != nil {
 		t.Skipf("store.New: %v", err)
 	}
@@ -77,15 +77,39 @@ func TestEnsureColumnReaddsMissingOnExistingVolume(t *testing.T) {
 	if hasColumn(t, s, tbl, "max_extensions") {
 		t.Fatal("precondition: column should be absent (old volume)")
 	}
+	if hasColumn(t, s, tbl, "auction_mode") {
+		t.Fatal("precondition: column should be absent (old volume)")
+	}
+	if hasColumn(t, s, tbl, "reserve_cents") {
+		t.Fatal("precondition: column should be absent (old volume)")
+	}
 	// startup migration mechanism re-adds the missing column...
 	if err := s.ensureColumn(ctx, tbl, "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		t.Fatalf("ensureColumn add: %v", err)
+	}
+	if err := s.ensureColumn(ctx, tbl, "auction_mode", "VARCHAR(32) NOT NULL DEFAULT 'first_price'"); err != nil {
+		t.Fatalf("ensureColumn add: %v", err)
+	}
+	if err := s.ensureColumn(ctx, tbl, "reserve_cents", "BIGINT NOT NULL DEFAULT 0"); err != nil {
 		t.Fatalf("ensureColumn add: %v", err)
 	}
 	if !hasColumn(t, s, tbl, "max_extensions") {
 		t.Fatal("ensureColumn did not re-add the column on a pre-existing table")
 	}
+	if !hasColumn(t, s, tbl, "auction_mode") {
+		t.Fatal("ensureColumn did not re-add auction_mode on a pre-existing table")
+	}
+	if !hasColumn(t, s, tbl, "reserve_cents") {
+		t.Fatal("ensureColumn did not re-add reserve_cents on a pre-existing table")
+	}
 	// ...and is idempotent on a subsequent boot (no error, no-op).
 	if err := s.ensureColumn(ctx, tbl, "max_extensions", "BIGINT NOT NULL DEFAULT 0"); err != nil {
+		t.Fatalf("ensureColumn idempotent call errored: %v", err)
+	}
+	if err := s.ensureColumn(ctx, tbl, "auction_mode", "VARCHAR(32) NOT NULL DEFAULT 'first_price'"); err != nil {
+		t.Fatalf("ensureColumn idempotent call errored: %v", err)
+	}
+	if err := s.ensureColumn(ctx, tbl, "reserve_cents", "BIGINT NOT NULL DEFAULT 0"); err != nil {
 		t.Fatalf("ensureColumn idempotent call errored: %v", err)
 	}
 }
@@ -99,7 +123,13 @@ func TestMigrateIdempotentOnCurrentSchema(t *testing.T) {
 	if err := s.migrate(ctx); err != nil {
 		t.Fatalf("migrate on current schema: %v", err)
 	}
+	if !hasColumn(t, s, "auction_rules", "auction_mode") {
+		t.Fatal("auction_rules.auction_mode missing after migrate")
+	}
 	if !hasColumn(t, s, "auction_rules", "max_extensions") {
 		t.Fatal("auction_rules.max_extensions missing after migrate")
+	}
+	if !hasColumn(t, s, "auction_rules", "reserve_cents") {
+		t.Fatal("auction_rules.reserve_cents missing after migrate")
 	}
 }

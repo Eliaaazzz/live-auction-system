@@ -1,5 +1,6 @@
 import React from 'react';
-import { bidRejectCopy } from '../lib/types.js';
+import { bidRejectCopy, ConnStatus } from '../lib/types.js';
+import { normalizeSyncStartSeq } from '../lib/connState.js';
 
 // lumen-primitives.jsx
 // §7.1 components. Money is string-cents, time is server-corrected.
@@ -441,12 +442,36 @@ function BidButton({ currentCents, incrementCents, onBid, disabled, shake, isLea
 
 // ─── ConnectionBar — P7 ───
 function ConnectionBar({ status, gap }) {
-  if (status === 'ok') return null;
-  const msg = status === 'reconnecting' ? '连接中断 · 正在重连'
-            : status === 'syncing' ? `正在同步 #${gap?.from}→#${gap?.to}`
-            : status === 'schema'  ? '协议版本不匹配 · 请刷新'
+  if (status === ConnStatus.OPEN) return null;
+
+  const asSeq = (raw) => {
+    const parsed = normalizeSyncStartSeq(raw);
+    return parsed > 0 ? parsed : null;
+  };
+
+  const syncingMsg = () => {
+    if (gap == null) return '正在同步';
+    if (typeof gap === 'number' || typeof gap === 'string') {
+      const parsed = asSeq(gap);
+      return parsed == null ? '正在同步' : `正在同步 #${parsed}`;
+    }
+    if (typeof gap === 'object') {
+      const from = asSeq(gap.from);
+      const to = asSeq(gap.to);
+      if (from == null && to == null) return '正在同步';
+      if (from == null) return `正在同步 #${to}`;
+      if (to == null) return `正在同步 #${from}→#?`;
+      return `正在同步 #${from}→#${to}`;
+    }
+    return '正在同步';
+  };
+
+  const msg = status === ConnStatus.RECONNECTING ? '连接中断 · 正在重连'
+            : status === ConnStatus.SYNCING ? syncingMsg()
+            : status === ConnStatus.CONNECTING ? '连接中'
+            : status === ConnStatus.SCHEMA  ? '协议版本不匹配 · 请刷新'
             : '';
-  const bg = status === 'schema' ? 'var(--state-rejected)' : 'var(--douyin-cyan)';
+  const bg = status === ConnStatus.SCHEMA ? 'var(--state-rejected)' : 'var(--douyin-cyan)';
   return (
     <div style={{
       position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30,

@@ -10,7 +10,8 @@ products(id, seller_id, name, image_url, description, status, created_at, update
 auction_rules(
   id, auction_id,
   start_price_cents, increment_cents, cap_price_cents,
-  duration_sec, extend_window_sec, extend_sec,
+  duration_sec, extend_window_sec, extend_sec, max_extensions,
+  auction_mode,
   frozen_at
 )
 

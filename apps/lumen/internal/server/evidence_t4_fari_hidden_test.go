@@ -44,7 +44,7 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			name:        "live with bids — status from mysql, price/winner from last BID_ACCEPTED",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), bid(2, "u2", "12000")},
-			wantStatus:  model.StateLive, wantPrice: "12000", wantWinner: "u2", wantWinnerDisplayName: "", wantSeq: 2,
+			wantStatus:  model.StateLive, wantPrice: "12000", wantWinner: "u2", wantWinnerDisplayName: "u2", wantSeq: 2,
 		},
 		{
 			name:        "no_bid terminal",
@@ -64,7 +64,7 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			name:        "sold terminal, no order yet — from AUCTION_SOLD payload",
 			mysqlStatus: model.StateLive,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "u1", AmountCents: "11000", Status: model.StateSold})},
-			wantStatus:  model.StateSold, wantPrice: "11000", wantWinner: "u1", wantWinnerDisplayName: "", wantSeq: 2,
+			wantStatus:  model.StateSold, wantPrice: "11000", wantWinner: "u1", wantWinnerDisplayName: "u1", wantSeq: 2,
 		},
 		{
 			name:        "sold terminal can derive winnerDisplayName from BID_ACCEPTED displayName",
@@ -73,12 +73,26 @@ func TestT4EvidenceSummaryDerivesFromChain(t *testing.T) {
 			wantStatus:  model.StateSold, wantPrice: "9000", wantWinner: "seller", wantWinnerDisplayName: "出价王", wantSeq: 2,
 		},
 		{
+			name:        "sold terminal falls back winnerDisplayName to winnerId when BID_ACCEPTED displayName is empty",
+			mysqlStatus: model.StateLive,
+			timeline:    []store.EvidenceEvent{ev(1, model.TypeBidAccepted, model.BidAcceptedData{Seq: 1, UserID: "seller", DisplayName: "", AmountCents: "9000", Status: model.StateLive}), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "seller", AmountCents: "9000", Status: model.StateSold})},
+			wantStatus:  model.StateSold, wantPrice: "9000", wantWinner: "seller", wantWinnerDisplayName: "seller", wantSeq: 2,
+		},
+		{
 			name:        "sold + order — order override promotes to ORDER_CREATED",
 			mysqlStatus: model.StateSold,
 			timeline:    []store.EvidenceEvent{bid(1, "u1", "11000"), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "u1", AmountCents: "11000", Status: model.StateSold})},
 			order:       store.Order{BuyerID: "u1", BuyerName: "买家A", AmountCents: model.Cents(11000), Status: "created"},
 			hasOrder:    true,
 			wantStatus:  model.StateOrderCreated, wantPrice: "11000", wantWinner: "u1", wantWinnerDisplayName: "买家A", wantSeq: 2,
+		},
+		{
+			name:        "sold + order falls back to buyerId when buyerName is empty",
+			mysqlStatus: model.StateSold,
+			timeline:    []store.EvidenceEvent{bid(1, "u2", "12000"), ev(2, model.TypeAuctionSold, model.AuctionSoldData{Seq: 2, WinnerID: "u2", AmountCents: "12000", Status: model.StateSold})},
+			order:       store.Order{BuyerID: "u2", BuyerName: "", AmountCents: model.Cents(12000), Status: "created"},
+			hasOrder:    true,
+			wantStatus:  model.StateOrderCreated, wantPrice: "12000", wantWinner: "u2", wantWinnerDisplayName: "u2", wantSeq: 2,
 		},
 	}
 

@@ -79,7 +79,7 @@ days) - Public D-day: 2026-06-10
 | **Mini-program** | OPEN DECISION → C | — | Stub-only landing ("请在抖音 App 打开") |
 
 **Out of scope**: native iOS/Android apps; payment flow; logistics; user
-authentication beyond dev-login.
+authentication beyond session bootstrap.
 
 ------------------------------------------------------------------------
 
@@ -129,11 +129,11 @@ clock offset (P4).
 
 | Endpoint | Returns | UI use |
 |------------------------|------------------------|------------------------|
-| `POST /api/dev-login` | `{ userId, token, nickname }` | Acquire session token |
+| `POST /api/login` | `{ userId, token, nickname }` | Acquire session token (fallback `POST /api/dev-login`) |
 | `GET /api/auctions/:id` | Snapshot fallback | Pre-LIVE preview |
 | `GET /api/auctions/:id/leaderboard?n=10` | top-N by max accepted bid | Leaderboard component |
 | `GET /api/auctions/:id/evidence` | hash-chain timeline + chain head + optional order | Evidence screen |
-| `POST /api/auctions` | `{ auctionId }` | Admin: publish（`rules` includes `auctionMode`，取值 `first_price` / `second_price`，省略时默认一价） |
+| `POST /api/auctions` | `{ auctionId }` | Admin: publish（`rules` includes `auctionMode`，取值 `first_price` / `second_price`，省略时默认一价；兼容 `mode` 别名 `ENGLISH` / `VICKREY` / `first` / `second` / `vickrey` / `auction2` / `2`） |
 | `POST /api/auctions/:id/freeze` | facts-confirmed gate | Admin: enter SCHEDULED |
 | `POST /api/auctions/:id/start` | `{ endAtMs }` | Admin: go LIVE |
 | `POST /api/auctions/:id/cancel` | terminal | Admin: cancel (with 2-step confirm UI) |
@@ -444,7 +444,7 @@ below are real; open them to see the implementation.
 | Screen | Standalone (mock) | Backend-wired |
 |---|---|---|
 | `<MobileRoom>` via `/preview/room` (and `:final10` / `:leading`) | ✅ | ⬜ — uses props only |
-| `<MobileRoom>` via `<LiveRoomRoute>` at `/room/:auctionId` | n/a | ✅ — full WS + REST chain (dev-login → snapshot → leaderboard → ROOM_JOIN) |
+| `<MobileRoom>` via `<LiveRoomRoute>` at `/room/:auctionId` | n/a | ✅ — full WS + REST chain (`/api/login` → snapshot → leaderboard → ROOM_JOIN; fallback `/api/dev-login`) |
 | `<MobileHammer>` / `<MobileEvidence>` | ✅ via `/preview/*` | ⬜ — needs evidence fetch + status-change subscription |
 | Admin screens | ✅ via `/admin/*` | ⬜ — `api.*` stubs exist but routes haven't been wired yet |
 
@@ -610,7 +610,7 @@ lumen-frontend/
     ├── main.jsx · App.jsx       ← React + BrowserRouter root + route table
     ├── styles.css               ← All design tokens (§6) + CSS animations
     ├── lib/
-    │   ├── auth.js              ← dev-login + JWT bearer storage
+    │   ├── auth.js              ← session bootstrap + JWT bearer storage
     │   ├── api.js               ← REST client (/api/*) with auth
     │   ├── ws.js                ← RoomClient: envelope · seqguard · reconnect · clock skew
     │   ├── types.js             ← AuctionStatus · EventType · BidErrorCode · bidRejectCopy
@@ -741,7 +741,7 @@ complete the exploration in §14:
 
 -   Logo / brand identity development
 -   Marketing pages, landing pages, About pages
--   Authentication flows beyond dev-login affordance
+-   Authentication flows beyond session bootstrap
 -   Payment / checkout flow
 -   Push notification design
 -   iOS/Android native app design

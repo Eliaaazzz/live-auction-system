@@ -15,26 +15,16 @@
 //   cd apps/web && node scripts/smoke-schema.mjs
 
 import { WebSocket } from 'ws';
-import { resolveAuctionId, SCHEMA_VERSION } from './smoke-shared.mjs';
+import { resolveAuctionId, SCHEMA_VERSION, login } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-schema' });
 
-async function devLogin() {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: 'fari-schema' }),
-  });
-  if (!r.ok) throw new Error(`dev-login ${r.status}`);
-  return r.json();
-}
-
 const errors = [];
 const must = (cond, msg) => { if (!cond) errors.push(msg); };
 
-const { token } = await devLogin();
+const { token } = await login(HOST_HTTP, 'fari-schema');
 const url = `${HOST_WS}/ws?token=${encodeURIComponent(token)}&auction=${encodeURIComponent(AUCTION_ID)}`;
 const ws = new WebSocket(url);
 

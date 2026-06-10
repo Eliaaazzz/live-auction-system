@@ -21,6 +21,8 @@ import { useAuctionStore } from '../store/auction.js';
 import { msRemaining } from '../lib/clock.js';
 import { api } from '../lib/api.js';
 import { ensureSession, currentToken } from '../lib/auth.js';
+import { ConnStatus } from '../lib/types.js';
+import { normalizeSyncStartSeq, makeSyncGap } from '../lib/connState.js';
 import { resolveAuctionMode } from '../lib/auctionMode.js';
 
 const USE_MOCK = String(import.meta.env.VITE_USE_MOCK_DATA ?? 'true') === 'true';
@@ -34,6 +36,7 @@ export function LiveRoomRoute() {
   const leaderboardAtMsRef = useRef(0);
   const pendingLeaderBumpRef = useRef(0);
   const leaderboardFlightRef = useRef(false);
+  const syncStartSeqRef = useRef(0);
 
   // F26: stable callback for PullToResync — closes WS, exp-backoff reconnect
   // resets to 0, ROOM_JOIN(lastSeq) replays missed events from the Stream.
@@ -77,16 +80,41 @@ export function LiveRoomRoute() {
     }
   }, [auctionId]);
 
+  const handleConnState = useCallback((connState) => {
+    const status = connState?.status;
+    const nextState = { ...connState };
+
+    if (status === ConnStatus.SYNCING) {
+      const lastSeq = connState?.lastSeq;
+      syncStartSeqRef.current = normalizeSyncStartSeq(lastSeq);
+      pendingLeaderBumpRef.current = 0;
+      nextState.gap = null;
+      useAuctionStore.getState().setConn(status, nextState);
+      return;
+    }
+
+    if (status === ConnStatus.OPEN && syncStartSeqRef.current > 0) {
+      const gap = makeSyncGap(syncStartSeqRef.current, useAuctionStore.getState().lastSeq);
+      if (gap) nextState.gap = gap;
+      syncStartSeqRef.current = 0;
+      void maybeRefreshLeaders({ force: true });
+    }
+
+    useAuctionStore.getState().setConn(status, nextState);
+  }, [maybeRefreshLeaders]);
+
   const handleEvent = useCallback((env) => {
     const s = useAuctionStore.getState();
     if (!s) return;
     s.applyEvent(env);
 
     if (env?.type === 'BID_ACCEPTED') {
-      pendingLeaderBumpRef.current += 1;
-      if (pendingLeaderBumpRef.current >= 3) {
-        pendingLeaderBumpRef.current = 0;
-        void maybeRefreshLeaders({ force: false });
+      if (syncStartSeqRef.current <= 0) {
+        pendingLeaderBumpRef.current += 1;
+        if (pendingLeaderBumpRef.current >= 3) {
+          pendingLeaderBumpRef.current = 0;
+          void maybeRefreshLeaders({ force: false });
+        }
       }
       return;
     }
@@ -98,7 +126,9 @@ export function LiveRoomRoute() {
       env?.type === 'ROOM_SNAPSHOT'
     ) {
       pendingLeaderBumpRef.current = 0;
-      void maybeRefreshLeaders({ force: true });
+      if (syncStartSeqRef.current <= 0) {
+        void maybeRefreshLeaders({ force: true });
+      }
     }
   }, [maybeRefreshLeaders]);
 
@@ -106,6 +136,9 @@ export function LiveRoomRoute() {
   useEffect(() => {
     let alive = true;
     let client;
+    syncStartSeqRef.current = 0;
+    pendingLeaderBumpRef.current = 0;
+    leaderboardAtMsRef.current = 0;
 
     (async () => {
       if (USE_MOCK) {
@@ -131,7 +164,7 @@ export function LiveRoomRoute() {
         useAuctionStore.getState().setSelfUserId(session.userId);
       } catch (e) {
         console.error('[LiveRoom] session bootstrap failed', e);
-        useAuctionStore.getState().setConn('reconnecting', { reason: 'login-failed' });
+        useAuctionStore.getState().setConn(ConnStatus.RECONNECTING, { reason: 'login-failed' });
         return;
       }
 
@@ -176,7 +209,7 @@ export function LiveRoomRoute() {
         url,
         auctionId,
         getLastSeq: () => useAuctionStore.getState().lastSeq,
-        onState:    (s) => useAuctionStore.getState().setConn(s.status, s),
+        onState:    handleConnState,
         onEvent:    handleEvent,
         onReject:   (env) => useAuctionStore.getState().applyReject(env),
       });
@@ -187,6 +220,7 @@ export function LiveRoomRoute() {
     return () => {
       alive = false;
       clientRef.current = null;
+      syncStartSeqRef.current = 0;
       client?.leave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -240,6 +274,7 @@ export function LiveRoomRoute() {
       status={store.status}
       extendCount={store.extendCount}
       connStatus={store.connStatus}
+      connGap={store.connDetail?.gap}
       yourRank={rankOfYou(store.leaders, store.yourUserId)}
       yourGapCents={youGap}
       leaders={store.leaders}

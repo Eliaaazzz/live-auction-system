@@ -22,6 +22,7 @@ const SECTIONS = [
   {
     label: '连接状态 · Connection',
     items: [
+      { to: '/preview/conn/connect',   label: '连接中',         hint: 'WS 握手/初始连接' },
       { to: '/preview/conn/reconnect', label: '重连中',         hint: 'WS 中断' },
       { to: '/preview/conn/sync',      label: '同步遗漏事件',    hint: 'XRANGE 14922→14998' },
       { to: '/preview/conn/schema',    label: '协议版本不匹配',  hint: '终态 · 需刷新' },

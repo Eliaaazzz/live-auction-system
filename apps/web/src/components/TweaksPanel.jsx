@@ -16,6 +16,7 @@
 
 import React from 'react';
 import { useAuctionStore } from '../store/auction.js';
+import { ConnStatus } from '../lib/types.js';
 
 /** Reads the `tweaks` query param. Memoizes on first call. */
 let _enabled = null;
@@ -32,7 +33,13 @@ export function _resetTweaksEnabledForTests() {
 }
 
 const STATUSES = ['LIVE', 'SOLD', 'NO_BID', 'CANCELLED', 'SCHEDULED', 'DRAFT'];
-const CONN_STATES = ['ok', 'reconnecting', 'syncing', 'schema'];
+const CONN_STATES = [
+  ConnStatus.OPEN,
+  ConnStatus.CONNECTING,
+  ConnStatus.RECONNECTING,
+  ConnStatus.SYNCING,
+  ConnStatus.SCHEMA,
+];
 const TIME_PRESETS = [
   { label: '5min',       ms: 300_000 },
   { label: 'final-30s',  ms: 28_400 },

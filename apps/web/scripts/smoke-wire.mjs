@@ -12,7 +12,7 @@
 // Covers TC-T6-001/004-013 from docs/test-cases/T6-frontend-wire.md.
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
+import { SCHEMA_VERSION, resolveAuctionId, login } from './smoke-shared.mjs';
 
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-wire' });
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
@@ -24,17 +24,7 @@ const TYPES = {
   AUCTION_NO_BID: 'AUCTION_NO_BID', AUCTION_CANCELLED: 'AUCTION_CANCELLED', PONG: 'PONG',
 };
 
-async function devLogin() {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: 'fari-smoke' }),
-  });
-  if (!r.ok) throw new Error(`dev-login ${r.status}`);
-  return r.json();
-}
-
-const { userId, token, nickname } = await devLogin();
+const { userId, token, nickname } = await login(HOST_HTTP, 'fari-smoke');
 console.log('login →', { userId, nickname, tokenLen: token.length });
 
 const ws = new WebSocket(`${HOST_WS}/ws?token=${encodeURIComponent(token)}`);

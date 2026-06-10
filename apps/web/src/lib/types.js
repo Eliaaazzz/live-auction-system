@@ -36,6 +36,7 @@ export const EventType = Object.freeze({
   // wire-broadcast (ws-envelope.md §3.2)
   ROOM_SNAPSHOT:     'ROOM_SNAPSHOT',
   BID_ACCEPTED:      'BID_ACCEPTED',
+  ROOM_STATE_PATCH:  'ROOM_STATE_PATCH',
   BID_REJECTED:      'BID_REJECTED',
   AUCTION_EXTENDED:  'AUCTION_EXTENDED',  // anti-snipe (event, NOT a status)
   AUCTION_SOLD:      'AUCTION_SOLD',

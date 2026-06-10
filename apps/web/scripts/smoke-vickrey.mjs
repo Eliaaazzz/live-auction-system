@@ -16,8 +16,8 @@
 // Exits 0 on PASS, 1 on any assertion failure.
 
 import { WebSocket } from 'ws';
-import { SCHEMA_VERSION, resolveAuctionId } from './smoke-shared.mjs';
 import { resolveAuctionMode } from '../src/lib/auctionMode.js';
+import { SCHEMA_VERSION, resolveAuctionId, login } from './smoke-shared.mjs';
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const HOST_WS = process.env.HOST_WS || process.env.WS_ADDR || 'ws://localhost:8080';
 
@@ -39,18 +39,6 @@ const errors = [];
 const must = (cond, msg) => {
   if (!cond) errors.push(msg);
 };
-
-async function devLogin(nick) {
-  const r = await fetch(`${HOST_HTTP}/api/dev-login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ nickname: nick }),
-  });
-  if (!r.ok) {
-    throw new Error(`dev-login ${r.status} ${nick}`);
-  }
-  return r.json();
-}
 
 async function api(token, path, opts = {}) {
   const r = await fetch(`${HOST_HTTP}/api${path}`, {
@@ -92,7 +80,13 @@ function send(ws, type, auctionId, data) {
   );
 }
 
-async function createSecondPriceAuction(sellerToken, { durationSec = 8, capCents = '30000', reserveCents = '10000', bidStepCents = '1000' }) {
+async function createSecondPriceAuction(sellerToken, {
+  durationSec = 8,
+  capCents = '30000',
+  reserveCents = '10000',
+  bidStepCents = '1000',
+  mode = 'second_price',
+}) {
   const { productId } = await api(sellerToken, '/products', {
     method: 'POST',
     body: {
@@ -115,7 +109,7 @@ async function createSecondPriceAuction(sellerToken, { durationSec = 8, capCents
         extendSec: 0,
         maxExtensions: 0,
         capPriceCents: capCents,
-        auctionMode: 'second_price',
+        auctionMode: mode,
       },
     },
   });
@@ -131,6 +125,8 @@ async function runScenario({
   expectedWinnerNick,
   expectedAmountCents,
   expectedReserveCents = '10000',
+  mode = 'second_price',
+  forceNewAuction = false,
   presetAuctionIndex = 0,
 }) {
   console.log(`\n[scenario] ${title}`);
@@ -141,7 +137,7 @@ async function runScenario({
       ? PRESET_AUCTION_IDS[presetAuctionIndex] || ''
       : '';
 
-  if (USE_PRESET_AUCTION && !presetAuctionId) {
+  if (USE_PRESET_AUCTION && !forceNewAuction && !presetAuctionId) {
     must(
       false,
       `preset auction index ${presetAuctionIndex} not provided in WEB_SMOKE_AID (got ${PRESET_AUCTION_IDS.length} id(s): ${PRESET_AUCTION_IDS.join(',') || '<empty>'})`,
@@ -149,20 +145,29 @@ async function runScenario({
     return;
   }
 
-  const sellerToken = presetAuctionId
+  const sellerToken = (presetAuctionId && !forceNewAuction)
     ? null
-    : (await devLogin(`vickrey-${slug}-seller`)).token;
+    : (await login(HOST_HTTP, `vickrey-${slug}-seller`)).token;
 
   const { auctionId, reserveCents } = presetAuctionId
-    ? { auctionId: presetAuctionId, reserveCents: expectedReserveCents }
+    ? (forceNewAuction
+      ? await createSecondPriceAuction(sellerToken, {
+        durationSec: 9,
+        capCents: '30000',
+        reserveCents: expectedReserveCents,
+        bidStepCents: '1000',
+        mode,
+      })
+      : { auctionId: presetAuctionId, reserveCents: expectedReserveCents })
     : await createSecondPriceAuction(sellerToken, {
       durationSec: 9,
       capCents: '30000',
       reserveCents: expectedReserveCents,
       bidStepCents: '1000',
+      mode,
     });
   let scenarioAuctionLabel = `created new auction ${auctionId} (reserve=${reserveCents})`;
-  if (presetAuctionId) {
+  if (presetAuctionId && !forceNewAuction) {
     const presetSnap = await getAuction(auctionId);
     const presetAuctionMode = resolveAuctionMode(presetSnap?.rules);
     const presetLive = presetSnap?.status === 'LIVE';
@@ -187,7 +192,7 @@ async function runScenario({
   const bidders = await Promise.all(
     bids.map(async (bid) => ({
       ...bid,
-      ...(await devLogin(`vickrey-${slug}-${bid.nick}`)),
+      ...(await login(HOST_HTTP, `vickrey-${slug}-${bid.nick}`)),
     })),
   );
 
@@ -305,6 +310,20 @@ await runScenario({
   expectedWinnerNick: 'solo',
   expectedAmountCents: '10000',
   presetAuctionIndex: 1,
+});
+
+await runScenario({
+  title: 'vickrey mode alias should also resolve to second-price',
+  mode: 'vickrey',
+  forceNewAuction: true,
+  bids: [
+    { nick: 'vickrey-low', amountCents: '11000' },
+    { nick: 'vickrey-high', amountCents: '13000' },
+    { nick: 'vickrey-winner', amountCents: '24000' },
+  ],
+  expectedWinnerNick: 'vickrey-winner',
+  expectedAmountCents: '13000',
+  presetAuctionIndex: 2,
 });
 
 if (errors.length === 0) {

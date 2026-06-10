@@ -17,6 +17,7 @@ function AdminPublish() {
   const [stepCents,  setStepCents]  = React.useState('500000');
   const [reserveCents, setReserveCents] = React.useState('10000000');
   const [capCents, setCapCents] = React.useState('30000000');
+  const [auctionMode, setAuctionMode] = React.useState('first_price');
   const [duration, setDuration] = React.useState(30);
   const [maxExtends, setMaxExtends] = React.useState(5);
   const [antiSnipe, setAntiSnipe] = React.useState(true);
@@ -25,21 +26,17 @@ function AdminPublish() {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
 
-  // #53-M4: cap must be reachable from start via integer steps. Without
-  // this check the cap-hit path silently can't fire because no bid is
-  // simultaneously >= cap AND in the (start + N*step) sequence. Auction
-  // ends on duration timeout instead, which surprises the seller.
-  // BigInt-safe modulo; only meaningful when step > 0 (separate guard).
-  const stepBI = (() => { try { return BigInt(stepCents); } catch { return 0n; } })();
+  // #53-M4: auction cap is optional buy-now ceiling. Backend accepts a cap
+  // below the next step (first-cap is always reachable via clamped required
+  // price), so we only require cap > start price here.
   const startBI = (() => { try { return BigInt(startCents); } catch { return 0n; } })();
   const capBI = (() => { try { return BigInt(capCents); } catch { return 0n; } })();
-  const capReachable = stepBI > 0n && capBI > startBI && ((capBI - startBI) % stepBI) === 0n;
+  const reserveBI = (() => { try { return BigInt(reserveCents); } catch { return 0n; } })();
 
   const valid = title.length > 4
-    && BigInt(startCents) > 0n
-    && BigInt(reserveCents) <= BigInt(startCents)
-    && BigInt(capCents) > BigInt(startCents)
-    && capReachable;
+    && startBI > 0n
+    && reserveBI <= startBI
+    && capBI > startBI;
 
   // Submit pipeline:
   //   1. ensureSession (seller role; backend's freeze handler runs ownsAuction)
@@ -69,6 +66,7 @@ function AdminPublish() {
           reserveCents,
           capCents,
           durationMs: duration * 60 * 1000,
+          auctionMode,
           maxExtensions: antiSnipe ? maxExtends : 0,
           antiSnipeWindowMs: antiSnipe ? 10_000 : 0,
         },
@@ -185,19 +183,28 @@ function AdminPublish() {
               </FormRow>
               <FormRow label="保留价 (≤ 起拍价)" required>
                 <CurrencyInput cents={reserveCents} onChange={setReserveCents}/>
-                <Hint warn={BigInt(reserveCents) > BigInt(startCents)}>
-                  {BigInt(reserveCents) > BigInt(startCents) ? '保留价不能高于起拍价' : '未达保留价 → NO_BID'}
+                <Hint warn={reserveBI > startBI}>
+                  {reserveBI > startBI ? '保留价不能高于起拍价' : '未达保留价 → NO_BID'}
                 </Hint>
               </FormRow>
               <FormRow label="上限价 (cap)" required>
                 <CurrencyInput cents={capCents} onChange={setCapCents}/>
-                <Hint warn={BigInt(capCents) <= BigInt(startCents) || !capReachable}>
-                  {BigInt(capCents) <= BigInt(startCents)
+                <Hint warn={capBI <= startBI}>
+                  {capBI <= startBI
                     ? '上限价必须大于起拍价'
-                    : !capReachable
-                      ? '上限价不可达 · (cap - start) 必须是阶梯的整数倍'
-                      : '触发即 AUCTION_SOLD'}
+                    : '触发即 AUCTION_SOLD'}
                 </Hint>
+              </FormRow>
+                <FormRow label="结算方式" required>
+                <select
+                  aria-label="结算方式"
+                  value={auctionMode}
+                  onChange={(e) => setAuctionMode(e.target.value)}
+                  style={inp}
+                >
+                  <option value="first_price">标准一价拍卖（赢者出价）</option>
+                  <option value="second_price">二价拍卖（赢者付次高价）</option>
+                </select>
               </FormRow>
             </div>
 
@@ -291,6 +298,8 @@ function AdminPublish() {
                     <td>{formatCentsCNY(reserveCents)}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>上限</td>
                     <td style={{ color: 'var(--solemn-gold)' }}>{formatCentsCNY(capCents)}</td></tr>
+                <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>结算方式</td>
+                    <td>{auctionMode === 'second_price' ? '二价（Vickrey）' : '标准一价'}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>开拍</td>
                     <td>{scheduleDate} {scheduleTime}</td></tr>
                 <tr><td style={{ color: 'var(--douyin-ink-muted)', paddingRight: 12 }}>反狙击</td>

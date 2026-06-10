@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // HT-092 (review doc): outside dev, the §8 baseline must fail fast — the default
@@ -171,5 +172,170 @@ func TestRedisURLPasswordFallback(t *testing.T) {
 	}
 	if cfg.RedisPassword != "url-pass" {
 		t.Fatalf("redis password from URL=%q", cfg.RedisPassword)
+	}
+}
+
+func TestRoomStatePatchConfigDefaults(t *testing.T) {
+	t.Setenv("APP_ENV", "dev")
+	t.Setenv("ROOM_STATE_PATCH_MIN_VIEWERS", "")
+	t.Setenv("ROOM_STATE_PATCH_MAX_EVENTS", "")
+	t.Setenv("ROOM_STATE_PATCH_FLUSH_INTERVAL_MS", "")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE", "")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load should pass with defaults: %v", err)
+	}
+	if cfg.RoomStatePatchMinViewers != 0 {
+		t.Fatalf("min viewers=%d want 0", cfg.RoomStatePatchMinViewers)
+	}
+	if cfg.RoomStatePatchMaxEvents != 1 {
+		t.Fatalf("max events=%d want 1", cfg.RoomStatePatchMaxEvents)
+	}
+	if cfg.RoomStatePatchFlushInterval != 120*time.Millisecond {
+		t.Fatalf("flush interval=%s want %s", cfg.RoomStatePatchFlushInterval, 120*time.Millisecond)
+	}
+	if cfg.RoomStatePatchAdaptiveEnabled {
+		t.Fatalf("adaptive patch should default off")
+	}
+	if cfg.RoomStatePatchAdaptiveMinBids != 0 {
+		t.Fatalf("adaptive min bids=%d want 0", cfg.RoomStatePatchAdaptiveMinBids)
+	}
+}
+
+func TestRoomStatePatchConfigOverrides(t *testing.T) {
+	t.Setenv("APP_ENV", "dev")
+	t.Setenv("ROOM_STATE_PATCH_MIN_VIEWERS", "3")
+	t.Setenv("ROOM_STATE_PATCH_MAX_EVENTS", "7")
+	t.Setenv("ROOM_STATE_PATCH_FLUSH_INTERVAL_MS", "250")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE", "true")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS", "9")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load should pass with overrides: %v", err)
+	}
+	if cfg.RoomStatePatchMinViewers != 3 {
+		t.Fatalf("min viewers=%d want 3", cfg.RoomStatePatchMinViewers)
+	}
+	if cfg.RoomStatePatchMaxEvents != 7 {
+		t.Fatalf("max events=%d want 7", cfg.RoomStatePatchMaxEvents)
+	}
+	if cfg.RoomStatePatchFlushInterval != 250*time.Millisecond {
+		t.Fatalf("flush interval=%s want %s", cfg.RoomStatePatchFlushInterval, 250*time.Millisecond)
+	}
+	if !cfg.RoomStatePatchAdaptiveEnabled {
+		t.Fatalf("adaptive should be enabled from override")
+	}
+	if cfg.RoomStatePatchAdaptiveMinBids != 9 {
+		t.Fatalf("adaptive min bids=%d want 9", cfg.RoomStatePatchAdaptiveMinBids)
+	}
+}
+
+func TestRoomStatePatchAdaptiveConfigInvalidEnvFallsBack(t *testing.T) {
+	t.Setenv("APP_ENV", "dev")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE", "maybe")
+	t.Setenv("ROOM_STATE_PATCH_ADAPTIVE_MIN_BIDS", "-12")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load should pass with invalid adaptive env: %v", err)
+	}
+	if cfg.RoomStatePatchAdaptiveEnabled {
+		t.Fatalf("adaptive should default off for invalid bool env")
+	}
+	if cfg.RoomStatePatchAdaptiveMinBids != 0 {
+		t.Fatalf("adaptive min bids=%d want 0", cfg.RoomStatePatchAdaptiveMinBids)
+	}
+}
+
+func TestRoomStatePatchConfigInvalidValuesFallBack(t *testing.T) {
+	t.Setenv("APP_ENV", "dev")
+
+	tests := []struct {
+		name       string
+		min, max   string
+		flushMS    string
+		wantMin    int
+		wantMax    int
+		wantFlush  time.Duration
+	}{
+		{
+			name:      "negative_min",
+			min:       "-1",
+			max:       "2",
+			flushMS:   "",
+			wantMin:   0,
+			wantMax:   2,
+			wantFlush: 120 * time.Millisecond,
+		},
+		{
+			name:      "negative_max",
+			min:       "2",
+			max:       "-5",
+			flushMS:   "",
+			wantMin:   2,
+			wantMax:   1,
+			wantFlush: 120 * time.Millisecond,
+		},
+		{
+			name:      "invalid_min",
+			min:       "bad",
+			max:       "2",
+			flushMS:   "",
+			wantMin:   0,
+			wantMax:   2,
+			wantFlush: 120 * time.Millisecond,
+		},
+		{
+			name:      "invalid_max",
+			min:       "2",
+			max:       "bad",
+			flushMS:   "",
+			wantMin:   2,
+			wantMax:   1,
+			wantFlush: 120 * time.Millisecond,
+		},
+		{
+			name:      "invalid_flush",
+			min:       "2",
+			max:       "2",
+			flushMS:   "oops",
+			wantMin:   2,
+			wantMax:   2,
+			wantFlush: 120 * time.Millisecond,
+		},
+		{
+			name:      "zero_flush",
+			min:       "2",
+			max:       "2",
+			flushMS:   "0",
+			wantMin:   2,
+			wantMax:   2,
+			wantFlush: 0,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ROOM_STATE_PATCH_MIN_VIEWERS", tc.min)
+			t.Setenv("ROOM_STATE_PATCH_MAX_EVENTS", tc.max)
+			t.Setenv("ROOM_STATE_PATCH_FLUSH_INTERVAL_MS", tc.flushMS)
+
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load should pass with %s values: %v", tc.name, err)
+			}
+			if cfg.RoomStatePatchMinViewers != tc.wantMin {
+				t.Fatalf("min viewers=%d want %d", cfg.RoomStatePatchMinViewers, tc.wantMin)
+			}
+			if cfg.RoomStatePatchMaxEvents != tc.wantMax {
+				t.Fatalf("max events=%d want %d", cfg.RoomStatePatchMaxEvents, tc.wantMax)
+			}
+			if cfg.RoomStatePatchFlushInterval != tc.wantFlush {
+				t.Fatalf("flush interval=%s want %s", cfg.RoomStatePatchFlushInterval, tc.wantFlush)
+			}
+		})
 	}
 }

@@ -13,14 +13,14 @@
 // Scenario:
 //   1. POST /api/auctions with an obviously bogus bearer token
 //   2. Assert: response is 401, body has `code: ERR_AUTH`
-//   3. POST /api/dev-login to refresh
+//   3. Refresh session (POST /api/login, fallback /api/dev-login)
 //   4. Retry the protected call with the new token → 200 (or 4xx that ISN'T 401)
 //
 // Usage:
 //   make up && make seed
 //   cd apps/web && node scripts/smoke-401.mjs
 
-import { resolveAuctionId } from './smoke-shared.mjs';
+import { login, resolveAuctionId } from './smoke-shared.mjs';
 
 const HOST_HTTP = process.env.HOST_HTTP || process.env.WS_HOST || 'http://localhost:8080';
 const AUCTION_ID = resolveAuctionId({ scriptName: 'smoke-401' });
@@ -48,14 +48,8 @@ if (body?.code) {
 }
 
 // ─── 2. Refresh session ────────────────────────────────────
-const login = await fetch(`${HOST_HTTP}/api/dev-login`, {
-  method: 'POST',
-  headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ nickname: 'fari-401-smoke' }),
-});
-must(login.ok, `dev-login failed with ${login.status}`);
-const { token } = await login.json();
-must(token, 'dev-login returned no token');
+const { token } = await login(HOST_HTTP, 'fari-401-smoke');
+must(token, 'login returned no token');
 
 // ─── 3. Retry with new token → no longer 401 ───────────────
 const retry = await fetch(`${HOST_HTTP}/api/auctions/${AUCTION_ID}`, {

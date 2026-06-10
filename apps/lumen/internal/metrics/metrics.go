@@ -40,10 +40,20 @@ type Registry struct {
 	ScriptTime       *Histogram
 
 	// Counters (monotonic). SeqGap=0 is the correctness invariant (§4.1).
-	BidsAccepted     *Counter
-	BidsRejected     *Counter
-	BackpressureDrop *Counter
-	SeqGap           *Counter
+	BidsAccepted          *Counter
+	BidsRejected          *Counter
+	BackpressureDrop      *Counter
+	SeqGap                *Counter
+	WsAuthUnauthorized    *Counter
+	WsSchemaMismatch      *Counter
+	WsUpgradeFailed       *Counter
+	RoomStatePatchEmitted *Counter
+	RoomStatePatchBids    *Counter
+	RoomStatePatchSkippedPublic *Counter
+	RoomStatePatchLag      *Histogram
+	TimerErrInternal      *Counter
+	TimerErrInternalKeyType *Counter
+	TimerErrInternalSeqMismatch *Counter
 
 	// Gauges (point-in-time). StreamLen is sampled by the gateway sweep;
 	// ActiveConns is incremented/decremented on WS connect/disconnect.
@@ -55,16 +65,56 @@ type Registry struct {
 // (~60k per histogram at 500/50) are well within memory budget at cap=4096.
 func New() *Registry {
 	return &Registry{
-		AckLatency:       NewHistogram(4096),
-		BroadcastLatency: NewHistogram(4096),
-		HammerLatency:    NewHistogram(4096),
-		CatchupLatency:   NewHistogram(4096),
-		ScriptTime:       NewHistogram(4096),
-		BidsAccepted:     &Counter{},
-		BidsRejected:     &Counter{},
-		BackpressureDrop: &Counter{},
-		SeqGap:           &Counter{},
+		AckLatency:            NewHistogram(4096),
+		BroadcastLatency:      NewHistogram(4096),
+		HammerLatency:         NewHistogram(4096),
+		CatchupLatency:        NewHistogram(4096),
+		ScriptTime:            NewHistogram(4096),
+		BidsAccepted:          &Counter{},
+		BidsRejected:          &Counter{},
+		BackpressureDrop:      &Counter{},
+		SeqGap:                &Counter{},
+		WsAuthUnauthorized:    &Counter{},
+		WsSchemaMismatch:      &Counter{},
+		WsUpgradeFailed:       &Counter{},
+		RoomStatePatchEmitted: &Counter{},
+		RoomStatePatchBids:    &Counter{},
+		RoomStatePatchSkippedPublic: &Counter{},
+		RoomStatePatchLag:      NewHistogram(4096),
+		TimerErrInternal:      &Counter{},
+		TimerErrInternalKeyType: &Counter{},
+		TimerErrInternalSeqMismatch: &Counter{},
 	}
+}
+
+// ResetForLoadRun resets instruments used by load/perf SLO evaluation.
+//
+// Histograms are rewound to zero-sample state and monotonic counters/gauges are
+// cleared so the next /metrics snapshot reflects only post-reset samples. Active
+// connections are intentionally not reset to avoid making a running stack look
+// inconsistent under concurrent traffic outside the harness window.
+func (r *Registry) ResetForLoadRun() {
+	r.AckLatency.Reset()
+	r.BroadcastLatency.Reset()
+	r.HammerLatency.Reset()
+	r.CatchupLatency.Reset()
+	r.ScriptTime.Reset()
+
+	r.BidsAccepted.Set(0)
+	r.BidsRejected.Set(0)
+	r.BackpressureDrop.Set(0)
+	r.SeqGap.Set(0)
+	r.WsAuthUnauthorized.Set(0)
+	r.WsSchemaMismatch.Set(0)
+	r.WsUpgradeFailed.Set(0)
+	r.RoomStatePatchEmitted.Set(0)
+	r.RoomStatePatchBids.Set(0)
+	r.RoomStatePatchSkippedPublic.Set(0)
+	r.RoomStatePatchLag.Reset()
+	r.TimerErrInternal.Set(0)
+	r.TimerErrInternalKeyType.Set(0)
+	r.TimerErrInternalSeqMismatch.Set(0)
+	r.StreamLenMax.Store(0)
 }
 
 // ObserveStreamLen records a new max if n exceeds the recorded peak. Cheap
@@ -85,34 +135,54 @@ func (r *Registry) ObserveStreamLen(n int64) {
 // proto/observed.md (T8 will materialize a doc; the field names here are the
 // source). Histograms render as {p50,p95,p99,count} in milliseconds.
 type Snapshot struct {
-	Ack              HistogramSnapshot `json:"ackLatencyMs"`
-	Broadcast        HistogramSnapshot `json:"broadcastLatencyMs"`
-	Hammer           HistogramSnapshot `json:"hammerLatencyMs"`
-	Catchup          HistogramSnapshot `json:"catchupLatencyMs"`
-	ScriptTime       HistogramSnapshot `json:"placeBidScriptTimeMs"`
-	BidsAccepted     int64             `json:"bidsAccepted"`
-	BidsRejected     int64             `json:"bidsRejected"`
-	BackpressureDrop int64             `json:"backpressureForceClose"`
-	SeqGap           int64             `json:"seqGapCount"`
-	StreamLenMax     int64             `json:"streamLenMax"`
-	ActiveConns      int64             `json:"activeConns"`
+	Ack                   HistogramSnapshot `json:"ackLatencyMs"`
+	Broadcast             HistogramSnapshot `json:"broadcastLatencyMs"`
+	Hammer                HistogramSnapshot `json:"hammerLatencyMs"`
+	Catchup               HistogramSnapshot `json:"catchupLatencyMs"`
+	ScriptTime            HistogramSnapshot `json:"placeBidScriptTimeMs"`
+	BidsAccepted          int64             `json:"bidsAccepted"`
+	BidsRejected          int64             `json:"bidsRejected"`
+	BackpressureDrop      int64             `json:"backpressureForceClose"`
+	SeqGap                int64             `json:"seqGapCount"`
+	WsAuthUnauthorized    int64             `json:"wsAuthUnauthorized"`
+	WsSchemaMismatch      int64             `json:"wsSchemaMismatch"`
+	WsUpgradeFailed       int64             `json:"wsUpgradeFailed"`
+	RoomStatePatchEmitted int64             `json:"roomStatePatchEmitted"`
+	RoomStatePatchBids    int64             `json:"roomStatePatchBids"`
+	RoomStatePatchSkippedPublic int64        `json:"roomStatePatchSkippedPublic"`
+	RoomStatePatchLagMs   HistogramSnapshot  `json:"roomStatePatchLagMs"`
+	TimerErrInternal      int64             `json:"timerErrInternal"`
+	TimerErrInternalKeyType int64          `json:"timerErrInternalKeyType"`
+	TimerErrInternalSeqMismatch int64      `json:"timerErrInternalSeqMismatch"`
+	StreamLenMax          int64             `json:"streamLenMax"`
+	ActiveConns           int64             `json:"activeConns"`
 }
 
 // Snapshot is non-blocking from the writer side: each histogram takes its own
 // mutex briefly to copy + sort a sample slice; counters/gauges are atomic.
 func (r *Registry) Snapshot() Snapshot {
 	return Snapshot{
-		Ack:              r.AckLatency.Snapshot(),
-		Broadcast:        r.BroadcastLatency.Snapshot(),
-		Hammer:           r.HammerLatency.Snapshot(),
-		Catchup:          r.CatchupLatency.Snapshot(),
-		ScriptTime:       r.ScriptTime.Snapshot(),
-		BidsAccepted:     r.BidsAccepted.Load(),
-		BidsRejected:     r.BidsRejected.Load(),
-		BackpressureDrop: r.BackpressureDrop.Load(),
-		SeqGap:           r.SeqGap.Load(),
-		StreamLenMax:     r.StreamLenMax.Load(),
-		ActiveConns:      r.ActiveConns.Load(),
+		Ack:                   r.AckLatency.Snapshot(),
+		Broadcast:             r.BroadcastLatency.Snapshot(),
+		Hammer:                r.HammerLatency.Snapshot(),
+		Catchup:               r.CatchupLatency.Snapshot(),
+		ScriptTime:            r.ScriptTime.Snapshot(),
+		BidsAccepted:          r.BidsAccepted.Load(),
+		BidsRejected:          r.BidsRejected.Load(),
+		BackpressureDrop:      r.BackpressureDrop.Load(),
+		SeqGap:                r.SeqGap.Load(),
+		WsAuthUnauthorized:    r.WsAuthUnauthorized.Load(),
+		WsSchemaMismatch:      r.WsSchemaMismatch.Load(),
+		WsUpgradeFailed:       r.WsUpgradeFailed.Load(),
+		RoomStatePatchEmitted: r.RoomStatePatchEmitted.Load(),
+		RoomStatePatchBids:    r.RoomStatePatchBids.Load(),
+		RoomStatePatchSkippedPublic: r.RoomStatePatchSkippedPublic.Load(),
+		RoomStatePatchLagMs:   r.RoomStatePatchLag.Snapshot(),
+		TimerErrInternal:      r.TimerErrInternal.Load(),
+		TimerErrInternalKeyType:   r.TimerErrInternalKeyType.Load(),
+		TimerErrInternalSeqMismatch: r.TimerErrInternalSeqMismatch.Load(),
+		StreamLenMax:          r.StreamLenMax.Load(),
+		ActiveConns:           r.ActiveConns.Load(),
 	}
 }
 
@@ -121,6 +191,7 @@ type Counter struct{ n atomic.Int64 }
 
 func (c *Counter) Inc()        { c.n.Add(1) }
 func (c *Counter) Add(n int64) { c.n.Add(n) }
+func (c *Counter) Set(n int64) { c.n.Store(n) }
 func (c *Counter) Load() int64 { return c.n.Load() }
 
 // Histogram is a fixed-capacity reservoir-sampled latency distribution. Past
@@ -133,6 +204,14 @@ type Histogram struct {
 	samples []time.Duration
 	n       int64 // total observations (lifetime)
 	r       *rand.Rand
+}
+
+// Reset clears the sample set and total-observation count.
+func (h *Histogram) Reset() {
+	h.mu.Lock()
+	h.n = 0
+	h.samples = h.samples[:0]
+	h.mu.Unlock()
 }
 
 // NewHistogram constructs a histogram with the given reservoir cap. cap=0

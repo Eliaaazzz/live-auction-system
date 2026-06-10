@@ -20,10 +20,13 @@
 
 import { CURRENT_SCHEMA_VERSION, ClientFrameType, EventType, ConnStatus } from './types.js';
 import { setClockOffset } from './clock.js';
+import { normalizeSyncStartSeq } from './connState.js';
 
 const HEARTBEAT_MS  = 15_000;
 const RECONNECT_MIN = 500;
 const RECONNECT_MAX = 8_000;
+const MAX_CLIENT_BID_ID_LEN = 128;
+const MAX_AMOUNT_CENTS = 9_007_199_254_740_991n; // max safe + model boundary
 
 /**
  * Build the backend WS URL from a base + auctionId + JWT.
@@ -66,10 +69,16 @@ export class RoomClient {
     this.onState({ status: ConnStatus.CONNECTING, attempts: this.attempts });
     const ws = new WebSocket(this.url);
     this.ws = ws;
+    this.unhandledTypes = new Set();
 
     ws.onopen = () => {
       this.attempts = 0;
-      const lastSeq = this.getLastSeq();
+      let lastSeq = 0;
+      try {
+        lastSeq = normalizeSyncStartSeq(this.getLastSeq());
+      } catch {
+        lastSeq = 0;
+      }
       // Tell the gateway who we are + replay anything since lastSeq.
       this.#send(ClientFrameType.ROOM_JOIN, {
         auctionId: this.auctionId,
@@ -83,6 +92,7 @@ export class RoomClient {
       let env;
       try { env = JSON.parse(msg.data); } catch { return; }
       if (!env || typeof env !== 'object') return;
+      if (this.dead) return;
 
       // Schema gate (blueprint §4 P7). A mismatch is terminal — the user
       // is on a stale build vs the server protocol; surface and stop.
@@ -93,9 +103,12 @@ export class RoomClient {
           server: env.schemaVersion,
           client: CURRENT_SCHEMA_VERSION,
         });
+        clearInterval(this.heartbeatId);
+        this.heartbeatId = null;
         ws.close(1000, 'schema mismatch');
         return;
       }
+      if (typeof env.type !== 'string' || env.type.trim().length === 0) return;
 
       // P4: derive clock offset from EVERY envelope's serverTimeMs.
       if (typeof env.serverTimeMs === 'number') {
@@ -113,10 +126,12 @@ export class RoomClient {
 
         case EventType.ROOM_SNAPSHOT:
         case EventType.BID_ACCEPTED:
+        case EventType.ROOM_STATE_PATCH:
         case EventType.AUCTION_EXTENDED:
         case EventType.AUCTION_SOLD:
         case EventType.AUCTION_NO_BID:
         case EventType.AUCTION_CANCELLED:
+        case EventType.AI_COMMENTARY:
           this.onEvent(env);
           // First downstream business event after open == we're caught up.
           this.onState({ status: ConnStatus.OPEN });
@@ -125,7 +140,8 @@ export class RoomClient {
         default:
           // Unknown type — log once, do nothing (forward-compat: a future
           // schemaVersion may add events the old client doesn't yet handle).
-          if (typeof console !== 'undefined') {
+          if (!this.unhandledTypes.has(env.type) && typeof console !== 'undefined') {
+            this.unhandledTypes.add(env.type);
             console.warn('[RoomClient] unhandled envelope.type =', env.type);
           }
       }
@@ -155,6 +171,14 @@ export class RoomClient {
    * id replays the cached BID_ACCEPTED (see ws-envelope.md "DUPLICATE").
    */
   placeBid({ amountCents, clientBidId }) {
+    if (this.dead) {
+      this.onReject({
+        type: EventType.BID_REJECTED,
+        data: { code: 'ERR_INTERNAL' },
+        requestId: clientBidId,
+      });
+      return;
+    }
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.onReject({
         type: EventType.BID_REJECTED,
@@ -163,7 +187,82 @@ export class RoomClient {
       });
       return;
     }
-    this.#send(ClientFrameType.BID_PLACE, { amountCents, clientBidId });
+    if (
+      typeof clientBidId !== 'string' ||
+      clientBidId.length === 0 ||
+      clientBidId.length > MAX_CLIENT_BID_ID_LEN ||
+      !/^\S+$/.test(clientBidId)
+    ) {
+      this.onReject({
+        type: EventType.BID_REJECTED,
+        data: { code: 'ERR_INTERNAL' },
+        requestId: clientBidId,
+      });
+      return;
+    }
+    let normalizedAmountCents = amountCents;
+    if (typeof amountCents === 'number') {
+      if (!Number.isFinite(amountCents) ||
+          !Number.isInteger(amountCents) ||
+          !Number.isSafeInteger(amountCents) ||
+          amountCents < 1) {
+        this.onReject({
+          type: EventType.BID_REJECTED,
+          data: { code: 'ERR_INTERNAL' },
+          requestId: clientBidId,
+        });
+        return;
+      }
+      normalizedAmountCents = String(amountCents);
+    } else if (typeof amountCents === 'bigint') {
+      if (amountCents < 1n || amountCents > MAX_AMOUNT_CENTS) {
+        this.onReject({
+          type: EventType.BID_REJECTED,
+          data: { code: 'ERR_INTERNAL' },
+          requestId: clientBidId,
+        });
+        return;
+      }
+      normalizedAmountCents = amountCents.toString();
+    } else if (typeof amountCents !== 'string') {
+      this.onReject({
+        type: EventType.BID_REJECTED,
+        data: { code: 'ERR_INTERNAL' },
+        requestId: clientBidId,
+      });
+      return;
+    } else {
+      if (!/^\+?\d+$/.test(amountCents)) {
+        this.onReject({
+          type: EventType.BID_REJECTED,
+          data: { code: 'ERR_INTERNAL' },
+          requestId: clientBidId,
+        });
+        return;
+      }
+
+      try {
+        const normalized = BigInt(amountCents);
+        if (normalized < 1n || normalized > MAX_AMOUNT_CENTS) {
+          this.onReject({
+            type: EventType.BID_REJECTED,
+            data: { code: 'ERR_INTERNAL' },
+            requestId: clientBidId,
+          });
+          return;
+        }
+        normalizedAmountCents = normalized.toString();
+      } catch {
+        this.onReject({
+          type: EventType.BID_REJECTED,
+          data: { code: 'ERR_INTERNAL' },
+          requestId: clientBidId,
+        });
+        return;
+      }
+    }
+
+    this.#send(ClientFrameType.BID_PLACE, { amountCents: normalizedAmountCents, clientBidId });
   }
 
   /**
@@ -171,6 +270,7 @@ export class RoomClient {
    * ROOM_JOIN(lastSeq) replays the missed Stream delta.
    */
   resync() {
+    if (this.dead) return;
     this.attempts = 0;
     this.ws?.close();
   }

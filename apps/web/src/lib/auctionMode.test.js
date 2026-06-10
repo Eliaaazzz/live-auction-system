@@ -18,6 +18,8 @@ describe('resolveAuctionMode', () => {
     expect(resolveAuctionMode('ENGLISH')).toBe('first_price');
     expect(resolveAuctionMode({ mode: 'second' })).toBe('second_price');
     expect(resolveAuctionMode({ mode: 'secondprice' })).toBe('second_price');
+    expect(resolveAuctionMode({ mode: 'auction2' })).toBe('second_price');
+    expect(resolveAuctionMode({ mode: '2' })).toBe('second_price');
     expect(resolveAuctionMode({ mode: 'first' })).toBe('first_price');
     expect(resolveAuctionMode({ mode: 'firstprice' })).toBe('first_price');
   });

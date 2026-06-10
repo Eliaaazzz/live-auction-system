@@ -11,18 +11,23 @@ Options:
   --eval-report PATH        explicit load eval report path
   --report PATH             write closure summary to this file
   --second-price-report PATH explicit second-price payment report path
+  --require-second-price-report [auto|1/true/0/false|yes/no|on/off] require second-price report (auto: infer from manifest auction mode, default: auto)
   --allow-fail-reported N   allow remote result=FAIL-REPORTED when N is truthy (1/true/yes/on; default: 1)
   --format FORMAT           output format: tsv|markdown (default: tsv)
   --markdown                alias for --format markdown
+  --max-ws-auth-unauthorized N    require ws_auth_unauthorized <= N
+  --max-ws-schema-mismatch N      require ws_schema_mismatch <= N
+  --max-ws-upgrade-failed N       require ws_upgrade_failed <= N
   -h, --help               show this help
 
 Summary:
   This helper emits a closure status (PASS / PASS-REPORTED / FAIL) for a rehearsal bundle and checks:
   1) deploy preflight failed_checks==0
-  2) remote perf gate result PASS/FAIL-REPORTED
-  3) optional load eval summary (if provided/found)
-  4) optional second-price payment settlement summary
-  5) catchup/ws guard status from manifest.json when available
+  2) optional build revision alignment when expected revision is recorded in manifest.txt
+  3) remote perf gate result PASS/FAIL-REPORTED
+  4) optional load eval summary (if provided/found)
+  5) optional second-price payment settlement summary
+  6) catchup/ws guard status from manifest.json when available
 USAGE
   exit 2
 }
@@ -65,12 +70,39 @@ normalize_format() {
   esac
 }
 
+normalize_auction_mode() {
+  local normalized
+  normalized="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]//g')"
+  case "$normalized" in
+    vickrey|secondprice|second|auction2|2)
+      echo "second_price"
+      return
+      ;;
+    firstprice|first|english|auction1|1|en|e)
+      echo "first_price"
+      return
+      ;;
+    unknown)
+      echo "unknown"
+      return
+      ;;
+    *)
+      echo "$normalized"
+      return
+      ;;
+  esac
+}
+
 OUT_DIR="${OUT_DIR:-}"
 REPORT_PATH="${REPORT_PATH:-}"
 EVAL_REPORT="${EVAL_REPORT:-}"
 SECOND_PRICE_REPORT="${SECOND_PRICE_REPORT:-}"
+SECOND_PRICE_MODE="${SECOND_PRICE_MODE:-auto}"
 ALLOW_FAIL_REPORTED="${ALLOW_FAIL_REPORTED:-1}"
 REPORT_FORMAT="${REPORT_FORMAT:-tsv}"
+MAX_WS_AUTH_UNAUTHORIZED="${MAX_WS_AUTH_UNAUTHORIZED:-0}"
+MAX_WS_SCHEMA_MISMATCH="${MAX_WS_SCHEMA_MISMATCH:-0}"
+MAX_WS_UPGRADE_FAILED="${MAX_WS_UPGRADE_FAILED:-0}"
 
 if [[ $# -eq 0 ]]; then
   usage
@@ -94,6 +126,10 @@ while [[ $# -gt 0 ]]; do
       SECOND_PRICE_REPORT="$2"
       shift 2
       ;;
+    --require-second-price-report)
+      SECOND_PRICE_MODE="$2"
+      shift 2
+      ;;
     --allow-fail-reported)
       ALLOW_FAIL_REPORTED="$2"
       shift 2
@@ -105,6 +141,18 @@ while [[ $# -gt 0 ]]; do
     --markdown)
       REPORT_FORMAT="markdown"
       shift
+      ;;
+    --max-ws-auth-unauthorized)
+      MAX_WS_AUTH_UNAUTHORIZED="$2"
+      shift 2
+      ;;
+    --max-ws-schema-mismatch)
+      MAX_WS_SCHEMA_MISMATCH="$2"
+      shift 2
+      ;;
+    --max-ws-upgrade-failed)
+      MAX_WS_UPGRADE_FAILED="$2"
+      shift 2
       ;;
     -h|--help)
       usage
@@ -127,7 +175,48 @@ if [[ ! -d "$OUT_DIR" ]]; then
 fi
 
 REPORT_FORMAT="$(normalize_format "$REPORT_FORMAT")"
+normalize_bool01_any() {
+  local normalized
+  normalized="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$normalized" in
+    1|true|yes|on)
+      echo 1
+      return
+      ;;
+    0|false|no|off)
+      if [[ "$1" == "auto" ]]; then
+        echo auto
+      else
+        echo 0
+      fi
+      return
+      ;;
+    auto)
+      echo auto
+      return
+      ;;
+    *)
+      echo "error: --require-second-price-report must be auto/1/0/true/false/yes/no/on/off" >&2
+      exit 2
+      ;;
+  esac
+}
+
 ALLOW_FAIL_REPORTED="$(normalize_bool01 "$ALLOW_FAIL_REPORTED")"
+SECOND_PRICE_MODE="$(normalize_bool01_any "$SECOND_PRICE_MODE")"
+
+if ! [[ "$MAX_WS_AUTH_UNAUTHORIZED" =~ ^[0-9]+$ ]]; then
+  echo "error: --max-ws-auth-unauthorized must be a non-negative integer"
+  exit 2
+fi
+if ! [[ "$MAX_WS_SCHEMA_MISMATCH" =~ ^[0-9]+$ ]]; then
+  echo "error: --max-ws-schema-mismatch must be a non-negative integer"
+  exit 2
+fi
+if ! [[ "$MAX_WS_UPGRADE_FAILED" =~ ^[0-9]+$ ]]; then
+  echo "error: --max-ws-upgrade-failed must be a non-negative integer"
+  exit 2
+fi
 
 record() {
   local artifact="$1"
@@ -154,12 +243,44 @@ elif [[ -f "$OUT_DIR"/manifest.json ]]; then
   manifest_file="$OUT_DIR"/manifest.json
 fi
 
+manifest_txt_file=""
+if [[ -f "$OUT_DIR/manifest.txt" ]]; then
+  manifest_txt_file="$OUT_DIR/manifest.txt"
+fi
+
 status_file=""
 if [[ -f "$OUT_DIR/status.tsv" ]]; then
   status_file="$OUT_DIR/status.tsv"
 fi
 
+manifest_auction_mode=""
+manifest_auction_mode_raw=""
+if [[ -n "$manifest_file" ]] && command -v jq >/dev/null 2>&1; then
+  manifest_auction_mode_raw="$(jq -r '.params.auction_mode // .params.auctionMode // .params.mode // .params.rules.mode // .params.rules.auctionMode // empty' "$manifest_file" 2>/dev/null | tr -d '\r\n' || true)"
+  manifest_auction_mode="$(normalize_auction_mode "$manifest_auction_mode_raw")"
+fi
+
+if [[ "$SECOND_PRICE_MODE" == "auto" ]]; then
+  case "$manifest_auction_mode" in
+    second_price)
+      SECOND_PRICE_MODE="1"
+      ;;
+    first_price|unknown|"")
+      SECOND_PRICE_MODE="0"
+      ;;
+    *)
+      SECOND_PRICE_MODE="0"
+      ;;
+  esac
+fi
+
 # 1) preflight: PASS if failed_checks == 0 or status.tsv has no rc!=0 rows.
+read_manifest_line() {
+  local file="$1"
+  local key="$2"
+  awk -F= -v key="$key" '($1 == key) {sub(/\r$/, "", $2); print $2; exit}' "$file" 2>/dev/null || true
+}
+
 preflight_status="PASS"
 preflight_reason="ok"
 if [[ -f "$OUT_DIR/manifest.txt" ]]; then
@@ -182,6 +303,62 @@ else
   overall="FAIL"
 fi
 record "deploy_preflight" "$preflight_status" "$preflight_reason" "${OUT_DIR}"
+
+# 1.1) build revision alignment check (only when preflight captured expected revision)
+version_expected=""
+version_actual=""
+version_match=""
+version_result=""
+version_status="SKIP"
+version_reason="EXPECTED_BUILD_REVISION not set in preflight manifest"
+
+if [[ -n "$manifest_txt_file" ]]; then
+  version_expected="$(read_manifest_line "$manifest_txt_file" "expected_build_revision")"
+  if [[ -n "$version_expected" ]]; then
+    version_actual="$(read_manifest_line "$manifest_txt_file" "version_revision_actual")"
+    version_match="$(read_manifest_line "$manifest_txt_file" "version_revision_match")"
+    version_result="$(read_manifest_line "$manifest_txt_file" "version_revision_result")"
+    if [[ "$version_match" == "1" ]]; then
+      version_status="PASS"
+      version_reason="expected=$version_expected actual=${version_actual:-unknown}"
+    elif [[ "$version_match" == "0" ]]; then
+      version_status="FAIL"
+      if [[ -n "$version_result" ]]; then
+        version_reason="$version_result"
+      else
+        version_reason="expected=$version_expected actual=${version_actual:-unknown}"
+      fi
+      overall="FAIL"
+    else
+      version_status="SKIP"
+      if [[ -n "$version_result" ]]; then
+        version_reason="$version_result"
+      else
+        version_reason="version_revision_match unavailable in manifest"
+      fi
+    fi
+  fi
+fi
+
+if [[ "$version_status" == "SKIP" ]] && [[ -n "$version_expected" ]] && [[ -n "$status_file" ]]; then
+  version_check_row="$(awk -F'\t' '$1 == "version_revision" {print $2 "|" $3 "|" $4; exit}' "$status_file" 2>/dev/null || true)"
+  if [[ -n "$version_check_row" ]]; then
+    version_rc="${version_check_row%%|*}"
+    if [[ "$version_rc" == "0" ]]; then
+      version_status="PASS"
+      version_reason="version_revision rc=0"
+    else
+      version_status="FAIL"
+      version_reason="version_revision rc=$version_rc"
+      overall="FAIL"
+    fi
+  else
+    version_status="SKIP"
+    version_reason="version_revision check row not found"
+  fi
+fi
+
+record "version_revision_check" "$version_status" "$version_reason" "${manifest_txt_file:-${status_file:-$OUT_DIR}}"
 
 # 2) remote perf gate
 perf_summary=""
@@ -345,8 +522,14 @@ if [[ -z "$SECOND_PRICE_REPORT" ]]; then
 fi
 
 if [[ -z "$SECOND_PRICE_REPORT" ]]; then
-  second_price_status="SKIP"
-  second_price_reason="no verify-second-price-payment-summary.tsv"
+  if [[ "$SECOND_PRICE_MODE" == "1" ]]; then
+    second_price_status="FAIL"
+    second_price_reason="missing second-price report in second-price mode"
+    overall="FAIL"
+  else
+    second_price_status="SKIP"
+    second_price_reason="no verify-second-price-payment-summary.tsv"
+  fi
 elif [[ ! -r "$SECOND_PRICE_REPORT" ]]; then
   second_price_status="FAIL"
   second_price_reason="cannot read second-price payment report"

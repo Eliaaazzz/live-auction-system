@@ -19,6 +19,14 @@ REQUIRE_WS_SCHEMA_CHECK="${REQUIRE_WS_SCHEMA_CHECK:-0}"
 WS_PRECHECK_AUCTION="${WS_PRECHECK_AUCTION:-$AID}"
 WS_PRECHECK_SCHEMA="${WS_PRECHECK_SCHEMA:-${SCHEMA_VERSION:-2}}"
 WS_PRECHECK_TOKEN="${WS_PRECHECK_TOKEN:-}"
+EXPECTED_BUILD_REVISION="${EXPECTED_BUILD_REVISION:-}"
+EXPECTED_WS_SCHEMA="${EXPECTED_WS_SCHEMA:-${SCHEMA_VERSION:-}}"
+VERSION_CHECK_ACTUAL_REVISION=""
+VERSION_CHECK_MATCH="skip"
+VERSION_CHECK_RESULT="not requested"
+VERSION_WS_SCHEMA_CHECK_ACTUAL=""
+VERSION_WS_SCHEMA_CHECK_MATCH="skip"
+VERSION_WS_SCHEMA_CHECK_RESULT="not requested"
 
 mkdir -p "$OUT_DIR"
 
@@ -75,6 +83,10 @@ if is_true "$REQUIRE_WS_SCHEMA_CHECK" && ! is_positive_int "$WS_PRECHECK_SCHEMA"
   echo "invalid WS_PRECHECK_SCHEMA=$WS_PRECHECK_SCHEMA; must be positive integer when REQUIRE_WS_SCHEMA_CHECK=1"
   exit 1
 fi
+if [ -n "$EXPECTED_WS_SCHEMA" ] && ! is_positive_int "$EXPECTED_WS_SCHEMA"; then
+  echo "invalid EXPECTED_WS_SCHEMA=$EXPECTED_WS_SCHEMA; must be positive integer"
+  exit 1
+fi
 if ! is_positive_int "$MAX_TIME"; then
   echo "invalid MAX_TIME=$MAX_TIME; must be positive integer"
   exit 1
@@ -83,6 +95,120 @@ if [ -z "$WS_PRECHECK_AUCTION" ]; then
   echo "invalid WS_PRECHECK_AUCTION: auction id required"
   exit 1
 fi
+
+record_version_check() {
+  local dir_artifact="$OUT_DIR/version"
+
+  if [ -z "$EXPECTED_BUILD_REVISION" ]; then
+    VERSION_CHECK_RESULT="skip (EXPECTED_BUILD_REVISION unset)"
+    VERSION_CHECK_MATCH="skip"
+    printf "version_revision\t%d\t%s\t%s\n" "0" "-" "$dir_artifact" >> "$STATUS_FILE"
+    return
+  fi
+
+  if [ ! -f "$dir_artifact/body.txt" ]; then
+    failures=$((failures + 1))
+    VERSION_CHECK_RESULT="missing /version response body"
+    VERSION_CHECK_MATCH="0"
+    printf "version_revision\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_revision expected build revision but version endpoint response is missing"
+    return
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    failures=$((failures + 1))
+    VERSION_CHECK_RESULT="jq required for /version verification"
+    VERSION_CHECK_MATCH="0"
+    printf "version_revision\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_revision check requires jq"
+    return
+  fi
+
+  local actual_revision
+  actual_revision="$(jq -r '.build.revision // empty' "$dir_artifact/body.txt" | tr -d '\r')"
+  VERSION_CHECK_ACTUAL_REVISION="$actual_revision"
+  if [ -z "$actual_revision" ]; then
+    failures=$((failures + 1))
+    VERSION_CHECK_RESULT="empty build.revision in /version response"
+    VERSION_CHECK_MATCH="0"
+    printf "version_revision\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_revision check found empty build.revision in /version response"
+    return
+  fi
+
+  if [ "$actual_revision" != "$EXPECTED_BUILD_REVISION" ]; then
+    failures=$((failures + 1))
+    VERSION_CHECK_RESULT="expected=$EXPECTED_BUILD_REVISION actual=$actual_revision"
+    VERSION_CHECK_MATCH="0"
+    printf "version_revision\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_revision mismatch: expected=$EXPECTED_BUILD_REVISION actual=$actual_revision"
+    return
+  fi
+
+  VERSION_CHECK_RESULT="match"
+  VERSION_CHECK_MATCH="1"
+  printf "version_revision\t%d\t%s\t%s\n" "0" "-" "$dir_artifact" >> "$STATUS_FILE"
+}
+
+record_version_ws_schema_check() {
+  local dir_artifact="$OUT_DIR/version"
+  if [ -z "$EXPECTED_WS_SCHEMA" ]; then
+    VERSION_WS_SCHEMA_CHECK_RESULT="skip (EXPECTED_WS_SCHEMA unset)"
+    VERSION_WS_SCHEMA_CHECK_MATCH="skip"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "0" "-" "$dir_artifact" >> "$STATUS_FILE"
+    return
+  fi
+
+  if [ ! -f "$dir_artifact/body.txt" ]; then
+    failures=$((failures + 1))
+    VERSION_WS_SCHEMA_CHECK_RESULT="missing /version response body"
+    VERSION_WS_SCHEMA_CHECK_MATCH="0"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_ws_schema expected schema but /version response body is missing"
+    return
+  fi
+
+  if ! command -v jq >/dev/null 2>&1; then
+    failures=$((failures + 1))
+    VERSION_WS_SCHEMA_CHECK_RESULT="jq required for /version wsSchema verification"
+    VERSION_WS_SCHEMA_CHECK_MATCH="0"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_ws_schema check requires jq"
+    return
+  fi
+
+  local actual_schema
+  actual_schema="$(jq -r '.wsSchema // empty' "$dir_artifact/body.txt" | tr -d '\r')"
+  VERSION_WS_SCHEMA_CHECK_ACTUAL="$actual_schema"
+  if [ -z "$actual_schema" ]; then
+    failures=$((failures + 1))
+    VERSION_WS_SCHEMA_CHECK_RESULT="missing wsSchema in /version response"
+    VERSION_WS_SCHEMA_CHECK_MATCH="0"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_ws_schema check found empty wsSchema in /version response"
+    return
+  fi
+  if ! is_positive_int "$actual_schema"; then
+    failures=$((failures + 1))
+    VERSION_WS_SCHEMA_CHECK_RESULT="non-integer wsSchema in /version response: $actual_schema"
+    VERSION_WS_SCHEMA_CHECK_MATCH="0"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_ws_schema check found non-integer wsSchema in /version response: $actual_schema"
+    return
+  fi
+  if [ "$actual_schema" != "$EXPECTED_WS_SCHEMA" ]; then
+    failures=$((failures + 1))
+    VERSION_WS_SCHEMA_CHECK_RESULT="expected=$EXPECTED_WS_SCHEMA actual=$actual_schema"
+    VERSION_WS_SCHEMA_CHECK_MATCH="0"
+    printf "version_ws_schema\t%d\t%s\t%s\n" "1" "-" "$dir_artifact" >> "$STATUS_FILE"
+    echo "==> version_ws_schema mismatch: expected=$EXPECTED_WS_SCHEMA actual=$actual_schema"
+    return
+  fi
+
+  VERSION_WS_SCHEMA_CHECK_RESULT="match"
+  VERSION_WS_SCHEMA_CHECK_MATCH="1"
+  printf "version_ws_schema\t%d\t%s\t%s\n" "0" "-" "$dir_artifact" >> "$STATUS_FILE"
+}
 
 printf "check\texit_code\thttp_code\tartifact\n" > "$STATUS_FILE"
 
@@ -161,10 +287,15 @@ record_ws_schema() {
   local expected_schema="$2"
   local auction="$3"
   local token="${4:-}"
+  local ws_endpoint="${5:-}"
   local timeout_ms
   local rc
 
   mkdir -p "$dir"
+
+  if [ -z "$ws_endpoint" ]; then
+    ws_endpoint="$ws_url"
+  fi
 
   if ! command -v node >/dev/null 2>&1; then
     failures=$((failures + 1))
@@ -188,7 +319,7 @@ record_ws_schema() {
   set +e
   if [ -n "$token" ]; then
     node "$SCRIPT_DIR/ws-schema-precheck.mjs" \
-      --url "$ws_url" \
+      --url "$ws_endpoint" \
       --auction "$auction" \
       --schema "$expected_schema" \
       --token "$token" \
@@ -197,7 +328,7 @@ record_ws_schema() {
       2> "$dir/stderr.txt"
   else
     node "$SCRIPT_DIR/ws-schema-precheck.mjs" \
-      --url "$ws_url" \
+      --url "$ws_endpoint" \
       --auction "$auction" \
       --schema "$expected_schema" \
       --timeout-ms "$timeout_ms" \
@@ -228,7 +359,7 @@ check_https() {
     failures=$((failures + 1))
     printf "%s\t%d\t%s\t%s\n" "require_https" "1" "-" "$OUT_DIR" >> "$STATUS_FILE"
     echo "==> REQUIRE_HTTPS=1 but BASE_URL is not https: $BASE_URL"
-    return 1
+    return 0
   fi
 
   printf "%s\t%d\t%s\t%s\n" "require_https" "0" "-" "$OUT_DIR" >> "$STATUS_FILE"
@@ -333,13 +464,16 @@ record_ws() {
 }
 
 record_http "healthz" "/healthz" "2"
+record_http "version" "/version" "2"
 record_http "metrics" "/metrics" "2"
 record_http "admin" "/admin.html" "2"
 record_http "room" "/room.html?auction=$AID" "2"
+record_version_check
+record_version_ws_schema_check
 record_ws "ws" "/ws" "$REQUIRE_WS_UPGRADE"
 check_https
 if is_true "$REQUIRE_WS_SCHEMA_CHECK"; then
-  record_ws_schema "ws_schema" "$WS_PRECHECK_SCHEMA" "$WS_PRECHECK_AUCTION" "$WS_PRECHECK_TOKEN"
+  record_ws_schema "ws_schema" "$WS_PRECHECK_SCHEMA" "$WS_PRECHECK_AUCTION" "$WS_PRECHECK_TOKEN" "$ws_url/ws"
 else
   printf "%s\t%d\t%s\t%s\n" "ws_schema" "0" "-" "$OUT_DIR" >> "$STATUS_FILE"
 fi
@@ -354,6 +488,21 @@ if [ -s "$OUT_DIR/metrics/body.txt" ]; then
 fi
 
 {
+  echo "expected_build_revision=$EXPECTED_BUILD_REVISION"
+  if [ -n "$EXPECTED_BUILD_REVISION" ]; then
+    echo "version_revision_actual=$VERSION_CHECK_ACTUAL_REVISION"
+    echo "version_revision_match=$VERSION_CHECK_MATCH"
+    echo "version_revision_result=$VERSION_CHECK_RESULT"
+  fi
+  echo "expected_ws_schema=$EXPECTED_WS_SCHEMA"
+  if [ -n "$EXPECTED_WS_SCHEMA" ]; then
+    echo "version_ws_schema_actual=$VERSION_WS_SCHEMA_CHECK_ACTUAL"
+    echo "version_ws_schema_match=$VERSION_WS_SCHEMA_CHECK_MATCH"
+    echo "version_ws_schema_result=$VERSION_WS_SCHEMA_CHECK_RESULT"
+  fi
+} >> "$MANIFEST_FILE"
+
+{
   echo
   echo "status_file=$STATUS_FILE"
   echo "metrics_summary=$METRICS_SUMMARY"
@@ -365,6 +514,29 @@ echo "preflight pack:  $OUT_DIR"
 echo "manifest:        $MANIFEST_FILE"
 echo "status:          $STATUS_FILE"
 echo "metrics summary: $METRICS_SUMMARY"
+if [ -n "$EXPECTED_BUILD_REVISION" ]; then
+  if [ "$VERSION_CHECK_MATCH" = "1" ]; then
+    echo "version check:   PASS (deployed revision ${VERSION_CHECK_ACTUAL_REVISION})"
+  elif [ "$VERSION_CHECK_MATCH" = "0" ]; then
+    echo "version check:   FAIL ($VERSION_CHECK_RESULT)"
+  else
+    echo "version check:   $VERSION_CHECK_RESULT"
+  fi
+else
+  echo "version check:   skip (EXPECTED_BUILD_REVISION unset)"
+fi
+
+if [ -n "$EXPECTED_WS_SCHEMA" ]; then
+  if [ "$VERSION_WS_SCHEMA_CHECK_MATCH" = "1" ]; then
+    echo "ws schema check: PASS (deployed wsSchema ${VERSION_WS_SCHEMA_CHECK_ACTUAL})"
+  elif [ "$VERSION_WS_SCHEMA_CHECK_MATCH" = "0" ]; then
+    echo "ws schema check: FAIL ($VERSION_WS_SCHEMA_CHECK_RESULT)"
+  else
+    echo "ws schema check: $VERSION_WS_SCHEMA_CHECK_RESULT"
+  fi
+else
+  echo "ws schema check: skip (EXPECTED_WS_SCHEMA unset)"
+fi
 
 if [ "$failures" -ne 0 ] && ! is_true "$ALLOW_FAILURE"; then
   exit 1
