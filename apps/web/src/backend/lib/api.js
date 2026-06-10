@@ -113,6 +113,17 @@ export const api = {
   /** Top-N accepted bids (Redis ZSET). */
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
+  /**
+   * #261-7/8/10: room social channel — comments (弹幕) / gifts / like toggles.
+   * payload = { kind: 'comment'|'gift'|'like', text?, giftId?, giftName?,
+   * giftEmoji?, delta? }. Auth like the bid lane; opts {token, seat} let a
+   * Showcase seat speak under its OWN identity. The send is display-only —
+   * the server broadcasts a ROOM_SOCIAL frame back to everyone (sender included),
+   * and the UI renders from that echo so both phones stay identical.
+   */
+  social: (id, payload, opts = {}) =>
+    request(`/auctions/${id}/social`, { method: 'POST', body: payload, ...opts }),
+
   /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable.
    *  opts: { signal?, token?, seat? } — `token`/`seat` let a Showcase seat bid under
    *  its OWN identity (买家A/买家B). NB: a destructured default `({ signal, token,
@@ -185,8 +196,14 @@ export const api = {
    * then starts manually. Wire the Publish form's "scheduled at" picker
    * to a client-side timer that calls startLive() at the chosen instant.
    */
-  startLive: (id, { durationMs } = {}) =>
-    request(`/auctions/${id}/start`, { method: 'POST', body: durationMs ? { durationMs } : undefined }),
+  startLive: (id, { durationMs, demoCrowd } = {}) => {
+    // demoCrowd (#261-12a): true/false toggles the server's 发布即人气 crowd
+    // script for THIS auction; omitted → server env default (on).
+    const body = {};
+    if (durationMs) body.durationMs = durationMs;
+    if (typeof demoCrowd === 'boolean') body.demoCrowd = demoCrowd;
+    return request(`/auctions/${id}/start`, { method: 'POST', body: Object.keys(body).length ? body : undefined });
+  },
 
   /**
    * Seller / admin: any non-terminal → CANCELLED.

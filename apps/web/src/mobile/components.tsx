@@ -69,7 +69,10 @@ export function VideoBackground({ lot, liveUrl }: { lot: Lot; liveUrl?: string }
   );
 }
 
-export function LiveHeader({ room, followed, onToggleFollow, onClose, account }: { room: Room; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
+export function LiveHeader({ room, viewers, followed, onToggleFollow, onClose, account }: { room: Room; viewers?: number; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
+  // #261-12a: 在线人数实时来自服务端（ROOM_SNAPSHOT + 人气脚本 stats 广播），
+  // 不再是建房时的静态数。viewers 缺省时退回 room.viewers（mock 模式）。
+  const liveViewers = viewers != null && viewers > 0 ? viewers : room.viewers;
   return (
     <div className="lm-header">
       <div className="lm-anchor">
@@ -85,7 +88,7 @@ export function LiveHeader({ room, followed, onToggleFollow, onClose, account }:
             <Avatar src={'https://i.pravatar.cc/40?img=24'} size={20} ring="rgba(0,0,0,0.35)" />
             <Avatar src={'https://i.pravatar.cc/40?img=36'} size={20} ring="rgba(0,0,0,0.35)" />
           </div>
-          <Icon name="eye" size={13} />{fmtCount(room.viewers)}
+          <Icon name="eye" size={13} />{fmtCount(liveViewers)}
         </div>
         <button className="lm-close" onClick={onClose} aria-label="关闭"><Icon name="close" size={16} /></button>
       </div>
@@ -93,23 +96,25 @@ export function LiveHeader({ room, followed, onToggleFollow, onClose, account }:
   );
 }
 
-export function LotChip({ lot }: { lot: Lot }) {
+export function LotChip({ lot, onOpenIntro }: { lot: Lot; onOpenIntro?: () => void }) {
+  // #261-12b: 有 AI 介绍时商品卡可点开「宝贝介绍」。
   return (
-    <div className="lm-lotchip">
+    <div className={'lm-lotchip' + (onOpenIntro ? ' has-intro' : '')} onClick={onOpenIntro} role={onOpenIntro ? 'button' : undefined}>
       <ProductImg lot={lot} radius={8} className="lm-lotchip-img" />
-      <div className="lm-lotchip-meta"><div className="lm-lotchip-no">第 {lot.index} 件 · 竞拍中</div><div className="lm-lotchip-title">{lot.title}</div></div>
+      <div className="lm-lotchip-meta">
+        <div className="lm-lotchip-no">第 {lot.index} 件 · 竞拍中</div>
+        <div className="lm-lotchip-title">{lot.title}</div>
+        {onOpenIntro && <div className="lm-lotchip-more">宝贝介绍 <Icon name="chevronR" size={9} /></div>}
+      </div>
     </div>
   );
 }
 
 interface Float { id: number; x: number; color: string; icon: IconName; }
-// NOTE: ll_like_<roomId> (and the lj_join_ / lf_follow_ keys elsewhere) are a
-// client-side cache. A future backend likes/follows API will reconcile these —
-// the local flag just keeps the optimistic UI sticky across refreshes.
-export function ActionRail({ roomId, cartCount: _cartCount, onOpenComments: _onOpenComments, onOpenGift, onShare }: { roomId: string; cartCount?: number; onOpenComments?: () => void; onOpenGift?: () => void; onShare?: () => void } = { roomId: '' }) {
-  const likeKey = 'll_like_' + roomId;
-  const [liked, setLiked] = useState(() => localStorage.getItem(likeKey) === '1');
-  const [likes, setLikes] = useState(() => (localStorage.getItem(likeKey) === '1' ? 1285 : 1284));
+// #261-10: likes are REAL now — the count is server-authoritative (ROOM_SOCIAL
+// broadcast), the toggle is cancellable, and a like from the other phone bursts
+// here too (likeBurst bumps on every remote +1).
+export function ActionRail({ likes, liked, onToggleLike, likeBurst = 0, onOpenComments: _onOpenComments, onOpenGift, onShare }: { likes: number; liked: boolean; onToggleLike: () => void; likeBurst?: number; onOpenComments?: () => void; onOpenGift?: () => void; onShare?: () => void }) {
   const [floats, setFloats] = useState<Float[]>([]);
   const seq = useRef(0);
   const colors = ['#fe2c55', '#ff8fa3', '#ffce54', '#7fd6ff', '#9bd24e'];
@@ -118,21 +123,24 @@ export function ActionRail({ roomId, cartCount: _cartCount, onOpenComments: _onO
     setFloats((f) => [...f, { id, x: (Math.random() - 0.5) * 26, color: colors[id % colors.length], icon }]);
     setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1000);
   };
+  // remote likes float too (skip the initial mount value)
+  const firstBurst = useRef(true);
+  useEffect(() => {
+    if (firstBurst.current) { firstBurst.current = false; return; }
+    if (likeBurst > 0) burst('heart');
+  }, [likeBurst]);
   const like = () => {
-    if (liked) return; // once per room
-    setLikes((n) => n + 1);
-    setLiked(true);
-    try { localStorage.setItem(likeKey, '1'); } catch { /* ignore */ }
-    burst('heart');
+    if (!liked) burst('heart');
+    onToggleLike();
   };
   return (
     <div className="lm-rail">
-      <button className="lm-rail-btn" onClick={like}>
+      <button className="lm-rail-btn" onClick={like} aria-label={liked ? '取消点赞' : '点赞'}>
         <div className="lm-rail-ic" style={{ color: liked ? '#fe2c55' : '#fff', position: 'relative' }}>
           <Icon name="heart" size={23} fill={liked} />
           {floats.map((f) => (<span key={f.id} className="lm-heart-float" style={{ marginLeft: f.x, color: f.color }}><Icon name={f.icon} size={18} fill /></span>))}
         </div>
-        <span className="lm-rail-num">{fmtCount(likes)}</span>
+        <span className="lm-rail-num">{fmtCount(Math.max(0, likes))}</span>
       </button>
       <button className="lm-rail-btn" onClick={onOpenGift}>
         <div className="lm-rail-ic" style={{ color: '#ffce54' }}><Icon name="gift" size={22} /></div>

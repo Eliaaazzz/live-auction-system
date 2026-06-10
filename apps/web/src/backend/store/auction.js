@@ -22,7 +22,8 @@ const DEFAULT_STATE = {
   status: AuctionStatus.DRAFT,
   connStatus: ConnStatus.IDLE,
   connDetail: null,
-  viewerCount: 0, // 参与人数 — real room occupancy from ROOM_SNAPSHOT
+  viewerCount: 0, // 参与人数 — real room occupancy from ROOM_SNAPSHOT (+ crowd sim via ROOM_SOCIAL stats)
+  likeCount: 0,   // #261-10 — server-authoritative room likes (ROOM_SNAPSHOT seed + ROOM_SOCIAL updates)
 
   // pricing — ALL string-cents (blueprint P1).
   //
@@ -173,6 +174,23 @@ export function createAuctionStore() {
 
   clearLastReject: () => set({ lastRejectCode: null, lastRejectAt: null, lastRejectSeq: 0 }),
 
+  // ── room social (#261-7/8/10/12a) ────────────────────────────
+  // ROOM_SOCIAL frames are display-only and carry running totals; this
+  // reducer ONLY touches viewerCount/likeCount — never status/price/seq.
+  // comment/gift items are routed to the room UI by the engine callback
+  // (ephemeral danmaku — late joiners don't need history).
+  applySocial: (data) => set((s) => {
+    const next = {};
+    const kind = data?.kind;
+    if (kind === 'stats') {
+      if (typeof data.viewerCount === 'number' && data.viewerCount > 0) next.viewerCount = data.viewerCount;
+      if (typeof data.likeCount === 'number' && data.likeCount >= 0) next.likeCount = Math.max(s.likeCount, data.likeCount);
+    } else if (kind === 'like') {
+      if (typeof data.likeCount === 'number' && data.likeCount >= 0) next.likeCount = data.likeCount;
+    }
+    return next;
+  }),
+
   // ── AI sidecar health (T7-3 / issue #70 §4.3) ────────────────
   // Called by lib/api.js when draftFacts() throws a 502 ApiError or
   // network error, and on the next success. Bid path never reads from
@@ -215,6 +233,7 @@ export function createAuctionStore() {
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
           if (data.viewerCount != null) next.viewerCount = data.viewerCount; // 参与人数
+          if (data.likeCount != null) next.likeCount = data.likeCount;       // #261-10 点赞数 seed
 
           if (data.rules) {
             if (data.rules.stepCents != null) next.stepCents = data.rules.stepCents;

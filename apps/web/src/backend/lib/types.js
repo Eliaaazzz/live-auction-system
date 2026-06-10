@@ -43,6 +43,7 @@ export const EventType = Object.freeze({
   AUCTION_NO_BID:    'AUCTION_NO_BID',
   AUCTION_CANCELLED: 'AUCTION_CANCELLED',
   AI_COMMENTARY:     'AI_COMMENTARY',  // T7 §4.2: LLM auctioneer commentary, non-authoritative (proto/ai-events.md)
+  ROOM_SOCIAL:       'ROOM_SOCIAL',    // #261-7/8/10/12a: 弹幕/礼物/点赞/人气 social broadcast, non-authoritative, no seq
   PONG:              'PONG',
 
   // evidence-only (evidence-card.md §1 timeline)

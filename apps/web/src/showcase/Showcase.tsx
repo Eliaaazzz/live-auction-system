@@ -100,19 +100,26 @@ export default function Showcase() {
                 </IOSDevice>
               </div>
 
-              {/* admin in chrome frame — center, sidebar foldable */}
+              {/* admin in chrome frame — center, sidebar foldable. #261-2: start
+                  COLLAPSED inside the 1000px showcase window so the content area
+                  (监控/商品表格) gets the full width — 展示全貌；点顶栏按钮可展开。 */}
               <div style={{ width: ADMIN_W }}>
                 <SectionLabel title="PC 端 · 商家 / 主播后台" desc="竞拍发布 · 直播商品 · 订单 · 实时竞拍监控 · 左侧栏可折叠" />
                 <ChromeWindow url="seller.auction-master.com/admin" width={ADMIN_W} height={PHONE_H} tabs={[{ title: '实时竞拍大师 · 后台' }]}>
-                  <AdminApp embedded />
+                  <AdminApp embedded defaultCollapsed />
                 </ChromeWindow>
               </div>
 
-              {/* mobile — buyer B (opens on the next live room) */}
+              {/* mobile — buyer B. SAME room as buyer A (startIndex 0): the whole
+                  triptych story is 买家A vs 买家B bidding against each other in one
+                  auction — 同场竞价. With startIndex=1, B silently opened the NEXT
+                  live room whenever more than one auction was live, so A and B
+                  never saw each other's bids. Viewers can still swipe to other
+                  rooms by hand. */}
               <div style={{ width: PHONE_W }}>
                 <SectionLabel title="移动端 · 买家 B" desc="同场竞价 · 出价与排名毫秒级实时同步" />
                 <IOSDevice dark width={PHONE_W} height={PHONE_H}>
-                  <MobileApp startIndex={1} seat="B" />
+                  <MobileApp startIndex={0} seat="B" />
                 </IOSDevice>
               </div>
             </div>
