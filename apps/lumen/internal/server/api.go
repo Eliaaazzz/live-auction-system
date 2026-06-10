@@ -672,6 +672,10 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, rerr.Error())
 		return
 	}
+	// #261-10/12a: REST first-paint carries the live social numbers too, so a
+	// fresh room shows the crowd/likes before the WS snapshot lands. Display-only.
+	snap.ViewerCount = s.hub.viewerCount(aid) + s.crowd.ViewerBoost(aid)
+	snap.LikeCount = s.social.likeCount(aid)
 	// Surface the product (name / image / 介绍) so the room shows the real item
 	// and the VLM page can draft facts from its image. Best-effort: a missing
 	// product just yields empty fields, never a 500.
@@ -726,7 +730,7 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]dto, 0, len(items))
 	for _, it := range items {
-		out = append(out, dto{
+		d := dto{
 			AuctionID:         it.ID,
 			ProductName:       it.ProductName,
 			ImageURL:          it.ImageURL,
@@ -741,7 +745,40 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 			IncrementCents:    strconv.FormatInt(it.IncrementCents, 10),
 			CapPriceCents:     strconv.FormatInt(it.CapPriceCents, 10),
 			BidCount:          it.BidCount,
-		})
+		}
+		// LIVE rows: the MySQL columns are creation-time values — bids touch only
+		// the Redis state Hash, and AUCTION_EXTENDED never updates auctions.end_at.
+		// Merge the live Redis state so 商品管理「当前出价」/ buyer browse show the
+		// real-time price and the post-extension countdown (#261-2). Best-effort —
+		// on a Redis miss the MySQL row stands. Snapshot() is single-flighted, and
+		// a list page holds only a handful of LIVE rows.
+		if it.Status == model.StateLive {
+			if snap, serr := s.st.Snapshot(r.Context(), it.ID); serr == nil && snap.Status != "" {
+				d.Status = snap.Status // hammer leads the MySQL projection by ≤2s
+				if snap.EndAtMs > 0 {
+					d.EndAtMs = snap.EndAtMs
+				}
+				// Price/winner only for open (ENGLISH) auctions. The sealed family
+				// and HYBRID_REVEAL hide live standings by contract — and the hybrid
+				// Lua DOES write the hidden leader into the state Hash (place_bid_
+				// hybrid.lua HSETs currentPriceCents+winnerId), so merging it here
+				// would leak exactly what GetLeaderboard's mode gate hides. Missing
+				// mode (pre-#114 state hash) normalizes to ENGLISH, matching that gate.
+				mode := model.ModeEnglish
+				if snap.Rules != nil {
+					mode = model.NormalizeMode(snap.Rules.Mode)
+				}
+				if mode == model.ModeEnglish {
+					if snap.CurrentPriceCents != "" {
+						d.CurrentPriceCents = snap.CurrentPriceCents
+					}
+					if snap.WinnerID != "" {
+						d.WinnerID = snap.WinnerID
+					}
+				}
+			}
+		}
+		out = append(out, d)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"auctions": out})
 }
@@ -929,6 +966,10 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		DurationMs int64 `json:"durationMs"`
+		// #261-12a: per-publish override for the demo crowd script. nil → the
+		// LUMEN_DEMO_CROWD env default; explicit false lets a seller run a
+		// bots-free room (e.g. while recording the two-buyer duel).
+		DemoCrowd *bool `json:"demoCrowd"`
 	}
 	// body is optional (empty -> default duration), but a present-yet-malformed
 	// body is a client error rather than a silent default.
@@ -970,6 +1011,10 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			EndAtMs:         endAtMs,
 		})
 	}
+	// #261-12a: 发布即人气 — spawn the built-in crowd script (sim viewers +
+	// rule-abiding sim bids). Fire-and-forget; never blocks the seller's
+	// response and never touches the bid path from here.
+	s.crowd.MaybeStart(aid, body.DemoCrowd)
 	writeJSON(w, http.StatusOK, map[string]any{"code": code, "endAtMs": endAtMs})
 }
 
@@ -1076,6 +1121,10 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	if err := s.st.UpdateAuctionStatus(r.Context(), aid, model.StateCancelled); err != nil {
 		log.Printf("cancel %s: status projection write failed (persistence worker self-heals from Stream): %v", aid, err)
 	}
+	// #261-12a: a cancelled room must stop its demo crowd immediately (the
+	// script would also self-detect on its next snapshot, this just makes the
+	// 取消异常竞拍 button feel instant).
+	s.crowd.Stop(aid)
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
 

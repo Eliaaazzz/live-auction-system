@@ -32,12 +32,23 @@ export const INTRO_TAIL = '成色与瑕疵以实物及卖家声明为准，平�
 // 现在仅作为 intro 缺失/被清洗掉时的结构化兜底。
 const FIELD_CN: Record<string, string> = { category: '品类', brand: '品牌', model: '型号', condition: '成色', defects: '瑕疵', material: '材质', color: '颜色' };
 export function composeIntro(name: string, facts?: DraftFact[]): string | null {
+  // estimateCNY 是给卖家配置参考的识图估价（#261-12b），绝不能出现在买家文案里
+  // （价格随拍随变，写死会误导 — 与 sidecar intro 的禁价规则一致）。
   const good = (facts ?? []).filter(
-    (f) => f?.value && !f.highRisk && f.field !== 'authenticity' && String(f.value).trim().toLowerCase() !== 'unverified',
+    (f) => f?.value && !f.highRisk && f.field !== 'authenticity' && f.field !== 'estimateCNY' && String(f.value).trim().toLowerCase() !== 'unverified',
   );
   if (!good.length) return null;
   const parts = good.map((f) => `${FIELD_CN[f.field ?? ''] ?? f.field}：${f.value}`);
   return `${name}（AI 识图）${parts.join('，')}。${INTRO_TAIL}`;
+}
+
+// pickEstimate：从识图 facts 里取 AI 估价（estimateCNY，元）。返回 null 表示
+// 模型没给/不可解析 — 调用方退回封顶价启发式（#261-12b 推荐加价幅度识图化）。
+export function pickEstimate(resp?: { facts?: DraftFact[] }): number | null {
+  const f = (resp?.facts ?? []).find((x) => x?.field === 'estimateCNY');
+  if (!f?.value) return null;
+  const n = parseInt(String(f.value).replace(/[^0-9]/g, ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 // pickIntro：AI 识图响应 → 精修文案。模型直出的 intro（已过 sidecar 合规

@@ -223,9 +223,10 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
                   {feed.slice(0, 40).map((b, i) => (
                     <div key={b.id} className={'mon-bid' + (i === 0 ? ' lead' : b.self ? ' self' : '')}>
                       <Avatar size={26} src={b.avatar} style={{ flexShrink: 0 }} />
-                      <span className="mon-name" style={{ fontWeight: 600 }}>{b.self ? '我' : b.userName}</span>
-                      {i === 0 && <Tag color="gold" style={{ marginInlineStart: 4 }}>领先</Tag>}
-                      <span style={{ color: '#bbb', fontSize: 12 }}>{ago(b.ts)}</span>
+                      {/* #261-2: 买家名横排（.mon-name nowrap）— 不再竖着一字一行 */}
+                      <span className="mon-name">{b.self ? '我' : b.userName}</span>
+                      {i === 0 && <Tag color="gold" style={{ marginInlineStart: 4, flexShrink: 0 }}>领先</Tag>}
+                      <span className="mon-time">{ago(b.ts)}</span>
                       <span className="mon-amt" style={{ color: i === 0 ? '#fe2c55' : '#333' }}>¥{fmtMoney(b.amount)}</span>
                     </div>
                   ))}
@@ -239,11 +240,11 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
                 <div className="mon-feed">
                   {state.ranking.slice(0, 10).map((r, i) => (
                     <div key={r.userId} className={'mon-bid' + (i === 0 ? ' lead' : r.self ? ' self' : '')}>
-                      <span style={{ width: 22, textAlign: 'center', fontWeight: 800, color: i === 0 ? '#f6a609' : i === 1 ? '#8c8c8c' : '#bbb' }}>
+                      <span style={{ width: 22, textAlign: 'center', fontWeight: 800, color: i === 0 ? '#f6a609' : i === 1 ? '#8c8c8c' : '#bbb', flexShrink: 0 }}>
                         {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                       </span>
                       <Avatar size={26} src={r.avatar} style={{ flexShrink: 0 }} />
-                      <span className="mon-name" style={{ fontWeight: 600 }}>{r.self ? '我' : r.userName}</span>
+                      <span className="mon-name">{r.self ? '我' : r.userName}</span>
                       <span className="mon-amt">¥{fmtCompact(r.amount)}</span>
                     </div>
                   ))}

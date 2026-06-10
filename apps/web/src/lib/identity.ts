@@ -46,9 +46,15 @@ export type SeatIdentity = { nickname: string; avatar: string };
 // and — via auth.js seats — their own backend userId/token). Stable across
 // reloads so a returning viewer keeps the same two faces. Real /m never calls
 // this; it uses the full useIdentity login store above.
+// Avatars MUST be defaultAvatarFor(nickname): every other pane renders a peer's
+// face as hash(displayName) (useAuctionEngine), so a fixed avatar(15) here would
+// give 买家A one face on their own phone and another on 买家B's / the admin
+// monitor. Same hash → same face on all three panes.
+// #261-9: 买家A = Jason，买家B = Elia。后台监控/对方手机显示真名；在「自己的」
+// 手机上，排名/出价/评论/送礼一律渲染「我」（self 标记由引擎按 userId 判定）。
 const SEAT_IDENTITIES: Record<string, SeatIdentity> = {
-  A: { nickname: '买家A', avatar: avatar(15) },
-  B: { nickname: '买家B', avatar: avatar(33) },
+  A: { nickname: 'Jason', avatar: defaultAvatarFor('Jason') },
+  B: { nickname: 'Elia', avatar: defaultAvatarFor('Elia') },
 };
 export function seatIdentity(seat: string): SeatIdentity {
   return SEAT_IDENTITIES[seat] ?? { nickname: '买家' + seat, avatar: defaultAvatarFor('seat-' + seat) };

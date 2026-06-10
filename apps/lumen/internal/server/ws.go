@@ -1568,7 +1568,10 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 				}
 			}
 		}
-		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) // 参与人数 at join time (incl. self)
+		// 参与人数 at join time (incl. self) + crowd-sim boost + running likes
+		// (#261-10/12a — display-only social numbers ride the snapshot).
+		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) + s.crowd.ViewerBoost(d.AuctionID)
+		snap.LikeCount = s.social.likeCount(d.AuctionID)
 		if snap.Rules != nil {
 			s.hub.setMode(d.AuctionID, snap.Rules.Mode) // cache mode for the BID_PLACE hot path
 		}

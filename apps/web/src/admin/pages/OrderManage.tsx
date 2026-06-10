@@ -49,13 +49,6 @@ const STATUS_META: Record<OStatus, { text: string; color: string }> = {
 const FLOW_STEPS = ['拍下成交', '买家付款', '卖家发货', '交易完成'];
 const STEP_OF: Record<OStatus, number> = { pending: 0, paid: 1, shipped: 2, done: 3, refunded: 0 };
 
-const ORDERS: Order[] = [
-  { key: '1', no: 'AUC20260609001', item: '百达翡丽年历计时腕表 玫瑰金蓝盘', price: 628000, buyer: '李***', deposit: 20000, status: 'paid', time: '06-09 21:18' },
-  { key: '2', no: 'AUC20260609002', item: '香奈儿经典粗花呢套装', price: 36500, buyer: '黄***', deposit: 1000, status: 'shipped', time: '06-09 20:41' },
-  { key: '3', no: 'AUC20260608012', item: '范思哲 La Medusa 印花帆布托特包', price: 9800, buyer: '张***', deposit: 500, status: 'pending', time: '06-08 21:05' },
-  { key: '4', no: 'AUC20260608007', item: "迪奥 Walk'n'Dior 老花厚底帆布鞋", price: 6400, buyer: '王***', deposit: 300, status: 'done', time: '06-08 19:26' },
-];
-
 export default function OrderManage() {
   const { message } = AntdApp.useApp();
   const [seg, setSeg] = useState<OStatus | 'all'>('all');
@@ -88,10 +81,9 @@ export default function OrderManage() {
     return () => { alive = false; clearInterval(t); };
   }, []);
 
-  // Real orders when the backend has any terminal auctions; else the demo seed so a
-  // fresh demo still shows a populated table (flagged 演示 in the toolbar).
-  const usingDemo = !(realOrders && realOrders.length);
-  const source = usingDemo ? ORDERS : (realOrders as Order[]);
+  // #261-5/11: 真数据 only — 不再用迪奥等占位假订单垫底。没有成交就是空表 +
+  // 引导文案，「成交订单 / 近期成交 / 订单管理」三处永远同源同步。
+  const source = realOrders ?? [];
   const rows = useMemo(() => source.filter((o) => (seg === 'all' ? true : o.status === seg)).filter((o) => (kw ? o.no.includes(kw) || o.buyer.includes(kw) || o.item.includes(kw) : true)), [source, seg, kw]);
 
   const columns: ColumnsType<Order> = [
@@ -126,11 +118,11 @@ export default function OrderManage() {
     <div className="admin-content">
       <div className="admin-toolbar">
         <Segmented value={seg} onChange={(val) => setSeg(val as OStatus | 'all')} options={[{ label: '全部', value: 'all' }, { label: '待支付', value: 'pending' }, { label: '已支付', value: 'paid' }, { label: '已发货', value: 'shipped' }, { label: '已完成', value: 'done' }, { label: '已退保证金', value: 'refunded' }]} />
-        {usingDemo ? <Tag color="default" style={{ marginLeft: 8 }}>演示数据 · 暂无真实成交订单</Tag> : <Tag color="green" style={{ marginLeft: 8 }}>● 实时订单（{source.length}）</Tag>}
+        <Tag color={source.length ? 'green' : 'default'} style={{ marginLeft: 8 }}>{source.length ? `● 实时订单（${source.length}）` : '暂无成交订单 · 落锤后自动出现'}</Tag>
         <div className="spacer" />
         <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder="订单号 / 买家 / 拍品" style={{ width: 240 }} value={kw} onChange={(e) => setKw(e.target.value)} />
       </div>
-      <Table<Order> columns={columns} dataSource={rows} scroll={{ x: 1180 }} pagination={{ pageSize: 8, showTotal: (t) => `共 ${t} 笔订单` }} size="middle" />
+      <Table<Order> columns={columns} dataSource={rows} scroll={{ x: 1180 }} locale={{ emptyText: '暂无订单 — 直播间落锤成交后，订单会实时出现在这里' }} pagination={{ pageSize: 8, showTotal: (t) => `共 ${t} 笔订单` }} size="middle" />
 
       <Drawer
         title="订单详情"

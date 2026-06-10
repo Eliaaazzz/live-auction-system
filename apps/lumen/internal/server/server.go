@@ -36,6 +36,12 @@ type Server struct {
 	// instruments). One per process; the load harness scrapes /metrics, the
 	// bid hot path Observes.
 	metrics *metrics.Registry
+	// social holds per-room like counters for the ROOM_SOCIAL channel
+	// (#261-7/8/10). Nil-safe accessors; in-process state (single-node demo).
+	social *socialState
+	// crowd is the 发布即人气 demo crowd script (#261-12a). Nil-safe; inert
+	// unless an auction start enables it.
+	crowd *CrowdSim
 }
 
 // isLoopbackHostPort reports whether addr ("host:port") binds ONLY the loopback
@@ -86,6 +92,11 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	// panics are counted alongside supervised worker panics.
 	s.auctioneer = NewAuctioneerHooks(cfg.AISidecarURL, s.hub, s.httpClient)
 	s.auctioneer.metrics = s.metrics
+	// #261-7/8/10/12a: room social channel + publish-time demo crowd. Both are
+	// display-only (no seq, no Stream, no bid-path contact) — see social.go /
+	// crowd.go headers for the boundaries.
+	s.social = newSocialState()
+	s.crowd = newCrowdSim(st, s.hub, s.social, s.metrics, s.broadcastSocial)
 
 	switch mode {
 	case "all", "gateway":
@@ -201,6 +212,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auctions/{id}/prequalify-recommendation", s.handlePrequalifyRecommendation)
 	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
+	mux.HandleFunc("POST /api/auctions/{id}/social", s.handleSocial) // #261-7/8/10 弹幕/礼物/点赞 broadcast
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /ws", s.handleWS)
 
