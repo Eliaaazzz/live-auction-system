@@ -182,6 +182,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/dev-login", s.handleDevLogin)
 	mux.HandleFunc("POST /api/products", s.handleCreateProduct)
 	mux.HandleFunc("POST /api/facts/draft", s.handleFactsDraft)
+	mux.HandleFunc("POST /api/listing/draft", s.handleListingDraft)
 	mux.HandleFunc("GET /api/auctions", s.handleListAuctions)
 	mux.HandleFunc("POST /api/auctions", s.handleCreateAuction)
 	mux.HandleFunc("POST /api/recommend-mode", s.handleRecommendMode) // issue #114: heuristic mode recommender

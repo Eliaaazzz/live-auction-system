@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined, FolderOpenOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
@@ -22,6 +22,9 @@ export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [sellingPoints, setSellingPoints] = useState<string[]>([]);
+  const [copyNote, setCopyNote] = useState<string | null>(null);
   const v = Form.useWatch([], form) || {};
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [fileList, setFileList] = useState<any[]>([]);
@@ -29,6 +32,37 @@ export default function AuctionPublish() {
   const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
   const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
+
+  const onGenerateCopy = async () => {
+    if (copyBusy) return;
+    const vals = form.getFieldsValue();
+    setCopyBusy(true);
+    setCopyNote(null);
+    try {
+      await ensureSession('seller-demo');
+      const draft = await api.draftListing({
+        title: vals.name || '',
+        description: vals.intro || '',
+        category: vals.category || '',
+      });
+      const next: Record<string, string> = {};
+      if (draft?.title) next.name = draft.title;
+      if (draft?.script) next.intro = draft.script;
+      if (Object.keys(next).length > 0) form.setFieldsValue(next);
+      setSellingPoints(Array.isArray(draft?.sellingPoints) ? draft.sellingPoints : []);
+      const note = draft?.fallback
+        ? 'AI 暂不可用 · 已填入兜底文案，可继续编辑'
+        : 'AI 已生成 · 请核对后再发布';
+      setCopyNote(note);
+      message.success(note);
+    } catch (e: any) {
+      const msg = '生成失败：' + (e?.message || e);
+      setCopyNote(msg);
+      message.warning(msg);
+    } finally {
+      setCopyBusy(false);
+    }
+  };
 
   // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
   const handleUpload = async (file: File): Promise<boolean> => {
@@ -219,11 +253,29 @@ export default function AuctionPublish() {
               <Space>
                 <span>商品介绍</span>
                 <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiIntro}>✨ AI 生成介绍</Button>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} icon={<ThunderboltOutlined />} loading={copyBusy} onClick={onGenerateCopy}>AI 拍卖文案</Button>
               </Space>
             }
           >
             <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
           </Form.Item>
+          {copyNote && (
+            <div style={{ marginTop: -8, marginBottom: 10, fontSize: 12, color: '#8c8c8c' }}>{copyNote}</div>
+          )}
+          {sellingPoints.length > 0 && (
+            <div style={{ marginTop: -2, marginBottom: 10 }}>
+              <Space size={[6, 6]} wrap>
+                {sellingPoints.map((p, i) => <Tag color="gold" key={`${p}-${i}`}>{p}</Tag>)}
+              </Space>
+            </div>
+          )}
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="AI 文案仅供起草"
+            description="标题、卖点和开场话术不会自动发布为权威事实；卖家需核对后再点击发布。"
+          />
           <Divider orientation="left" plain>竞拍规则</Divider>
           <Space size={16} style={{ display: 'flex' }}>
             <Form.Item label="起拍价" name="start" style={{ flex: 1 }} extra="0 元起拍（固定 · 无保留价）" tooltip="本场拍卖始终 0 元起拍，无保留价，人人可参与">
