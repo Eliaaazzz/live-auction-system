@@ -17,6 +17,18 @@ body,
   height: 100%;
 }
 
+/* #260-7: on mobile, `height:100%` only tracks the browser-chrome resize on a
+   resize event and `100vh` overshoots behind the collapsed URL bar — both squeeze
+   the bottom tab/bid bars. `dvh` follows the dynamic viewport live. Desktop is
+   unaffected (dvh == vh there). */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
 html,
 body {
   /* NOTE: do NOT force a dark background here. The Showcase / live pages set

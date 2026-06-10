@@ -217,7 +217,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           <ActionRail roomId={room.id} cartCount={lot.index} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
           <div className={shake ? 'lm-shake' : undefined}>
-            <BidActionBar joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
+            <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
           </div>
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
@@ -226,7 +226,9 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <EmotionFX fx={fx} />
 
-          {bidSheetOpen && (
+          {/* #260-2: gate the sheet on `ready` — opened pre-snapshot it would seed its
+              amount stepper from the lot.startPrice fallback instead of the live min. */}
+          {bidSheetOpen && ready && (
             <BidSheet lot={lot} state={state} nextMinBid={nextMinBid} onClose={() => setBidSheetOpen(false)} onConfirm={(amt) => { if (!joined) { setBidSheetOpen(false); setSheetTab('join'); return; } placeBid(amt); setBidSheetOpen(false); }} />
           )}
 
@@ -254,14 +256,23 @@ function CountdownPill({ ms, ending, urgent, hidden }: { ms: number; ending: boo
   );
 }
 
-function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
+function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { ready: boolean; joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
   const [amt, setAmt] = useState(nextMinBid);
   const effCap = capPrice > 0 ? capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
   // #2 不随直播价「自己跳动」：别人出价时保持我设好的数字不变。价格涨过我的数字时
   // 不静默改它，只在点「出价」那一刻按最新最低价钳制提交，并提示「价已涨」。
+  // #260-2 例外：用户还没碰过步进器时跟随最新最低价 —— 该 bar 在骨架屏后面就挂载了，
+  // 初始 seed 可能是快照未到时的 lot.startPrice 回退值（会偏高，如 ¥5000 vs 真实最低
+  // ¥3200），不跟随就会按虚高价提交。「我设好的数字」从第一次点 +/- 才算数。
+  const touched = useRef(false);
+  useEffect(() => { if (!touched.current) setAmt(nextMinBid); }, [nextMinBid]);
   const bidAmt = Math.min(effCap, Math.max(amt, nextMinBid));
-  const staleLow = amt < nextMinBid;
+  const staleLow = touched.current && amt < nextMinBid;
 
+  // 快照未到位时不给出价入口：此刻的 nextMinBid 只是回退猜测（#260-2 禁用 CTA）。
+  if (!ready) {
+    return (<div className="lm-bidbar"><button className="lm-bidcta" disabled>正在同步竞拍价…</button></div>);
+  }
   if (!joined) {
     return (<div className="lm-bidbar"><button className="lm-bidcta join" onClick={onJoin}><span><Icon name="gavel" size={18} /> 我要参与竞拍</span><span className="sub">同意服务条款后即可出价</span></button></div>);
   }
@@ -275,8 +286,8 @@ function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, i
   }
   const behind = myRank != null && myRank >= 2;
   const gapv = myMax != null ? Math.max(0, currentPrice - myMax) : currentPrice;
-  const dec = () => setAmt((a) => Math.max(nextMinBid, a - increment));
-  const inc = () => setAmt((a) => Math.min(effCap, a + increment));
+  const dec = () => { touched.current = true; setAmt((a) => Math.max(nextMinBid, a - increment)); };
+  const inc = () => { touched.current = true; setAmt((a) => Math.min(effCap, a + increment)); };
   return (
     <div className="lm-bidbar">
       {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtCompactYuan(gapv)}</div><div className="l">距第一名</div></div>)}

@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Card, Statistic, Steps, Button, Popconfirm, Tabs, Tag, Avatar, Progress, Empty, Spin, Select, App as AntdApp } from 'antd';
+import { Card, Statistic, Steps, Button, Popconfirm, Tabs, Tag, Avatar, Progress, Spin, Select, App as AntdApp } from 'antd';
 import { ThunderboltOutlined, StopOutlined, CrownOutlined, TeamOutlined, FireOutlined, ReloadOutlined, VideoCameraOutlined } from '@ant-design/icons';
 import { useAuctionEngine } from '../../lib/useAuctionEngine';
 import { auctionToLot, type BackendAuction } from '../../lib/mapBackend';
@@ -7,11 +7,12 @@ import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
 import type { Lot } from '../../lib/types';
 import { fmtMoney, fmtClock, fmtCompact } from '../../lib/format';
+import EmptyLive from '../EmptyLive';
 
 const STEP_INDEX: Record<string, number> = { upcoming: 0, live: 1, ending: 2, sold: 3, unsold: 3 };
 const POLL_MS = 10_000;
 
-export default function LiveMonitor() {
+export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {}) {
   const [liveList, setLiveList] = useState<BackendAuction[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -71,7 +72,7 @@ export default function LiveMonitor() {
         // key by id so switching pick remounts the engine cleanly.
         <MonitorView key={selected.auctionId} lot={auctionToLot(selected)} onCancelled={refresh} />
       ) : (
-        <Card><Empty description="暂无正在直播的竞拍" style={{ padding: 32 }} /></Card>
+        <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} /></Card>
       )}
     </div>
   );

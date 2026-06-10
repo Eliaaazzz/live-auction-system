@@ -1070,7 +1070,7 @@ func clampLeaderboardN(q string) int {
 	return v
 }
 
-// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, amountCents}]}.
+// GET /api/auctions/{id}/leaderboard?n=10 -> {auctionId, leaderboard:[{userId, displayName, amountCents}]}.
 // Top-n bidders by accepted max amount (Redis ZSET), money as string. n clamps to [1,100].
 // Requires a valid token: the bidder list (userId + amount) is room-scoped data, not
 // public the way the single current price is — so unlike GET /auctions/{id} it is gated.
@@ -1084,6 +1084,21 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	// #260-3: label rows with nicknames. WS BID_ACCEPTED already carries
+	// displayName; without this the REST reconcile path showed raw `user_xxx`
+	// ids for bidders the client never saw live. Best-effort — on DB error the
+	// rows go out unlabeled (client falls back to userId), never a 500.
+	if len(lb) > 0 {
+		ids := make([]string, len(lb))
+		for i := range lb {
+			ids[i] = lb[i].UserID
+		}
+		if names, nerr := s.st.UserNicknames(r.Context(), ids); nerr == nil {
+			for i := range lb {
+				lb[i].DisplayName = names[lb[i].UserID]
+			}
+		}
 	}
 	// Stamp the response with the auction's current state seq so the client can
 	// reconcile by seq: it merge-MAXes the REST rows into its live board and never

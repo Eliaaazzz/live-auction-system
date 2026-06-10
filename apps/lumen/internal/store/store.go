@@ -830,6 +830,10 @@ func (s *Store) PlaceBidSealed(ctx context.Context, aid, userID, clientBidID, am
 type LeaderEntry struct {
 	UserID      string `json:"userId"`
 	AmountCents string `json:"amountCents"`
+	// DisplayName is filled by the REST layer from the users table (#260-3) so
+	// the leaderboard shows nicknames, not raw ids. Empty = unknown (client
+	// falls back to UserID). The Redis ZSET itself stores only ids.
+	DisplayName string `json:"displayName,omitempty"`
 }
 
 // Leaderboard returns the top-n bidders by accepted max amount, descending.
