@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -21,12 +22,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// POST /api/login {nickname} -> {userId, token, nickname}. Public buyer login.
-// This keeps production dev-login disabled while still allowing browser users
-// to obtain a user-scoped bidding token. Seller/admin roles are not minted here.
+// POST /api/login {nickname, sellerKey?} -> {userId, token, nickname, role}.
+// Public buyer login; the plain path always mints a `user_*` id with role
+// "user" (a `role` field in the body is ignored — see login_prod_test).
+//
+// #260-4 seller path: with sellerKey present (and matching LUMEN_SELLER_KEY
+// when configured) the id is minted in the separate `seller_*` namespace.
+// That namespace — not a DB role column — is what creation endpoints trust
+// (requireSeller): the plain login derives ids as user_+slug(nickname), so any
+// nickname is publicly impersonable and a role attached to it would be too.
+// A seller_* id can only come out of this key-checked branch, and the JWT
+// signature keeps it unforgeable.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Nickname string `json:"nickname"`
+		Nickname  string `json:"nickname"`
+		SellerKey string `json:"sellerKey"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -36,8 +46,16 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "nickname required")
 		return
 	}
-	userID := "user_" + slug(nickname)
-	if err := s.st.UpsertUser(r.Context(), userID, nickname, "user"); err != nil {
+	role, prefix := "user", "user_"
+	if key := strings.TrimSpace(body.SellerKey); key != "" {
+		if s.cfg.SellerKey != "" && subtle.ConstantTimeCompare([]byte(key), []byte(s.cfg.SellerKey)) != 1 {
+			writeErr(w, http.StatusForbidden, "invalid seller key")
+			return
+		}
+		role, prefix = "seller", "seller_"
+	}
+	userID := prefix + slug(nickname)
+	if err := s.st.UpsertUser(r.Context(), userID, nickname, role); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -45,7 +63,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"userId":   userID,
 		"token":    auth.Token(s.cfg.JWTSecret, userID),
 		"nickname": nickname,
+		"role":     role,
 	})
+}
+
+// requireSeller gates creation endpoints behind the seller namespace when a
+// seller key is configured (#260-4). Unset key (default, dev/CI/loadtest) =
+// open mode: every authenticated user passes, today's flows keep working.
+func (s *Server) requireSeller(w http.ResponseWriter, userID string) bool {
+	if s.cfg.SellerKey == "" || strings.HasPrefix(userID, "seller_") {
+		return true
+	}
+	writeJSON(w, http.StatusForbidden, map[string]string{"code": model.CodeErrNotAllow, "error": "seller login required"})
+	return false
 }
 
 // POST /api/auctions/{id}/bids {clientBidId, amountCents} -> BID_ACCEPTED/BID_REJECTED envelope.
@@ -182,6 +212,9 @@ func (s *Server) handleCreateProduct(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	if !s.requireSeller(w, userID) {
+		return
+	}
 	var body struct {
 		Name        string `json:"name"`
 		ImageURL    string `json:"imageUrl"`
@@ -265,6 +298,9 @@ func (s *Server) handleCreateAuction(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
 	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !s.requireSeller(w, userID) {
 		return
 	}
 	var body struct {

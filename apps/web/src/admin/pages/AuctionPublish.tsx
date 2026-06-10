@@ -4,6 +4,7 @@ import { PlusOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
+import { INTRO_TEMPLATES, defaultIntro, pickIntro } from '../../lib/intro';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
 
@@ -11,31 +12,6 @@ const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) *
 
 const CAT_EMOJI: Record<string, string> = { 玉石珠宝: '🧿', 翡翠玉镯: '💚', 二手奢侈品: '⌚️', 文玩杂项: '🫖', 钱币邮票: '🪙', 艺术品: '🎴', 特色食品: '🍫' };
 const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠玉镯: PROD.jadeBangle, 二手奢侈品: PROD.watch, 文玩杂项: PROD.teapot, 钱币邮票: PROD.goldNecklace, 艺术品: PROD.diamond, 特色食品: PROD.chocolate };
-
-// 即时智能模板：点「AI 生成介绍」立刻出文案（卖家零等待、永不空白），合规——
-// 不出现「保真/正品/假一赔十」等词，结尾统一带平台不保真声明。后台真豆包返回后再精修。
-const INTRO_TEMPLATES: Record<string, (name: string) => string> = {
-  玉石珠宝: (n) => `${n}：天然材质，色泽温润，雕工细腻，佩戴大气百搭。成色与瑕疵以实物及卖家声明为准，平台不作真伪保证，理性出价。`,
-  翡翠玉镯: (n) => `${n}：种水透亮，触手细腻，圈口适中，日常佩戴显气质。颜色与种地以实物为准，平台不保真，喜欢的朋友放心参与。`,
-  二手奢侈品: (n) => `${n}：经典款式，品相良好，配件情况以图为准。二手非全新，真伪与成色由卖家声明，平台不作鉴定背书，请理性竞拍。`,
-  文玩杂项: (n) => `${n}：包浆自然，形制规整，盘玩手感佳。年代与材质以卖家描述为准，平台不保真，识货的朋友可大胆出价。`,
-  钱币邮票: (n) => `${n}：品相清晰，存世可藏，细节见图。评级与真伪以卖家声明为准，平台不作担保，欢迎理性竞拍。`,
-  艺术品: (n) => `${n}：做工考究，观感出众，适合收藏陈设。作者与年代以卖家描述为准，平台不作鉴定保证。`,
-  特色食品: (n) => `${n}：精选用料，风味地道，适合自享或送礼。保质期与产地以实物标签为准，请按需出价。`,
-};
-const defaultIntro = (n: string) => `${n}：成色良好，细节见图，喜欢的朋友可参与竞拍。具体材质与瑕疵以实物及卖家声明为准，平台不作真伪保证。`;
-
-// composeIntro 把真豆包识图返回的 facts 拼成一段「AI 识图」介绍：过滤掉
-// highRisk / authenticity / unverified（平台不保真），无可用事实时返回 null（保留模板）。
-const FIELD_CN: Record<string, string> = { category: '品类', brand: '品牌', model: '型号', condition: '成色', defects: '瑕疵', material: '材质', color: '颜色' };
-function composeIntro(name: string, facts?: Array<{ field?: string; value?: string; highRisk?: boolean }>): string | null {
-  const good = (facts ?? []).filter(
-    (f) => f?.value && !f.highRisk && f.field !== 'authenticity' && String(f.value).trim().toLowerCase() !== 'unverified',
-  );
-  if (!good.length) return null;
-  const parts = good.map((f) => `${FIELD_CN[f.field ?? ''] ?? f.field}：${f.value}`);
-  return `${name}（AI 识图）${parts.join('，')}。成色与瑕疵以实物及卖家声明为准，平台不作真伪保证。`;
-}
 
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
@@ -66,9 +42,11 @@ export default function AuctionPublish() {
   };
 
   // ✨ AI 生成商品介绍 —— 秒出 + 后台真 AI 精修：
-  //   1) 点击【立刻】写入合规智能模板，卖家零等待、按钮不转圈、永不空白；
-  //   2) 同时【非阻塞】调真豆包多模态识图（/facts/draft），8s 内返回且卖家未改动
-  //      就替换成「AI 识图」版；超时/失败/已被改动则保留模板。
+  //   1) 点击【立刻】写入有人味的分类模板（lib/intro），卖家零等待、按钮不转圈、永不空白；
+  //   2) 同时【非阻塞】调真豆包多模态识图（/facts/draft）。同一个能读图的模型一次调用
+  //      直出 facts + intro 文案（sidecar 已做合规清洗），12s 内返回且卖家未改动就替换；
+  //      超时/失败/已被改动则保留模板。12s 按 doubao-seed-flash 档位给（通常 2~4s 返
+  //      回），thinking 系模型请直接换接入点而不是调大这里。
   // 这样真模型再慢也不卡 demo，而 AI 仍真实在跑（不是假装）。
   const onAiIntro = () => {
     const name = String(form.getFieldValue('name') || '').trim();
@@ -79,11 +57,11 @@ export default function AuctionPublish() {
     message.success('✨ 已生成商品介绍');
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    const timer = setTimeout(() => ctrl.abort(), 12000);
     void (async () => {
       try {
         await ensureSession('seller-demo');
-        const { facts } = await api.draftFacts({
+        const resp = await api.draftFacts({
           productId: 'draft-preview',
           title: name,
           description: tpl,
@@ -91,11 +69,11 @@ export default function AuctionPublish() {
           imageUrls: [uploadedUrl ? (uploadedUrl.startsWith('http') ? uploadedUrl : location.origin + uploadedUrl) : (CAT_IMG[category] ?? PROD.jadePendant)],
           signal: ctrl.signal,
         });
-        const refined = composeIntro(name, facts);
+        const refined = pickIntro(name, resp);
         // 仅当卖家没动过（仍等于模板）才用 AI 版覆盖，绝不抹掉卖家手改。
         if (refined && form.getFieldValue('name') === name && form.getFieldValue('intro') === tpl) {
-          form.setFieldsValue({ intro: refined.slice(0, 200) });
-          message.success('AI 已根据商品图优化介绍');
+          form.setFieldsValue({ intro: refined });
+          message.success('✨ AI 已看图重写介绍');
         }
       } catch {
         /* 超时/中止/失败：静默保留模板——demo 永不暴露 AI 慢或不可用。 */
