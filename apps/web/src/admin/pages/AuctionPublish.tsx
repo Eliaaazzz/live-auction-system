@@ -258,7 +258,7 @@ export default function AuctionPublish() {
             message.success('🎬 直播视频已就位，开拍即自动播放');
           } catch (ve: any) {
             hideUp();
-            message.warning('视频上传失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || ve));
+            message.warning('视频上传失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || String(ve ?? '未知错误')));
           }
         }
         await api.freeze(auctionId, { factsConfirmed: true });

@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,6 +104,14 @@ func TestSlugEmptyResidueDistinctAndStable(t *testing.T) {
 	}
 	if x, y := slug("!!!"), slug("???"); x == y {
 		t.Fatalf("symbol-only nicknames collide: %q == %q", x, y)
+	}
+	// pin the output SHAPE of the hashed path: anon + 8 hex chars
+	if x := slug("!!!"); len(x) != len("anon")+8 || !strings.HasPrefix(x, "anon") {
+		t.Fatalf("hashed slug shape: %q want anon+8hex", x)
+	}
+	// whitespace-only trims to empty → bare anon (defensive branch, upstream rejects it)
+	if got := slug("   "); got != "anon" {
+		t.Fatalf("slug(whitespace-only)=%q want anon", got)
 	}
 }
 
