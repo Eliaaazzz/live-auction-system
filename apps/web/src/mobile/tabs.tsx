@@ -89,14 +89,14 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
     <div>
       <div className="lm-section-t"><Icon name="trophy" size={13} /> 实时排名 · 参与 {state.participants} 人 · 出价 {state.bidCount} 次</div>
       <div className="lm-podium">
-        <div className="lm-rankcard r1">
-          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先</div>
-          <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{first?.userName ?? '虚位以待'}</span></div>
+        <div className={'lm-rankcard r1' + (first?.self ? ' me' : '')}>
+          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先{first?.self ? ' · 我' : ''}</div>
+          <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{first ? (first.self ? '我' : first.userName) : '虚位以待'}</span></div>
           <div className="lm-rank-amt tnum">{first ? fmtCompactYuan(first.amount) : fmtYuan(0)}</div>
         </div>
-        <div className="lm-rankcard r2">
-          <div className="lm-rank-badge">2 · 第二名 · 紧追</div>
-          <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{second?.userName ?? '虚位以待'}</span></div>
+        <div className={'lm-rankcard r2' + (second?.self ? ' me' : '')}>
+          <div className="lm-rank-badge">2 · 第二名 · 紧追{second?.self ? ' · 我' : ''}</div>
+          <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{second ? (second.self ? '我' : second.userName) : '虚位以待'}</span></div>
           <div className="lm-rank-amt tnum">{second ? fmtCompactYuan(second.amount) : '—'}</div>
         </div>
       </div>
@@ -125,15 +125,18 @@ function HistoryTab({ state }: { state: AuctionState }) {
     <div>
       <div className="lm-section-t"><Icon name="clock" size={13} /> 出价历史 · 共 {state.bidCount} 次（最近 50 条）</div>
       {rows.length === 0 && <div className="lm-empty">暂无出价，快来抢第一口</div>}
-      {rows.map((b, i) => (
-        <div className="lm-hist-row" key={b.id}>
-          <Avatar src={b.avatar} size={26} />
-          <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
-          {i === 0 && <span className="lm-hist-lead">当前领先</span>}
-          <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
-          <span className="lm-hist-t">{ago(b.ts)}</span>
-        </div>
-      ))}
+      {/* #261-1 固定高度 + 内置滚动条，列表再长也不会顶开面板 */}
+      <div className="lm-hist-list">
+        {rows.map((b, i) => (
+          <div className={'lm-hist-row' + (b.self ? ' self' : '')} key={b.id}>
+            <Avatar src={b.avatar} size={26} />
+            <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
+            {i === 0 && <span className="lm-hist-lead">当前领先</span>}
+            <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
+            <span className="lm-hist-t">{ago(b.ts)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

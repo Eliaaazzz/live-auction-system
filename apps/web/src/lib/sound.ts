@@ -23,6 +23,27 @@ function ac(): AudioContext | null {
 export function unlockAudio(): void {
   ac();
 }
+
+// 语音播报（#261-6）：用浏览器内置 Web Speech TTS，无需后端 / 音频文件，离线可用。
+// 受同一个静音开关控制；做节流避免连续出价时叠播。
+let lastSpeakAt = 0;
+export function speak(text: string): void {
+  if (muted) return;
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  const now = Date.now();
+  if (now - lastSpeakAt < 1200) return;
+  lastSpeakAt = now;
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-CN';
+    u.rate = 1.06;
+    u.volume = 0.9;
+    window.speechSynthesis.cancel(); // 抢占未播完的上一条，保证及时
+    window.speechSynthesis.speak(u);
+  } catch {
+    /* TTS 不可用则静默降级到提示音 */
+  }
+}
 export function isMuted(): boolean {
   return muted;
 }
