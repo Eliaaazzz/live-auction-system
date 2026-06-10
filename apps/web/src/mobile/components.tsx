@@ -103,13 +103,9 @@ export function LotChip({ lot }: { lot: Lot }) {
 }
 
 interface Float { id: number; x: number; color: string; icon: IconName; }
-// NOTE: ll_like_<roomId> (and the lj_join_ / lf_follow_ keys elsewhere) are a
-// client-side cache. A future backend likes/follows API will reconcile these —
-// the local flag just keeps the optimistic UI sticky across refreshes.
-export function ActionRail({ roomId, cartCount: _cartCount, onOpenComments: _onOpenComments, onOpenGift, onShare }: { roomId: string; cartCount?: number; onOpenComments?: () => void; onOpenGift?: () => void; onShare?: () => void } = { roomId: '' }) {
-  const likeKey = 'll_like_' + roomId;
-  const [liked, setLiked] = useState(() => localStorage.getItem(likeKey) === '1');
-  const [likes, setLikes] = useState(() => (localStorage.getItem(likeKey) === '1' ? 1285 : 1284));
+// #261-10 点赞状态/计数提升到 LiveRoom（可取消 + 跨端广播同步）；本组件只负责
+// 渲染与点赞气泡动画。like/count 经 props 传入，onLike 切换由父组件广播。
+export function ActionRail({ likes, liked, onLike, cartCount: _cartCount, onOpenComments: _onOpenComments, onOpenGift, onShare }: { roomId?: string; cartCount?: number; likes: number; liked: boolean; onLike: () => void; onOpenComments?: () => void; onOpenGift?: () => void; onShare?: () => void }) {
   const [floats, setFloats] = useState<Float[]>([]);
   const seq = useRef(0);
   const colors = ['#fe2c55', '#ff8fa3', '#ffce54', '#7fd6ff', '#9bd24e'];
@@ -118,16 +114,10 @@ export function ActionRail({ roomId, cartCount: _cartCount, onOpenComments: _onO
     setFloats((f) => [...f, { id, x: (Math.random() - 0.5) * 26, color: colors[id % colors.length], icon }]);
     setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1000);
   };
-  const like = () => {
-    if (liked) return; // once per room
-    setLikes((n) => n + 1);
-    setLiked(true);
-    try { localStorage.setItem(likeKey, '1'); } catch { /* ignore */ }
-    burst('heart');
-  };
+  const onHeart = () => { if (!liked) burst('heart'); onLike(); };
   return (
     <div className="lm-rail">
-      <button className="lm-rail-btn" onClick={like}>
+      <button className="lm-rail-btn" onClick={onHeart}>
         <div className="lm-rail-ic" style={{ color: liked ? '#fe2c55' : '#fff', position: 'relative' }}>
           <Icon name="heart" size={23} fill={liked} />
           {floats.map((f) => (<span key={f.id} className="lm-heart-float" style={{ marginLeft: f.x, color: f.color }}><Icon name={f.icon} size={18} fill /></span>))}

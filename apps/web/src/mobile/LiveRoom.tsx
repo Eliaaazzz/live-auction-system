@@ -5,6 +5,7 @@ import { COMMENT_POOL, ENTER_POOL, BOT_USERS, pick } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
 import { sfx, isMuted, setMuted, unlockAudio } from '../lib/sound';
+import { createRoomBus, type RoomBus } from '../lib/roomBus';
 import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
 import { BidSheet } from './BidSheet';
@@ -40,7 +41,11 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const [flash, setFlash] = useState<{ id: number; type: 'gold' | 'red' } | null>(null);
   const [gain, setGain] = useState<{ id: number; text: string } | null>(null);
   const [shake, setShake] = useState(false);
+  // #261-10 点赞提升到房间层：可取消 + 跨端广播同步
+  const [liked, setLiked] = useState(() => localStorage.getItem('ll_like_' + room.id) === '1');
+  const [likes, setLikes] = useState(() => (localStorage.getItem('ll_like_' + room.id) === '1' ? 1285 : 1284));
 
+  const busRef = useRef<RoomBus | null>(null);
   const feedSeq = useRef(0);
   const fxSeq = useRef(0);
   const flashSeq = useRef(0);
@@ -58,6 +63,29 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     setFeed((f) => [...f.slice(-40), { ...item, id }]);
     if (item.kind !== 'bid' && sheetRef.current !== 'comments') setUnread((u) => u + 1);
   }, []);
+
+  // #261-7/8/10 房间社交总线：把本端弹幕/送礼/点赞同步给同浏览器的其它买家端，
+  // 并渲染收到的对端事件（不回投自身，故本端动作不会重复）。
+  useEffect(() => {
+    const bus = createRoomBus(room.id);
+    busRef.current = bus;
+    const off = bus.subscribe((e) => {
+      if (e.t === 'comment' || e.t === 'gift') pushFeed({ kind: 'comment', name: e.name, text: e.text, color: e.color, avatar: e.avatar });
+      else if (e.t === 'like') setLikes((n) => Math.max(0, n + e.delta));
+    });
+    return () => { off(); bus.close(); busRef.current = null; };
+  }, [room.id, pushFeed]);
+
+  // #261-10 点赞可取消 + 广播：再点一次取消，计数 ±1 并广播给对端。
+  const toggleLike = useCallback(() => {
+    setLiked((was) => {
+      const now = !was;
+      setLikes((n) => Math.max(0, n + (now ? 1 : -1)));
+      try { localStorage.setItem('ll_like_' + room.id, now ? '1' : '0'); } catch { /* ignore */ }
+      busRef.current?.publish({ t: 'like', delta: now ? 1 : -1 });
+      return now;
+    });
+  }, [room.id]);
 
   const flashFx = useCallback((type: FxToken['type'], text: string) => {
     const id = fxSeq.current++;
@@ -122,7 +150,12 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     if (loading) return;
     const t = setInterval(() => {
       if (Math.random() < 0.3) pushFeed({ kind: 'enter', text: pick(ENTER_POOL) });
-      else { const u = pick(BOT_USERS); pushFeed({ kind: 'comment', name: u.name, text: pick(COMMENT_POOL), color: u.color, avatar: u.avatar }); }
+      else {
+        // #261-7 弹幕一致：本端机器人弹幕也广播给对端，两端最终渲染同一并集
+        const u = pick(BOT_USERS); const text = pick(COMMENT_POOL);
+        pushFeed({ kind: 'comment', name: u.name, text, color: u.color, avatar: u.avatar });
+        busRef.current?.publish({ t: 'comment', name: u.name, text, color: u.color, avatar: u.avatar });
+      }
     }, 2600 + Math.random() * 1600);
     return () => clearInterval(t);
   }, [loading, pushFeed]);
@@ -175,7 +208,12 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const toggleFollow = () => setFollowed((v) => { const nv = !v; localStorage.setItem('lf_follow_' + room.id, nv ? '1' : '0'); return nv; });
   const tapTab = (t: TabKey) => { setSheetTab((cur) => (cur === t ? null : t)); if (t === 'comments') setUnread(0); };
   const onJoin = () => { setJoined(true); try { localStorage.setItem('lj_join_' + room.id, '1'); } catch { /* ignore */ } pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
-  const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ident.avatar }); };
+  const onSendGift = (g: GiftTier) => {
+    // #261-8 送礼广播：本端显示「我」，对端显示真实昵称（自相对显示）
+    const text = `送出 ${g.emoji} ${g.name}`;
+    pushFeed({ kind: 'comment', name: '我', text, color: '#ffce54', avatar: ident.avatar });
+    busRef.current?.publish({ t: 'gift', name: ident.nickname || '观众', text, color: '#ffce54', avatar: ident.avatar });
+  };
   const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
   // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
   // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
@@ -214,7 +252,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           {gain && <div key={gain.id} className="lm-gainfloat">{gain.text}</div>}
 
           <Danmaku items={danmaku} />
-          <ActionRail roomId={room.id} cartCount={lot.index} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
+          <ActionRail roomId={room.id} cartCount={lot.index} likes={likes} liked={liked} onLike={toggleLike} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
           <div className={shake ? 'lm-shake' : undefined}>
             <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
@@ -222,7 +260,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
 
-          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ident.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
+          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => { pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ident.avatar }); busRef.current?.publish({ t: 'comment', name: ident.nickname || '观众', text: t, color: '#fe2c55', avatar: ident.avatar }); }} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
 
           <EmotionFX fx={fx} />
 
