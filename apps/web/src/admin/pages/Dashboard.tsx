@@ -34,7 +34,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
       } catch { /* keep last good */ }
     };
     load();
-    const t = setInterval(load, 10_000);
+    const t = setInterval(load, 5_000); // #261-5 收紧轮询，成交/出价数据更贴近直播间
     return () => { alive = false; clearInterval(t); };
   }, []);
 
@@ -44,8 +44,10 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
   const liveBids = live.reduce((s, a) => s + (Number(a.bidCount) || 0), 0);
   const liveLot = live[0];
   const hasReal = auctions.length > 0;
-  const recent = sold.length
-    ? sold.slice(0, 4).map((a) => ({ img: a.imageUrl || PROD.watch, name: a.productName || '拍品', price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId) }))
+  // #261-5 近期成交与上方统计卡同源：有真实拍卖时一律走真实成交（可能为空），
+  // 不再在「成交额/订单=0」时仍展示 4 条演示成交，避免三处口径打架。
+  const recent = hasReal
+    ? sold.slice(0, 8).map((a) => ({ img: a.imageUrl || PROD.watch, name: a.productName || '拍品', price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId) }))
     : DEMO_RECENT;
   return (
     <div style={{ margin: 18 }}>
@@ -110,6 +112,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
           <Card title="近期成交">
             <List
               dataSource={recent}
+              locale={{ emptyText: '本场暂无成交，开拍成交后实时刷新' }}
               renderItem={(it) => (
                 <List.Item>
                   <List.Item.Meta
