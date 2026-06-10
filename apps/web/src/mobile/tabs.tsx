@@ -127,15 +127,18 @@ function HistoryTab({ state }: { state: AuctionState }) {
     <div>
       <div className="lm-section-t"><Icon name="clock" size={13} /> 出价历史 · 共 {state.bidCount} 次（最近 50 条）</div>
       {rows.length === 0 && <div className="lm-empty">暂无出价，快来抢第一口</div>}
-      {rows.map((b, i) => (
-        <div className="lm-hist-row" key={b.id}>
-          <Avatar src={b.avatar} size={26} />
-          <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
-          {i === 0 && <span className="lm-hist-lead">当前领先</span>}
-          <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
-          <span className="lm-hist-t">{ago(b.ts)}</span>
-        </div>
-      ))}
+      {/* #261-1 固定高度 + 内置滚动条，列表再长也不会顶开面板 */}
+      <div className="lm-hist-list">
+        {rows.map((b, i) => (
+          <div className={'lm-hist-row' + (b.self ? ' self' : '')} key={b.id}>
+            <Avatar src={b.avatar} size={26} />
+            <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
+            {i === 0 && <span className="lm-hist-lead">当前领先</span>}
+            <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
+            <span className="lm-hist-t">{ago(b.ts)}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

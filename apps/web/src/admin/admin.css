@@ -37,7 +37,34 @@
 .mon-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; flex-shrink: 0; }
 .mon-time { color: #bbb; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 @keyframes monin { from { transform: translateY(-6px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.mon-amt { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mon-amt { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+/* #261-2 监控全貌：grid 子项允许收缩，避免右卡被裁、买家名被挤成竖排 */
+.mon-grid > * { min-width: 0; }
+.mon-bid > .mon-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mon-bid > .ant-avatar, .mon-bid > .ant-tag { flex-shrink: 0; }
+.mon-bid > span:not(.mon-name):not(.mon-amt) { flex-shrink: 0; white-space: nowrap; }
+
+/* #261-13 直播中左侧发布历史 */
+.mon-layout { display: flex; gap: 16px; align-items: flex-start; }
+.mon-main { flex: 1 1 auto; min-width: 0; }
+.mon-history { width: 216px; flex-shrink: 0; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px; max-height: 560px; display: flex; flex-direction: column; }
+.mon-history-hd { font-weight: 700; font-size: 14px; color: #333; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+.mon-history-hd span { font-size: 12px; color: #fe2c55; font-weight: 600; }
+.mon-history-list { overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+.mon-history-empty { color: #bbb; font-size: 13px; text-align: center; padding: 20px 0; }
+.mon-history-item { display: flex; align-items: center; gap: 10px; padding: 8px; width: 100%; font: inherit; color: inherit; text-align: left; border-radius: 8px; background: #fafafa; border: 1px solid transparent; cursor: default; transition: background 0.15s; }
+.mon-history-item.live { cursor: pointer; }
+.mon-history-item.live:hover { background: #fff0f3; }
+.mon-history-item.active { background: #fff0f3; border-color: #ffd6df; }
+.mon-history-meta { min-width: 0; flex: 1 1 auto; display: flex; flex-direction: column; gap: 4px; }
+.mon-history-name { font-size: 13px; font-weight: 600; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 980px) {
+  .mon-layout { flex-direction: column; }
+  .mon-history { width: auto; max-height: none; }
+  .mon-history-list { flex-direction: row; overflow-x: auto; }
+  .mon-history-item { min-width: 210px; }
+}
+
 /* #261-13: 发布历史 | 表单 | 预览 三栏 */
 .pub-grid { display: grid; grid-template-columns: 248px 1fr 320px; gap: 24px; }
 @media (max-width: 1280px) { .pub-grid { grid-template-columns: 1fr 320px; } .pub-history { display: none; } }
