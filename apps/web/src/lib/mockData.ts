@@ -22,16 +22,20 @@ export const ENTER_POOL: string[] = ['北京的 马大瓜 来了','上海的 设
 
 export const ROOMS: Room[] = [
   {
-    id: 'room-1', anchorName: '马大瓜珠宝', anchorAvatar: avatar(5), fans: '6.8万', viewers: 2333, tagline: '古玩榜第 8 名',
-    lot: { id: 'lot-1', index: 1, title: '金镶玉平安扣·和田玉吊坠项链首饰', subtitle: '和田玉 · 925银镶嵌 · 附证书', image: PROD.jadePendant, tone: '#2f6b5a', tone2: '#d9b45a', startPrice: 0, increment: 50, minIncrement: 50, capPrice: 12000, deposit: 200, durationSec: 80, extendSec: 15, category: '玉石珠宝', estimate: '市场参考价 ¥6,800 – ¥9,200' },
+    id: 'room-1', anchorName: '腕表猎人 Leo', anchorAvatar: avatar(52), fans: '23.4万', viewers: 6620, tagline: '名表榜第 1 名',
+    lot: { id: 'lot-1', index: 1, title: '百达翡丽年历计时腕表 · 玫瑰金蓝盘', subtitle: '95新 · 原盒原证 · 已质检', image: PROD.watch, tone: '#16294a', tone2: '#c9925e', startPrice: 0, increment: 2000, minIncrement: 2000, capPrice: 680000, deposit: 20000, durationSec: 90, extendSec: 30, category: '名表', estimate: '市场参考价 ¥58万 – ¥66万' },
   },
   {
-    id: 'room-2', anchorName: '翠玉阁·阿琳', anchorAvatar: avatar(20), fans: '12.1万', viewers: 4180, tagline: '珠宝榜第 3 名',
-    lot: { id: 'lot-2', index: 1, title: '天然冰糯种翡翠手镯 · 内径 56mm', subtitle: 'A货翡翠 · 起光起胶 · 复检证书', image: PROD.jadeBangle, tone: '#0f7a5a', tone2: '#27d39b', startPrice: 1000, increment: 100, minIncrement: 100, capPrice: 30000, deposit: 500, durationSec: 70, extendSec: 20, category: '翡翠玉镯', estimate: '市场参考价 ¥1.8万 – ¥2.6万' },
+    id: 'room-2', anchorName: '大牌包包·Mia', anchorAvatar: avatar(20), fans: '12.1万', viewers: 4180, tagline: '箱包榜第 3 名',
+    lot: { id: 'lot-2', index: 1, title: '范思哲 La Medusa 印花帆布托特包', subtitle: '美杜莎装饰 · 小号 · 全新带卡', image: PROD.bag, tone: '#1c1c20', tone2: '#d4af5f', startPrice: 0, increment: 100, minIncrement: 100, capPrice: 12000, deposit: 500, durationSec: 70, extendSec: 20, category: '箱包', estimate: '市场参考价 ¥8,500 – ¥11,000' },
   },
   {
-    id: 'room-3', anchorName: '腕表猎人 Leo', anchorAvatar: avatar(52), fans: '23.4万', viewers: 6620, tagline: '二奢榜第 1 名',
-    lot: { id: 'lot-3', index: 1, title: '二手奢侈品腕表 · 钢款自动机械', subtitle: '95新 · 原盒原证 · 已质检', image: PROD.watch, tone: '#1b2a4a', tone2: '#aab3c7', startPrice: 5000, increment: 500, minIncrement: 500, capPrice: 88000, deposit: 2000, durationSec: 90, extendSec: 30, category: '二手奢侈品', estimate: '市场参考价 ¥6.8万 – ¥7.6万' },
+    id: 'room-3', anchorName: '高定衣橱·Coco', anchorAvatar: avatar(5), fans: '6.8万', viewers: 2333, tagline: '服饰榜第 8 名',
+    lot: { id: 'lot-3', index: 1, title: '香奈儿经典粗花呢套装', subtitle: '米金色 · 珍珠链饰 · 专柜电子卡', image: PROD.apparel, tone: '#8a7656', tone2: '#e6d6ae', startPrice: 0, increment: 500, minIncrement: 500, capPrice: 48000, deposit: 1000, durationSec: 80, extendSec: 15, category: '服饰', estimate: '市场参考价 ¥3.2万 – ¥4.5万' },
+  },
+  {
+    id: 'room-4', anchorName: '潮鞋研究所·Kiko', anchorAvatar: avatar(33), fans: '9.6万', viewers: 3512, tagline: '鞋履榜第 5 名',
+    lot: { id: 'lot-4', index: 1, title: "迪奥 Walk'n'Dior 老花厚底帆布鞋", subtitle: 'Oblique 提花 · 38码 · 9成新', image: PROD.shoes, tone: '#2b3046', tone2: '#cfc3a8', startPrice: 0, increment: 100, minIncrement: 100, capPrice: 8000, deposit: 300, durationSec: 60, extendSec: 15, category: '鞋履', estimate: '市场参考价 ¥5,800 – ¥7,200' },
   },
 ];
 

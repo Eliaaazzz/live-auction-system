@@ -1,23 +1,14 @@
-// Real, hot-linkable image assets — no AI placeholders.
-//   · Product photos: Unsplash CDN (permanent, free license, hot-link friendly)
+// Real image assets — no AI placeholders.
+//   · Product photos: local files under public/products/（随 dist 一起部署，
+//     相对路径在 hash 路由下始终解析到站点根，不再热链外站 CDN）
 //   · Faces / avatars: pravatar.cc (real photo faces)
-// All load directly in the browser at runtime; swap freely for your own CDN.
 
-const U = (id: string, w = 600): string => `https://images.unsplash.com/${id}?w=${w}&q=72&auto=format&fit=crop`;
-
-/** 拍品主图（按品类） */
+/** 拍品占位主图（按品类，四张图各不相同） */
 export const PROD = {
-  jadePendant: U('photo-1676329945867-01c9975aa9d1'), // 玉/翡翠 绿珠项链
-  jadeBangle: U('photo-1767040276964-d2a39a86b1d4'), // 翡翠玉珠
-  watch: U('photo-1702865053958-71ec751c4118'), // 二手奢侈品腕表
-  teapot: U('photo-1532136868905-8094ef8ef5f2'), // 紫砂壶
-  diamond: U('photo-1721103418939-5112f0ccfac8'), // 钻石首饰
-  goldNecklace: U('photo-1664178266066-e37e0d25e6a1'), // 金饰
-  chocolate: U('photo-1511381939415-e44015466834'), // 食品
-  artOil: U('photo-1578321272176-b7bbc0679853'), // 艺术品 · 古典油画
-  artLandscape: U('photo-1577720580479-7d839d829c73'), // 艺术品 · 风景油画
-  goldBars: U('photo-1610375461246-83df859d849d'), // 贵金属 · 投资金条
-  luxuryBag: U('photo-1584917865442-de89df76afd3'), // 二手奢侈品 · 名牌手提包
+  watch: 'products/patek-philippe-watch.jpg', // 名表 · 百达翡丽年历计时 玫瑰金蓝盘
+  bag: 'products/versace-la-medusa-tote.avif', // 箱包 · 范思哲 La Medusa 印花托特
+  apparel: 'products/chanel-tweed-suit.jpg', // 服饰 · 香奈儿经典粗花呢套装
+  shoes: 'products/dior-oblique-sneaker.webp', // 鞋履 · 迪奥 Walk'n'Dior 老花厚底
 };
 
 /** 真实人脸头像 */
