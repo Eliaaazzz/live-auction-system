@@ -4,7 +4,7 @@ import { useAuctionEngine } from '../lib/useAuctionEngine';
 import { COMMENT_POOL, ENTER_POOL, BOT_USERS, pick } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
-import { sfx, isMuted, setMuted, unlockAudio } from '../lib/sound';
+import { sfx, speak, isMuted, setMuted, unlockAudio } from '../lib/sound';
 import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
 import { BidSheet } from './BidSheet';
@@ -78,8 +78,8 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
 
   const onEvent = useCallback((e: EngineEvent) => {
     switch (e.kind) {
-      case 'leading': flashFx('lead', '领先！第 1 名'); if (!isMuted()) sfx.lead(); screenFlash('gold'); break;
-      case 'outbid': flashFx('outbid', '被超越！'); if (!isMuted()) sfx.outbid(); screenFlash('red'); triggerShake(); break;
+      case 'leading': flashFx('lead', '领先！第 1 名'); if (!isMuted()) { sfx.lead(); speak('您已领先，第一名'); } screenFlash('gold'); break;
+      case 'outbid': flashFx('outbid', '被超越！'); if (!isMuted()) { sfx.outbid(); speak('您被反超了'); } screenFlash('red'); triggerShake(); break;
       case 'extend': flashFx('extend', `倒计时延长 +${e.addSec}s`); if (!isMuted()) sfx.extend(); pushFeed({ kind: 'enter', text: `结束前有人出价，倒计时自动延长 ${e.addSec}s` }); break;
       case 'cap': pushFeed({ kind: 'enter', text: '触发封顶价，即将成交' }); break;
       case 'start': pushFeed({ kind: 'enter', text: '开拍啦，出价开始！' }); break;
