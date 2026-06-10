@@ -39,21 +39,26 @@ services:
       SIDECAR_ADDR: ":8090"
       # Real AI is OPT-IN: with no key these stay empty → the sidecar serves the
       # canned generators (demo path unchanged). To go live, drop the values into
-      # infra/.env — ONE place flips both VLM + auctioneer:
+      # infra/.env — ONE key flips both VLM + auctioneer:
       #   ARK_API_KEY=…       (火山方舟 API key)
-      #   ARK_VLM_MODEL=ep-…  (doubao-vision inference endpoint id)
-      #   ARK_LLM_MODEL=ep-…  (doubao text inference endpoint id)
-      # Defaults to Ark Beijing; repoint ARK_BASE_URL at an Ollama/vLLM server
-      # (e.g. http://host:11434/v1) + a Qwen model id for the open-source path.
+      #   ARK_VLM_MODEL=ep-…  (FAST multimodal ep, doubao-seed-1.6-flash class —
+      #                        reads the image AND writes the intro in one call)
+      #   ARK_LLM_MODEL=ep-…  (text ep for the auctioneer — a DIFFERENT ep, or
+      #                        the two share one rate-limit queue and slow down)
+      # Per-side overrides (optional): ARK_{VLM,LLM}_BASE_URL to split providers
+      # (e.g. VLM on Ark, LLM on Ollama http://host:11434/v1 + Qwen model id),
+      # ARK_{VLM,LLM}_TIMEOUT_MS (sidecar default 30000; flash class ⇒ ~8000).
       # VLM_MODE is a kill-switch only: set VLM_MODE=mock to force canned VLM
       # facts even with creds; otherwise key+model select the real VLM path.
       VLM_MODE: ${VLM_MODE:-}
       VLM_API_KEY: ${ARK_API_KEY:-}
       VLM_MODEL: ${ARK_VLM_MODEL:-}
-      VLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      VLM_BASE_URL: ${ARK_VLM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}}
+      VLM_TIMEOUT_MS: ${ARK_VLM_TIMEOUT_MS:-}
       LLM_API_KEY: ${ARK_API_KEY:-}
       LLM_MODEL: ${ARK_LLM_MODEL:-}
-      LLM_BASE_URL: ${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      LLM_BASE_URL: ${ARK_LLM_BASE_URL:-${ARK_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}}
+      LLM_TIMEOUT_MS: ${ARK_LLM_TIMEOUT_MS:-}
     ports: ["8090:8090"]
 
   lumen:

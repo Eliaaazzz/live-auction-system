@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import Showcase from './showcase/Showcase';
 import MobileApp from './mobile/MobileApp';
 import AdminApp from './admin/AdminApp';
+import SellerGate from './admin/SellerGate';
 
 /**
  * Routes
@@ -21,7 +22,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/m" element={<MobileApp />} />
-      <Route path="/admin/*" element={<AdminApp />} />
+      <Route path="/admin/*" element={<SellerGate><AdminApp /></SellerGate>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

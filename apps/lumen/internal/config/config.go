@@ -25,6 +25,12 @@ type Config struct {
 	EnableDevLogin    bool
 	EvidenceHMACKey   string
 	MetricsResetToken string
+	// SellerKey (#260-4) gates the seller identity namespace. Set → POST
+	// /api/login{sellerKey} must match to mint a `seller_*` id, and creation
+	// endpoints (product/auction/upload) require one. Unset (default) → open
+	// mode: any non-empty sellerKey is accepted and creation stays ungated,
+	// preserving the zero-config dev/demo/loadtest flow.
+	SellerKey string
 }
 
 const defaultJWTSecret = "change-me-local-only"
@@ -53,6 +59,7 @@ func Load() (Config, error) {
 		EnableDevLogin:    env("ENABLE_DEV_LOGIN", "true") == "true",
 		EvidenceHMACKey:   env("EVIDENCE_HMAC_KEY", defaultEvidenceKey),
 		MetricsResetToken: os.Getenv("METRICS_RESET_TOKEN"),
+		SellerKey:         os.Getenv("LUMEN_SELLER_KEY"),
 	}
 
 	// §8: outside dev the default signing secret and dev-login must be off.

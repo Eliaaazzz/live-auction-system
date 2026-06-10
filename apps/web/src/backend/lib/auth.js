@@ -83,6 +83,33 @@ export function currentUser(seat = '') {
   return s ? { userId: s.userId, nickname: s.nickname } : null;
 }
 
+/** Role of the stored session: 'seller' only via sellerLogin; else 'user'. */
+export function currentRole(seat = '') {
+  return readStorage(seat)?.role === 'seller' ? 'seller' : 'user';
+}
+
+/**
+ * #260-4 seller login for the /admin gate. POST /api/login {nickname, sellerKey}
+ * mints a `seller_*`-namespace session the backend's creation endpoints trust.
+ * Stored in the DEFAULT seat so every admin page's ensureSession('seller-demo')
+ * finds a matching cached session and does NOT plain-re-login over it.
+ * Throws Error('密钥不正确') on a 403 (server has LUMEN_SELLER_KEY set and the
+ * key mismatched); with no key configured server-side any non-empty key passes.
+ */
+export async function sellerLogin(sellerKey, nickname = 'seller-demo') {
+  const res = await fetch(`${API_BASE}/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ nickname, sellerKey: String(sellerKey || '').trim() }),
+  });
+  if (res.status === 403) throw new Error('卖家密钥不正确');
+  if (!res.ok) throw new Error(`login ${res.status}`);
+  const session = await res.json();
+  if (!session.nickname) session.nickname = nickname;
+  writeStorage(session, '');
+  return session;
+}
+
 export function clearSession(seat = '') {
   _sessions.delete(seat);
   try { localStorage.removeItem(sessionKey(seat)); } catch {}

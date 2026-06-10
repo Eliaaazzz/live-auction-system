@@ -32,13 +32,18 @@ func uploadDir() string {
 	return "./data/uploads"
 }
 
-// handleUpload — POST /api/upload, multipart field "file". Auth-gated (any
-// session; sellers come through dev-login like every other seller endpoint).
-// The content type is sniffed from the first 512 bytes — extensions lie, the
-// magic bytes don't — and only static image formats pass.
+// handleUpload — POST /api/upload, multipart field "file". Auth-gated; with a
+// seller key configured it additionally requires the seller_* namespace
+// (#260-4) so randoms can't fill the upload dir. The content type is sniffed
+// from the first 512 bytes — extensions lie, the magic bytes don't — and only
+// static image formats pass.
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.authUser(r); !ok {
+	userID, ok := s.authUser(r)
+	if !ok {
 		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !s.requireSeller(w, userID) {
 		return
 	}
 
