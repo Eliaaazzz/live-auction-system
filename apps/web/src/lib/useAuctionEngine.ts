@@ -16,9 +16,10 @@
 // Reuses src/backend/{lib,store} (the original apps/web data layer, unchanged).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useStore } from 'zustand';
 import type { AuctionState, EngineEvent, Lot, RankRow, Bid, AuctionStatus } from './types';
 import { avatar } from './assets';
-import { useAuctionStore } from '../backend/store/auction.js';
+import { useAuctionStore, createAuctionStore } from '../backend/store/auction.js';
 import { RoomClient, buildRoomUrl } from '../backend/lib/ws.js';
 import { api } from '../backend/lib/api.js';
 import { ensureSession, currentToken } from '../backend/lib/auth.js';
@@ -30,6 +31,12 @@ interface Opts {
   startDelaySec?: number;
   running?: boolean;
   onEvent?: (e: EngineEvent) => void;
+  /** Backend identity. Buyers omit → per-device guest (deviceNickname); admin passes 'seller-demo' (owner). */
+  nickname?: string;
+  /** Showcase seat ('A'/'B') → own session + own room store. '' (default) = the single-room device user. */
+  seat?: string;
+  /** "My" avatar for self rows — passed down from the identity layer by the caller (LiveRoom). */
+  selfAvatar?: string;
 }
 
 const WS_BASE = (import.meta as any).env?.VITE_WS_BASE || undefined;
@@ -77,14 +84,26 @@ function bidFromLeader(l: any, rank: number): Bid {
 }
 
 export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
-  const { running = true, onEvent } = opts;
+  const { running = true, onEvent, nickname, seat = '', selfAvatar } = opts;
   const auctionId = lot.id;
-  const store = useAuctionStore();
+  // Per-SEAT room store: a named Showcase seat (买家A/买家B) gets its OWN store
+  // instance so its snapshot/leaderboard/yourUserId never clobber the other
+  // seat's. The default seat ('') keeps the shared singleton — identical to the
+  // single-room /m + /admin behavior. Held in a ref so the instance is created
+  // exactly once per mount and stays stable across renders.
+  const storeApiRef = useRef<any>(null);
+  if (!storeApiRef.current) storeApiRef.current = seat ? createAuctionStore() : useAuctionStore;
+  const storeApi = storeApiRef.current;
+  const store = useStore(storeApi, (s: any) => s);
   const clientRef = useRef<any>(null);
   const rafRef = useRef<number>(0);
   const onEventRef = useRef(onEvent);
   const lastEmitRef = useRef<string>('');
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
+  const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
+  // selfAvatar 由调用方（LiveRoom）从身份层下传：真实 /m 用全局登录身份，Showcase 座位
+  // 用该座位的固定头像。用它覆盖所有「自己」行的头像，消除「同一个我，出价/送礼头像不
+  // 一样」(#3)，且让 买家A / 买家B 各自的自我头像互不串台。
   const autoMaxRef = useRef<number | null>(null);
   useEffect(() => { onEventRef.current = onEvent; });
 
@@ -93,11 +112,11 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     if (!running || !auctionId) return undefined;
     let alive = true;
     let client: any;
-    const st = useAuctionStore.getState();
+    const st = storeApi.getState();
 
     (async () => {
       try {
-        const session = await ensureSession('demo');
+        const session = await ensureSession(nickname, seat);
         if (!alive) return;
         st.setSelfUserId(session.userId);
       } catch { /* room retries with its own session */ }
@@ -115,27 +134,28 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
           capCents: rules.capCents ?? snap.capCents ?? (lot.capPrice ? String(lot.capPrice * 100) : null),
           endAtMs: snap.endAtMs ?? null,
           winnerId: snap.winnerId ?? null,
-          yourUserId: useAuctionStore.getState().yourUserId,
+          yourUserId: storeApi.getState().yourUserId,
         });
+        if ((snap as any).livePlayUrl) setLivePlayUrl(String((snap as any).livePlayUrl));
       } catch { /* WS will rebuild from snapshot frame */ }
 
       try {
         const { leaderboard = [] } = await api.getLeaderboard(auctionId, 10);
-        if (alive) useAuctionStore.getState().setLeaders(leaderboard);
+        if (alive) storeApi.getState().setLeaders(leaderboard);
       } catch { /* fills from BID_ACCEPTED */ }
 
-      const url = buildRoomUrl(WS_BASE, auctionId, currentToken());
+      const url = buildRoomUrl(WS_BASE, auctionId, currentToken(seat));
       client = new RoomClient({
         url,
         auctionId,
-        getLastSeq: () => useAuctionStore.getState().lastSeq,
-        onState: (s: any) => useAuctionStore.getState().setConn(s.status, s),
+        getLastSeq: () => storeApi.getState().lastSeq,
+        onState: (s: any) => storeApi.getState().setConn(s.status, s),
         onEvent: (env: any) => {
-          useAuctionStore.getState().applyEvent(env);
+          storeApi.getState().applyEvent(env);
           emitEngineEvent(env);
           maybeRefreshLeaders(env);
         },
-        onReject: (env: any) => useAuctionStore.getState().applyReject(env),
+        onReject: (env: any) => storeApi.getState().applyReject(env),
       });
       clientRef.current = client;
       client.connect();
@@ -152,8 +172,8 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   // ── countdown: drive store.remainingMs from the server clock ──
   useEffect(() => {
     const tick = () => {
-      const endAtMs = useAuctionStore.getState().endAtMs;
-      if (endAtMs) useAuctionStore.getState().tickRemaining(msRemaining(endAtMs));
+      const endAtMs = storeApi.getState().endAtMs;
+      if (endAtMs) storeApi.getState().tickRemaining(msRemaining(endAtMs));
       rafRef.current = window.requestAnimationFrame(tick);
     };
     rafRef.current = window.requestAnimationFrame(tick);
@@ -163,7 +183,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   function maybeRefreshLeaders(env: any) {
     if (env?.type === EventType.BID_ACCEPTED || env?.type === EventType.AUCTION_SOLD) {
       api.getLeaderboard(auctionId, 10)
-        .then(({ leaderboard = [] }: any) => useAuctionStore.getState().setLeaders(leaderboard))
+        .then(({ leaderboard = [] }: any) => storeApi.getState().setLeaders(leaderboard))
         .catch(() => {});
     }
   }
@@ -175,7 +195,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const key = `${env?.type}:${env?.seq ?? ''}`;
     if (key === lastEmitRef.current) return;
     lastEmitRef.current = key;
-    const s = useAuctionStore.getState();
+    const s = storeApi.getState();
     switch (env?.type) {
       case EventType.BID_ACCEPTED: {
         const self = s.yourUserId && env.data?.userId === s.yourUserId;
@@ -202,19 +222,20 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const ranking: RankRow[] = leaders.map((l, i) => ({
       userId: l.userId,
       userName: l.displayName || l.userId || '匿名买家',
-      avatar: avatar(hashNum(l.userId ?? `u${i}`)),
+      avatar: (l.isYou && selfAvatar) ? selfAvatar : avatar(hashNum(l.userId ?? `u${i}`)),
       amount: yuan(l.cents),
       self: !!l.isYou,
     }));
     const leader = leaders.length ? bidFromLeader(leaders[0], 0) : null;
+    if (leader && leader.self && selfAvatar) leader.avatar = selfAvatar;
     const bids: Bid[] = (store.recentEvents ?? [])
       .filter((e: any) => e.type === EventType.BID_ACCEPTED && e.data?.amountCents)
-      .slice(0, 20)
+      .slice(0, 50)
       .map((e: any) => ({
         id: String(e.seq ?? e.ts ?? Math.random()),
         userId: e.data.userId,
         userName: e.data.displayName || e.data.userId || '匿名买家',
-        avatar: avatar(hashNum(e.data.userId ?? '')),
+        avatar: (store.yourUserId && e.data.userId === store.yourUserId && selfAvatar) ? selfAvatar : avatar(hashNum(e.data.userId ?? '')),
         amount: yuan(e.data.amountCents),
         ts: e.ts ?? Date.now(),
         self: !!(store.yourUserId && e.data.userId === store.yourUserId),
@@ -236,7 +257,13 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       lastEvent: null,
       bidCount: store.totalBidsCount ?? 0,
     };
-  }, [store, lot.durationSec]);
+  }, [store, lot.durationSec, selfAvatar]);
+
+  // True once THIS room's REST snapshot has initialised the (singleton) store —
+  // i.e. real price/bids/status are present, not the previous room's leftovers.
+  // LiveRoom uses it to drop the loading skeleton exactly when real data lands,
+  // so a swipe reveals live chrome with no stale-price flash.
+  const ready = store.auctionId === auctionId;
 
   const nextMinBid = useMemo(() => {
     const cur = yuan(store.currentCents);
@@ -247,14 +274,14 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
 
   // ── placeBid: HTTP command lane + WS fallback (server adjudicates) ──
   const placeBid = useCallback((amount: number): { ok: boolean; reason?: string } => {
-    const s = useAuctionStore.getState();
+    const s = storeApi.getState();
     if (s.status !== 'LIVE') return { ok: false, reason: '当前不可出价' };
     if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return { ok: false, reason: '竞拍已结束' };
     const amountCents = String(Math.round(amount) * 100);
     const clientBidId = makeBidId();
-    void submitBid(auctionId, { clientBidId, amountCents }, clientRef.current);
+    void submitBid(storeApi, auctionId, { clientBidId, amountCents }, clientRef.current, seat);
     return { ok: true };
-  }, [auctionId]);
+  }, [auctionId, seat, storeApi]);
 
   const setAutoBidMax = useCallback((max: number | null) => {
     autoMaxRef.current = max;
@@ -265,7 +292,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     try { clientRef.current?.resync?.(); } catch { /* noop */ }
   }, []);
 
-  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart };
+  return { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, selfAvatar, auctioneerText: (store as any).auctioneerText || '' };
 }
 
 function makeBidId(): string {
@@ -274,24 +301,28 @@ function makeBidId(): string {
     : `cbid-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-async function submitBid(auctionId: string, payload: any, client: any) {
+async function submitBid(storeApi: any, auctionId: string, payload: any, client: any, seat: string) {
   try {
-    const env = await placeBidHttp(auctionId, payload);
-    if (env?.type === EventType.BID_REJECTED) useAuctionStore.getState().applyReject(env);
-    else if (env?.type) useAuctionStore.getState().applyEvent(env);
+    const env = await placeBidHttp(auctionId, payload, seat);
+    if (env?.type === EventType.BID_REJECTED) storeApi.getState().applyReject(env);
+    else if (env?.type) storeApi.getState().applyEvent(env);
     return;
   } catch (e: any) {
     const status = Number(e?.status);
     const fallback = e?.name === 'AbortError' || e?.name === 'TypeError' || status === 404 || status === 405 || status === 501;
     if (fallback && client) { client.placeBid(payload); return; }
-    useAuctionStore.getState().applyReject({ type: EventType.BID_REJECTED, auctionId, requestId: payload.clientBidId, data: { code: BidErrorCode.ERR_INTERNAL } });
+    storeApi.getState().applyReject({ type: EventType.BID_REJECTED, auctionId, requestId: payload.clientBidId, data: { code: BidErrorCode.ERR_INTERNAL } });
   }
 }
 
-async function placeBidHttp(auctionId: string, payload: any) {
-  if (typeof AbortController === 'undefined') return api.placeBid(auctionId, payload);
+async function placeBidHttp(auctionId: string, payload: any, seat: string) {
+  // A named seat bids under its OWN token so the backend attributes the bid to
+  // 买家A/买家B (not the default-seat session). Default seat → undefined → api
+  // falls back to the device token (unchanged single-room behavior).
+  const token = seat ? currentToken(seat) : undefined;
+  if (typeof AbortController === 'undefined') return api.placeBid(auctionId, payload, { token, seat });
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), BID_HTTP_TIMEOUT_MS);
-  try { return await api.placeBid(auctionId, payload, { signal: ctrl.signal }); }
+  try { return await api.placeBid(auctionId, payload, { signal: ctrl.signal, token, seat }); }
   finally { clearTimeout(t); }
 }

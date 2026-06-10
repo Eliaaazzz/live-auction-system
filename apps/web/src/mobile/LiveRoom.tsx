@@ -1,26 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EngineEvent, Room } from '../lib/types';
 import { useAuctionEngine } from '../lib/useAuctionEngine';
-import { COMMENT_POOL, ENTER_POOL, BOT_USERS, ME, pick } from '../lib/mockData';
+import { COMMENT_POOL, ENTER_POOL, BOT_USERS, pick } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, splitClock } from '../lib/format';
+import { computeIncrement } from '../lib/pricing';
 import { sfx, isMuted, setMuted, unlockAudio } from '../lib/sound';
-import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, type DanmakuItem, type FxToken } from './components';
+import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
 import { BidSheet } from './BidSheet';
 import { StateOverlays } from './overlays';
 import { Icon } from './icons';
+import { ProfileButton, AccountSheet } from './account';
+import { useIdentity, type SeatIdentity } from '../lib/identity';
 import './motion.css';
 
-interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; }
+interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; onEnded?: () => void; seat?: string; identity?: SeatIdentity; }
 
-export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true }: Props) {
+export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true, onEnded, seat = '', identity }: Props) {
   const lot = room.lot;
+  // Showcase seats (买家A/买家B) pass an explicit per-seat identity; real /m uses
+  // the global login store. Everything below reads `ident`, so it works for both.
+  const globalIdent = useIdentity();
+  const ident = identity ?? globalIdent;
+  const [acctOpen, setAcctOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [followed, setFollowed] = useState(() => localStorage.getItem('lf_follow_' + room.id) === '1');
-  const [joined, setJoined] = useState(false);
+  // localStorage join flag is a client cache; a future backend session/join API will reconcile it.
+  const [joined, setJoined] = useState(() => localStorage.getItem('lj_join_' + room.id) === '1');
   const [agreed, setAgreed] = useState(false);
   const [sheetTab, setSheetTab] = useState<TabKey | null>(null);
   const [bidSheetOpen, setBidSheetOpen] = useState(false);
+  const [giftOpen, setGiftOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const [reminded, setReminded] = useState(false);
   const [feed, setFeed] = useState<DanmakuItem[]>([]);
   const [fx, setFx] = useState<FxToken | null>(null);
@@ -76,15 +87,36 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     }
   }, [flashFx, pushFeed, screenFlash, triggerShake]);
 
-  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running: running && !loading, onEvent });
+  // Boot the engine immediately (not gated on !loading) so this room's snapshot
+  // starts loading the moment it mounts — the skeleton then clears on `ready`, not
+  // a blind timer, so a swipe reveals live data as soon as it lands.
+  const { state, nextMinBid, placeBid, setAutoBidMax, autoBidMax, restart, livePlayUrl, ready, auctioneerText } = useAuctionEngine(lot, { seedToPrice, startDelaySec, running, onEvent, nickname: ident.nickname || undefined, seat, selfAvatar: ident.avatar || undefined });
 
+  const revealed = useRef(false);
+  const reveal = useCallback(() => {
+    if (revealed.current) return;
+    revealed.current = true;
+    setLoading(false);
+    startedAt.current = Date.now();
+    prevPrice.current = lot.startPrice;
+  }, [lot.startPrice]);
+
+  // Reset on room change (runs before the ready-watcher below so a warm store still
+  // reveals instantly). Fallback cap: if the snapshot never lands (offline/slow),
+  // reveal anyway after 1.2s so the room is never stuck behind the skeleton.
   useEffect(() => {
     setLoading(true);
+    revealed.current = false;
     lastTickSec.current = -1;
     prevStatus.current = '';
-    const t = setTimeout(() => { setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 850);
+    const t = setTimeout(reveal, 1200);
     return () => clearTimeout(t);
-  }, [room.id, lot.startPrice]);
+  }, [room.id, lot.startPrice, reveal]);
+
+  // Reveal the chrome the instant the snapshot is in the store (real price/bids,
+  // no stale-price flash). The poster shows immediately behind the skeleton via
+  // VideoBackground, so the swipe is never a black frame.
+  useEffect(() => { if (ready) reveal(); }, [ready, reveal]);
 
   useEffect(() => {
     if (loading) return;
@@ -129,7 +161,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     if ((prev === 'live' || prev === 'ending') && (state.status === 'sold' || state.status === 'unsold')) {
       if (isMuted()) return;
       if (state.status === 'unsold') sfx.lose();
-      else { sfx.hammer(); if (state.leader?.userId === ME.id) setTimeout(() => sfx.win(), 260); }
+      else { sfx.hammer(); if (state.myRank === 1) setTimeout(() => sfx.win(), 260); }
     }
   }, [state.status, loading, state.leader]);
 
@@ -142,22 +174,32 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const toggleSound = () => { setSoundOn((v) => { const nv = !v; setMuted(!nv); if (nv) { unlockAudio(); sfx.tick(); } return nv; }); };
   const toggleFollow = () => setFollowed((v) => { const nv = !v; localStorage.setItem('lf_follow_' + room.id, nv ? '1' : '0'); return nv; });
   const tapTab = (t: TabKey) => { setSheetTab((cur) => (cur === t ? null : t)); if (t === 'comments') setUnread(0); };
-  const onJoin = () => { setJoined(true); pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
+  const onJoin = () => { setJoined(true); try { localStorage.setItem('lj_join_' + room.id, '1'); } catch { /* ignore */ } pushFeed({ kind: 'enter', text: '我 已参与竞拍，冻结保证金成功' }); };
+  const onSendGift = (g: GiftTier) => { pushFeed({ kind: 'comment', name: '我', text: `送出 ${g.emoji} ${g.name}`, color: '#ffce54', avatar: ident.avatar }); };
   const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
-  const onReturn = useCallback(() => { setLoading(true); setTimeout(() => { restart(); setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 600); }, [restart, lot.startPrice]);
+  // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
+  // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
+  const onReturn = useCallback(() => {
+    if (onEnded) { onEnded(); return; }
+    setLoading(true);
+    setTimeout(() => { restart(); setLoading(false); startedAt.current = Date.now(); prevPrice.current = lot.startPrice; }, 600);
+  }, [onEnded, restart, lot.startPrice]);
 
   const live = state.status === 'live' || state.status === 'ending';
   const urgent = state.status === 'ending' && state.remainingMs <= 6000;
+  // dynStep is always >= lot.increment (backend floor) so quick bids never reject.
+  const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : state.currentPrice, state.participants, lot.increment));
 
   return (
     <div className="lm-root" onPointerDownCapture={unlockOnce}>
-      <VideoBackground lot={lot} />
+      <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} />
+          <LiveHeader room={room} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
           <LotChip lot={lot} />
           <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
+          {auctioneerText && <div className="lm-aibubble"><span className="dot" /> AI 主播 · {auctioneerText}</div>}
 
           <button className={'lm-sound-btn' + (soundOn ? '' : ' off')} onClick={toggleSound} aria-label={soundOn ? '关闭音效' : '开启音效'}>
             {soundOn ? (
@@ -172,23 +214,29 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           {gain && <div key={gain.id} className="lm-gainfloat">{gain.text}</div>}
 
           <Danmaku items={danmaku} />
-          <ActionRail cartCount={lot.index} onOpenComments={() => tapTab('comments')} />
+          <ActionRail roomId={room.id} cartCount={lot.index} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
           <div className={shake ? 'lm-shake' : undefined}>
-            <BidActionBar joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={lot.increment} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
+            <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
           </div>
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
 
-          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ME.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
+          <TabSheet active={sheetTab} onClose={() => setSheetTab(null)} state={state} lot={lot} joined={joined} agreed={agreed} onAgree={setAgreed} onJoin={onJoin} placeBid={placeBid} nextMinBid={nextMinBid} autoBidMax={autoBidMax} setAutoBidMax={setAutoBidMax} comments={comments} onSendComment={(t) => pushFeed({ kind: 'comment', name: '我', text: t, color: '#fe2c55', avatar: ident.avatar })} onOpenSheetBid={() => setBidSheetOpen(true)} setActive={setSheetTab} />
 
           <EmotionFX fx={fx} />
 
-          {bidSheetOpen && (
+          {/* #260-2: gate the sheet on `ready` — opened pre-snapshot it would seed its
+              amount stepper from the lot.startPrice fallback instead of the live min. */}
+          {bidSheetOpen && ready && (
             <BidSheet lot={lot} state={state} nextMinBid={nextMinBid} onClose={() => setBidSheetOpen(false)} onConfirm={(amt) => { if (!joined) { setBidSheetOpen(false); setSheetTab('join'); return; } placeBid(amt); setBidSheetOpen(false); }} />
           )}
 
           <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
+
+          <GiftPanel roomId={room.id} open={giftOpen} onClose={() => setGiftOpen(false)} onSend={onSendGift} />
+          <ShareModal roomId={room.id} open={shareOpen} onClose={() => setShareOpen(false)} />
+          {!seat && <AccountSheet open={acctOpen} onClose={() => setAcctOpen(false)} />}
         </>
       )}
       {loading && <RoomSkeleton />}
@@ -208,10 +256,23 @@ function CountdownPill({ ms, ending, urgent, hidden }: { ms: number; ending: boo
   );
 }
 
-function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
+function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { ready: boolean; joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
   const [amt, setAmt] = useState(nextMinBid);
-  useEffect(() => { setAmt((a) => (a < nextMinBid ? nextMinBid : a)); }, [nextMinBid]);
+  const effCap = capPrice > 0 ? capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
+  // #2 不随直播价「自己跳动」：别人出价时保持我设好的数字不变。价格涨过我的数字时
+  // 不静默改它，只在点「出价」那一刻按最新最低价钳制提交，并提示「价已涨」。
+  // #260-2 例外：用户还没碰过步进器时跟随最新最低价 —— 该 bar 在骨架屏后面就挂载了，
+  // 初始 seed 可能是快照未到时的 lot.startPrice 回退值（会偏高，如 ¥5000 vs 真实最低
+  // ¥3200），不跟随就会按虚高价提交。「我设好的数字」从第一次点 +/- 才算数。
+  const touched = useRef(false);
+  useEffect(() => { if (!touched.current) setAmt(nextMinBid); }, [nextMinBid]);
+  const bidAmt = Math.min(effCap, Math.max(amt, nextMinBid));
+  const staleLow = touched.current && amt < nextMinBid;
 
+  // 快照未到位时不给出价入口：此刻的 nextMinBid 只是回退猜测（#260-2 禁用 CTA）。
+  if (!ready) {
+    return (<div className="lm-bidbar"><button className="lm-bidcta" disabled>正在同步竞拍价…</button></div>);
+  }
   if (!joined) {
     return (<div className="lm-bidbar"><button className="lm-bidcta join" onClick={onJoin}><span><Icon name="gavel" size={18} /> 我要参与竞拍</span><span className="sub">同意服务条款后即可出价</span></button></div>);
   }
@@ -220,18 +281,18 @@ function BidActionBar({ joined, live, myRank, currentPrice, myMax, nextMinBid, i
   }
   if (myRank === 1) {
     const rec = increment * 2;
-    const recBid = Math.min(capPrice, currentPrice + rec);
+    const recBid = Math.min(effCap, currentPrice + rec);
     return (<div className="lm-bidbar"><div className="lm-bar-gap"><Icon name="lock" size={16} style={{ color: '#ffce54' }} /><div className="l">已锁第一</div></div><button className="lm-bidcta lead" onClick={() => onBid(recBid)}><span><Icon name="crown" size={16} fill /> 加固至 {fmtYuan(recBid)}</span><span className="sub">建议 +¥{rec} 拉开差距</span></button></div>);
   }
   const behind = myRank != null && myRank >= 2;
   const gapv = myMax != null ? Math.max(0, currentPrice - myMax) : currentPrice;
-  const dec = () => setAmt((a) => Math.max(nextMinBid, a - increment));
-  const inc = () => setAmt((a) => Math.min(capPrice, a + increment));
+  const dec = () => { touched.current = true; setAmt((a) => Math.max(nextMinBid, a - increment)); };
+  const inc = () => { touched.current = true; setAmt((a) => Math.min(effCap, a + increment)); };
   return (
     <div className="lm-bidbar">
       {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtCompactYuan(gapv)}</div><div className="l">距第一名</div></div>)}
       <div className="lm-stepper"><button onClick={dec} aria-label="减"><Icon name="minus" size={18} /></button><span className="val tnum" onClick={onOpenSheet}>{fmtYuan(amt)}</span><button onClick={inc} aria-label="加"><Icon name="plus" size={18} /></button></div>
-      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(amt)}><span>{behind ? `反超第一 · ${fmtYuan(amt)}` : `立即出价 ${fmtYuan(amt)}`}</span><span className="sub">{behind ? `推荐反超 ¥${nextMinBid} 起` : `最低 ¥${nextMinBid} · 点价可多笔`}</span></button>
+      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? `反超第一 · ${fmtYuan(bidAmt)}` : `立即出价 ${fmtYuan(bidAmt)}`}</span><span className="sub">{staleLow ? `价已涨 · 按最低 ¥${nextMinBid} 出价` : (behind ? `推荐反超 ¥${nextMinBid} 起` : `最低 ¥${nextMinBid} · 点价可多笔`)}</span></button>
     </div>
   );
 }

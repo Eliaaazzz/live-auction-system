@@ -1,9 +1,21 @@
-.admin-root { height: 100%; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+.admin-root { min-height: 100vh; font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+/* Dark sider must reach the very bottom of the viewport on every tab, even when
+   the page content is short. min-height 100vh keeps the dark column full-height. */
+.admin-root .ant-layout-sider { min-height: 100vh; }
+/* Inner light column fills remaining width; light bg means short pages show white,
+   never the dark body gradient leaking through. */
+.admin-root > .ant-layout { background: #f5f6f8; min-height: 100vh; }
 .admin-logo { height: 60px; display: flex; align-items: center; gap: 10px; padding: 0 18px; color: #fff; font-weight: 800; font-size: 15px; letter-spacing: 0.2px; border-bottom: 1px solid rgba(255,255,255,0.08); white-space: nowrap; overflow: hidden; }
 .admin-logo .mark { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg,#ff5f7e,#fe2c55); display: grid; place-items: center; font-size: 17px; flex-shrink: 0; }
-.admin-header { display: flex; align-items: center; gap: 14px; padding: 0 22px; background: #fff; border-bottom: 1px solid #f0f0f0; }
-.admin-header .title { font-size: 17px; font-weight: 700; }
-.admin-content { margin: 18px; padding: 20px; background: #fff; border-radius: 12px; min-height: 200px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.admin-header { display: flex; align-items: center; gap: 14px; padding: 0 22px 0 8px; background: #fff; border-bottom: 1px solid #f0f0f0; }
+.admin-header .admin-fold { font-size: 17px; color: #555; width: 40px; height: 40px; flex-shrink: 0; }
+.admin-header .admin-fold:hover { color: #fe2c55; }
+.admin-header .title { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.admin-header .seller-name { font-size: 13px; color: #333; white-space: nowrap; }
+/* White card fills the remaining viewport so the frame is identical across tabs:
+   content sits at the top, extra space stays white (never black).
+   100vh - header(56) - vertical margins(18*2=36). box-sizing keeps padding inside. */
+.admin-content { margin: 18px; padding: 20px; background: #fff; border-radius: 12px; min-height: calc(100vh - 56px - 36px); box-sizing: border-box; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
 .admin-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
 .admin-toolbar .spacer { flex: 1; }
 .prod-cell { display: flex; gap: 12px; align-items: flex-start; }
@@ -29,3 +41,89 @@
 .pub-phone .pub-img { width: 100%; height: 148px; object-fit: cover; border-radius: 12px; margin: 8px 0; display: block; }
 .pub-card { background: rgba(255,255,255,0.12); backdrop-filter: blur(8px); border-radius: 14px; padding: 12px; }
 .pub-cta { margin-top: 10px; background: linear-gradient(96deg,#ff5f7e,#fe2c55); border-radius: 12px; text-align: center; padding: 11px; font-weight: 800; }
+
+/* ============================================================
+   Responsive: keep the full-height frame intact on narrow screens
+   and stop wide tables/grids from forcing whole-page horizontal scroll.
+   ============================================================ */
+/* The content column owns its own horizontal scroll; the page never scrolls
+   sideways because of an oversized table or grid inside it. */
+.admin-root .ant-layout-content { max-width: 100%; overflow-x: hidden; }
+/* AntD tables scroll inside themselves rather than widening the layout. */
+.admin-content .ant-table-wrapper,
+.admin-content .ant-table-content { max-width: 100%; }
+.admin-content .ant-table-content { overflow-x: auto; }
+
+/* ============================================================
+   Embedded mode — admin runs inside the Showcase Chrome window.
+   The frame has a FIXED height with overflow:hidden, so the layout must fill
+   the frame (height 100%) instead of the viewport (100vh). Otherwise the dark
+   Sider runs to the real window bottom and the page bottom is clipped.
+   (The collapsible Sider's default trigger is position:fixed to the viewport
+   and would be clipped here — AdminApp uses a header fold button instead.)
+   ============================================================ */
+.admin-root.admin-embedded,
+.admin-root.admin-embedded > .ant-layout { min-height: 100%; height: 100%; }
+.admin-root.admin-embedded .ant-layout-sider { min-height: 100%; height: 100%; }
+/* Inside the frame the content card sizes to its own content (the surrounding
+   #f5f6f8 fills the rest) instead of the 100vh-tall card the full route uses. */
+.admin-root.admin-embedded .admin-content { min-height: 0; }
+
+@media (max-width: 768px) {
+  /* Tighter chrome so the white card keeps maximum room on small screens. */
+  .admin-header { gap: 8px; padding: 0 12px; }
+  .admin-header .title { font-size: 15px; }
+  /* Hide the seller name on very narrow screens; avatar still identifies the user. */
+  .admin-header .seller-name { display: none; }
+  .admin-content { margin: 10px; padding: 12px; min-height: calc(100vh - 56px - 20px); border-radius: 10px; }
+  /* Single-column the two-up grids early so nothing overflows horizontally. */
+  .mon-grid,
+  .pub-grid { grid-template-columns: 1fr; gap: 14px; }
+  .pub-preview { position: static; }
+}
+
+/* ============================================================
+   行动导向空状态（EmptyLive：直播商品 / 实时竞拍监控）
+   不说「暂无 X」，直接说下一步：快去直播 / 上架商品。
+   ============================================================ */
+.empty-live { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px 60px; text-align: center; }
+.empty-live-badge { position: relative; width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 20px; background: linear-gradient(135deg, #ffe3e9, #fff5f7); box-shadow: 0 10px 28px rgba(254, 44, 85, 0.14), inset 0 0 0 1px rgba(254, 44, 85, 0.08); }
+.empty-live-badge > .anticon { font-size: 38px; color: #fe2c55; }
+/* 两圈错峰呼吸光环：把空页讲成「即将开播」的期待感，而不是出错感。 */
+.empty-live-badge::before,
+.empty-live-badge::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(254, 44, 85, 0.32); animation: empty-pulse 2.8s ease-out infinite; pointer-events: none; }
+.empty-live-badge::after { animation-delay: 1.4s; }
+@keyframes empty-pulse { 0% { transform: scale(1); opacity: 0.55; } 70%, 100% { transform: scale(1.55); opacity: 0; } }
+.empty-live-spark { position: absolute; font-size: 15px; animation: empty-float 3.2s ease-in-out infinite alternate; }
+.empty-live-spark.s1 { top: -4px; right: -12px; }
+.empty-live-spark.s2 { bottom: 0; left: -14px; font-size: 12px; animation-delay: 0.9s; }
+@keyframes empty-float { from { transform: translateY(0); } to { transform: translateY(-7px); } }
+.empty-live-title { font-size: 18px; font-weight: 800; color: #1f1f28; letter-spacing: 0.3px; }
+.empty-live-hint { margin-top: 7px; color: #9a9aa5; font-size: 14px; }
+.empty-live .empty-live-cta.ant-btn { margin-top: 22px; height: 42px; padding-inline: 26px; border-radius: 21px; font-weight: 700; border: none; background: linear-gradient(96deg, #ff5f7e, #fe2c55); box-shadow: 0 8px 20px rgba(254, 44, 85, 0.28); transition: transform 0.18s ease, box-shadow 0.18s ease; }
+.empty-live .empty-live-cta.ant-btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(254, 44, 85, 0.36); }
+@media (prefers-reduced-motion: reduce) {
+  .empty-live-badge::before, .empty-live-badge::after, .empty-live-spark { animation: none; }
+}
+
+/* ============================================================
+   竞拍发布 · 草稿箱 —— 存草稿真的存下来，并且有一个地方看得到。
+   ============================================================ */
+.draft-box { margin-top: 28px; padding: 16px 16px 8px; border: 1px solid #ffe3e9; border-radius: 14px; background: linear-gradient(180deg, #fff8fa, #fff 56%); }
+.draft-box-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.draft-box-title { display: inline-flex; align-items: center; gap: 7px; font-weight: 800; font-size: 14.5px; color: #1f1f28; }
+.draft-box-title .anticon { color: #fe2c55; font-size: 16px; }
+.draft-box-count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; background: #fe2c55; color: #fff; font-size: 11.5px; font-weight: 700; }
+.draft-box-hint { margin-left: auto; color: #b9b9c2; font-size: 12px; }
+.draft-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; margin-bottom: 8px; background: #fff; border: 1px solid #f2f2f5; border-radius: 10px; transition: border-color 0.18s ease, box-shadow 0.18s ease; }
+.draft-item:hover { border-color: #ffd6df; box-shadow: 0 4px 14px rgba(254, 44, 85, 0.08); }
+.draft-item.editing { border-color: #fe2c55; box-shadow: 0 0 0 2px rgba(254, 44, 85, 0.10); }
+.draft-thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: #f0f0f0; flex-shrink: 0; }
+.draft-meta { flex: 1; min-width: 0; }
+.draft-name { font-weight: 700; font-size: 13.5px; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-sub { margin-top: 3px; color: #9a9aa5; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-time { color: #b9b9c2; font-size: 12px; white-space: nowrap; }
+@media (max-width: 768px) {
+  .draft-box-hint { display: none; }
+  .draft-time { display: none; }
+}
