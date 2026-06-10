@@ -145,6 +145,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
           // #261-10/12a: REST first-paint carries the social numbers so the room
           // shows the live crowd/likes before the WS snapshot lands.
           viewerCount: (snap as any).viewerCount ?? 0,
+          simViewerCount: (snap as any).simViewerCount ?? 0, // #266 模拟人气自声明
           likeCount: (snap as any).likeCount ?? 0,
         });
         if ((snap as any).livePlayUrl) setLivePlayUrl(String((snap as any).livePlayUrl));
@@ -284,6 +285,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       bids,
       ranking,
       participants: store.viewerCount ?? 0,
+      simViewers: store.simViewerCount ?? 0,
       likes: store.likeCount ?? 0,
       myMaxBid: store.yourCents ? yuan(store.yourCents) : null,
       myRank: myRankIdx >= 0 ? myRankIdx + 1 : null,

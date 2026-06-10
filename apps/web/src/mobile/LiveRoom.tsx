@@ -270,7 +270,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} viewers={state.participants} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
+          <LiveHeader room={room} viewers={state.participants} simViewers={state.simViewers} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
           <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
           <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />

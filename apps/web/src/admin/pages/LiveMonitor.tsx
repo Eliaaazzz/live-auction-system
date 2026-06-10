@@ -199,7 +199,7 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
           <Statistic title="距结束" value={fmtClock(state.remainingMs)} valueStyle={{ color: state.status === 'ending' ? '#fe2c55' : undefined, fontSize: 20 }} prefix={<FireOutlined />} />
           <Statistic title="出价次数" value={feedCount} valueStyle={{ fontSize: 20 }} prefix={<ThunderboltOutlined />} />
-          <Statistic title="参与人数" value={state.participants} valueStyle={{ fontSize: 20 }} prefix={<TeamOutlined />} />
+          <Statistic title={state.simViewers > 0 ? '参与人数（含模拟人气）' : '参与人数'} value={state.participants} valueStyle={{ fontSize: 20 }} prefix={<TeamOutlined />} suffix={state.simViewers > 0 ? <Tag color="orange" style={{ marginInlineStart: 6, fontSize: 11 }}>演示</Tag> : undefined} />
           <Statistic title="下次最低出价" value={nextMinBid} prefix="¥" valueStyle={{ fontSize: 20 }} />
         </div>
 
@@ -225,6 +225,7 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
                       <Avatar size={26} src={b.avatar} style={{ flexShrink: 0 }} />
                       {/* #261-2: 买家名横排（.mon-name nowrap）— 不再竖着一字一行 */}
                       <span className="mon-name">{b.self ? '我' : b.userName}</span>
+                      {String(b.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>模拟</Tag>}
                       {i === 0 && <Tag color="gold" style={{ marginInlineStart: 4, flexShrink: 0 }}>领先</Tag>}
                       <span className="mon-time">{ago(b.ts)}</span>
                       <span className="mon-amt" style={{ color: i === 0 ? '#fe2c55' : '#333' }}>¥{fmtMoney(b.amount)}</span>
@@ -245,6 +246,7 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
                       </span>
                       <Avatar size={26} src={r.avatar} style={{ flexShrink: 0 }} />
                       <span className="mon-name">{r.self ? '我' : r.userName}</span>
+                      {String(r.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>模拟</Tag>}
                       <span className="mon-amt">¥{fmtCompact(r.amount)}</span>
                     </div>
                   ))}

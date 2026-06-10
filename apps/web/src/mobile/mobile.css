@@ -39,6 +39,9 @@
 .lm-follow.is-followed { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.78); }
 .lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .lm-viewers { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
+.lm-viewers-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+/* #266 review 诚实边界：演示人气在跑时的显式「模拟」声明徽标 */
+.lm-simtag { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: #ffd98a; background: rgba(246,166,9,0.18); border: 1px solid rgba(246,166,9,0.45); border-radius: 999px; padding: 1px 7px; backdrop-filter: blur(6px); }
 .lm-viewer-avs { display: flex; }
 .lm-viewer-avs > * { margin-left: -7px; }
 .lm-viewer-avs > *:first-child { margin-left: 0; }
@@ -302,6 +305,8 @@
 
 /* ---------- history: 当前领先 tag (50-row list) ---------- */
 .lm-hist-lead { flex-shrink: 0; font-size: 9.5px; font-weight: 800; color: var(--gold, #ffce54); background: rgba(255,206,84,0.16); border: 1px solid rgba(255,206,84,0.34); border-radius: 999px; padding: 1px 7px; }
+/* #266 review 诚实边界：模拟出价者行内声明（user_sim* 前缀自识别） */
+.lm-hist-sim { flex-shrink: 0; font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); border-radius: 999px; padding: 1px 6px; }
 
 /* ---------- gift panel (Douyin style) ---------- */
 .lm-giftsheet {

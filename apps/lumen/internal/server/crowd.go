@@ -208,10 +208,13 @@ func (c *CrowdSim) loop(ctx context.Context, aid string, run *crowdRun) {
 			likes := c.social.addLikes(aid, crowdLikesDelta(v, rng))
 			if c.broadcast != nil {
 				c.broadcast(aid, model.RoomSocialData{
-					Kind:         "stats",
-					ViewerCount:  int(v) + c.hub.viewerCount(aid),
-					LikeCount:    likes,
-					ServerTimeMs: time.Now().UnixMilli(),
+					Kind:        "stats",
+					ViewerCount: int(v) + c.hub.viewerCount(aid),
+					// 诚实边界（#266 review）：模拟头数随帧自声明，客户端据此
+					// 渲染「模拟人气」徽标 — 永不冒充真实并发。
+					SimViewerCount: int(v),
+					LikeCount:      likes,
+					ServerTimeMs:   time.Now().UnixMilli(),
 				})
 			}
 

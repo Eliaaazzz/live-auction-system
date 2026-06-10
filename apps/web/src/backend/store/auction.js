@@ -24,6 +24,7 @@ const DEFAULT_STATE = {
   connDetail: null,
   viewerCount: 0, // 参与人数 — real room occupancy from ROOM_SNAPSHOT (+ crowd sim via ROOM_SOCIAL stats)
   likeCount: 0,   // #261-10 — server-authoritative room likes (ROOM_SNAPSHOT seed + ROOM_SOCIAL updates)
+  simViewerCount: 0, // #266 review 诚实边界 — viewerCount 里的模拟人气头数；>0 ⇒ UI 必须挂「模拟人气」徽标
 
   // pricing — ALL string-cents (blueprint P1).
   //
@@ -184,6 +185,8 @@ export function createAuctionStore() {
     const kind = data?.kind;
     if (kind === 'stats') {
       if (typeof data.viewerCount === 'number' && data.viewerCount > 0) next.viewerCount = data.viewerCount;
+      // 模拟头数自声明（#266 review 诚实边界）：0 也要应用 — 人气脚本停了徽标要摘掉。
+      if (typeof data.simViewerCount === 'number' && data.simViewerCount >= 0) next.simViewerCount = data.simViewerCount;
       if (typeof data.likeCount === 'number' && data.likeCount >= 0) next.likeCount = Math.max(s.likeCount, data.likeCount);
     } else if (kind === 'like') {
       if (typeof data.likeCount === 'number' && data.likeCount >= 0) next.likeCount = data.likeCount;
@@ -234,6 +237,7 @@ export function createAuctionStore() {
           next.lastSeq        = data.seq ?? 0;
           if (data.viewerCount != null) next.viewerCount = data.viewerCount; // 参与人数
           if (data.likeCount != null) next.likeCount = data.likeCount;       // #261-10 点赞数 seed
+          if (data.simViewerCount != null) next.simViewerCount = data.simViewerCount; // #266 模拟人气自声明 seed
           // The snapshot is just as authoritative an owner signal as REST
           // init(): claim the room here too, so if getAuction failed (WS-only
           // rebuild path) useAuctionEngine's `ready` doesn't stay false

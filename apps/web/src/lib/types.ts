@@ -91,6 +91,8 @@ export interface AuctionState {
   bids: Bid[];
   ranking: RankRow[];
   participants: number;
+  /** #266 review 诚实边界：participants 里的模拟人气头数（>0 ⇒ UI 必须挂「模拟人气」徽标）。 */
+  simViewers: number;
   /** #261-10 server-authoritative room likes (synced across every client). */
   likes: number;
   myMaxBid: number | null;
