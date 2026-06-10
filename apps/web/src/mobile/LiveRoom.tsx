@@ -4,7 +4,7 @@ import { useAuctionEngine } from '../lib/useAuctionEngine';
 import { COMMENT_POOL, ENTER_POOL, BOT_USERS } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, fmtCompact, fmtMoney, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
-import { sfx, isMuted, setMuted, unlockAudio, speak } from '../lib/sound';
+import { sfx, isMuted, setMuted, unlockAudio, speak, cancelSpeak } from '../lib/sound';
 import { serverNow } from '../backend/lib/clock.js';
 import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, ProductImg, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
@@ -139,7 +139,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       case 'extend': flashFx('extend', `倒计时延长 +${e.addSec}s`); if (!isMuted()) sfx.extend(); pushFeed({ kind: 'enter', text: `结束前有人出价，倒计时自动延长 ${e.addSec}s` }); break;
       case 'cap': pushFeed({ kind: 'enter', text: '触发封顶价，即将成交' }); break;
       case 'start': pushFeed({ kind: 'enter', text: '开拍啦，出价开始！' }); break;
-      case 'settle': if (!isMuted() && e.won) speak('恭喜您，竞拍成功'); break;
+      case 'settle': cancelSpeak(); if (!isMuted() && e.won) speak('恭喜您，竞拍成功'); break;
       case 'social': onSocial(e.social); break;
       default: break;
     }
