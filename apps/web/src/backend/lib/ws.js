@@ -118,6 +118,7 @@ export class RoomClient {
         case EventType.AUCTION_SOLD:
         case EventType.AUCTION_NO_BID:
         case EventType.AUCTION_CANCELLED:
+        case EventType.AI_COMMENTARY: // non-authoritative LLM auctioneer copy; reducer renders it (#260 item 5)
           this.onEvent(env);
           // First downstream business event after open == we're caught up.
           this.onState({ status: ConnStatus.OPEN });

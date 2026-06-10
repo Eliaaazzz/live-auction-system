@@ -15,8 +15,11 @@ export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
   const [form] = Form.useForm();
   const [busy, setBusy] = useState(false);
+  const [uploadedUrl, setUploadedUrl] = useState<string>('');
   const v = Form.useWatch([], form) || {};
-  const previewImg = CAT_IMG[v.category as string] ?? PROD.jadePendant;
+  // Prefer the seller's actual uploaded image; only fall back to the category
+  // placeholder when nothing was uploaded. (#260 item 1)
+  const previewImg = uploadedUrl || CAT_IMG[v.category as string] || PROD.jadePendant;
   const step = v.step ?? 50;
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
@@ -26,7 +29,7 @@ export default function AuctionPublish() {
       setBusy(true);
       try {
         await ensureSession('seller-demo');
-        const imageUrl = CAT_IMG[vals.category as string] ?? PROD.jadePendant;
+        const imageUrl = uploadedUrl || CAT_IMG[vals.category as string] || PROD.jadePendant;
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -70,7 +73,28 @@ export default function AuctionPublish() {
         <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, minStep: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, deposit: 200 }}>
           <Divider orientation="left" plain>商品信息</Divider>
           <Form.Item label="商品主图" required>
-            <Upload listType="picture-card" beforeUpload={() => false} maxCount={4}>
+            <Upload
+              listType="picture-card"
+              maxCount={1}
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              customRequest={async ({ file, onSuccess, onError }) => {
+                try {
+                  // /api/upload is auth-gated and uploadImage only attaches an
+                  // existing token; mint a seller session first so a first-time
+                  // upload (before 发布) doesn't 401 and silently drop the image. (#260)
+                  await ensureSession('seller-demo');
+                  const { url } = await api.uploadImage(file as File);
+                  setUploadedUrl(url);
+                  onSuccess?.({ url });
+                  message.success('主图已上传');
+                } catch (err: any) {
+                  setUploadedUrl('');
+                  onError?.(err);
+                  message.error('图片上传失败：' + (err?.message || err));
+                }
+              }}
+              onRemove={() => setUploadedUrl('')}
+            >
               <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>
             </Upload>
           </Form.Item>

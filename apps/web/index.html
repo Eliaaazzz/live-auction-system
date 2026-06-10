@@ -5,6 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#0d0d12" />
     <title>抖音直播竞拍 · 实时竞拍大师</title>
+    <script>
+      // Shared links use bare paths (/m, /admin) but the app is a HashRouter,
+      // so /m would land on the showcase. Redirect bare paths to their hash
+      // route before the app mounts. (#260 item 6)
+      (function () {
+        var p = location.pathname;
+        // Scope to exactly the advertised share paths so other SPA-fallback
+        // routes (/room/..., /evidence/..., /showcase) are untouched. (#260 item 6)
+        if (!location.hash && (p === '/m' || p === '/admin' || p.indexOf('/admin/') === 0)) {
+          location.replace('/#' + p + location.search);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

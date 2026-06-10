@@ -225,7 +225,11 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       startsInMs: 0,
       remainingMs,
       totalMs: (lot.durationSec || 60) * 1000,
-      currentPrice: yuan(store.currentCents),
+      // Until the global store's snapshot belongs to THIS auction, currentPrice
+      // would be the previous room's (or default) value — and the +N档 / 加固
+      // bid chips derive their amounts from it (tabs.tsx, LiveRoom.tsx), an
+      // overpay path on multi-room swipe before sync. Show 0 until loaded. (#260 item 2)
+      currentPrice: store.auctionId === auctionId ? yuan(store.currentCents) : 0,
       leader,
       bids,
       ranking,
@@ -236,14 +240,21 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       lastEvent: null,
       bidCount: store.totalBidsCount ?? 0,
     };
-  }, [store, lot.durationSec]);
+  }, [store, lot.durationSec, auctionId]);
 
   const nextMinBid = useMemo(() => {
-    const cur = yuan(store.currentCents);
-    const step = yuan(store.stepCents) || lot.minIncrement || 1;
-    if (!store.currentCents || store.currentCents === '0') return lot.startPrice > 0 ? lot.startPrice : step;
-    return cur + step;
-  }, [store.currentCents, store.stepCents, lot.minIncrement, lot.startPrice]);
+    // The store is a global singleton: until init() runs for THIS auction it
+    // still holds defaults / the previous room's data (stepCents '500000' = ¥5000,
+    // currentCents '0'). Trusting those would let the bid CTA pre-fill ¥5000 and
+    // one-tap submit it as an overpay. So only trust store values once the loaded
+    // snapshot belongs to this auction; otherwise fall back to lot.minIncrement,
+    // a small safe floor. The correct cur+step lands as soon as the snapshot
+    // arrives. (#260 item 2 — verified against store default auction.js:37)
+    const loaded = store.auctionId === auctionId;
+    const step = (loaded ? yuan(store.stepCents) : 0) || lot.minIncrement || 1;
+    if (!loaded || !store.currentCents || store.currentCents === '0') return step;
+    return yuan(store.currentCents) + step;
+  }, [store.auctionId, store.currentCents, store.stepCents, lot.minIncrement, auctionId]);
 
   // ── placeBid: HTTP command lane + WS fallback (server adjudicates) ──
   const placeBid = useCallback((amount: number): { ok: boolean; reason?: string } => {
