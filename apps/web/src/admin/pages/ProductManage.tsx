@@ -6,6 +6,7 @@ import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
+import EmptyLive from '../EmptyLive';
 
 interface Prod { key: string; name: string; id: string; image: string; tags: string[]; start: number; step: number; cap: number; current: number; bids: number; status: 'live' | 'done' | 'waiting'; endTs?: number; }
 
@@ -56,7 +57,7 @@ function LiveCountdown({ endTs }: { endTs: number }) {
   return <span style={{ color: ending ? '#fe2c55' : '#fa8c16', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{hh}:{mm}:{ss}</span>;
 }
 
-export default function ProductManage() {
+export default function ProductManage({ onGo }: { onGo?: (p: string) => void } = {}) {
   const { message } = AntdApp.useApp();
   const [tab, setTab] = useState('live');
   const [explaining, setExplaining] = useState<string | null>(null);
@@ -67,18 +68,18 @@ export default function ProductManage() {
   const [liveStarted, setLiveStarted] = useState<Set<string>>(new Set());
   const [uploadingVideo, setUploadingVideo] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const { auctions = [] } = await api.listAuctions();
       setProducts(auctions.filter((a: any) => !isJunk(a.productName)).map(toProd));
-    } catch (e: any) {
-      message.error('加载商品失败：' + (e?.message || e));
+    } catch {
+      // An empty/failed list is NOT an error toast — just leave the friendly empty state.
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
-  }, [message]);
-  useEffect(() => { load(); const t = setInterval(load, 10_000); return () => clearInterval(t); }, [load]);
+  }, []);
+  useEffect(() => { load(); const t = setInterval(() => load(true), 10_000); return () => clearInterval(t); }, [load]);
 
   const cancelAuction = async (id: string, name: string) => {
     try {
@@ -215,11 +216,11 @@ export default function ProductManage() {
         <Button icon={<FilterOutlined />}>筛选</Button>
         <span style={{ marginLeft: 8, color: '#fe2c55', fontWeight: 600, fontSize: 13 }}>● 直播中</span>
         <div className="spacer" />
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={load}>刷新列表</Button>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => load()}>刷新列表</Button>
         <Button icon={<AppstoreOutlined />}>查看分组</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => message.info('请前往「竞拍发布」添加商品')}>添加商品</Button>
       </div>
-      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: '暂无拍品 · 去「竞拍发布」开拍' }} pagination={{ pageSize: 6, showTotal: (t) => `共 ${t} 件拍品` }} scroll={{ x: 1480 }} size="middle" />
+      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: <EmptyLive onGo={() => onGo?.('publish')} /> }} pagination={{ pageSize: 6, showTotal: (t) => `共 ${t} 件拍品` }} scroll={{ x: 1480 }} size="middle" />
 
       <Modal
         open={!!streamInfo}

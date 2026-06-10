@@ -3,7 +3,7 @@ import LiveRoom from './LiveRoom';
 import { ROOMS } from '../lib/mockData';
 import { SwipeHint } from './components';
 import { LoginGate } from './account';
-import { useIdentity, seatIdentity, type SeatIdentity } from '../lib/identity';
+import { useIdentity, seatIdentity, defaultAvatarFor, type SeatIdentity } from '../lib/identity';
 import { api } from '../backend/lib/api.js';
 import { auctionsToRooms } from '../lib/mapBackend';
 import type { Room } from '../lib/types';
@@ -30,6 +30,16 @@ function readRoomParam(): string | null {
   return new URLSearchParams(q).get('room');
 }
 
+// #260 需求#7: #/m?as=<昵称> → 免登录固定身份。每个昵称一个独立 seat（自己的
+// 后端 userId/token + 房间 store），同一台机器开两个窗口（?as=买家甲 / ?as=买家乙)
+// 就能双账号对拍演示，互不串号。跳过登录门，不碰全局登录身份。
+function readAsParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const q = window.location.hash.split('?')[1] || '';
+  const v = (new URLSearchParams(q).get('as') || '').trim();
+  return v ? v.slice(0, 16) : null;
+}
+
 export default function MobileApp({ startIndex = 0, autoGuest = false, seat = '' }: { startIndex?: number; autoGuest?: boolean; seat?: string } = {}) {
   const orderId = readOrderParam();
   // #3/#4 unified identity: gate the buyer rail behind a lightweight nickname
@@ -44,15 +54,21 @@ export default function MobileApp({ startIndex = 0, autoGuest = false, seat = ''
   // session (minted inside the engine, keyed by seat). They never touch the global
   // login store — that global singleton is exactly what collapsed A and B into one
   // account before. So seat panes skip the login gate entirely.
-  const seatIdent = useMemo<SeatIdentity | null>(() => (seat ? seatIdentity(seat) : null), [seat]);
+  // ?as=<昵称> reuses the same seat machinery: a synthetic 'as-<昵称>' seat.
+  const asNick = seat ? null : readAsParam();
+  const effSeat = seat || (asNick ? 'as-' + asNick : '');
+  const seatIdent = useMemo<SeatIdentity | null>(() => {
+    if (asNick) return { nickname: asNick, avatar: defaultAvatarFor(asNick) };
+    return seat ? seatIdentity(seat) : null;
+  }, [seat, asNick]);
   useEffect(() => {
-    if (seat) return; // seat panes manage their own session; never mutate the global identity
+    if (effSeat) return; // seat panes manage their own session; never mutate the global identity
     if (ready) resolve();
     else if (autoGuest) continueAsGuest();
-  }, [seat, ready, autoGuest, resolve, continueAsGuest]);
+  }, [effSeat, ready, autoGuest, resolve, continueAsGuest]);
 
   if (orderId) return <OrderView auctionId={orderId} />;
-  if (seat && seatIdent) return <BuyerRail startIndex={startIndex} seat={seat} identity={seatIdent} />;
+  if (effSeat && seatIdent) return <BuyerRail startIndex={startIndex} seat={effSeat} identity={seatIdent} />;
   if (!ready) return autoGuest ? <CenterMsg text="正在进入直播间…" sub="LOADING" /> : <LoginGate />;
   return <BuyerRail startIndex={startIndex} />;
 }

@@ -122,10 +122,10 @@ export default function AdminApp({
               }}
             >
               {page === 'dashboard' && <Dashboard onGo={(p) => setPage(p as PageKey)} />}
-              {page === 'products' && <ProductManage />}
+              {page === 'products' && <ProductManage onGo={(p) => setPage(p as PageKey)} />}
               {page === 'publish' && <AuctionPublish />}
               {page === 'orders' && <OrderManage />}
-              {page === 'monitor' && <LiveMonitor />}
+              {page === 'monitor' && <LiveMonitor onGo={(p) => setPage(p as PageKey)} />}
             </Content>
           </Layout>
         </Layout>
