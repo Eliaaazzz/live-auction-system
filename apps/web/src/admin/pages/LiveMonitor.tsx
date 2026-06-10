@@ -14,6 +14,7 @@ const POLL_MS = 10_000;
 
 export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {}) {
   const [liveList, setLiveList] = useState<BackendAuction[]>([]);
+  const [allList, setAllList] = useState<BackendAuction[]>([]); // #261-13 发布历史（任意状态）
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -23,7 +24,9 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
   const refresh = useCallback(async () => {
     try {
       const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
-      const live = (auctions || []).filter((a: BackendAuction) => a.auctionId && a.status === 'LIVE');
+      const arr = (auctions || []) as BackendAuction[];
+      setAllList(arr);
+      const live = arr.filter((a) => a.auctionId && a.status === 'LIVE');
       setLiveList(live);
       setSelectedId((cur) => (cur && live.some((a: BackendAuction) => a.auctionId === cur) ? cur : (live[0]?.auctionId ?? null)));
     } catch {
@@ -68,13 +71,63 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
         <Tag color="red">共 {liveList.length} 件在拍</Tag>
       </div>
 
-      {selected ? (
-        // key by id so switching pick remounts the engine cleanly.
-        <MonitorView key={selected.auctionId} lot={auctionToLot(selected)} onCancelled={refresh} />
-      ) : (
-        <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} title="快去直播吧" hint="开播带拍后，这里实时跳动出价与人气" cta="去竞拍发布开拍" /></Card>
-      )}
+      <div className="mon-layout">
+        {/* #261-13 直播中左侧发布历史：让主播看到自己发布了什么，点 LIVE 项可切换监控 */}
+        <PublishHistory
+          items={allList}
+          selectedId={selectedId}
+          onPick={(a) => { if (a.status === 'LIVE') setSelectedId(a.auctionId); }}
+        />
+        <div className="mon-main">
+          {selected ? (
+            // key by id so switching pick remounts the engine cleanly.
+            <MonitorView key={selected.auctionId} lot={auctionToLot(selected)} onCancelled={refresh} />
+          ) : (
+            <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} title="快去直播吧" hint="开播带拍后，这里实时跳动出价与人气" cta="去竞拍发布开拍" /></Card>
+          )}
+        </div>
+      </div>
     </div>
+  );
+}
+
+const STATUS_TAG: Record<string, { label: string; color: string }> = {
+  LIVE: { label: '直播中', color: 'red' },
+  SCHEDULED: { label: '已排期', color: 'gold' },
+  SOLD: { label: '已成交', color: 'green' },
+  UNSOLD: { label: '流拍', color: 'default' },
+  CANCELLED: { label: '已取消', color: 'default' },
+};
+
+/** #261-13 发布历史栏：展示本商家已发布的拍品（排除草稿），LIVE 项可点选监控。 */
+function PublishHistory({ items, selectedId, onPick }: { items: BackendAuction[]; selectedId: string | null; onPick: (a: BackendAuction) => void }) {
+  const published = items.filter((a) => a.status && a.status !== 'DRAFT');
+  return (
+    <aside className="mon-history">
+      <div className="mon-history-hd">发布历史 <span>{published.length}</span></div>
+      <div className="mon-history-list">
+        {published.length === 0 && <div className="mon-history-empty">还没有发布记录</div>}
+        {published.map((a) => {
+          const t = STATUS_TAG[a.status || ''] || { label: a.status || '—', color: 'default' };
+          const live = a.status === 'LIVE';
+          return (
+            <button
+              key={a.auctionId}
+              type="button"
+              className={'mon-history-item' + (live ? ' live' : '') + (a.auctionId === selectedId ? ' active' : '')}
+              onClick={() => onPick(a)}
+              title={live ? '点击监控这场' : a.productName}
+            >
+              <Avatar shape="square" size={34} src={a.imageUrl} style={{ flexShrink: 0 }} />
+              <div className="mon-history-meta">
+                <div className="mon-history-name">{a.productName || '直播拍品'}</div>
+                <Tag color={t.color} style={{ marginInlineEnd: 0, width: 'fit-content' }}>{t.label}</Tag>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </aside>
   );
 }
 

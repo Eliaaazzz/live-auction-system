@@ -23,6 +23,7 @@ function ac(): AudioContext | null {
 export function unlockAudio(): void {
   ac();
 }
+
 export function isMuted(): boolean {
   return muted;
 }

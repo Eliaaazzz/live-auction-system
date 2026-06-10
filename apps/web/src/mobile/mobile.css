@@ -162,6 +162,7 @@
 .lm-rankcard { flex: 1; min-width: 0; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
 .lm-rankcard.r1 { background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.36); }
 .lm-rankcard.r2 { background: rgba(207,214,228,0.1); border: 1px solid rgba(207,214,228,0.24); }
+.lm-rankcard.me { box-shadow: 0 0 0 2px rgba(254,44,85,0.55) inset; }
 .lm-rank-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; }
 .lm-rankcard.r1 .lm-rank-badge { color: var(--gold, #ffce54); }
 .lm-rankcard.r2 .lm-rank-badge { color: var(--silver, #cfd6e4); }
@@ -178,6 +179,11 @@
 .lm-lead-note { display: flex; align-items: center; gap: 6px; background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.32); color: var(--gold, #ffce54); border-radius: 12px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; }
 
 .lm-hist-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.lm-hist-row.self { background: rgba(254,44,85,0.12); border-radius: 8px; padding-inline: 6px; }
+/* #261-1 出价历史固定高 + 内置滚动条 */
+.lm-hist-list { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.lm-hist-list::-webkit-scrollbar { width: 5px; }
+.lm-hist-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 999px; }
 .lm-hist-nm { font-size: 12.5px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lm-hist-amt { font-size: 14px; font-weight: 800; flex-shrink: 0; }
 .lm-hist-amt.lead { color: var(--gold, #ffce54); }
