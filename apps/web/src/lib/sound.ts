@@ -73,8 +73,14 @@ function noise(dur: number, gain: number, when = 0): void {
 // 领先 / 被反超 / 成交时用中文语音播报，与音效共用同一个静音开关。
 // speechSynthesis 缺失（旧 WebView）时静默降级为纯音效。每次播报前 cancel()
 // 排队中的旧播报：竞价高频反超时只读最新状态，不读历史。
+// Chromium 坑：cancel() 同一 tick 内紧跟 speak() 会让新 utterance 卡在
+// pending 队列里不出声，竞价高频互相 cancel 时全部积压，落槌后才把过期的
+// 「您已领先」吐出来。所以 cancel 和 speak 之间必须隔一拍，并用代际计数
+// 把已被新文案取代的旧播报直接丢弃。
 let lastSpeakAt = 0;
 let lastSpeakText = '';
+let speakGen = 0;
+let speakTimer: ReturnType<typeof setTimeout> | undefined;
 export function speak(text: string, minGapMs = 2500): void {
   if (muted || typeof window === 'undefined') return;
   const synth = window.speechSynthesis;
@@ -84,15 +90,30 @@ export function speak(text: string, minGapMs = 2500): void {
   if (text === lastSpeakText && now - lastSpeakAt < minGapMs) return;
   lastSpeakAt = now;
   lastSpeakText = text;
-  try {
-    synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'zh-CN';
-    u.rate = 1.12;
-    u.pitch = 1.05;
-    u.volume = 0.95;
-    synth.speak(u);
-  } catch { /* ignore */ }
+  const gen = ++speakGen;
+  if (speakTimer !== undefined) clearTimeout(speakTimer);
+  try { synth.cancel(); } catch { /* ignore */ }
+  speakTimer = setTimeout(() => {
+    if (gen !== speakGen) return; // 已被更新的播报取代
+    try {
+      synth.resume(); // Chromium 偶发停在 paused 态，先恢复再说话
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'zh-CN';
+      u.rate = 1.12;
+      u.pitch = 1.05;
+      u.volume = 0.95;
+      synth.speak(u);
+    } catch { /* ignore */ }
+  }, 60);
+}
+
+// 结拍等终态时冲掉在途/待播的过期播报（领先、被反超），避免落槌后还在喊领先。
+export function cancelSpeak(): void {
+  speakGen++;
+  if (speakTimer !== undefined) clearTimeout(speakTimer);
+  lastSpeakText = '';
+  if (typeof window === 'undefined') return;
+  try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
 }
 
 export const sfx = {
