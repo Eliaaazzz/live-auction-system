@@ -7,7 +7,7 @@ import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
 import { isJunk } from '../../lib/mapBackend';
 
-const OIMG: Record<string, string> = { '1': PROD.jadePendant, '2': PROD.jadeBangle, '3': PROD.watch, '4': PROD.teapot, '5': PROD.goldNecklace, '6': PROD.diamond, '7': PROD.jadePendant, '8': PROD.diamond };
+const OIMG: Record<string, string> = { '1': PROD.watch, '2': PROD.apparel, '3': PROD.bag, '4': PROD.shoes };
 
 type OStatus = 'pending' | 'paid' | 'shipped' | 'done' | 'refunded';
 interface Order { key: string; no: string; item: string; price: number; buyer: string; deposit: number; status: OStatus; time: string; img?: string; }
@@ -50,14 +50,10 @@ const FLOW_STEPS = ['拍下成交', '买家付款', '卖家发货', '交易完�
 const STEP_OF: Record<OStatus, number> = { pending: 0, paid: 1, shipped: 2, done: 3, refunded: 0 };
 
 const ORDERS: Order[] = [
-  { key: '1', no: 'AUC20260608001', item: '金镶玉平安扣·和田玉吊坠项链', price: 9000, buyer: '黄***', deposit: 200, status: 'pending', time: '06-08 14:32' },
-  { key: '2', no: 'AUC20260608002', item: '天然冰糯种翡翠手镯 56mm', price: 21600, buyer: '张***', deposit: 500, status: 'paid', time: '06-08 14:10' },
-  { key: '3', no: 'AUC20260608003', item: '二手奢侈品腕表 钢款机械', price: 70000, buyer: '李***', deposit: 2000, status: 'shipped', time: '06-08 13:48' },
-  { key: '4', no: 'AUC20260607021', item: '紫砂壶名家全手工原矿', price: 5400, buyer: '王***', deposit: 100, status: 'done', time: '06-07 21:05' },
-  { key: '5', no: 'AUC20260607019', item: '清代老银元袁大头三年', price: 2600, buyer: '陈***', deposit: 100, status: 'done', time: '06-07 20:33' },
-  { key: '6', no: 'AUC20260607012', item: '奈良美智版画《青春后藏刀》', price: 7000000, buyer: '周***', deposit: 50000, status: 'paid', time: '06-07 19:20' },
-  { key: '7', no: 'AUC20260607008', item: '和田玉籽料手串 12mm', price: 0, buyer: '—（流拍）', deposit: 200, status: 'refunded', time: '06-07 18:02' },
-  { key: '8', no: 'AUC20260606044', item: '18K金钻石戒指 30分', price: 4300, buyer: '赵***', deposit: 300, status: 'done', time: '06-06 22:14' },
+  { key: '1', no: 'AUC20260609001', item: '百达翡丽年历计时腕表 玫瑰金蓝盘', price: 628000, buyer: '李***', deposit: 20000, status: 'paid', time: '06-09 21:18' },
+  { key: '2', no: 'AUC20260609002', item: '香奈儿经典粗花呢套装', price: 36500, buyer: '黄***', deposit: 1000, status: 'shipped', time: '06-09 20:41' },
+  { key: '3', no: 'AUC20260608012', item: '范思哲 La Medusa 印花帆布托特包', price: 9800, buyer: '张***', deposit: 500, status: 'pending', time: '06-08 21:05' },
+  { key: '4', no: 'AUC20260608007', item: "迪奥 Walk'n'Dior 老花厚底帆布鞋", price: 6400, buyer: '王***', deposit: 300, status: 'done', time: '06-08 19:26' },
 ];
 
 export default function OrderManage() {

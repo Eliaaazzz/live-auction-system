@@ -11,8 +11,12 @@ import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type Auct
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
 
-const CAT_EMOJI: Record<string, string> = { 玉石珠宝: '🧿', 翡翠玉镯: '💚', 二手奢侈品: '⌚️', 文玩杂项: '🫖', 钱币邮票: '🪙', 艺术品: '🎴', 特色食品: '🍫' };
-const CAT_IMG: Record<string, string> = { 玉石珠宝: PROD.jadePendant, 翡翠玉镯: PROD.jadeBangle, 二手奢侈品: PROD.watch, 文玩杂项: PROD.teapot, 钱币邮票: PROD.goldNecklace, 艺术品: PROD.diamond, 特色食品: PROD.chocolate };
+// 本地占位图（products/…）和上传图（/uploads/…）都是相对路径；发给 AI 识图、
+// 存进后端的 imageUrl 统一补成同源绝对地址（过 SSRF、跨端可取）。
+const toAbsUrl = (u: string): string => (u.startsWith('http') ? u : new URL(u, location.href).toString());
+
+const CAT_EMOJI: Record<string, string> = { 名表: '⌚️', 箱包: '👜', 服饰: '👗', 鞋履: '👟' };
+const CAT_IMG: Record<string, string> = { 名表: PROD.watch, 箱包: PROD.bag, 服饰: PROD.apparel, 鞋履: PROD.shoes };
 
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
@@ -23,7 +27,7 @@ export default function AuctionPublish() {
   const [fileList, setFileList] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<AuctionDraft[]>(() => listDrafts());
   const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
-  const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.jadePendant);
+  const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
 
   // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
@@ -68,8 +72,8 @@ export default function AuctionPublish() {
           productId: 'draft-preview',
           title: name,
           description: tpl,
-          // AI 视觉需服务端可抓取的【绝对】URL；上传图是相对 /uploads/，补成同源绝对地址（过 SSRF）。
-          imageUrls: [uploadedUrl ? (uploadedUrl.startsWith('http') ? uploadedUrl : location.origin + uploadedUrl) : (CAT_IMG[category] ?? PROD.jadePendant)],
+          // AI 视觉需服务端可抓取的【绝对】URL。
+          imageUrls: [toAbsUrl(uploadedUrl || (CAT_IMG[category] ?? PROD.watch))],
           signal: ctrl.signal,
         });
         const refined = pickIntro(name, resp);
@@ -142,7 +146,7 @@ export default function AuctionPublish() {
       setBusy(true);
       try {
         await ensureSession('seller-demo');
-        const imageUrl = uploadedUrl || (CAT_IMG[vals.category as string] ?? PROD.jadePendant);
+        const imageUrl = toAbsUrl(uploadedUrl || (CAT_IMG[vals.category as string] ?? PROD.watch));
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -191,7 +195,7 @@ export default function AuctionPublish() {
     <div className="admin-content">
       <Alert type="info" showIcon style={{ marginBottom: 18 }} message="发布即生成竞拍状态机：上架 → 竞拍中 → 截拍中 → 成交/流拍。规则一经有人出价不可再改，请提前配置好。" />
       <div className="pub-grid">
-        <Form form={form} layout="vertical" initialValues={{ category: '玉石珠宝', start: 0, step: 50, minStep: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, deposit: 200 }}>
+        <Form form={form} layout="vertical" initialValues={{ category: '名表', start: 0, step: 50, minStep: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, deposit: 200 }}>
           <Divider orientation="left" plain>商品信息</Divider>
           <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）；未上传则使用所选分类的示例图">
             <Upload
@@ -206,7 +210,7 @@ export default function AuctionPublish() {
             </Upload>
           </Form.Item>
           <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
-            <Input placeholder="如：金镶玉平安扣·和田玉吊坠项链首饰" maxLength={60} showCount />
+            <Input placeholder="如：百达翡丽年历计时腕表 玫瑰金蓝盘" maxLength={60} showCount />
           </Form.Item>
           <Space size={16} style={{ display: 'flex' }}>
             <Form.Item label="商品分类" name="category" style={{ flex: 1 }}>
@@ -282,9 +286,9 @@ export default function AuctionPublish() {
                 <div key={d.id} className={'draft-item' + (d.id === draftId ? ' editing' : '')}>
                   <img
                     className="draft-thumb"
-                    src={d.imageUrl || CAT_IMG[d.category ?? ''] || PROD.jadePendant}
+                    src={d.imageUrl || CAT_IMG[d.category ?? ''] || PROD.watch}
                     alt=""
-                    onError={(e) => { e.currentTarget.src = CAT_IMG[d.category ?? ''] ?? PROD.jadePendant; }}
+                    onError={(e) => { e.currentTarget.src = CAT_IMG[d.category ?? ''] ?? PROD.watch; }}
                   />
                   <div className="draft-meta">
                     <div className="draft-name">{d.name}</div>

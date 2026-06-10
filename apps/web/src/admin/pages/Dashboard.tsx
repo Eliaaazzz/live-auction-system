@@ -15,10 +15,10 @@ const maskBuyer = (id?: string): string => {
   return n ? n.slice(0, 1) + '***' : '匿名';
 };
 const DEMO_RECENT = [
-  { img: PROD.watch, name: '二手奢侈品腕表 钢款机械', price: 70000, buyer: '李***' },
-  { img: PROD.jadeBangle, name: '天然冰糯种翡翠手镯', price: 21600, buyer: '张***' },
-  { img: PROD.jadePendant, name: '金镶玉平安扣吊坠', price: 9000, buyer: '黄***' },
-  { img: PROD.teapot, name: '紫砂壶名家全手工', price: 5400, buyer: '王***' },
+  { img: PROD.watch, name: '百达翡丽年历计时腕表 玫瑰金蓝盘', price: 628000, buyer: '李***' },
+  { img: PROD.apparel, name: '香奈儿经典粗花呢套装', price: 36500, buyer: '黄***' },
+  { img: PROD.bag, name: '范思哲 La Medusa 印花托特包', price: 9800, buyer: '张***' },
+  { img: PROD.shoes, name: "迪奥 Walk'n'Dior 老花厚底帆布鞋", price: 6400, buyer: '王***' },
 ];
 
 export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
@@ -45,7 +45,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
   const liveLot = live[0];
   const hasReal = auctions.length > 0;
   const recent = sold.length
-    ? sold.slice(0, 4).map((a) => ({ img: a.imageUrl || PROD.jadePendant, name: a.productName || '拍品', price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId) }))
+    ? sold.slice(0, 4).map((a) => ({ img: a.imageUrl || PROD.watch, name: a.productName || '拍品', price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId) }))
     : DEMO_RECENT;
   return (
     <div style={{ margin: 18 }}>
@@ -93,13 +93,13 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
             }
           >
             <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-              <Avatar shape="square" size={72} src={liveLot?.imageUrl || PROD.jadePendant} />
+              <Avatar shape="square" size={72} src={liveLot?.imageUrl || PROD.watch} />
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{liveLot?.productName || '金镶玉平安扣·和田玉吊坠项链首饰'}</div>
-                <div style={{ color: '#999', fontSize: 13, margin: '4px 0 10px' }}>0 元起拍 · 加价 ¥{liveLot ? fmtMoney(yuanOf(liveLot.incrementCents)) : '50'} · {liveLot ? (yuanOf(liveLot.capPriceCents) > 0 ? `封顶 ¥${fmtMoney(yuanOf(liveLot.capPriceCents))}` : '不封顶') : '封顶 ¥12,000'}</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{liveLot?.productName || '百达翡丽年历计时腕表 · 玫瑰金蓝盘'}</div>
+                <div style={{ color: '#999', fontSize: 13, margin: '4px 0 10px' }}>0 元起拍 · 加价 ¥{liveLot ? fmtMoney(yuanOf(liveLot.incrementCents)) : '2,000'} · {liveLot ? (yuanOf(liveLot.capPriceCents) > 0 ? `封顶 ¥${fmtMoney(yuanOf(liveLot.capPriceCents))}` : '不封顶') : '封顶 ¥680,000'}</div>
                 <div style={{ display: 'flex', gap: 24 }}>
-                  <Statistic title="当前价" value={liveLot ? yuanOf(liveLot.currentPriceCents) : 850} prefix="¥" valueStyle={{ color: '#fe2c55', fontSize: 22 }} />
-                  <Statistic title="出价次数" value={liveLot ? (Number(liveLot.bidCount) || 0) : 17} valueStyle={{ fontSize: 22 }} />
+                  <Statistic title="当前价" value={liveLot ? yuanOf(liveLot.currentPriceCents) : 458000} prefix="¥" valueStyle={{ color: '#fe2c55', fontSize: 22 }} />
+                  <Statistic title="出价次数" value={liveLot ? (Number(liveLot.bidCount) || 0) : 23} valueStyle={{ fontSize: 22 }} />
                   <Statistic title="状态" value={liveLot ? '直播中' : '—'} valueStyle={{ fontSize: 22 }} />
                 </div>
               </div>
@@ -129,10 +129,10 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
         <Col span={24}>
           <Card title="各品类成交占比">
             {[
-              { k: '玉石珠宝', v: 38, c: '#fe2c55' },
-              { k: '二手奢侈品', v: 27, c: '#1677ff' },
-              { k: '翡翠玉镯', v: 19, c: '#52c41a' },
-              { k: '文玩杂项', v: 16, c: '#faad14' },
+              { k: '名表', v: 38, c: '#fe2c55' },
+              { k: '箱包', v: 27, c: '#1677ff' },
+              { k: '服饰', v: 19, c: '#52c41a' },
+              { k: '鞋履', v: 16, c: '#faad14' },
             ].map((row) => (
               <div key={row.k} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
                 <span style={{ width: 96, fontSize: 13 }}>{row.k}</span>
