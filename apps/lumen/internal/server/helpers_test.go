@@ -75,13 +75,34 @@ func TestSlug(t *testing.T) {
 		"a-b_c":       "a_b_c",
 		"Café 99":     "caf_99", // non-ascii dropped, digits kept
 		"":            "anon",
-		"!!!":         "anon",
 		"UPPER":       "upper",
+		"买家A":         "a", // legacy mapping preserved — user_a keeps its bid/order history
+		"买家B":         "b",
 	}
 	for in, want := range cases {
 		if got := slug(in); got != want {
 			t.Errorf("slug(%q)=%q want %q", in, got, want)
 		}
+	}
+}
+
+// Empty-ASCII-residue nicknames (pure CJK/emoji/symbols) must NOT collapse into
+// one shared "anon" account. 2026-06-10 深度排查：两台手机各输一个中文昵称 →
+// 同一个 user_anon → 对端把彼此的 ROOM_SOCIAL 广播判为 self 并抑制动画，
+// 看起来像「点赞/礼物跨端不同步」。
+func TestSlugEmptyResidueDistinctAndStable(t *testing.T) {
+	a, b := slug("杰瑞"), slug("测试")
+	if a == "anon" || b == "anon" {
+		t.Fatalf("pure-CJK nickname still collapses to bare anon: %q / %q", a, b)
+	}
+	if a == b {
+		t.Fatalf("distinct CJK nicknames collide: slug(杰瑞)=%q == slug(测试)=%q", a, b)
+	}
+	if again := slug("杰瑞"); again != a {
+		t.Fatalf("slug unstable for same nickname: %q then %q", a, again)
+	}
+	if x, y := slug("!!!"), slug("???"); x == y {
+		t.Fatalf("symbol-only nicknames collide: %q == %q", x, y)
 	}
 }
 

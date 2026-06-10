@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"hash/fnv"
 	"io"
 	"log"
 	"net/http"
@@ -1387,7 +1388,19 @@ func slug(s string) string {
 		}
 	}
 	if b.Len() == 0 {
-		return "anon"
+		// 残基为空（纯 CJK/emoji/符号昵称）。旧实现把它们全部坍缩成同一个
+		// "anon" → 两台手机各输一个中文昵称会共享同一个 user_anon 账号，对端
+		// 把彼此的 ROOM_SOCIAL 广播误判为 self 并抑制点赞/礼物动画，看起来
+		// 就是「跨端不同步」（2026-06-10 深度排查）。改为对原始昵称取 FNV-1a
+		// 短哈希：不同昵称 → 不同 userId；同一昵称仍稳定映射同一账号。空昵称
+		// 维持 "anon"（handleLogin 上游已拒绝空昵称，这里只是防御）。ASCII
+		// 残基非空的路径保持不变 — 存量账号（如 买家A → user_a）不受影响。
+		if s == "" {
+			return "anon"
+		}
+		h := fnv.New32a()
+		_, _ = io.WriteString(h, s)
+		return "anon" + hex.EncodeToString(h.Sum(nil))
 	}
 	return b.String()
 }
