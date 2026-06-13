@@ -30,12 +30,14 @@
 .lm-scrim-bottom { position: absolute; bottom: 0; left: 0; right: 0; height: 56%; background: linear-gradient(0deg, rgba(0,0,0,0.78) 6%, rgba(0,0,0,0.25) 60%, transparent); z-index: 5; pointer-events: none; }
 
 /* ---------- header ---------- */
-.lm-header { position: absolute; top: 46px; left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
-.lm-anchor { display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
-.lm-anchor-meta { display: flex; flex-direction: column; line-height: 1.12; padding-right: 2px; }
+/* #16 顶部安全区：刘海/灵动岛设备 top 跟随 env(safe-area-inset-top)，header 不被挖空区遮住。 */
+.lm-header { position: absolute; top: max(46px, calc(env(safe-area-inset-top, 0px) + 8px)); left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
+/* #19 已关注横排：min-width:0 让主播名收缩(省略号)、把空间让给关注按钮，按钮自身 nowrap+不收缩 → 永不竖排。 */
+.lm-anchor { display: flex; align-items: center; gap: 7px; min-width: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
+.lm-anchor-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; padding-right: 2px; }
 .lm-anchor-name { font-size: 12.5px; font-weight: 700; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lm-anchor-fans { font-size: 10px; color: rgba(255,255,255,0.68); }
-.lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; cursor: pointer; }
+.lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
 .lm-follow.is-followed { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.78); }
 .lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .lm-viewers { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
@@ -110,14 +112,19 @@
   display: flex; align-items: stretch;
   background: rgba(10,10,14,0.96); border-top: 1px solid rgba(255,255,255,0.07);
 }
-.lm-tabbtn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0; }
+/* #17 tab 不堆叠：每个按钮 flex:1 min-width:0 均分，标签 nowrap 永不竖排折行。 */
+.lm-tabbtn { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0; }
 .lm-tabbtn.on { color: #fe2c55; }
 .lm-tabbtn-ic { position: relative; display: grid; place-items: center; height: 22px; }
-.lm-tabbtn-l { font-size: 10.5px; font-weight: 600; }
+.lm-tabbtn-l { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 .lm-tabbtn.on .lm-tabbtn-l { font-weight: 800; }
 .lm-tabdot { position: absolute; top: -2px; right: -5px; width: 6px; height: 6px; border-radius: 50%; background: #fe2c55; }
 .lm-tabdot.gold { background: #ffce54; }
 
+/* #15 shake 不再位移出价条：shell 全屏 inset:0（containing block = 视口），承接 .lm-shake
+   的 transform；pointer-events:none 让空白处点击穿透，只有 .lm-bidbar 自身可点。 */
+.lm-bidbar-shell { position: absolute; inset: 0; z-index: 26; pointer-events: none; }
+.lm-bidbar-shell > .lm-bidbar { pointer-events: auto; }
 .lm-bidbar {
   position: absolute; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom, 0px)); z-index: 26;
   height: 60px; padding: 6px 12px;
@@ -126,16 +133,17 @@
 }
 .lm-stepper { display: flex; align-items: center; background: rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
 .lm-stepper button { width: 34px; height: 46px; background: none; border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
-.lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; }
-.lm-bidcta { flex: 1; height: 48px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+.lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; white-space: nowrap; }
+/* #18 数字永不竖排：CTA 主文案 nowrap（含金额），min-width:0+overflow 让长数字裁切而非折行。 */
+.lm-bidcta { flex: 1; min-width: 0; overflow: hidden; height: 48px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-bidcta > span.sub { font-size: 10px; font-weight: 600; opacity: 0.9; }
 .lm-bidcta.lead { background: linear-gradient(96deg, #ffce54, #f6a609); color: #4a2c00; box-shadow: 0 6px 18px rgba(246,166,9,0.35); }
 .lm-bidcta.second { background: linear-gradient(96deg, #ff7a8a, #fe2c55); }
 .lm-bidcta.join { gap: 1px; }
 .lm-bidcta:disabled { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.5); box-shadow: none; }
-.lm-bidcta > :first-child { display: inline-flex; align-items: center; gap: 5px; }
+.lm-bidcta > :first-child { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; max-width: 100%; }
 .lm-bar-gap { flex-shrink: 0; text-align: center; min-width: 48px; }
-.lm-bar-gap .v { font-size: 14px; font-weight: 800; color: var(--gold, #ffce54); }
+.lm-bar-gap .v { font-size: 14px; font-weight: 800; color: var(--gold, #ffce54); white-space: nowrap; }
 .lm-bar-gap .l { font-size: 9.5px; color: rgba(255,255,255,0.55); }
 
 .lm-sheet-backdrop { position: absolute; inset: 0; z-index: 23; background: rgba(0,0,0,0.32); animation: la-rise 0.2s ease; }
@@ -172,12 +180,12 @@
 .lm-rank-user { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .lm-rank-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lm-rank-ph { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.1); }
-.lm-rank-amt { font-size: 17px; font-weight: 800; }
+.lm-rank-amt { font-size: 17px; font-weight: 800; white-space: nowrap; }
 .lm-myrow { display: flex; align-items: center; justify-content: space-between; background: rgba(254,44,85,0.12); border: 1px solid rgba(254,44,85,0.3); border-radius: 14px; padding: 10px 12px; }
 .lm-myrow .left { display: flex; align-items: center; gap: 8px; }
 .lm-myrank-pill { background: var(--bid-grad, #fe2c55); border-radius: 8px; font-size: 12px; font-weight: 800; padding: 3px 8px; }
 .lm-gap { text-align: right; }
-.lm-gap .v { font-size: 16px; font-weight: 800; color: var(--gold, #ffce54); }
+.lm-gap .v { font-size: 16px; font-weight: 800; color: var(--gold, #ffce54); white-space: nowrap; }
 .lm-gap .l { font-size: 10.5px; color: rgba(255,255,255,0.55); }
 .lm-lead-note { display: flex; align-items: center; gap: 6px; background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.32); color: var(--gold, #ffce54); border-radius: 12px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; }
 
@@ -213,7 +221,7 @@
 .lm-quickbids { display: flex; gap: 8px; margin-bottom: 10px; }
 .lm-chip { flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 10px 6px; text-align: center; cursor: pointer; }
 .lm-chip .x { font-size: 11px; color: rgba(255,255,255,0.6); }
-.lm-chip .v { font-size: 14px; font-weight: 800; }
+.lm-chip .v { font-size: 14px; font-weight: 800; white-space: nowrap; }
 .lm-chip:active { background: rgba(254,44,85,0.2); }
 .lm-field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .lm-field label { font-size: 12px; color: rgba(255,255,255,0.6); width: 78px; flex-shrink: 0; }
