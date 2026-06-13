@@ -291,7 +291,11 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           <Danmaku items={danmaku} />
           <ActionRail likes={state.likes} liked={liked} onToggleLike={onToggleLike} likeBurst={likeBurst} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
-          <div className={shake ? 'lm-shake' : undefined}>
+          {/* #15 动画位移修复：shake 用 transform，会给后代建立 containing block，
+              让底部锚定的 .lm-bidbar(position:absolute;bottom:…) 整条飞出屏幕。改成
+              全屏 inset:0 的 shell —— containing block 与视口同尺寸，出价条 bottom 锚点
+              不变，shake 只整体平移；pointer-events:none 让空白处点击穿透到下层。 */}
+          <div className={'lm-bidbar-shell' + (shake ? ' lm-shake' : '')}>
             <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
           </div>
 

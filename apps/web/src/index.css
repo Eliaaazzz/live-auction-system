@@ -105,10 +105,13 @@ body {
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Number readability: tabular figures so prices don't jitter while ticking */
+/* Number readability: tabular figures so prices don't jitter while ticking.
+   #18 nowrap: a price/amount must never wrap to a 2nd line ("横着变竖着") when its
+   container is narrow — it stays on one line and the container clips/ellipsizes. */
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
 }
 
 /* Hide scrollbars inside the live overlay panels (keep scroll) */
