@@ -89,7 +89,7 @@ export function LiveHeader({ room, viewers, simViewers = 0, followed, onToggleFo
               <Avatar src={'https://i.pravatar.cc/40?img=24'} size={20} ring="rgba(0,0,0,0.35)" />
               <Avatar src={'https://i.pravatar.cc/40?img=36'} size={20} ring="rgba(0,0,0,0.35)" />
             </div>
-            <Icon name="eye" size={13} />{fmtCount(liveViewers)}
+            <Icon name="eye" size={13} /><span className="tnum">{fmtCount(liveViewers)}</span>
           </div>
           {/* #266 review 诚实边界：人气脚本在跑时显式声明模拟，绝不冒充真实并发。 */}
           {simViewers > 0 && <div className="lm-simtag">模拟人气 · 演示</div>}

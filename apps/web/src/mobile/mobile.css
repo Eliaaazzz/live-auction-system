@@ -32,15 +32,17 @@
 /* ---------- header ---------- */
 /* #16 顶部安全区：刘海/灵动岛设备 top 跟随 env(safe-area-inset-top)，header 不被挖空区遮住。 */
 .lm-header { position: absolute; top: max(46px, calc(env(safe-area-inset-top, 0px) + 8px)); left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
-/* #19 已关注横排：min-width:0 让主播名收缩(省略号)、把空间让给关注按钮，按钮自身 nowrap+不收缩 → 永不竖排。 */
-.lm-anchor { display: flex; align-items: center; gap: 7px; min-width: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
+/* #19 已关注横排：anchor flex:1 优先吃剩余宽度、min-width:0 让主播名省略号截断而非挤垮
+   关注按钮（按钮 nowrap+flex-shrink:0 永不竖排）；header-right 不收缩，保证名字跨宽度一致可读。 */
+.lm-anchor { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
 .lm-anchor-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; padding-right: 2px; }
 .lm-anchor-name { font-size: 12.5px; font-weight: 700; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lm-anchor-fans { font-size: 10px; color: rgba(255,255,255,0.68); }
+.lm-anchor-fans { font-size: 10px; color: rgba(255,255,255,0.68); white-space: nowrap; }
 .lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
 .lm-follow.is-followed { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.78); }
-.lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.lm-viewers { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
+.lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* #18 观众数 1.28万 不竖排：chip 整体 nowrap+不收缩，万级数字永远横排一行。 */
+.lm-viewers { display: flex; align-items: center; gap: 5px; white-space: nowrap; flex-shrink: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
 .lm-viewers-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 /* #266 review 诚实边界：演示人气在跑时的显式「模拟」声明徽标 */
 .lm-simtag { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: #ffd98a; background: rgba(246,166,9,0.18); border: 1px solid rgba(246,166,9,0.45); border-radius: 999px; padding: 1px 7px; backdrop-filter: blur(6px); }
@@ -48,6 +50,12 @@
 .lm-viewer-avs > * { margin-left: -7px; }
 .lm-viewer-avs > *:first-child { margin-left: 0; }
 .lm-close { width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
+/* #19 跟进：手机宽度(≤430px，覆盖 360/375/390/414/430 全系)header 拥挤时，观众 chip 里
+   3 个纯装饰头像(~46px)会把主播名/粉丝挤到不可读。手机端隐藏它们（只保留眼睛图标+人数），
+   把宽度让给「头像 + 名字(省略号截断) + 粉丝 + 关注按钮」；平板/桌面(showcase)宽度足够照常显示。 */
+@media (max-width: 430px) {
+  .lm-viewer-avs { display: none; }
+}
 
 .lm-rankchip { position: absolute; top: 82px; left: 12px; z-index: 20; display: inline-flex; align-items: center; gap: 5px; background: linear-gradient(96deg, #f6a609, #ffce54); color: #4a2c00; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; }
 
@@ -90,7 +98,7 @@
 .lm-rail { position: absolute; right: 10px; bottom: 320px; z-index: 18; display: flex; flex-direction: column; gap: 15px; align-items: center; }
 .lm-rail-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: none; color: #fff; cursor: pointer; }
 .lm-rail-ic { width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,0.3); backdrop-filter: blur(6px); display: grid; place-items: center; position: relative; }
-.lm-rail-num { font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+.lm-rail-num { font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.6); white-space: nowrap; }
 .lm-rail-badge { position: absolute; top: -3px; right: -4px; background: #fe2c55; border-radius: 999px; font-size: 9px; font-weight: 800; padding: 1px 5px; border: 1.5px solid rgba(0,0,0,0.4); }
 .lm-heart-float { position: absolute; bottom: 40px; left: 50%; pointer-events: none; animation: la-float-up 1s ease-out forwards; }
 
@@ -127,15 +135,17 @@
 .lm-bidbar-shell > .lm-bidbar { pointer-events: auto; }
 .lm-bidbar {
   position: absolute; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom, 0px)); z-index: 26;
-  height: 60px; padding: 6px 12px;
-  display: flex; align-items: center; gap: 9px;
+  height: 60px; padding: 6px 10px;
+  display: flex; align-items: center; gap: 8px;
   background: rgba(10,10,14,0.96); border-top: 1px solid rgba(255,255,255,0.06);
 }
 .lm-stepper { display: flex; align-items: center; background: rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
 .lm-stepper button { width: 34px; height: 46px; background: none; border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
 .lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; white-space: nowrap; }
-/* #18 数字永不竖排：CTA 主文案 nowrap（含金额），min-width:0+overflow 让长数字裁切而非折行。 */
-.lm-bidcta { flex: 1; min-width: 0; overflow: hidden; height: 48px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+/* #18 数字永不竖排：CTA 主文案 nowrap（含金额）。min-width:0 让 flex 正常分配；
+   字号 14 + 出价条更紧的 padding/gap，让「反超第一 · ¥14,800」在 360px 也整段放下
+   不折行、不裁切（金额必须完整可见）。 */
+.lm-bidcta { flex: 1; min-width: 0; height: 48px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-bidcta > span.sub { font-size: 10px; font-weight: 600; opacity: 0.9; }
 .lm-bidcta.lead { background: linear-gradient(96deg, #ffce54, #f6a609); color: #4a2c00; box-shadow: 0 6px 18px rgba(246,166,9,0.35); }
 .lm-bidcta.second { background: linear-gradient(96deg, #ff7a8a, #fe2c55); }
