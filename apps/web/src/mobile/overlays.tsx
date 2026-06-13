@@ -58,7 +58,9 @@ function AboutToStart({ state, lot, reminded, onToggleRemind }: { state: Auction
     <div className="lm-ov">
       <div className="lm-ov-card">
         <div className="lm-ov-title">即将开拍</div>
-        <div className="lm-ov-sub">下一件拍品 {fmtClock(state.startsInMs)} 后开始</div>
+        {/* startsInMs 目前后端快照不下发(恒 0) → 别显示假的「00:00 后开始」；
+            有真实倒计时才显示，否则给诚实文案并引导下方「设置开拍提醒」。 */}
+        <div className="lm-ov-sub">{state.startsInMs > 0 ? `下一件拍品 ${fmtClock(state.startsInMs)} 后开始` : '主播正在准备 · 设置提醒不错过开拍'}</div>
         <div className="lm-ov-lot">
           <ProductImg lot={lot} radius={12} className="img" />
           <div style={{ minWidth: 0 }}>
