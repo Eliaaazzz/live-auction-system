@@ -30,15 +30,19 @@
 .lm-scrim-bottom { position: absolute; bottom: 0; left: 0; right: 0; height: 56%; background: linear-gradient(0deg, rgba(0,0,0,0.78) 6%, rgba(0,0,0,0.25) 60%, transparent); z-index: 5; pointer-events: none; }
 
 /* ---------- header ---------- */
-.lm-header { position: absolute; top: 46px; left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
-.lm-anchor { display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
-.lm-anchor-meta { display: flex; flex-direction: column; line-height: 1.12; padding-right: 2px; }
+/* #16 顶部安全区：刘海/灵动岛设备 top 跟随 env(safe-area-inset-top)，header 不被挖空区遮住。 */
+.lm-header { position: absolute; top: max(46px, calc(env(safe-area-inset-top, 0px) + 8px)); left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
+/* #19 已关注横排：anchor flex:1 优先吃剩余宽度、min-width:0 让主播名省略号截断而非挤垮
+   关注按钮（按钮 nowrap+flex-shrink:0 永不竖排）；header-right 不收缩，保证名字跨宽度一致可读。 */
+.lm-anchor { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
+.lm-anchor-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; padding-right: 2px; }
 .lm-anchor-name { font-size: 12.5px; font-weight: 700; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lm-anchor-fans { font-size: 10px; color: rgba(255,255,255,0.68); }
-.lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; cursor: pointer; }
+.lm-anchor-fans { font-size: 10px; color: rgba(255,255,255,0.68); white-space: nowrap; }
+.lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
 .lm-follow.is-followed { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.78); }
-.lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
-.lm-viewers { display: flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
+.lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+/* #18 观众数 1.28万 不竖排：chip 整体 nowrap+不收缩，万级数字永远横排一行。 */
+.lm-viewers { display: flex; align-items: center; gap: 5px; white-space: nowrap; flex-shrink: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
 .lm-viewers-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
 /* #266 review 诚实边界：演示人气在跑时的显式「模拟」声明徽标 */
 .lm-simtag { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: #ffd98a; background: rgba(246,166,9,0.18); border: 1px solid rgba(246,166,9,0.45); border-radius: 999px; padding: 1px 7px; backdrop-filter: blur(6px); }
@@ -46,11 +50,21 @@
 .lm-viewer-avs > * { margin-left: -7px; }
 .lm-viewer-avs > *:first-child { margin-left: 0; }
 .lm-close { width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
+/* #19 跟进：手机宽度(≤430px，覆盖 360/375/390/414/430 全系)header 拥挤时，观众 chip 里
+   3 个纯装饰头像(~46px)会把主播名/粉丝挤到不可读。手机端隐藏它们（只保留眼睛图标+人数），
+   把宽度让给「头像 + 名字(省略号截断) + 粉丝 + 关注按钮」；平板/桌面(showcase)宽度足够照常显示。 */
+@media (max-width: 430px) {
+  .lm-viewer-avs { display: none; }
+}
 
-.lm-rankchip { position: absolute; top: 82px; left: 12px; z-index: 20; display: inline-flex; align-items: center; gap: 5px; background: linear-gradient(96deg, #f6a609, #ffce54); color: #4a2c00; border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 800; }
+/* #UIUX 榜单标签降饱和：从刺眼的实心金渐变改成半透明深底+金字，与其它 chip 同语言，
+   不再和竞拍状态抢视觉焦点（红/金只留给「行动/领先」）。 */
+.lm-rankchip { position: absolute; top: 82px; left: 12px; z-index: 20; display: inline-flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.34); backdrop-filter: blur(8px); color: var(--gold, #ffce54); border: 1px solid rgba(255,206,84,0.28); border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 700; }
 
-/* ---------- lot mini chip ---------- */
-.lm-lotchip { position: absolute; top: 80px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,0.4); backdrop-filter: blur(10px); border-radius: 12px; padding: 5px 9px 5px 5px; max-width: 188px; }
+/* ---------- lot mini chip + countdown （右上「拍品状态」chip 簇） ---------- */
+/* #UIUX 商品卡 + 倒计时合并为右上竖向簇：两者紧贴读作一体，顶部少一个分散浮层。 */
+.lm-lotstack { position: absolute; top: 88px; right: 12px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.lm-lotchip { display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,0.4); backdrop-filter: blur(10px); border-radius: 12px; padding: 5px 9px 5px 5px; max-width: 188px; }
 .lm-lotchip-img { width: 34px; height: 34px; flex-shrink: 0; }
 .lm-lotchip-meta { min-width: 0; }
 .lm-lotchip-no { font-size: 9.5px; color: var(--gold, #ffce54); font-weight: 800; }
@@ -77,18 +91,21 @@
 .lm-intro-text { font-size: 13px; line-height: 1.7; color: rgba(255,255,255,0.92); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 10px 12px; }
 .lm-intro-ai { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #7fd6ff; margin-top: 9px; }
 
-/* #261-4a: 排名卡是「我」时的强调描边 */
-.lm-rankcard.me { outline: 1.5px solid rgba(254,44,85,0.55); outline-offset: -1.5px; }
+/* #261-4a / #UIUX: 排名卡是「我」时的强调描边。改中性白环（"这是你"），不用红——
+   红只代表「被反超/需行动」，领先态(金卡)不该套红描边。 */
+.lm-rankcard.me { outline: 1.5px solid rgba(255,255,255,0.7); outline-offset: -1.5px; }
 
-/* ---------- countdown pill ---------- */
-.lm-cd { position: absolute; top: 122px; right: 12px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.42); backdrop-filter: blur(8px); border-radius: 999px; padding: 5px 11px; font-size: 13px; }
+/* ---------- countdown pill（现在流式排在 .lm-lotstack 内，商品卡正下方） ---------- */
+.lm-cd { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.42); backdrop-filter: blur(8px); border-radius: 999px; padding: 5px 11px; font-size: 13px; }
 .lm-cd.end { background: linear-gradient(96deg, #ff5f6d, #d61f3a); box-shadow: 0 6px 16px rgba(214,31,58,0.4); animation: la-pulse-ring 1.5s infinite; }
 
 /* ---------- right action rail ---------- */
-.lm-rail { position: absolute; right: 10px; bottom: 320px; z-index: 18; display: flex; flex-direction: column; gap: 15px; align-items: center; }
+/* #UIUX 右侧操作栏：圆环视觉缩到 40 + 更通透(0.24)，少挡商品；但整按钮(含文字)仍是
+   ≥44px 触达区，不破坏可点性（缩到 <44 的图标会伤触达，非 best practice）。 */
+.lm-rail { position: absolute; right: 10px; bottom: 320px; z-index: 18; display: flex; flex-direction: column; gap: 14px; align-items: center; }
 .lm-rail-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: none; color: #fff; cursor: pointer; }
-.lm-rail-ic { width: 44px; height: 44px; border-radius: 50%; background: rgba(0,0,0,0.3); backdrop-filter: blur(6px); display: grid; place-items: center; position: relative; }
-.lm-rail-num { font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
+.lm-rail-ic { width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.24); backdrop-filter: blur(6px); display: grid; place-items: center; position: relative; }
+.lm-rail-num { font-size: 11px; font-weight: 600; text-shadow: 0 1px 2px rgba(0,0,0,0.6); white-space: nowrap; }
 .lm-rail-badge { position: absolute; top: -3px; right: -4px; background: #fe2c55; border-radius: 999px; font-size: 9px; font-weight: 800; padding: 1px 5px; border: 1.5px solid rgba(0,0,0,0.4); }
 .lm-heart-float { position: absolute; bottom: 40px; left: 50%; pointer-events: none; animation: la-float-up 1s ease-out forwards; }
 
@@ -110,32 +127,40 @@
   display: flex; align-items: stretch;
   background: rgba(10,10,14,0.96); border-top: 1px solid rgba(255,255,255,0.07);
 }
-.lm-tabbtn { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0; }
+/* #17 tab 不堆叠：每个按钮 flex:1 min-width:0 均分，标签 nowrap 永不竖排折行。 */
+.lm-tabbtn { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0; }
 .lm-tabbtn.on { color: #fe2c55; }
 .lm-tabbtn-ic { position: relative; display: grid; place-items: center; height: 22px; }
-.lm-tabbtn-l { font-size: 10.5px; font-weight: 600; }
+.lm-tabbtn-l { font-size: 10.5px; font-weight: 600; white-space: nowrap; }
 .lm-tabbtn.on .lm-tabbtn-l { font-weight: 800; }
 .lm-tabdot { position: absolute; top: -2px; right: -5px; width: 6px; height: 6px; border-radius: 50%; background: #fe2c55; }
 .lm-tabdot.gold { background: #ffce54; }
 
+/* #15 shake 不再位移出价条：shell 全屏 inset:0（containing block = 视口），承接 .lm-shake
+   的 transform；pointer-events:none 让空白处点击穿透，只有 .lm-bidbar 自身可点。 */
+.lm-bidbar-shell { position: absolute; inset: 0; z-index: 26; pointer-events: none; }
+.lm-bidbar-shell > .lm-bidbar { pointer-events: auto; }
 .lm-bidbar {
   position: absolute; left: 0; right: 0; bottom: calc(56px + var(--safe-bottom, 0px)); z-index: 26;
-  height: 60px; padding: 6px 12px;
-  display: flex; align-items: center; gap: 9px;
+  height: 60px; padding: 6px 10px;
+  display: flex; align-items: center; gap: 8px;
   background: rgba(10,10,14,0.96); border-top: 1px solid rgba(255,255,255,0.06);
 }
 .lm-stepper { display: flex; align-items: center; background: rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
 .lm-stepper button { width: 34px; height: 46px; background: none; border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
-.lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; }
-.lm-bidcta { flex: 1; height: 48px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+.lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; white-space: nowrap; }
+/* #18 数字永不竖排：CTA 主文案 nowrap（含金额）。min-width:0 让 flex 正常分配；
+   字号 14 + 出价条更紧的 padding/gap，让「反超第一 · ¥14,800」在 360px 也整段放下
+   不折行、不裁切（金额必须完整可见）。 */
+.lm-bidcta { flex: 1; min-width: 0; height: 48px; border: none; border-radius: var(--r-btn, 14px); background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-bidcta > span.sub { font-size: 10px; font-weight: 600; opacity: 0.9; }
 .lm-bidcta.lead { background: linear-gradient(96deg, #ffce54, #f6a609); color: #4a2c00; box-shadow: 0 6px 18px rgba(246,166,9,0.35); }
 .lm-bidcta.second { background: linear-gradient(96deg, #ff7a8a, #fe2c55); }
 .lm-bidcta.join { gap: 1px; }
 .lm-bidcta:disabled { background: rgba(255,255,255,0.14); color: rgba(255,255,255,0.5); box-shadow: none; }
-.lm-bidcta > :first-child { display: inline-flex; align-items: center; gap: 5px; }
+.lm-bidcta > :first-child { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; max-width: 100%; }
 .lm-bar-gap { flex-shrink: 0; text-align: center; min-width: 48px; }
-.lm-bar-gap .v { font-size: 14px; font-weight: 800; color: var(--gold, #ffce54); }
+.lm-bar-gap .v { font-size: 14px; font-weight: 800; color: var(--gold, #ffce54); white-space: nowrap; }
 .lm-bar-gap .l { font-size: 9.5px; color: rgba(255,255,255,0.55); }
 
 .lm-sheet-backdrop { position: absolute; inset: 0; z-index: 23; background: rgba(0,0,0,0.32); animation: la-rise 0.2s ease; }
@@ -165,21 +190,32 @@
 .lm-rankcard { flex: 1; min-width: 0; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 5px; }
 .lm-rankcard.r1 { background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.36); }
 .lm-rankcard.r2 { background: rgba(207,214,228,0.1); border: 1px solid rgba(207,214,228,0.24); }
-.lm-rankcard.me { box-shadow: 0 0 0 2px rgba(254,44,85,0.55) inset; }
+.lm-rankcard.me { box-shadow: 0 0 0 2px rgba(255,255,255,0.22) inset; }
 .lm-rank-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; }
 .lm-rankcard.r1 .lm-rank-badge { color: var(--gold, #ffce54); }
 .lm-rankcard.r2 .lm-rank-badge { color: var(--silver, #cfd6e4); }
 .lm-rank-user { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 700; }
 .lm-rank-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lm-rank-ph { width: 22px; height: 22px; border-radius: 50%; background: rgba(255,255,255,0.1); }
-.lm-rank-amt { font-size: 17px; font-weight: 800; }
+.lm-rank-amt { font-size: 17px; font-weight: 800; white-space: nowrap; }
 .lm-myrow { display: flex; align-items: center; justify-content: space-between; background: rgba(254,44,85,0.12); border: 1px solid rgba(254,44,85,0.3); border-radius: 14px; padding: 10px 12px; }
 .lm-myrow .left { display: flex; align-items: center; gap: 8px; }
 .lm-myrank-pill { background: var(--bid-grad, #fe2c55); border-radius: 8px; font-size: 12px; font-weight: 800; padding: 3px 8px; }
 .lm-gap { text-align: right; }
-.lm-gap .v { font-size: 16px; font-weight: 800; color: var(--gold, #ffce54); }
+.lm-gap .v { font-size: 16px; font-weight: 800; color: var(--gold, #ffce54); white-space: nowrap; }
 .lm-gap .l { font-size: 10.5px; color: rgba(255,255,255,0.55); }
 .lm-lead-note { display: flex; align-items: center; gap: 6px; background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.32); color: var(--gold, #ffce54); border-radius: 12px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; }
+
+/* #UIUX 排名面板「最近出价」紧凑列表 — 填满面板、解释「为何继续出价」，避免空黑半成品感 */
+.lm-recent { margin-top: 14px; }
+.lm-recent-h { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.55); margin-bottom: 4px; }
+.lm-recent-row { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.lm-recent-row.self { background: rgba(254,44,85,0.1); border-radius: 8px; padding-inline: 6px; border-bottom-color: transparent; }
+.lm-recent-row .nm { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm-recent-row .tag { flex-shrink: 0; font-size: 9px; font-weight: 800; color: var(--gold, #ffce54); background: rgba(255,206,84,0.16); border: 1px solid rgba(255,206,84,0.32); border-radius: 999px; padding: 1px 6px; }
+.lm-recent-row .amt { flex-shrink: 0; font-size: 13px; font-weight: 800; white-space: nowrap; }
+.lm-recent-more { text-align: center; font-size: 12px; color: #ff8fa3; padding: 11px 0 2px; cursor: pointer; }
+.lm-recent-empty { margin-top: 16px; text-align: center; font-size: 12.5px; color: rgba(255,255,255,0.4); padding: 20px 0; }
 
 .lm-hist-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .lm-hist-row.self { background: rgba(254,44,85,0.12); border-radius: 8px; padding-inline: 6px; }
@@ -211,9 +247,9 @@
 .lm-checkbox.on { background: var(--bid-grad, #fe2c55); border-color: transparent; }
 .lm-terms a { color: #ff8fa3; }
 .lm-quickbids { display: flex; gap: 8px; margin-bottom: 10px; }
-.lm-chip { flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 10px 6px; text-align: center; cursor: pointer; }
+.lm-chip { flex: 1; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: var(--r-card, 14px); padding: 10px 6px; text-align: center; cursor: pointer; }
 .lm-chip .x { font-size: 11px; color: rgba(255,255,255,0.6); }
-.lm-chip .v { font-size: 14px; font-weight: 800; }
+.lm-chip .v { font-size: 14px; font-weight: 800; white-space: nowrap; }
 .lm-chip:active { background: rgba(254,44,85,0.2); }
 .lm-field { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .lm-field label { font-size: 12px; color: rgba(255,255,255,0.6); width: 78px; flex-shrink: 0; }
@@ -231,7 +267,7 @@
 
 /* ---------- precise bid sheet ---------- */
 .lm-mask { position: absolute; inset: 0; z-index: 45; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: flex; align-items: flex-end; animation: la-rise 0.2s ease; }
-.lm-sheet { width: 100%; background: #15151d; border-top-left-radius: 22px; border-top-right-radius: 22px; padding: 14px 16px calc(18px + var(--safe-bottom, 0px)); box-shadow: 0 -16px 50px rgba(0,0,0,0.6); animation: la-sheet-up 0.3s cubic-bezier(0.3,1.1,0.4,1); }
+.lm-sheet { width: 100%; background: #15151d; border-top-left-radius: var(--r-sheet, 18px); border-top-right-radius: var(--r-sheet, 18px); padding: 14px 16px calc(18px + var(--safe-bottom, 0px)); box-shadow: 0 -16px 50px rgba(0,0,0,0.6); animation: la-sheet-up 0.3s cubic-bezier(0.3,1.1,0.4,1); }
 .lm-sheet-grip { width: 40px; height: 4px; border-radius: 4px; background: rgba(255,255,255,0.2); margin: 0 auto 12px; }
 .lm-sheet-cd { text-align: center; margin-bottom: 12px; font-size: 13px; color: rgba(255,255,255,0.7); }
 .lm-sheet-cd b { color: #ff8fa3; }
@@ -264,12 +300,15 @@
 
 /* ---------- full-screen state overlays ---------- */
 .lm-ov { position: absolute; inset: 0; z-index: 42; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 0 24px; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); }
-.lm-ov-card { width: 100%; background: #1a1a22; border-radius: 22px; padding: 20px 18px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); animation: la-pop 0.4s ease; }
+.lm-ov-card { width: 100%; background: #1a1a22; border-radius: var(--r-modal, 20px); padding: 20px 18px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.08); animation: la-pop 0.4s ease; }
 .lm-ov-title { text-align: center; font-size: 22px; font-weight: 900; margin-bottom: 4px; }
 .lm-ov-grad { background: linear-gradient(96deg, #ffce54, #ff7a8a, #fe2c55); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lm-ov-sub { text-align: center; font-size: 12.5px; color: rgba(255,255,255,0.6); margin-bottom: 16px; }
 .lm-ov-lot { display: flex; gap: 12px; align-items: center; background: rgba(255,255,255,0.05); border-radius: 14px; padding: 12px; margin-bottom: 14px; }
 .lm-ov-lot .img { width: 56px; height: 56px; flex-shrink: 0; }
+/* #UIUX 浮层拍品标题：text-wrap:balance 让两行长度均衡，杜绝「玫瑰金蓝/盘」单字孤行；
+   最多两行截断，奢侈品卡片不再出现断行瑕疵。 */
+.lm-ov-lot-title { font-size: 15px; font-weight: 700; line-height: 1.35; text-wrap: balance; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .lm-ov-price { font-size: 26px; font-weight: 900; }
 .lm-ov-price.win { color: var(--gold, #ffce54); }
 .lm-ov-stat { display: flex; justify-content: space-around; margin: 6px 0 14px; text-align: center; }
@@ -351,11 +390,22 @@
 
 /* ---------- share modal (copy link) ---------- */
 .lm-share-mask { position: absolute; inset: 0; z-index: 48; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 0 28px; animation: la-rise 0.2s ease; }
-.lm-share-card { width: 100%; max-width: 320px; background: #1a1a22; border: 1px solid rgba(255,255,255,0.08); border-radius: 20px; padding: 18px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
+.lm-share-card { width: 100%; max-width: 320px; background: #1a1a22; border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-modal, 20px); padding: 18px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
 .lm-share-hd { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 800; margin-bottom: 14px; }
 .lm-share-url { width: 100%; background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.14); border-radius: 12px; padding: 11px 12px; color: rgba(255,255,255,0.82); font-size: 12.5px; outline: none; margin-bottom: 12px; box-sizing: border-box; }
 .lm-share-copy { width: 100%; height: 46px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14.5px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-share-hint { text-align: center; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 10px; line-height: 1.45; }
+
+/* #UIUX 高额出价二次确认弹层（居中，z 高于出价条/sheet，低于登录门） */
+.lm-confirm-mask { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 0 28px; animation: la-rise 0.2s ease; }
+.lm-confirm { width: 100%; max-width: 320px; background: #1a1a22; border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-modal, 20px); padding: 20px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.3s ease; }
+.lm-confirm-hd { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 15px; font-weight: 800; }
+.lm-confirm-amt { text-align: center; font-size: 30px; font-weight: 900; color: var(--gold, #ffce54); margin: 8px 0 6px; white-space: nowrap; }
+.lm-confirm-sub { text-align: center; font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.5; margin-bottom: 16px; }
+.lm-confirm-sub b { color: #ff8fa3; }
+.lm-confirm-row { display: flex; gap: 10px; }
+.lm-confirm-cancel { flex: 1; height: 46px; border-radius: var(--r-btn, 14px); border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: #fff; font-size: 15px; font-weight: 700; cursor: pointer; }
+.lm-confirm-ok { flex: 1.4; height: 46px; border-radius: var(--r-btn, 14px); border: none; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 
 /* ---------- shareable login-free order/result page (#/m?order=) ---------- */
 .ov-page { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 14px; padding: 54px 18px 28px; background: radial-gradient(120% 70% at 80% -10%, #2a1430 0%, #0b0b12 60%); overflow-y: auto; }
@@ -387,7 +437,7 @@
    Account / login (#3/#4 统一身份) — full-screen gate + sheet + header chip
    ============================================================ */
 .lm-login { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: radial-gradient(120% 80% at 80% -10%, #2a1430 0%, #0b0b12 60%); }
-.lm-login-card { width: 100%; max-width: 340px; background: rgba(20,20,28,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: 22px; padding: 22px 20px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
+.lm-login-card { width: 100%; max-width: 340px; background: rgba(20,20,28,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-modal, 20px); padding: 22px 20px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
 .lm-login-brand { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800; color: #fff; }
 .lm-login-brand .mk { font-size: 18px; }
 .lm-login-title { font-size: 22px; font-weight: 900; color: #fff; margin: 12px 0 4px; }
@@ -416,5 +466,7 @@
 .lm-acct-note { font-size: 11px; color: rgba(255,255,255,0.45); line-height: 1.5; padding: 4px 18px 0; }
 
 /* ---------- AI 主播实时解说气泡（真豆包 LLM 中文解说，AI_COMMENTARY 事件驱动） ---------- */
-.lm-aibubble { position: absolute; top: 108px; left: 12px; right: 116px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(20,20,28,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(127,214,255,0.38); color: #d6efff; border-radius: 12px; padding: 6px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: la-rise 0.3s ease; }
+/* #UIUX 移到顶部 chrome 下方、全宽：原 top:108 right:116 会被合并后的右上拍品簇盖住右半截。
+   现作为一条左对齐的 AI 解说字幕，整句可读、不和任何浮层重叠。 */
+.lm-aibubble { position: absolute; top: 206px; left: 12px; right: 12px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(20,20,28,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(127,214,255,0.38); color: #d6efff; border-radius: 12px; padding: 6px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: la-rise 0.3s ease; }
 .lm-aibubble .dot { width: 6px; height: 6px; border-radius: 50%; background: #7fd6ff; box-shadow: 0 0 8px #7fd6ff; flex-shrink: 0; animation: la-pulse-ring 1.6s infinite; }
