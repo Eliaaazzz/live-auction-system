@@ -102,13 +102,26 @@ body {
   --r-lg: 22px;
   --r-md: 16px;
   --r-sm: 10px;
+  /* #UIUX 语义圆角 token — 统一各表面圆角，消除手调不一致（按钮/卡片/底部表单/居中弹层/胶囊）。 */
+  --r-pill: 999px;   /* chips / pills */
+  --r-btn: 14px;     /* 主操作按钮 */
+  --r-card: 14px;    /* 卡片 / 列表项 */
+  --r-sheet: 18px;   /* 底部 sheet 顶角 */
+  --r-modal: 20px;   /* 居中弹层 */
+  /* #UIUX 描边 token — 普通卡=低透明白；领先=金；被反超/危险=红 */
+  --bd-soft: 1px solid rgba(255,255,255,0.1);
+  --bd-gold: 1.5px solid rgba(255,206,84,0.4);
+  --bd-danger: 1.5px solid rgba(254,44,85,0.5);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
-/* Number readability: tabular figures so prices don't jitter while ticking */
+/* Number readability: tabular figures so prices don't jitter while ticking.
+   #18 nowrap: a price/amount must never wrap to a 2nd line ("横着变竖着") when its
+   container is narrow — it stays on one line and the container clips/ellipsizes. */
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum' 1;
+  white-space: nowrap;
 }
 
 /* Hide scrollbars inside the live overlay panels (keep scroll) */

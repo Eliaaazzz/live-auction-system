@@ -70,10 +70,11 @@
 .lm-shake { animation: la-barshake 0.4s ease; }
 
 /* 声音开关按钮 */
+/* #UIUX 右上拍品簇(lm-lotstack)正下方：避开合并后的商品卡+倒计时。 */
 .lm-sound-btn {
   position: absolute;
-  top: 120px;
-  left: 12px;
+  top: 168px;
+  right: 12px;
   z-index: 30;
   width: 34px;
   height: 34px;
