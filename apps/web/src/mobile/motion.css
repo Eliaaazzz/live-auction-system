@@ -70,10 +70,10 @@
 .lm-shake { animation: la-barshake 0.4s ease; }
 
 /* 声音开关按钮 */
-/* #UIUX 移到右侧倒计时下方：原 top:120 left:12 会和 AI 解说气泡(top:108 left:12)重叠。 */
+/* #UIUX 右上拍品簇(lm-lotstack)正下方：避开合并后的商品卡+倒计时。 */
 .lm-sound-btn {
   position: absolute;
-  top: 158px;
+  top: 168px;
   right: 12px;
   z-index: 30;
   width: 34px;
