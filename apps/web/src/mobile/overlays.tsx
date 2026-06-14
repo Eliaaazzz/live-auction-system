@@ -64,7 +64,7 @@ function AboutToStart({ state, lot, reminded, onToggleRemind }: { state: Auction
         <div className="lm-ov-lot">
           <ProductImg lot={lot} radius={12} className="img" />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.3 }}>{lot.title}</div>
+            <div className="lm-ov-lot-title">{lot.title}</div>
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', marginTop: 3 }}>{lot.estimate}</div>
           </div>
         </div>
@@ -140,7 +140,7 @@ function WinSuccess({ state, lot, onReturn }: { state: AuctionState; lot: Lot; o
         <div className="lm-ov-lot">
           <ProductImg lot={lot} radius={12} className="img" />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.3 }}>{lot.title}</div>
+            <div className="lm-ov-lot-title">{lot.title}</div>
             <div className="lm-ov-price win tnum" style={{ marginTop: 4 }}>{fmtYuan(state.currentPrice)}</div>
           </div>
         </div>
@@ -202,7 +202,7 @@ function HammerResult({ state, lot, room, onReturn }: { state: AuctionState; lot
         <div className="lm-ov-lot" style={{ marginTop: 12 }}>
           <ProductImg lot={lot} radius={12} className="img" />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 700 }}>{lot.title}</div>
+            <div className="lm-ov-lot-title">{lot.title}</div>
             <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.5)', marginTop: 3 }}>{room.anchorName} · 下一件马上开拍</div>
           </div>
         </div>
