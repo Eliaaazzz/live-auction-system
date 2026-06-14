@@ -58,6 +58,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const [agreed, setAgreed] = useState(false);
   const [sheetTab, setSheetTab] = useState<TabKey | null>(null);
   const [bidSheetOpen, setBidSheetOpen] = useState(false);
+  const [pendingBid, setPendingBid] = useState<number | null>(null); // #UIUX 高额出价二次确认
   const [giftOpen, setGiftOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [reminded, setReminded] = useState(false);
@@ -251,7 +252,13 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     try { localStorage.setItem(likeKey, next ? '1' : '0'); } catch { /* ignore */ }
     sendSocial({ kind: 'like', delta: next ? 1 : -1 });
   };
-  const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
+  // #UIUX 高额二次确认：大额(≥¥10万)出价是有法律约束力的承诺，先弹确认防误触；
+  // 低价位拍品(<¥10万)直接提交保持快捷。机器人/精确出价走各自路径，不经此拦截。
+  const quickBid = (amount: number) => {
+    if (!joined) { setSheetTab('join'); return; }
+    if (amount >= 100000) { setPendingBid(amount); return; }
+    placeBid(amount);
+  };
   // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
   // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
   const onReturn = useCallback(() => {
@@ -272,8 +279,12 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
         <>
           <LiveHeader room={room} viewers={state.participants} simViewers={state.simViewers} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
-          <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
-          <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
+          {/* #UIUX 顶部减负：商品卡 + 倒计时合并成一个右上「拍品状态」竖向 chip 簇，
+              不再是两个分散的浮层；倒计时紧贴商品卡读作一体。 */}
+          <div className="lm-lotstack">
+            <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
+            <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
+          </div>
           {auctioneerText && <div className="lm-aibubble"><span className="dot" /> AI 主播 · {auctioneerText}</div>}
 
           <button className={'lm-sound-btn' + (soundOn ? '' : ' off')} onClick={toggleSound} aria-label={soundOn ? '关闭音效' : '开启音效'}>
@@ -309,6 +320,21 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
               amount stepper from the lot.startPrice fallback instead of the live min. */}
           {bidSheetOpen && ready && (
             <BidSheet lot={lot} state={state} nextMinBid={nextMinBid} onClose={() => setBidSheetOpen(false)} onConfirm={(amt) => { if (!joined) { setBidSheetOpen(false); setSheetTab('join'); return; } placeBid(amt); setBidSheetOpen(false); }} />
+          )}
+
+          {/* #UIUX 高额出价二次确认弹层：金额大、误触成本高 → 明确金额 + 法律约束力提示 + 确认。 */}
+          {pendingBid != null && (
+            <div className="lm-confirm-mask" onClick={() => setPendingBid(null)}>
+              <div className="lm-confirm" onClick={(e) => e.stopPropagation()}>
+                <div className="lm-confirm-hd"><Icon name="gavel" size={18} style={{ color: '#ff8fa3' }} /> 确认出价</div>
+                <div className="lm-confirm-amt tnum">{fmtYuan(pendingBid)}</div>
+                <div className="lm-confirm-sub">竞拍出价为<b>具有法律约束力</b>的购买承诺，确认后立即提交服务端裁决，落槌即成交。</div>
+                <div className="lm-confirm-row">
+                  <button className="lm-confirm-cancel" onClick={() => setPendingBid(null)}>取消</button>
+                  <button className="lm-confirm-ok" onClick={() => { placeBid(pendingBid); setPendingBid(null); }}>确认出价</button>
+                </div>
+              </div>
+            </div>
           )}
 
           <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
