@@ -34,6 +34,16 @@ export function isJunk(name?: string): boolean {
   return false;
 }
 
+/**
+ * Terminal auction states a seller may permanently delete (history cleanup —
+ * 删除发布历史 / 近期成交). In-flight lots (DRAFT/SCHEDULED/LIVE) are NOT deletable;
+ * they must be 下架/结束 first. Mirrors the backend model.IsTerminal gate.
+ */
+export const DELETABLE_STATUSES = ['SOLD', 'ORDER_CREATED', 'NO_BID', 'CANCELLED'];
+export function isDeletableAuction(status?: string): boolean {
+  return !!status && DELETABLE_STATUSES.includes(status);
+}
+
 const yuan = (cents?: string | number | null): number => {
   if (cents == null || cents === '') return 0;
   try { return Math.round(Number(BigInt(String(cents))) / 100); } catch { return Math.round(Number(cents) / 100) || 0; }

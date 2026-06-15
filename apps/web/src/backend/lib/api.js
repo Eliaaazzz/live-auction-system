@@ -172,6 +172,36 @@ export const api = {
   },
 
   /**
+   * Seller: upload a live clip (multipart, ≤64MB, mp4/webm) WITHOUT binding it
+   * to an auction yet — returns { url: "/uploads/<name>" }. The 竞拍发布 form
+   * calls this the moment a clip is dropped (upload-on-drop), then threads the
+   * returned url into createDraft's rules.livePlayUrl so the clip is in place at
+   * the auction's 0th second and 立即发布 stays instant. Contrast
+   * uploadStreamVideo(id, …), which re-uploads + retargets an EXISTING auction.
+   * Same multipart rule as uploadImage: no JSON content-type header.
+   */
+  uploadVideo: async (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const headers = {};
+    const tok = currentToken();
+    if (tok) headers.Authorization = `Bearer ${tok}`;
+    const res = await fetch(`${API_BASE}/upload/video`, { method: 'POST', headers, body: form });
+    if (!res.ok) {
+      if (res.status === 401) handleAuthFailure();
+      let code, message;
+      try {
+        const j = await res.json();
+        code = j.code; message = j.error || j.message;
+      } catch {
+        message = res.statusText;
+      }
+      throw new ApiError(res.status, code, message);
+    }
+    return res.json();
+  },
+
+  /**
    * Seller: publish auction.
    *   payload = { productId, rules: { mode?, startPriceCents, incrementCents,
    *               capPriceCents?, durationSec, extendWindowSec, extendSec,
@@ -211,6 +241,14 @@ export const api = {
    * UI MUST 2-step confirm (see AdminCancelModal — type current price).
    */
   cancel: (id, payload) => request(`/auctions/${id}/cancel`, { method: 'POST', body: payload }),
+
+  /**
+   * Seller/owner: permanently delete a TERMINAL auction and all its records
+   * (orders/events/evidence/rules + Redis keys). Backs the 后台「删除发布历史 /
+   * 近期成交」history cleanup. 409 ERR_NOT_TERMINAL if the lot is still
+   * DRAFT/SCHEDULED/LIVE — 下架/结束 it first. Irreversible.
+   */
+  deleteAuction: (id) => request(`/auctions/${id}`, { method: 'DELETE' }),
 
   /** Seller: modify a pre-start auction's rules (DRAFT/SCHEDULED). model.Rules shape. */
   updateRules: (id, rules) => request(`/auctions/${id}`, { method: 'PATCH', body: { rules } }),

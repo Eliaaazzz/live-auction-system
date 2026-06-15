@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, App as AntdApp } from 'antd';
-import { PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined, FolderOpenOutlined, DeleteOutlined, HistoryOutlined, VideoCameraAddOutlined, CheckCircleFilled } from '@ant-design/icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Form, Input, InputNumber, Select, Switch, Button, Upload, Divider, Space, Alert, Popconfirm, Tag, Checkbox, App as AntdApp } from 'antd';
+import { PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined, FolderOpenOutlined, DeleteOutlined, HistoryOutlined, VideoCameraAddOutlined, CheckCircleFilled, LoadingOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { recommendIncrement } from '../../lib/pricing';
 import { PROD } from '../../lib/assets';
 import { INTRO_TEMPLATES, defaultIntro, pickIntro, pickEstimate } from '../../lib/intro';
 import { api } from '../../backend/lib/api.js';
 import { ensureSession } from '../../backend/lib/auth.js';
-import { isJunk } from '../../lib/mapBackend';
+import { isJunk, isDeletableAuction } from '../../lib/mapBackend';
 import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type AuctionDraft } from '../drafts';
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
@@ -33,7 +33,11 @@ export default function AuctionPublish() {
   const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
   const [aiBusy, setAiBusy] = useState(false); // #261-12b AI 识图生成中
   const [aiEstimate, setAiEstimate] = useState<number | null>(null); // #261-12b 识图估价（元）→ 推荐加价幅度
-  const [videoFile, setVideoFile] = useState<File | null>(null); // #261-12b 直播视频（发布后推流）
+  const [videoFile, setVideoFile] = useState<File | null>(null); // #261-12b 直播视频：选中的本地文件（用于显示名/大小）
+  const [videoUrl, setVideoUrl] = useState<string | null>(null); // 拖入即上传后服务端返回的 /uploads/<name>
+  const [videoUploading, setVideoUploading] = useState(false); // 拖入上传进行中
+  const videoUploadRef = useRef<Promise<string | null> | null>(null); // 在途上传：用户手快、发布时还没传完就 await 它
+  const videoSeqRef = useRef(0); // 上传代号：重复拖入/移除时作废旧上传的回写，避免竞态
   const [history, setHistory] = useState<any[]>([]); // #261-13 发布历史
   const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
@@ -50,6 +54,42 @@ export default function AuctionPublish() {
     const t = setInterval(loadHistory, 10_000);
     return () => clearInterval(t);
   }, [loadHistory]);
+
+  // 发布历史管理（多选/全选删除）— 仅「已结束」的拍品可删（成交/流拍/已下架）；
+  // 正在直播 LIVE 与待开拍 DRAFT/SCHEDULED 不可删，需先下架。删除走后端硬删除，
+  // 连带成交订单/竞价事件一并清除，不可恢复。
+  const [manage, setManage] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
+  const deletableIds = history.filter((a) => isDeletableAuction(a.status)).map((a) => a.auctionId as string);
+  const selectedCount = deletableIds.filter((id) => selected.has(id)).length;
+  const allSelected = deletableIds.length > 0 && selectedCount === deletableIds.length;
+  const toggleSelect = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(deletableIds));
+  const exitManage = () => { setManage(false); setSelected(new Set()); };
+  const onDeleteSelected = async () => {
+    const ids = deletableIds.filter((id) => selected.has(id));
+    if (ids.length === 0) { message.warning('请勾选要删除的发布记录'); return; }
+    setDeleting(true);
+    try {
+      await ensureSession('seller-demo');
+      const results = await Promise.allSettled(ids.map((id) => api.deleteAuction(id)));
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (ok > 0) message.success(`已永久删除 ${ok} 条发布记录${fail ? `，${fail} 条失败` : ''}`);
+      else message.error('删除失败：' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || '请重试'));
+      setSelected(new Set());
+      await loadHistory();
+    } catch (e: any) {
+      message.error('删除失败：' + (e?.message || e));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // #256: AI 拍卖文案（标题/卖点/开场话术，LLM 起草）— 与 #261 的识图介绍并存：
   // 识图按钮管「商品介绍」（看图写），这个按钮管标题+卖点+话术（读表单文字）。
@@ -201,13 +241,56 @@ export default function AuctionPublish() {
     message.success('草稿已删除');
   };
 
-  // #261-12b: 拖拽选直播视频（mp4/webm ≤64MB），发布后自动推到直播间循环播放。
+  // #261-12b 拖入即上传：视频一落进框就把 64MB 传到通用 /api/upload/video（无需
+  // auctionId），让上传与「填表单的剩余时间」重叠 —— 而不是等到点发布才开始传。
+  // 拿到的 /uploads/<name> 记在 videoUrl，发布时随 createDraft 的 rules.livePlayUrl
+  // 一起下发（开拍第 0 秒视频即就位），所以「立即发布」是秒开、无需等传。
+  // 用 seq 代号护栏：重复拖入/中途移除时，旧上传的迟到回写按代号作废，不污染状态。
+  const startVideoUpload = (file: File) => {
+    const seq = ++videoSeqRef.current;
+    setVideoUploading(true);
+    setVideoUrl(null);
+    const mb = Math.round((file.size / 1024 / 1024) * 10) / 10;
+    const hide = message.loading(`直播视频上传中（${mb}MB）…`, 0);
+    const p = (async (): Promise<string | null> => {
+      try {
+        await ensureSession('seller-demo');
+        const { url } = await api.uploadVideo(file);
+        hide();
+        if (videoSeqRef.current === seq) {
+          setVideoUrl(url);
+          message.success('🎬 直播视频已上传 · 开拍即自动播放');
+        }
+        return url;
+      } catch (e: any) {
+        hide();
+        if (videoSeqRef.current === seq) {
+          setVideoUrl(null);
+          message.error('视频上传失败（点「重试」或发布时自动补传）：' + (e?.message || String(e ?? '未知错误')));
+        }
+        return null;
+      } finally {
+        if (videoSeqRef.current === seq) setVideoUploading(false);
+      }
+    })();
+    videoUploadRef.current = p;
+  };
+
+  // 拖拽选直播视频（mp4/webm ≤64MB）→ 立即开始上传（见 startVideoUpload）。
   const onPickVideo = (file: File): boolean => {
     if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
     if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
     setVideoFile(file);
-    message.success(`已选择直播视频「${file.name}」，发布时先上传、开拍即自动播放`);
-    return false; // 不走 antd 内建上传；发布拿到 auctionId 后再传
+    startVideoUpload(file);
+    return false; // 不走 antd 内建上传；我们自己传
+  };
+
+  const removeVideo = () => {
+    videoSeqRef.current++; // 作废任何在途上传的回写
+    setVideoFile(null);
+    setVideoUrl(null);
+    setVideoUploading(false);
+    videoUploadRef.current = null;
   };
 
   // REAL publish: createProduct → createDraft(rules) → freeze → start → LIVE.
@@ -220,6 +303,12 @@ export default function AuctionPublish() {
       try {
         await ensureSession('seller-demo');
         const imageUrl = toAbsUrl(uploadedUrl);
+        // 直播视频：优先用「拖入即上传」拿到的 URL；若用户手快、上传还在途，就 await
+        // 它（而不是再传一遍）。彻底失败则 liveUrl 为 null，走下方建拍后的兜底补传。
+        let liveUrl = videoUrl;
+        if (videoFile && !liveUrl && videoUploadRef.current) {
+          try { liveUrl = await videoUploadRef.current; } catch { liveUrl = null; }
+        }
         const { productId } = await api.createProduct({
           name: vals.name,
           imageUrl,
@@ -242,14 +331,15 @@ export default function AuctionPublish() {
             extendWindowSec: 10,
             extendSec: vals.autoExtend === false ? 0 : (Number(vals.extendSec) || 30),
             maxExtensions: 10,
+            // #261-12b 拖入即上传：把已传好的视频 URL 随建拍一起下发，开拍第0秒就位。
+            ...(liveUrl ? { livePlayUrl: liveUrl } : {}),
           },
         });
-        // #261-12b: 直播视频必须在开拍【前】上传 — 之前放在 startLive 之后，
-        // 上传期间倒计时已经在烧（80s 的场子传完视频只剩十几秒），而且先进房
-        // 的买家拿不到 livePlayUrl（引擎只在进房时读一次快照）→「传了视频但
-        // 移动端不播」。挪到 freeze/start 之前：开拍第 0 秒视频就位，所有人
-        // 进房即播；上传失败不阻断发布，可去直播商品页重传。
-        if (videoFile) {
+        // #261-12b 直播视频在开拍【前】就位。常规路径已在「拖入即上传」时把
+        // /uploads/<name> 随上面 rules.livePlayUrl 落库 —— 开拍第 0 秒视频即在，
+        // 所有进房买家都拿得到。只有当拖入上传失败/没赶上（liveUrl 为空但确有选片）
+        // 才在 freeze/start 之前补传一次，保证不空场；补传失败不阻断发布。
+        if (videoFile && !liveUrl) {
           const mb = Math.round((videoFile.size / 1024 / 1024) * 10) / 10;
           const hideUp = message.loading(`直播视频上传中（${mb}MB）— 传完即开拍…`, 0);
           try {
@@ -271,7 +361,7 @@ export default function AuctionPublish() {
         form.resetFields();
         setUploadedUrl(null);
         setFileList([]);
-        setVideoFile(null);
+        removeVideo(); // 清空视频文件/已传 URL/在途上传，避免下一单沿用
         setAiEstimate(null);
         loadHistory(); // 发布历史立即出现这一单（#261-13）
         // 从草稿载入的商品发布成功即消耗草稿：避免已上架的商品还躺在草稿箱里被重复发布。
@@ -293,15 +383,46 @@ export default function AuctionPublish() {
           <div className="pub-history-head">
             <HistoryOutlined /> 发布历史
             <span className="pub-history-count">{history.length}</span>
+            {history.length > 0 && (manage ? (
+              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} onClick={exitManage}>完成</Button>
+            ) : (
+              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} icon={<DeleteOutlined />} onClick={() => setManage(true)}>管理</Button>
+            ))}
           </div>
+          {manage && (
+            <div className="pub-hist-toolbar">
+              <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} disabled={deletableIds.length === 0} onChange={toggleSelectAll}>全选可删</Checkbox>
+              <span className="pub-hist-toolbar-spacer" />
+              <Popconfirm
+                title={`永久删除选中的 ${selectedCount} 条发布记录？`}
+                description="将从后端彻底删除（含成交订单 / 竞价记录），不可恢复"
+                okText="永久删除"
+                cancelText="再想想"
+                okButtonProps={{ danger: true }}
+                onConfirm={onDeleteSelected}
+                disabled={selectedCount === 0}
+              >
+                <Button danger size="small" icon={<DeleteOutlined />} loading={deleting} disabled={selectedCount === 0}>
+                  删除{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                </Button>
+              </Popconfirm>
+            </div>
+          )}
           {history.length === 0 && <div className="pub-history-empty">还没有发布记录。<br />右侧填好商品，一键发布开拍。</div>}
           {history.map((a) => {
             const live = a.status === 'LIVE';
+            const deletable = isDeletableAuction(a.status);
+            const checked = selected.has(a.auctionId);
             const sub = a.status === 'LIVE' ? `竞拍中 · 当前 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
               : a.status === 'SOLD' || a.status === 'ORDER_CREATED' ? `已成交 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
               : a.status === 'CANCELLED' ? '已下架' : a.status === 'NO_BID' ? '流拍' : '待开拍';
             return (
-              <div key={a.auctionId} className={'pub-hist-item' + (live ? ' live' : '')}>
+              <div key={a.auctionId} className={'pub-hist-item' + (live ? ' live' : '') + (manage && deletable && checked ? ' selected' : '')}>
+                {manage && (
+                  <span className="pub-hist-check" title={deletable ? '' : (live ? '正在直播，不能删除' : '未结束，请先下架后再删除')} style={{ display: 'inline-flex' }}>
+                    <Checkbox checked={checked} disabled={!deletable} onChange={() => toggleSelect(a.auctionId)} />
+                  </span>
+                )}
                 <img className="pub-hist-thumb" src={a.imageUrl || PROD.watch} alt="" loading="lazy" />
                 <div className="pub-hist-meta">
                   <div className="pub-hist-name">{a.productName || '直播拍品'}</div>
@@ -326,19 +447,30 @@ export default function AuctionPublish() {
               {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>}
             </Upload>
           </Form.Item>
-          {/* #261-12b: 拖拽视频 → 发布后直接推流到直播间（买家端自动循环播放，无需 OBS）。 */}
-          <Form.Item label="直播视频（选填）" tooltip="拖入 mp4/webm（≤64MB）。发布开拍后自动作为本场直播画面推流，买家进直播间即自动播放">
+          {/* #261-12b: 拖入视频 → 立即上传（不等发布）→ 发布时随 rules.livePlayUrl 下发，开拍即自动播放，无需 OBS。 */}
+          <Form.Item label="直播视频（选填）" tooltip="拖入 mp4/webm（≤64MB）即开始上传，无需等发布。发布开拍后自动作为本场直播画面，买家进直播间即自动播放">
             <div className="pub-video-dragger">
               <Upload.Dragger accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} maxCount={1}>
                 <p style={{ margin: '6px 0 2px' }}><VideoCameraAddOutlined style={{ fontSize: 26, color: '#fe2c55' }} /></p>
-                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里，开拍即作为直播画面自动播放</p>
+                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里 · 松手即开始上传，开拍即自动播放</p>
                 <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>建议 H.264 编码 mp4 · ≤64MB（webm 在 iPhone 无法播放；也可发布后用 OBS 推真镜头）</p>
               </Upload.Dragger>
             </div>
             {videoFile && (
               <div className="pub-video-meta">
-                <CheckCircleFilled /> 已就绪：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）
-                <Button size="small" type="text" danger onClick={() => setVideoFile(null)}>移除</Button>
+                {videoUploading ? (
+                  <span><LoadingOutlined /> 上传中：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）</span>
+                ) : videoUrl ? (
+                  <span><CheckCircleFilled /> 已上传：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）· 开拍即自动播放</span>
+                ) : (
+                  <span style={{ color: '#d4380d' }}>
+                    上传未完成：{videoFile.name}
+                    <Button size="small" type="link" style={{ paddingInline: 4 }} onClick={() => startVideoUpload(videoFile)}>重试上传</Button>
+                  </span>
+                )}
+                {!videoUploading && (
+                  <Button size="small" type="text" danger onClick={removeVideo}>移除</Button>
+                )}
               </div>
             )}
           </Form.Item>

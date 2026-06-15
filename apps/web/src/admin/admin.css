@@ -175,6 +175,11 @@
 .pub-hist-meta { flex: 1; min-width: 0; }
 .pub-hist-name { font-weight: 700; font-size: 12.5px; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pub-hist-sub { margin-top: 2px; color: #9a9aa5; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 发布历史管理（多选/全选删除）— 仅终态拍品可删 */
+.pub-hist-toolbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; }
+.pub-hist-toolbar-spacer { flex: 1; }
+.pub-hist-check { flex-shrink: 0; }
+.pub-hist-item.selected { border-color: #fe2c55; box-shadow: 0 0 0 2px rgba(254, 44, 85, 0.10); }
 
 /* #261-12b 视频拖拽上传框 */
 .pub-video-dragger .ant-upload-drag { border-radius: 12px; }
