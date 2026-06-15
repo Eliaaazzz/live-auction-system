@@ -47,6 +47,12 @@ type Config struct {
 	APIKey  string
 	Model   string
 	Timeout time.Duration
+	// Thinking gates Doubao's reasoning mode. "" → omit the field entirely (keeps
+	// the request OpenAI-compatible for Ollama/vLLM/OpenAI). "disabled"/"enabled"/
+	// "auto" → sent as {"thinking":{"type":…}} for Doubao Seed-1.6 reasoning models.
+	// "disabled" makes Seed-1.6 ~10x faster (no reasoning tokens) — both callers are
+	// advisory/off the bid path, so the latency win beats the marginal quality loss.
+	Thinking string
 }
 
 // ConfigFromEnv reads {PREFIX}_BASE_URL / {PREFIX}_API_KEY / {PREFIX}_MODEL,
@@ -64,6 +70,9 @@ func ConfigFromEnv(prefix, defBaseURL, defModel string) Config {
 		// action), so a generous budget is safe. Override per prefix with
 		// {PREFIX}_TIMEOUT_MS (e.g. LLM_TIMEOUT_MS=12000 for a fast Lite model).
 		Timeout: envDurationMs(prefix+"_TIMEOUT_MS", 30*time.Second),
+		// {PREFIX}_THINKING=disabled turns OFF Seed-1.6 reasoning (≈10x faster).
+		// Empty → field omitted (stays OpenAI-compatible for non-Doubao backends).
+		Thinking: strings.TrimSpace(os.Getenv(prefix + "_THINKING")),
 	}
 }
 
@@ -100,11 +109,18 @@ type Options struct {
 	Temperature float64
 }
 
+// thinkingParam is Doubao's reasoning toggle; omitempty keeps it off the wire
+// for non-Doubao OpenAI-compatible backends when Config.Thinking is "".
+type thinkingParam struct {
+	Type string `json:"type"`
+}
+
 type chatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
+	Model       string         `json:"model"`
+	Messages    []Message      `json:"messages"`
+	MaxTokens   int            `json:"max_tokens"`
+	Temperature float64        `json:"temperature"`
+	Thinking    *thinkingParam `json:"thinking,omitempty"`
 }
 
 type chatResponse struct {
@@ -129,12 +145,16 @@ func (c Config) Complete(ctx context.Context, msgs []Message, opt Options) (stri
 	if maxTokens <= 0 {
 		maxTokens = 512
 	}
-	payload, err := json.Marshal(chatRequest{
+	reqBody := chatRequest{
 		Model:       c.Model,
 		Messages:    msgs,
 		MaxTokens:   maxTokens,
 		Temperature: opt.Temperature,
-	})
+	}
+	if c.Thinking != "" {
+		reqBody.Thinking = &thinkingParam{Type: c.Thinking}
+	}
+	payload, err := json.Marshal(reqBody)
 	if err != nil {
 		return "", err
 	}
