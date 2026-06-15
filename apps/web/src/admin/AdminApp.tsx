@@ -8,6 +8,7 @@ import {
   AppstoreOutlined,
   FileDoneOutlined,
   FundOutlined,
+  ThunderboltOutlined,
   BellOutlined,
   UserOutlined,
   MenuFoldOutlined,
@@ -18,11 +19,12 @@ import ProductManage from './pages/ProductManage';
 import AuctionPublish from './pages/AuctionPublish';
 import OrderManage from './pages/OrderManage';
 import LiveMonitor from './pages/LiveMonitor';
+import Concurrency from './pages/Concurrency';
 import './admin.css';
 
 const { Sider, Header, Content } = Layout;
 
-type PageKey = 'dashboard' | 'products' | 'publish' | 'orders' | 'monitor';
+type PageKey = 'dashboard' | 'products' | 'publish' | 'orders' | 'monitor' | 'concurrency';
 
 const MENU = [
   { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
@@ -30,6 +32,7 @@ const MENU = [
   { key: 'products', icon: <AppstoreOutlined />, label: 'Live products' },
   { key: 'orders', icon: <FileDoneOutlined />, label: 'Orders' },
   { key: 'monitor', icon: <FundOutlined />, label: 'Live monitor' },
+  { key: 'concurrency', icon: <ThunderboltOutlined />, label: 'Concurrency demo' },
 ];
 
 const TITLES: Record<PageKey, string> = {
@@ -38,6 +41,7 @@ const TITLES: Record<PageKey, string> = {
   products: 'Live product management',
   orders: 'Order management',
   monitor: 'Live auction monitor',
+  concurrency: 'Ten-thousand-user concurrency demo',
 };
 
 /**
@@ -127,6 +131,7 @@ export default function AdminApp({
               {page === 'publish' && <AuctionPublish />}
               {page === 'orders' && <OrderManage />}
               {page === 'monitor' && <LiveMonitor onGo={(p) => setPage(p as PageKey)} />}
+              {page === 'concurrency' && <Concurrency />}
             </Content>
           </Layout>
         </Layout>
