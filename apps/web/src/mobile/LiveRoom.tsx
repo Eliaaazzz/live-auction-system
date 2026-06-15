@@ -42,9 +42,9 @@ function ambientForSlot(roomId: string, slot: number): { kind: 'enter' | 'commen
   return { kind: 'comment', name: u.name, text: COMMENT_POOL[Math.floor(rnd() * COMMENT_POOL.length)], color: u.color, avatar: u.avatar };
 }
 
-interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; onEnded?: () => void; seat?: string; identity?: SeatIdentity; }
+interface Props { room: Room; seedToPrice?: number; startDelaySec?: number; running?: boolean; onEnded?: () => void; onExit?: () => void; seat?: string; identity?: SeatIdentity; }
 
-export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true, onEnded, seat = '', identity }: Props) {
+export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running = true, onEnded, onExit, seat = '', identity }: Props) {
   const lot = room.lot;
   // Showcase seats (买家A/买家B) pass an explicit per-seat identity; real /m uses
   // the global login store. Everything below reads `ident`, so it works for both.
@@ -277,7 +277,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} viewers={state.participants} simViewers={state.simViewers} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
+          <LiveHeader room={room} viewers={state.participants} simViewers={state.simViewers} followed={followed} onToggleFollow={toggleFollow} onClose={onExit ?? (() => {})} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
           {/* #UIUX 顶部减负：商品卡 + 倒计时合并成一个右上「拍品状态」竖向 chip 簇，
               不再是两个分散的浮层；倒计时紧贴商品卡读作一体。 */}
@@ -337,7 +337,9 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
             </div>
           )}
 
-          <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
+          {/* canContinue = 还有其他直播场（多场时 onEnded 才注入）；autoAdvanceMs 仅 showcase
+              seat 注入 → 三屏 demo 结束后自动滚动；真实 /m 是终态屏，等用户「退出 / 继续看其他场」。 */}
+          <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} onExit={onExit} canContinue={!!onEnded} autoAdvanceMs={seat ? 6500 : undefined} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
 
           <GiftPanel roomId={room.id} open={giftOpen} onClose={() => setGiftOpen(false)} onSend={onSendGift} />
           {/* 对方礼物的飘屏（#261-8 — 自己的那份由 GiftPanel 即时播放） */}
