@@ -196,6 +196,7 @@
 .conc-actions { flex-shrink: 0; }
 .conc-empty { padding: 56px 24px; text-align: center; color: #9a9aa5; font-size: 14px; background: #fff; border: 1px dashed #e3e3ea; border-radius: 14px; }
 .conc-syncing { margin-bottom: 12px; font-size: 13px; color: #fe2c55; font-weight: 600; }
+.conc-ended { margin-bottom: 12px; font-size: 13px; color: #8a6d1a; font-weight: 600; background: #fff8e6; border: 1px solid #ffe7a8; border-radius: 10px; padding: 8px 12px; }
 
 .conc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
 @media (max-width: 1100px) { .conc-grid { grid-template-columns: repeat(2, 1fr); } }
