@@ -69,7 +69,7 @@ export function VideoBackground({ lot, liveUrl }: { lot: Lot; liveUrl?: string }
   );
 }
 
-export function LiveHeader({ room, viewers, followed, onToggleFollow, onClose, account }: { room: Room; viewers?: number; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
+export function LiveHeader({ room, viewers, simViewers = 0, followed, onToggleFollow, onClose, account }: { room: Room; viewers?: number; simViewers?: number; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
   // #261-12a: 在线人数实时来自服务端（ROOM_SNAPSHOT + 人气脚本 stats 广播），
   // 不再是建房时的静态数。viewers 缺省时退回 room.viewers（mock 模式）。
   const liveViewers = viewers != null && viewers > 0 ? viewers : room.viewers;
@@ -82,13 +82,17 @@ export function LiveHeader({ room, viewers, followed, onToggleFollow, onClose, a
       </div>
       <div className="lm-header-right">
         {account}
-        <div className="lm-viewers">
-          <div className="lm-viewer-avs">
-            <Avatar src={'https://i.pravatar.cc/40?img=11'} size={20} ring="rgba(0,0,0,0.35)" />
-            <Avatar src={'https://i.pravatar.cc/40?img=24'} size={20} ring="rgba(0,0,0,0.35)" />
-            <Avatar src={'https://i.pravatar.cc/40?img=36'} size={20} ring="rgba(0,0,0,0.35)" />
+        <div className="lm-viewers-col">
+          <div className="lm-viewers">
+            <div className="lm-viewer-avs">
+              <Avatar src={'https://i.pravatar.cc/40?img=11'} size={20} ring="rgba(0,0,0,0.35)" />
+              <Avatar src={'https://i.pravatar.cc/40?img=24'} size={20} ring="rgba(0,0,0,0.35)" />
+              <Avatar src={'https://i.pravatar.cc/40?img=36'} size={20} ring="rgba(0,0,0,0.35)" />
+            </div>
+            <Icon name="eye" size={13} /><span className="tnum">{fmtCount(liveViewers)}</span>
           </div>
-          <Icon name="eye" size={13} />{fmtCount(liveViewers)}
+          {/* #266 review 诚实边界：人气脚本在跑时显式声明模拟，绝不冒充真实并发。 */}
+          {simViewers > 0 && <div className="lm-simtag">模拟人气 · 演示</div>}
         </div>
         <button className="lm-close" onClick={onClose} aria-label="关闭"><Icon name="close" size={16} /></button>
       </div>

@@ -4,7 +4,7 @@ import { useAuctionEngine } from '../lib/useAuctionEngine';
 import { COMMENT_POOL, ENTER_POOL, BOT_USERS } from '../lib/mockData';
 import { fmtYuan, fmtCompactYuan, fmtCompact, fmtMoney, splitClock } from '../lib/format';
 import { computeIncrement } from '../lib/pricing';
-import { sfx, isMuted, setMuted, unlockAudio, speak } from '../lib/sound';
+import { sfx, isMuted, setMuted, unlockAudio, speak, cancelSpeak } from '../lib/sound';
 import { serverNow } from '../backend/lib/clock.js';
 import { VideoBackground, LiveHeader, LotChip, ActionRail, Danmaku, EmotionFX, RoomSkeleton, GiftPanel, ShareModal, ProductImg, type DanmakuItem, type FxToken, type GiftTier } from './components';
 import { BottomTabs, TabSheet, type TabKey, type CommentItem } from './tabs';
@@ -58,6 +58,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
   const [agreed, setAgreed] = useState(false);
   const [sheetTab, setSheetTab] = useState<TabKey | null>(null);
   const [bidSheetOpen, setBidSheetOpen] = useState(false);
+  const [pendingBid, setPendingBid] = useState<number | null>(null); // #UIUX 高额出价二次确认
   const [giftOpen, setGiftOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [reminded, setReminded] = useState(false);
@@ -139,7 +140,7 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       case 'extend': flashFx('extend', `倒计时延长 +${e.addSec}s`); if (!isMuted()) sfx.extend(); pushFeed({ kind: 'enter', text: `结束前有人出价，倒计时自动延长 ${e.addSec}s` }); break;
       case 'cap': pushFeed({ kind: 'enter', text: '触发封顶价，即将成交' }); break;
       case 'start': pushFeed({ kind: 'enter', text: '开拍啦，出价开始！' }); break;
-      case 'settle': if (!isMuted() && e.won) speak('恭喜您，竞拍成功'); break;
+      case 'settle': cancelSpeak(); if (!isMuted() && e.won) speak('恭喜您，竞拍成功'); break;
       case 'social': onSocial(e.social); break;
       default: break;
     }
@@ -251,7 +252,13 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
     try { localStorage.setItem(likeKey, next ? '1' : '0'); } catch { /* ignore */ }
     sendSocial({ kind: 'like', delta: next ? 1 : -1 });
   };
-  const quickBid = (amount: number) => { if (!joined) { setSheetTab('join'); return; } placeBid(amount); };
+  // #UIUX 高额二次确认：大额(≥¥10万)出价是有法律约束力的承诺，先弹确认防误触；
+  // 低价位拍品(<¥10万)直接提交保持快捷。机器人/精确出价走各自路径，不经此拦截。
+  const quickBid = (amount: number) => {
+    if (!joined) { setSheetTab('join'); return; }
+    if (amount >= 100000) { setPendingBid(amount); return; }
+    placeBid(amount);
+  };
   // 流拍/落槌后由 overlay 的 5s 计时器调用：多场次时自动「进入下一件」(BuyerRail.advance，
   // 等同上滑切下一间)；单场次时退回原地重新同步。onEnded 句柄稳定，overlay 计时 effect 才只触发一次。
   const onReturn = useCallback(() => {
@@ -270,10 +277,14 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
       <VideoBackground lot={lot} liveUrl={livePlayUrl} />
       {!loading && (
         <>
-          <LiveHeader room={room} viewers={state.participants} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
+          <LiveHeader room={room} viewers={state.participants} simViewers={state.simViewers} followed={followed} onToggleFollow={toggleFollow} onClose={() => {}} account={<ProfileButton onClick={() => setAcctOpen(true)} avatar={identity?.avatar} />} />
           <div className="lm-rankchip"><Icon name="trophy" size={12} fill /> {room.tagline}</div>
-          <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
-          <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
+          {/* #UIUX 顶部减负：商品卡 + 倒计时合并成一个右上「拍品状态」竖向 chip 簇，
+              不再是两个分散的浮层；倒计时紧贴商品卡读作一体。 */}
+          <div className="lm-lotstack">
+            <LotChip lot={lot} onOpenIntro={intro ? () => setIntroOpen(true) : undefined} />
+            <CountdownPill ms={state.remainingMs} ending={state.status === 'ending'} urgent={urgent} hidden={!live} />
+          </div>
           {auctioneerText && <div className="lm-aibubble"><span className="dot" /> AI 主播 · {auctioneerText}</div>}
 
           <button className={'lm-sound-btn' + (soundOn ? '' : ' off')} onClick={toggleSound} aria-label={soundOn ? '关闭音效' : '开启音效'}>
@@ -291,8 +302,12 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
           <Danmaku items={danmaku} />
           <ActionRail likes={state.likes} liked={liked} onToggleLike={onToggleLike} likeBurst={likeBurst} onOpenComments={() => tapTab('comments')} onOpenGift={() => setGiftOpen(true)} onShare={() => setShareOpen(true)} />
 
-          <div className={shake ? 'lm-shake' : undefined}>
-            <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
+          {/* #15 动画位移修复：shake 用 transform，会给后代建立 containing block，
+              让底部锚定的 .lm-bidbar(position:absolute;bottom:…) 整条飞出屏幕。改成
+              全屏 inset:0 的 shell —— containing block 与视口同尺寸，出价条 bottom 锚点
+              不变，shake 只整体平移；pointer-events:none 让空白处点击穿透到下层。 */}
+          <div className={'lm-bidbar-shell' + (shake ? ' lm-shake' : '')}>
+            <BidActionBar ready={ready} joined={joined} live={live} myRank={state.myRank} currentPrice={state.currentPrice} myMax={state.myMaxBid} secondPrice={state.ranking?.[1]?.amount ?? null} nextMinBid={nextMinBid} increment={dynStep} capPrice={lot.capPrice} onJoin={() => setSheetTab('join')} onBid={quickBid} onOpenSheet={() => setBidSheetOpen(true)} />
           </div>
 
           <BottomTabs active={sheetTab} joined={joined} unread={unread} leadDot={joined && state.myRank === 1} onTap={tapTab} />
@@ -305,6 +320,21 @@ export default function LiveRoom({ room, seedToPrice, startDelaySec = 0, running
               amount stepper from the lot.startPrice fallback instead of the live min. */}
           {bidSheetOpen && ready && (
             <BidSheet lot={lot} state={state} nextMinBid={nextMinBid} onClose={() => setBidSheetOpen(false)} onConfirm={(amt) => { if (!joined) { setBidSheetOpen(false); setSheetTab('join'); return; } placeBid(amt); setBidSheetOpen(false); }} />
+          )}
+
+          {/* #UIUX 高额出价二次确认弹层：金额大、误触成本高 → 明确金额 + 法律约束力提示 + 确认。 */}
+          {pendingBid != null && (
+            <div className="lm-confirm-mask" onClick={() => setPendingBid(null)}>
+              <div className="lm-confirm" onClick={(e) => e.stopPropagation()}>
+                <div className="lm-confirm-hd"><Icon name="gavel" size={18} style={{ color: '#ff8fa3' }} /> 确认出价</div>
+                <div className="lm-confirm-amt tnum">{fmtYuan(pendingBid)}</div>
+                <div className="lm-confirm-sub">竞拍出价为<b>具有法律约束力</b>的购买承诺，确认后立即提交服务端裁决，落槌即成交。</div>
+                <div className="lm-confirm-row">
+                  <button className="lm-confirm-cancel" onClick={() => setPendingBid(null)}>取消</button>
+                  <button className="lm-confirm-ok" onClick={() => { placeBid(pendingBid); setPendingBid(null); }}>确认出价</button>
+                </div>
+              </div>
+            </div>
           )}
 
           <StateOverlays state={state} lot={lot} room={room} onReturn={onReturn} reminded={reminded} onToggleRemind={() => setReminded((v) => !v)} />
@@ -362,7 +392,7 @@ function CountdownPill({ ms, ending, urgent, hidden }: { ms: number; ending: boo
 const fmtBid = (n: number) => (n >= 1_000_000 ? fmtCompactYuan(n) : fmtYuan(n));
 const fmtBidNum = (n: number) => (n >= 1_000_000 ? fmtCompact(n) : fmtMoney(n));
 
-function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { ready: boolean; joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
+function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, secondPrice, nextMinBid, increment, capPrice, onJoin, onBid, onOpenSheet }: { ready: boolean; joined: boolean; live: boolean; myRank: number | null; currentPrice: number; myMax: number | null; secondPrice: number | null; nextMinBid: number; increment: number; capPrice: number; onJoin: () => void; onBid: (amount: number) => void; onOpenSheet: () => void; }) {
   const [amt, setAmt] = useState(nextMinBid);
   const effCap = capPrice > 0 ? capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
   // #2 不随直播价「自己跳动」：别人出价时保持我设好的数字不变。价格涨过我的数字时
@@ -388,7 +418,10 @@ function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMi
   if (myRank === 1) {
     const rec = increment * 2;
     const recBid = Math.min(effCap, currentPrice + rec);
-    return (<div className="lm-bidbar"><div className="lm-bar-gap"><Icon name="lock" size={16} style={{ color: '#ffce54' }} /><div className="l">已锁第一</div></div><button className="lm-bidcta lead" onClick={() => onBid(recBid)}><span><Icon name="crown" size={16} fill /> 加固至 {fmtBid(recBid)}</span><span className="sub">建议 +¥{fmtBidNum(rec)} 拉开差距</span></button></div>);
+    // #UIUX 领先态：状态用金色「领先优势 ¥X」（真实领先差额），CTA 改透明交易语言
+    // 「加价至 ¥X 保持领先」（不用游戏化的「加固」）。
+    const leadMargin = secondPrice != null ? Math.max(0, currentPrice - secondPrice) : 0;
+    return (<div className="lm-bidbar"><div className="lm-bar-gap"><div className="v tnum" style={{ color: '#ffce54' }}>{leadMargin > 0 ? fmtBid(leadMargin) : '第 1'}</div><div className="l">{leadMargin > 0 ? '领先优势' : '已锁第一'}</div></div><button className="lm-bidcta lead" onClick={() => onBid(recBid)}><span><Icon name="crown" size={16} fill /> 加价至 {fmtBid(recBid)} 保持领先</span><span className="sub">建议 +¥{fmtBidNum(rec)} 拉开差距</span></button></div>);
   }
   const behind = myRank != null && myRank >= 2;
   const gapv = myMax != null ? Math.max(0, currentPrice - myMax) : currentPrice;
@@ -396,9 +429,12 @@ function BidActionBar({ ready, joined, live, myRank, currentPrice, myMax, nextMi
   const inc = () => { touched.current = true; setAmt((a) => Math.min(effCap, a + increment)); };
   return (
     <div className="lm-bidbar">
-      {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtCompactYuan(gapv)}</div><div className="l">距第一名</div></div>)}
+      {/* #UIUX 差价用完整数字「¥12,800」（避免与顶部在线「1.28万」混淆），标签「落后第一名」清晰。 */}
+      {behind && (<div className="lm-bar-gap"><div className="v tnum">{fmtBid(gapv)}</div><div className="l">落后第一名</div></div>)}
       <div className="lm-stepper"><button onClick={dec} aria-label="减"><Icon name="minus" size={18} /></button><span className="val tnum" onClick={onOpenSheet}>{fmtBid(amt)}</span><button onClick={inc} aria-label="加"><Icon name="plus" size={18} /></button></div>
-      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? `反超第一 · ${fmtBid(bidAmt)}` : `立即出价 ${fmtBid(bidAmt)}`}</span><span className="sub">{staleLow ? `价已涨 · 按最低 ¥${fmtBidNum(nextMinBid)} 出价` : (behind ? `推荐反超 ¥${fmtBidNum(nextMinBid)} 起` : `最低 ¥${fmtBidNum(nextMinBid)} · 点价可多笔`)}</span></button>
+      {/* #UIUX CTA 是动作、左侧步进器是金额——不再把金额重复进 CTA（消冗余 + 永不溢出）。
+          被反超「反超第一名」、首次「立即出价」；金额始终在紧邻步进器里可见可调。 */}
+      <button className={'lm-bidcta' + (behind ? ' second' : '')} onClick={() => onBid(bidAmt)}><span>{behind ? '反超第一名' : '立即出价'}</span><span className="sub">{staleLow ? `价已涨 · 最低 ¥${fmtBidNum(nextMinBid)}` : (behind ? '提交即反超当前第一' : '点价可一次加多笔')}</span></button>
     </div>
   );
 }

@@ -206,7 +206,7 @@ export default function AuctionPublish() {
     if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
     if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
     setVideoFile(file);
-    message.success(`已选择直播视频「${file.name}」，发布后自动推流到直播间`);
+    message.success(`已选择直播视频「${file.name}」，发布时先上传、开拍即自动播放`);
     return false; // 不走 antd 内建上传；发布拿到 auctionId 后再传
   };
 
@@ -244,20 +244,27 @@ export default function AuctionPublish() {
             maxExtensions: 10,
           },
         });
+        // #261-12b: 直播视频必须在开拍【前】上传 — 之前放在 startLive 之后，
+        // 上传期间倒计时已经在烧（80s 的场子传完视频只剩十几秒），而且先进房
+        // 的买家拿不到 livePlayUrl（引擎只在进房时读一次快照）→「传了视频但
+        // 移动端不播」。挪到 freeze/start 之前：开拍第 0 秒视频就位，所有人
+        // 进房即播；上传失败不阻断发布，可去直播商品页重传。
+        if (videoFile) {
+          const mb = Math.round((videoFile.size / 1024 / 1024) * 10) / 10;
+          const hideUp = message.loading(`直播视频上传中（${mb}MB）— 传完即开拍…`, 0);
+          try {
+            await api.uploadStreamVideo(auctionId, videoFile);
+            hideUp();
+            message.success('🎬 直播视频已就位，开拍即自动播放');
+          } catch (ve: any) {
+            hideUp();
+            message.warning('视频上传失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || String(ve ?? '未知错误')));
+          }
+        }
         await api.freeze(auctionId, { factsConfirmed: true });
         // #261-12a: demoCrowd 开关随发布下发 — 服务端内置人气脚本（~9997 观众 +
         // 按规则随机模拟出价）随开拍自动注入。
         await api.startLive(auctionId, { durationMs: durationSec * 1000, demoCrowd: vals.demoCrowd !== false });
-        // #261-12b: 选了直播视频 → 发布成功后立刻推流（写入该场的 livePlayUrl，
-        // 买家端进房自动循环播放）。失败不回滚发布，单独提示可去直播商品页重传。
-        if (videoFile) {
-          try {
-            await api.uploadStreamVideo(auctionId, videoFile);
-            message.success('🎬 直播视频已推流，买家端进房自动播放');
-          } catch (ve: any) {
-            message.warning('视频推流失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || ve));
-          }
-        }
         message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
         // 发布后重置表单与已上传主图：否则 uploadedUrl 会被下一个商品沿用，
         // 导致「商品图片不反应商品变化」（新商品发上了上一个商品的图）。
@@ -324,8 +331,8 @@ export default function AuctionPublish() {
             <div className="pub-video-dragger">
               <Upload.Dragger accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} maxCount={1}>
                 <p style={{ margin: '6px 0 2px' }}><VideoCameraAddOutlined style={{ fontSize: 26, color: '#fe2c55' }} /></p>
-                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里，发布后直接推流到直播间</p>
-                <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>mp4 / webm · ≤64MB · 买家端自动循环播放（也可发布后用 OBS 推真镜头）</p>
+                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里，开拍即作为直播画面自动播放</p>
+                <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>建议 H.264 编码 mp4 · ≤64MB（webm 在 iPhone 无法播放；也可发布后用 OBS 推真镜头）</p>
               </Upload.Dragger>
             </div>
             {videoFile && (

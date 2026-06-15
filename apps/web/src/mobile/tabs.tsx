@@ -92,12 +92,12 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
       <div className="lm-section-t"><Icon name="trophy" size={13} /> 实时排名 · 参与 {state.participants} 人 · 出价 {state.bidCount} 次</div>
       <div className="lm-podium">
         <div className={'lm-rankcard r1' + (first?.self ? ' me' : '')}>
-          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先{first?.self ? ' · 是我' : ''}</div>
+          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先</div>
           <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(first)}</span></div>
           <div className="lm-rank-amt tnum">{first ? fmtCompactYuan(first.amount) : fmtYuan(0)}</div>
         </div>
         <div className={'lm-rankcard r2' + (second?.self ? ' me' : '')}>
-          <div className="lm-rank-badge">2 · 第二名 · 紧追{second?.self ? ' · 是我' : ''}</div>
+          <div className="lm-rank-badge">第二名 · 紧追</div>
           <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(second)}</span></div>
           <div className="lm-rank-amt tnum">{second ? fmtCompactYuan(second.amount) : '—'}</div>
         </div>
@@ -114,6 +114,24 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
           <div className="left"><span className="lm-myrank-pill">未上榜</span><div style={{ fontSize: 12.5 }}>点击「我要参与」加入竞拍，争夺第一名</div></div>
           <Icon name="chevronR" size={18} style={{ color: '#ff8fa3' }} />
         </div>
+      )}
+      {/* #UIUX 排名面板补内容：排名卡下方加「最近出价」列表，面板不再下半片空黑；
+          告诉用户「价高者得、还在涨」，解释为何要继续出价；底部链到完整历史。 */}
+      {state.bids.length > 0 ? (
+        <div className="lm-recent">
+          <div className="lm-recent-h"><Icon name="clock" size={12} /> 最近出价</div>
+          {state.bids.slice(0, 6).map((b, i) => (
+            <div className={'lm-recent-row' + (b.self ? ' self' : '')} key={b.id}>
+              <Avatar src={b.avatar} size={20} />
+              <span className="nm">{b.self ? '我' : b.userName}</span>
+              {i === 0 && <span className="tag">领先</span>}
+              <span className="amt tnum">{fmtCompactYuan(b.amount)}</span>
+            </div>
+          ))}
+          <div className="lm-recent-more" onClick={() => setActive('history')}>查看全部出价历史 ›</div>
+        </div>
+      ) : (
+        <div className="lm-recent-empty">开拍后这里实时显示最近出价 · 价高者得</div>
       )}
     </div>
   );
@@ -133,6 +151,7 @@ function HistoryTab({ state }: { state: AuctionState }) {
           <div className={'lm-hist-row' + (b.self ? ' self' : '')} key={b.id}>
             <Avatar src={b.avatar} size={26} />
             <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
+            {String(b.userId || '').startsWith('user_sim') && <span className="lm-hist-sim">模拟</span>}
             {i === 0 && <span className="lm-hist-lead">当前领先</span>}
             <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
             <span className="lm-hist-t">{ago(b.ts)}</span>
