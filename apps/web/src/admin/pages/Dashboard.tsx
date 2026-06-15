@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Row, Col, Card, Statistic, Button, List, Progress, Avatar, Empty } from 'antd';
-import { RiseOutlined, FileDoneOutlined, ShoppingOutlined, ThunderboltOutlined, ArrowRightOutlined, FireOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Row, Col, Card, Statistic, Button, List, Progress, Avatar, Empty, Checkbox, Popconfirm, App as AntdApp } from 'antd';
+import { RiseOutlined, FileDoneOutlined, ShoppingOutlined, ThunderboltOutlined, ArrowRightOutlined, FireOutlined, DeleteOutlined } from '@ant-design/icons';
 import { fmtMoney } from '../../lib/format';
 import { PROD } from '../../lib/assets';
 import { api } from '../../backend/lib/api.js';
+import { ensureSession } from '../../backend/lib/auth.js';
 import { isJunk } from '../../lib/mapBackend';
 
 const yuanOf = (c?: string | number | null): number => {
@@ -31,26 +32,67 @@ function catOf(name: string): { k: string; c: string } {
 // 次数全部从同一份 GET /api/auctions 推导（同源必同步），不再用迪奥等假占位数据
 // 垫底。没有数据时给行动化空状态，而不是看起来像成交了的假列表。
 export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
+  const { message } = AntdApp.useApp();
   const [auctions, setAuctions] = useState<any[]>([]);
+  const aliveRef = useRef(true);
+  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, []);
+  const load = useCallback(async () => {
+    try {
+      const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
+      if (aliveRef.current) setAuctions((auctions as any[]).filter((a) => a.auctionId && !isJunk(a.productName)));
+    } catch { /* keep last good */ }
+  }, []);
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
-        if (alive) setAuctions((auctions as any[]).filter((a) => a.auctionId && !isJunk(a.productName)));
-      } catch { /* keep last good */ }
-    };
     load();
     const t = setInterval(load, 10_000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+    return () => clearInterval(t);
+  }, [load]);
+
+  // 近期成交管理（查看 + 多选/全选硬删除）。成交项均为终态，可直接删除；删除走后端
+  // DELETE /api/auctions/{id}，连带订单/事件一并清除，不可恢复（与发布历史同源）。
+  const [manage, setManage] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const live = auctions.filter((a) => a.status === 'LIVE');
   const sold = auctions.filter((a) => a.status === 'SOLD' || a.status === 'ORDER_CREATED');
   const gmv = sold.reduce((s, a) => s + yuanOf(a.currentPriceCents), 0);
   const liveBids = live.reduce((s, a) => s + (Number(a.bidCount) || 0), 0);
   const liveLot = live[0];
-  const recent = sold.slice(0, 4).map((a) => ({ img: a.imageUrl || PROD.watch, name: a.productName || '拍品', price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId) }));
+  // 平时看最近 4 笔；进入管理后展开更多（最多 20）方便逐条清理。
+  const recent = (manage ? sold.slice(0, 20) : sold.slice(0, 4)).map((a) => ({
+    id: a.auctionId as string, img: a.imageUrl || PROD.watch, name: a.productName || '拍品',
+    price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId),
+  }));
+  const shownIds = recent.map((r) => r.id);
+  const selectedCount = shownIds.filter((id) => selected.has(id)).length;
+  const allSelected = shownIds.length > 0 && selectedCount === shownIds.length;
+  const toggleSelect = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+  const toggleSelectAll = () => setSelected(allSelected ? new Set() : new Set(shownIds));
+  const exitManage = () => { setManage(false); setSelected(new Set()); };
+  const onDeleteSelected = async () => {
+    const ids = shownIds.filter((id) => selected.has(id));
+    if (ids.length === 0) { message.warning('请勾选要删除的成交'); return; }
+    setDeleting(true);
+    try {
+      await ensureSession('seller-demo');
+      const results = await Promise.allSettled(ids.map((id) => api.deleteAuction(id)));
+      const ok = results.filter((r) => r.status === 'fulfilled').length;
+      const fail = results.length - ok;
+      if (ok > 0) message.success(`已永久删除 ${ok} 笔成交${fail ? `，${fail} 笔失败` : ''}`);
+      else message.error('删除失败：' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || '请重试'));
+      setSelected(new Set());
+      await load();
+    } catch (e: any) {
+      message.error('删除失败：' + (e?.message || e));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // 各品类成交占比 — 从真实成交推导；无成交不渲染假图。
   const catAgg = new Map<string, { v: number; c: string }>();
@@ -130,21 +172,52 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
           </Card>
         </Col>
         <Col xs={24} lg={10}>
-          <Card title="近期成交">
+          <Card
+            title="近期成交"
+            extra={sold.length > 0 && (manage ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Popconfirm
+                  title={`永久删除选中的 ${selectedCount} 笔成交？`}
+                  description="将从后端彻底删除（含订单 / 竞价记录），不可恢复"
+                  okText="永久删除"
+                  cancelText="再想想"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={onDeleteSelected}
+                  disabled={selectedCount === 0}
+                >
+                  <Button danger size="small" icon={<DeleteOutlined />} loading={deleting} disabled={selectedCount === 0}>
+                    删除{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                  </Button>
+                </Popconfirm>
+                <Button type="link" size="small" onClick={exitManage}>完成</Button>
+              </span>
+            ) : (
+              <Button type="link" size="small" icon={<DeleteOutlined />} onClick={() => setManage(true)}>管理</Button>
+            ))}
+          >
             {recent.length ? (
-              <List
-                dataSource={recent}
-                renderItem={(it) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      avatar={<Avatar shape="square" size={40} src={it.img} />}
-                      title={<span style={{ fontSize: 13 }}>{it.name}</span>}
-                      description={<span style={{ fontSize: 12 }}>{it.buyer}</span>}
-                    />
-                    <span className="num-red">¥{fmtMoney(it.price)}</span>
-                  </List.Item>
+              <>
+                {manage && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0 12px', borderBottom: '1px solid #f5f5f5', marginBottom: 4 }}>
+                    <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} onChange={toggleSelectAll}>全选</Checkbox>
+                    <span style={{ color: '#999', fontSize: 12 }}>共 {sold.length} 笔成交 · 勾选后点「删除」永久清除</span>
+                  </div>
                 )}
-              />
+                <List
+                  dataSource={recent}
+                  renderItem={(it) => (
+                    <List.Item>
+                      {manage && <Checkbox style={{ marginRight: 12 }} checked={selected.has(it.id)} onChange={() => toggleSelect(it.id)} />}
+                      <List.Item.Meta
+                        avatar={<Avatar shape="square" size={40} src={it.img} />}
+                        title={<span style={{ fontSize: 13 }}>{it.name}</span>}
+                        description={<span style={{ fontSize: 12 }}>{it.buyer}</span>}
+                      />
+                      <span className="num-red">¥{fmtMoney(it.price)}</span>
+                    </List.Item>
+                  )}
+                />
+              </>
             ) : (
               <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无成交 · 落锤后实时出现" style={{ margin: '24px 0' }} />
             )}

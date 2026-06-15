@@ -1319,6 +1319,53 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 
 // ownsAuction enforces §8: seller actions verify server-side ownership; the
 // client-supplied identity is never trusted. Returns the auction on success.
+// DELETE /api/auctions/{id} -> permanently remove a TERMINAL auction and all of
+// its records (orders / coin_ledger / events / evidence / rules / bids + the
+// Redis keys), plus the product when unreferenced. Seller-only. Backs the 后台
+// 「删除发布历史 / 近期成交」history cleanup. 409 ERR_NOT_TERMINAL while the lot is
+// still DRAFT/SCHEDULED/LIVE — the seller must 下架/结束 it first.
+func (s *Server) handleDeleteAuction(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	aid := r.PathValue("id")
+	a, ok := s.ownsAuction(w, r, aid, userID)
+	if !ok {
+		return
+	}
+	if !model.IsTerminal(a.Status) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"code":    "ERR_NOT_TERMINAL",
+			"message": "仅已结束的拍品可删除，请先下架或结束该拍品",
+		})
+		return
+	}
+	res, err := s.st.DeleteAuction(r.Context(), aid, userID)
+	if err != nil {
+		if err == store.ErrAuctionNotDeletable {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"code":    "ERR_NOT_TERMINAL",
+				"message": "拍品状态已变化，无法删除",
+			})
+			return
+		}
+		if err == store.ErrNotFound {
+			writeErr(w, http.StatusNotFound, "auction not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"code":             "OK_DELETED",
+		"auctionId":        aid,
+		"redisKeysDeleted": res.RedisKeysDeleted,
+		"productDeleted":   res.ProductDeleted,
+	})
+}
+
 func (s *Server) ownsAuction(w http.ResponseWriter, r *http.Request, aid, userID string) (store.Auction, bool) {
 	a, err := s.st.GetAuction(r.Context(), aid)
 	if err == store.ErrNotFound {

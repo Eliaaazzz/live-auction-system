@@ -433,6 +433,22 @@
 /* ---------- share-order button on win / hammer overlays ---------- */
 .lm-share-order { width: 100%; margin-top: 10px; height: 42px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.08); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 
+/* ---------- 结束浮层底部：退出直播间 / 继续看其他场（V8「竞拍结束需要有推出界面」） ----------
+   顶部细分隔线把「退出/继续」与上方结算/分享动作分开，避免误触。 */
+.lm-ov-foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.09); display: flex; flex-direction: column; gap: 8px; }
+.lm-ov-exit { width: 100%; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); font-size: 14px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s ease; }
+.lm-ov-exit:active { background: rgba(255,255,255,0.12); }
+.lm-ov-continue { background: none; border: none; color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 2px; padding: 2px; }
+.lm-ov-continue:active { color: #fff; }
+
+/* ---------- 退出直播间后的终态屏 ---------- */
+.lm-exited { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: radial-gradient(120% 80% at 50% 0%, #241024 0%, #0b0b12 60%); }
+.lm-exited-card { text-align: center; animation: la-pop 0.34s ease; }
+.lm-exited-emoji { font-size: 46px; margin-bottom: 12px; }
+.lm-exited-title { font-size: 20px; font-weight: 800; color: #fff; }
+.lm-exited-sub { font-size: 13px; color: rgba(255,255,255,0.55); margin-top: 6px; margin-bottom: 22px; }
+.lm-exited-btn { height: 46px; padding: 0 30px; border-radius: 14px; border: none; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
+
 /* ============================================================
    Account / login (#3/#4 统一身份) — full-screen gate + sheet + header chip
    ============================================================ */

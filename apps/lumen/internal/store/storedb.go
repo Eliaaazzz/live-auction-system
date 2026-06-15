@@ -403,6 +403,148 @@ func (s *Store) WithAuctionTransitionLock(ctx context.Context, aid string, fn fu
 	return fn()
 }
 
+// ErrAuctionNotDeletable means a hard delete was attempted on a non-terminal
+// auction (DRAFT/SCHEDULED/LIVE). Only finished auctions are removable history —
+// in-flight lots must be 下架/结束 first, then deleted.
+var ErrAuctionNotDeletable = errors.New("auction not terminal; cannot delete")
+
+// DeleteAuctionResult reports what a hard delete removed (operator visibility /
+// API response).
+type DeleteAuctionResult struct {
+	RedisKeysDeleted int64
+	Untracked        int64
+	ProductDeleted   bool
+}
+
+// DeleteAuction permanently removes a TERMINAL auction and everything keyed to it
+// — the seller-facing「删除发布历史 / 成交记录」history cleanup. This is the only
+// hard-delete path in the system; the engine never deletes auctions (terminal
+// rows are the audit trail). The caller MUST have already verified seller
+// ownership (ownsAuction) — the store re-checks the seller + terminal state under
+// the row anyway as defense-in-depth.
+//
+// Ordering & safety:
+//   - The terminal gate is checked FIRST (a cheap owner+status read, BEFORE any
+//     purge): a stray call on a still-LIVE auction must NOT wipe its live Redis
+//     state only to then reject. Terminal is a FINAL state — nothing transitions
+//     back out of it — so this early read stays valid through the rest of the
+//     delete. A non-owner reads as ErrNotFound (the handler already 403s).
+//   - Redis is then purged (ZREM auction:active + DEL of every auction:{aid}:* key
+//     — state/leaderboard/events/sealed/sealednames/dedupe, all sharing the {aid}
+//     hash tag) so the persistence worker cannot re-project a settlement
+//     order/events row back from a lingering stream after the MySQL rows are gone.
+//     Best-effort: a terminal auction's keys are often already gone post-close, so
+//     a Redis miss/error does NOT abort the authoritative MySQL delete.
+//   - MySQL then runs in one transaction. The auctions-row delete is status-gated
+//     to the terminal set and atomic — 0 rows affected ⇒ ErrAuctionNotDeletable.
+//     The product row is removed only when no other auction still references it
+//     (spawn-formal can seed a formal auction off a shared product_id).
+func (s *Store) DeleteAuction(ctx context.Context, aid, sellerID string) (DeleteAuctionResult, error) {
+	var res DeleteAuctionResult
+
+	// --- 1) Gate: owner + terminal, BEFORE touching Redis ---
+	var productID, status string
+	switch err := s.db.QueryRowContext(ctx,
+		`SELECT product_id, status FROM auctions WHERE id = ? AND seller_id = ?`, aid, sellerID).
+		Scan(&productID, &status); {
+	case errors.Is(err, sql.ErrNoRows):
+		return res, ErrNotFound
+	case err != nil:
+		return res, err
+	}
+	if !model.IsTerminal(status) {
+		return res, ErrAuctionNotDeletable
+	}
+
+	// --- 2) Redis purge (terminal only; best-effort — MySQL is authoritative) ---
+	if n, err := s.rdb.ZRem(ctx, activeKey, aid).Result(); err == nil {
+		res.Untracked = n
+	}
+	seen := map[string]struct{}{}
+	var cursor uint64
+	pattern := fmt.Sprintf("auction:{%s}:*", aid)
+	for i := 0; i < 1000; i++ { // bounded: one auction has only a handful of keys
+		ks, cur, err := s.rdb.Scan(ctx, cursor, pattern, 200).Result()
+		if err != nil {
+			break // best-effort — do not block the MySQL delete on a Redis blip
+		}
+		for _, k := range ks {
+			seen[k] = struct{}{}
+		}
+		cursor = cur
+		if cursor == 0 {
+			break
+		}
+	}
+	if len(seen) > 0 {
+		keys := make([]string, 0, len(seen))
+		for k := range seen {
+			keys = append(keys, k)
+		}
+		if n, err := s.rdb.Del(ctx, keys...).Result(); err == nil {
+			res.RedisKeysDeleted = n
+		}
+	}
+
+	// --- 3) MySQL cascade (authoritative, transactional) ---
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	for _, q := range []string{
+		`DELETE FROM orders WHERE auction_id = ?`,
+		`DELETE FROM coin_ledger WHERE auction_id = ?`,
+		`DELETE FROM auction_events WHERE auction_id = ?`,
+		`DELETE FROM evidence_chain_cache WHERE auction_id = ?`,
+		`DELETE FROM bids WHERE auction_id = ?`,
+		`DELETE FROM auction_rules WHERE auction_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, aid); err != nil {
+			return res, err
+		}
+	}
+
+	// Status-gated atomic delete of the main row: re-checks terminal under the row,
+	// closing the TOCTOU against a concurrent transition. 0 rows ⇒ not deletable.
+	del, err := tx.ExecContext(ctx,
+		`DELETE FROM auctions WHERE id = ? AND status IN ('SOLD','NO_BID','CANCELLED','ORDER_CREATED')`, aid)
+	if err != nil {
+		return res, err
+	}
+	if n, _ := del.RowsAffected(); n == 0 {
+		return res, ErrAuctionNotDeletable
+	}
+
+	// Drop the product only when nothing else references it (spawn-formal reuse).
+	if productID != "" {
+		var others int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM auctions WHERE product_id = ? AND id <> ?`, productID, aid).
+			Scan(&others); err != nil {
+			return res, err
+		}
+		if others == 0 {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM products WHERE id = ?`, productID); err != nil {
+				return res, err
+			}
+			res.ProductDeleted = true
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return res, err
+	}
+	committed = true
+	return res, nil
+}
+
 // ErrEventPayloadMismatch means a row already exists for (auction_id, seq) with a
 // DIFFERENT event type or payload than the one being projected — a tamper/bug
 // signal, not the normal idempotent re-projection.

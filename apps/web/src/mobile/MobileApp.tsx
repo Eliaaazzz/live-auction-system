@@ -79,6 +79,9 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
   // It's only the initial room; safeIndex below clamps it once rooms load.
   const [index, setIndex] = useState(startIndex);
   const [dir, setDir] = useState<'up' | 'down'>('up');
+  // 退出直播间（V8「竞拍结束需要有推出界面」）：真实 /m 的结束终态屏 / 顶部 X → 退出态，
+  // 不再被困在出价流里无限循环。showcase seat 不注入 onExit（保留三屏自动滚动），故只在真 /m 触发。
+  const [exited, setExited] = useState(false);
   const cooldown = useRef(false);
   const touchY = useRef<number | null>(null);
 
@@ -159,6 +162,7 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
 
   if (rooms === null) return <CenterMsg text="正在加载直播场次…" sub="LOADING LIVE AUCTIONS" />;
   if (list.length === 0) return <CenterMsg text="暂无正在直播的竞拍" sub="卖家可在管理后台「竞拍发布」开播" />;
+  if (exited) return <ExitedScreen onReenter={() => { setExited(false); setIndex(0); }} />;
 
   const safeIndex = Math.min(index, list.length - 1);
   const room = list[safeIndex];
@@ -171,7 +175,7 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
       onTouchEnd={onTouchEnd}
     >
       <div key={room.id} className={'lm-room in-' + dir}>
-        <LiveRoom room={room} seat={seat} identity={identity} onEnded={list.length > 1 ? advance : undefined} />
+        <LiveRoom room={room} seat={seat} identity={identity} onEnded={list.length > 1 ? advance : undefined} onExit={seat ? undefined : () => setExited(true)} />
       </div>
 
       {safeIndex === 0 && list.length > 1 && <SwipeHint />}
@@ -188,6 +192,20 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
 function sameIds(a: Room[] | null, b: Room[]): boolean {
   if (!a || a.length !== b.length) return false;
   return a.every((r, i) => r.id === b[i].id);
+}
+
+// 退出直播间后的终态屏（V8「推出界面」）：明确「已退出」，给一键「返回直播」重进直播场。
+function ExitedScreen({ onReenter }: { onReenter: () => void }) {
+  return (
+    <div className="lm-exited">
+      <div className="lm-exited-card">
+        <div className="lm-exited-emoji" aria-hidden>👋</div>
+        <div className="lm-exited-title">已退出直播间</div>
+        <div className="lm-exited-sub">感谢观看本场竞拍</div>
+        <button className="lm-exited-btn" onClick={onReenter}>返回直播 ›</button>
+      </div>
+    </div>
+  );
 }
 
 function CenterMsg({ text, sub }: { text: string; sub?: string }) {
