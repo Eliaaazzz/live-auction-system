@@ -70,27 +70,57 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dir := uploadDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, "upload dir unavailable")
+	name, ok := storeUploadedMedia(w, head, file, ext)
+	if !ok {
 		return
 	}
-	// Server-generated name: timestamp + random token. The client filename is
-	// untrusted input and never touches the filesystem path.
-	name := fmt.Sprintf("%d-%s%s", time.Now().UnixMilli(), randToken(8), ext)
-	path := filepath.Join(dir, name)
-	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "upload write failed")
+	writeJSON(w, http.StatusOK, map[string]string{"url": "/uploads/" + name})
+}
+
+// handleUploadVideo — POST /api/upload/video, multipart field "file". The
+// auction-agnostic twin of handleUpload for live clips: it stores the bytes and
+// returns { url } WITHOUT binding them to any auction. The 竞拍发布 form uploads
+// a dropped clip here the moment it lands in the dragger (not at publish), so
+// the 64 MiB transfer overlaps the seller filling in the rest of the form; the
+// returned /uploads/<name> is then threaded into createAuction's
+// rules.livePlayUrl, so the clip is already in place at the auction's 0th
+// second. handleUploadStreamVideo stays the post-publish / OBS re-upload path
+// for an EXISTING auction. Seller-gated exactly like handleUpload.
+func (s *Server) handleUploadVideo(w http.ResponseWriter, r *http.Request) {
+	userID, ok := s.authUser(r)
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, io.MultiReader(bytes.NewReader(head), file)); err != nil {
-		_ = os.Remove(path)
-		writeErr(w, http.StatusInternalServerError, "upload write failed")
+	if !s.requireSeller(w, userID) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxVideoBytes+256*1024)
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, `missing multipart field "file" (max 64MB)`)
+		return
+	}
+	defer file.Close()
+
+	head := make([]byte, 512)
+	n, err := io.ReadFull(file, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		writeErr(w, http.StatusBadRequest, "unreadable upload")
+		return
+	}
+	head = head[:n]
+	ext, ok := videoExt(http.DetectContentType(head))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "unsupported video type — mp4 / webm only")
+		return
+	}
+
+	name, ok := storeUploadedMedia(w, head, file, ext)
+	if !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"url": "/uploads/" + name})
 }
 
@@ -138,28 +168,13 @@ func (s *Server) handleUploadStreamVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	dir := uploadDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, "upload dir unavailable")
+	name, ok := storeUploadedMedia(w, head, file, ext)
+	if !ok {
 		return
 	}
-	name := fmt.Sprintf("%d-%s%s", time.Now().UnixMilli(), randToken(8), ext)
-	path := filepath.Join(dir, name)
-	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "upload write failed")
-		return
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, io.MultiReader(bytes.NewReader(head), file)); err != nil {
-		_ = os.Remove(path)
-		writeErr(w, http.StatusInternalServerError, "upload write failed")
-		return
-	}
-
 	livePlayURL := "/uploads/" + name
 	if err := s.st.SetLivePlayURL(r.Context(), aid, livePlayURL); err != nil {
-		_ = os.Remove(path)
+		_ = os.Remove(filepath.Join(uploadDir(), name))
 		if err == store.ErrNotFound {
 			writeErr(w, http.StatusNotFound, "rules not found")
 			return
@@ -168,6 +183,36 @@ func (s *Server) handleUploadStreamVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"livePlayUrl": livePlayURL})
+}
+
+// storeUploadedMedia copies an already-sniffed upload into uploadDir() under a
+// server-generated "<ms>-<rand><ext>" name and returns that bare name — the
+// client filename is untrusted and never touches the path. head is the 512-byte
+// sniff prefix already drained off body; the two are recombined so nothing is
+// lost. On any filesystem failure it writes a 500 and returns ok=false, so the
+// caller just returns. Per-type size caps + content sniffing stay in each caller
+// (handleUpload images; handleUploadVideo / handleUploadStreamVideo clips); this
+// owns only the disk write the three otherwise duplicate.
+func storeUploadedMedia(w http.ResponseWriter, head []byte, body io.Reader, ext string) (string, bool) {
+	dir := uploadDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, "upload dir unavailable")
+		return "", false
+	}
+	name := fmt.Sprintf("%d-%s%s", time.Now().UnixMilli(), randToken(8), ext)
+	path := filepath.Join(dir, name)
+	dst, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "upload write failed")
+		return "", false
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, io.MultiReader(bytes.NewReader(head), body)); err != nil {
+		_ = os.Remove(path)
+		writeErr(w, http.StatusInternalServerError, "upload write failed")
+		return "", false
+	}
+	return name, true
 }
 
 // videoExt maps a sniffed content type to the on-disk extension for live
