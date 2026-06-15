@@ -209,11 +209,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
+	mux.HandleFunc("DELETE /api/auctions/{id}", s.handleDeleteAuction) // 后台 删除发布历史/近期成交 (terminal-only hard delete)
 	mux.HandleFunc("GET /api/auctions/{id}/prequalify-recommendation", s.handlePrequalifyRecommendation)
 	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
 	mux.HandleFunc("POST /api/auctions/{id}/social", s.handleSocial) // #261-7/8/10 弹幕/礼物/点赞 broadcast
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
+	mux.HandleFunc("POST /api/upload/video", s.handleUploadVideo) // #261-12b 拖入即上传：竞拍发布拖入视频立即上传(无需 auctionId)，发布时随 rules.livePlayUrl 下发
 	mux.HandleFunc("GET /ws", s.handleWS)
 
 	// Uploaded product media (see upload.go). Immutable names → long cache.
