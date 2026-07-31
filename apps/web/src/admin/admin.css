@@ -184,3 +184,32 @@
 /* #261-12b the drag-and-drop video upload box */
 .pub-video-dragger .ant-upload-drag { border-radius: 12px; }
 .pub-video-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: #52c41a; font-weight: 600; }
+
+/* ============================================================
+   The concurrency demo page — the admin's standalone view of concurrency plus server metrics
+   ============================================================ */
+.conc-wrap { padding: 20px 24px 32px; }
+.conc-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; flex-wrap: wrap; margin-bottom: 20px; }
+.conc-head-text { min-width: 0; flex: 1 1 420px; }
+.conc-title { font-size: 20px; font-weight: 800; color: #1d1d28; display: inline-flex; align-items: center; gap: 8px; }
+.conc-sub { margin-top: 6px; font-size: 13px; line-height: 1.7; color: #6b6b78; max-width: 760px; }
+.conc-actions { flex-shrink: 0; }
+.conc-empty { padding: 56px 24px; text-align: center; color: #9a9aa5; font-size: 14px; background: #fff; border: 1px dashed #e3e3ea; border-radius: 14px; }
+.conc-syncing { margin-bottom: 12px; font-size: 13px; color: #fe2c55; font-weight: 600; }
+.conc-ended { margin-bottom: 12px; font-size: 13px; color: #8a6d1a; font-weight: 600; background: #fff8e6; border: 1px solid #ffe7a8; border-radius: 10px; padding: 8px 12px; }
+
+.conc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+@media (max-width: 1100px) { .conc-grid { grid-template-columns: repeat(2, 1fr); } }
+.conc-card { background: #fff; border: 1px solid #ededf2; border-radius: 14px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+.conc-card-k { font-size: 12.5px; color: #8a8a96; font-weight: 600; }
+.conc-card-v { margin-top: 6px; font-size: 30px; font-weight: 900; color: #1d1d28; line-height: 1.1; letter-spacing: -0.5px; }
+.conc-card-s { margin-top: 4px; font-size: 11.5px; color: #a6a6b0; }
+.conc-card.pink { background: linear-gradient(135deg, #fff0f3, #ffe3ea); border-color: #ffd0db; }
+.conc-card.pink .conc-card-v { color: #fe2c55; }
+.conc-card.gold .conc-card-v { color: #c8920c; }
+.conc-card.green { border-color: #b7ebc6; background: #f6fff9; }
+.conc-card.green .conc-card-v { color: #1aab4a; }
+.conc-card.red { border-color: #ffc9c9; background: #fff6f6; }
+.conc-card.red .conc-card-v { color: #e23b3b; }
+.conc-note { margin-top: 16px; font-size: 12px; line-height: 1.7; color: #9a9aa5; }
+.conc-note code { background: #f0f0f4; padding: 1px 6px; border-radius: 5px; color: #fe2c55; }

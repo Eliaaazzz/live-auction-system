@@ -91,11 +91,17 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
   );
 }
 
+// Human-readable status tags covering every backend status enum (docs/state-machine.md, model.go).
+// ORDER_CREATED was missing and NO_BID was mistyped as UNSOLD (the backend never sends UNSOLD),
+// so those two fell back to the raw enum name (e.g. "ORDER_CREATED") in the UI. Now complete.
 const STATUS_TAG: Record<string, { label: string; color: string }> = {
-  LIVE: { label: 'Live', color: 'red' },
+  DRAFT: { label: 'Draft', color: 'default' },
   SCHEDULED: { label: 'Scheduled', color: 'gold' },
+  LIVE: { label: 'Live', color: 'red' },
   SOLD: { label: 'Sold', color: 'green' },
-  UNSOLD: { label: 'No bid', color: 'default' },
+  ORDER_CREATED: { label: 'Sold', color: 'green' },
+  NO_BID: { label: 'No bid', color: 'default' },
+  UNSOLD: { label: 'No bid', color: 'default' }, // a compatibility alias (the backend currently sends NO_BID)
   CANCELLED: { label: 'Cancelled', color: 'default' },
 };
 
@@ -108,7 +114,8 @@ function PublishHistory({ items, selectedId, onPick }: { items: BackendAuction[]
       <div className="mon-history-list">
         {published.length === 0 && <div className="mon-history-empty">No publish records yet</div>}
         {published.map((a) => {
-          const t = STATUS_TAG[a.status || ''] || { label: a.status || '—', color: 'default' };
+          // The fallback is a dash too, so an unknown status never leaks the raw enum name into the UI.
+          const t = STATUS_TAG[a.status || ''] || { label: '—', color: 'default' };
           const live = a.status === 'LIVE';
           return (
             <button

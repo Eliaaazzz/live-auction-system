@@ -35,7 +35,7 @@ import (
 )
 
 const (
-	crowdRampMs       = 40_000 // viewer ramp-in duration
+	crowdRampMs       = 10_000 // viewer ramp-in duration (10s to reach ~10k, which suits the admin concurrency page's 60s demo)
 	crowdBaseViewers  = 86     // instantly-present viewers at open
 	crowdStatsEvery   = 2500 * time.Millisecond
 	crowdQuietExtraMs = 8_000         // quiet tail beyond the anti-snipe window
