@@ -244,7 +244,7 @@ func (a *AuctioneerHooks) fire(parentCtx context.Context, aid, trigger string, c
 	// Every caller dispatches this as `go a.fire(...)`, so a panic here (bad
 	// sidecar payload, nil map, etc.) would crash the WHOLE gateway. Firewall it:
 	// AI is non-authoritative, a failed/​panicking dispatch must never take the
-	// bidding engine down (spec deep-review: 异常兜底; AI 非裁决). Passing a.metrics
+	// bidding engine down (spec deep-review: failure fallback; AI never adjudicates). Passing a.metrics
 	// makes AI-dispatch panics observable in goroutinePanics too.
 	defer recoverGoroutine("auctioneer.fire("+trigger+")", a.metrics)
 	// Bounded timeout independent of parentCtx — even if the caller
@@ -351,18 +351,18 @@ var (
 	// Money: in lock-step with apps/lumen/internal/server/ai_events.go
 	// auctioneerCurrencyPattern (Elia's #73 B1 fix). Catches:
 	//   - ¥1000  $50            (symbol-before-digit prefix form)
-	//   - 1000元  1万             (suffix form — Chinese is suffix-heavy)
-	//   - 市价 50000元           (mid-string suffix; the prompt-injection
+	//   - 1000 yuan  5000 CNY   (currency-word suffix form)
+	//   - market price 50000 yuan (mid-string suffix; the prompt-injection
 	//                            vector I flagged in #73 review)
 	// Two-layer defense: ValidateAuctioneerResponse (ai_events.go) is
 	// the authoritative re-validator; this regex is the per-trigger
 	// dispatch guardrail in fire(). Both must catch the same patterns
 	// or the layers drift — pin the patterns identical here.
-	reAuctioneerMoney = regexp.MustCompile(`(?:[¥$]\s*\d)|(?:\d+\s*[元万])`)
+	reAuctioneerMoney = regexp.MustCompile(`(?:[¥$€£]\s*\d)|(?:\d(?:[\d,.]*\d)?\s*(?i:yuan|rmb|cny|usd|eur|gbp)\b)`)
 )
 
 var auctioneerBannedWords = []string{
-	"绝对最低价", "仅此一件", "假一赔十", "保真", "百分百正品", "原价回收",
+	"absolute lowest price", "only one in existence", "tenfold refund", "guaranteed authentic", "100% genuine", "buyback at original price",
 }
 
 func failsAuctioneerGuardrail(text string) (string, bool) {
@@ -392,15 +392,15 @@ func failsAuctioneerGuardrail(text string) (string, bool) {
 func cannedFallback(trigger string) string {
 	switch trigger {
 	case "open":
-		return "拍卖正式开始 · 各位准备出价。"
+		return "The auction is officially open - get your bids ready."
 	case "surge":
-		return "竞争升温 · 出价幅度明显加大。"
+		return "The competition is heating up - the increments just jumped."
 	case "cold":
-		return "场内沉寂 · 还有机会反手抢回。"
+		return "The room has gone quiet - there is still time to take it back."
 	case "hammer":
-		return "落槌成交 · 恭喜得主。"
+		return "Sold - congratulations to the winner."
 	}
-	return "拍卖进行中。"
+	return "The auction is in progress."
 }
 
 // ─── helpers ────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ import (
 )
 
 // TestSnapFlightCollapsesConcurrent proves a reconnect-storm of concurrent
-// Snapshot(aid) reads collapses to far fewer underlying executions (缓存防击穿),
+// Snapshot(aid) reads collapses to far fewer underlying executions (cache-stampede protection),
 // and that every caller still gets the same correct result.
 func TestSnapFlightCollapsesConcurrent(t *testing.T) {
 	var f snapFlight

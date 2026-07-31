@@ -7,7 +7,7 @@ import (
 )
 
 // snapFlight collapses concurrent Snapshot(aid) reads of the same hot room-state
-// hash into ONE Redis HGetAll — 缓存防击穿 (cache-stampede protection, an explicit
+// hash into ONE Redis HGetAll - cache-stampede protection (an explicit
 // spec rubric item) for the mass-reconnect stampede a gateway crash/restart
 // produces: the 2026-06-07 load test crashed the gateway with ~15k live clients,
 // and on restart every one of them re-JOINs the SAME auction at once, which

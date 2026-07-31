@@ -21,7 +21,7 @@ func TestComplete_RoundTrip(t *testing.T) {
 		gotPath = r.URL.Path
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"  开拍 · 各位准备出价。 "}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"  Bidding is open - get your bids ready. "}}]}`))
 	}))
 	defer srv.Close()
 
@@ -33,7 +33,7 @@ func TestComplete_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "开拍 · 各位准备出价。" {
+	if out != "Bidding is open - get your bids ready." {
 		t.Fatalf("content not trimmed/returned: %q", out)
 	}
 	if gotAuth != "Bearer k-test" {

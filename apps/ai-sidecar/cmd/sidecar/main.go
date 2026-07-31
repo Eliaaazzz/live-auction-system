@@ -3,7 +3,7 @@
 // All three endpoints select their generator by env at startup:
 //   - VLM facts (/facts/draft) and auctioneer commentary (/llm/auctioneer) run a
 //     REAL OpenAI-compatible model when credentials are set — Volcengine Ark /
-//     豆包 Doubao by default (VLM_API_KEY+VLM_MODEL / LLM_API_KEY+LLM_MODEL), or
+//     Doubao by default (VLM_API_KEY+VLM_MODEL / LLM_API_KEY+LLM_MODEL), or
 //     any OpenAI-compatible server (Ollama + Qwen2.5 for the open-source path)
 //     by repointing *_BASE_URL/*_MODEL. With no creds they fall back to canned
 //     generators, so a box without keys still serves a complete demo path.
@@ -42,7 +42,7 @@ func main() {
 	// canned-but-trigger-aware mock. Guardrail (length/URL/phone/money/
 	// banned-word) runs regardless of generator. See proto/ai-events.md.
 	mux.HandleFunc("POST /llm/auctioneer", auctioneer.HandlerFunc(auctioneer.Select()))
-	// AI 拍卖文案: drafts a title + selling points + opening script from the
+	// AI auction copy: drafts a title + selling points + opening script from the
 	// seller's product info. Shares LLM_* creds with the auctioneer real path,
 	// but remains advisory: seller edits before publishing, and bidding never
 	// waits on this endpoint.

@@ -116,7 +116,7 @@ func projectSold(ctx context.Context, st *store.Store, aid string, e store.Strea
 	}
 	// Persist the hammer outcome (final price + winner) onto the auctions row —
 	// bids only touch Redis, so without this the row shows the start price
-	// forever (#261-2 商品后台价格不同步). Outside the ORDER_CREATED guard on
+	// forever (#261-2, the admin price not staying in sync). Outside the ORDER_CREATED guard on
 	// purpose: a worker restart re-sweeps every stream, which retro-fills rows
 	// projected before this fix. Idempotent (same values). A malformed payload
 	// is left to CreateOrderFromSold below, which already classifies it poison.

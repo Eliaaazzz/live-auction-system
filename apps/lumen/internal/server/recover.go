@@ -15,7 +15,7 @@ import (
 var goSupervisedBackoff = 500 * time.Millisecond
 
 // recoverGoroutine is the deferred panic firewall for a background goroutine
-// (spec deep-review: stability / 异常兜底). A panic in a worker we spawn —
+// (spec deep-review: stability / failure fallback). A panic in a worker we spawn -
 // subscribe / persistence / timer / AI dispatch — would otherwise crash the
 // WHOLE gateway: net/http recovers panics in REQUEST handlers, but not in
 // goroutines started outside the request lifecycle. This recovers, logs the

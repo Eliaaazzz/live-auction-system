@@ -39,7 +39,7 @@ type Store struct {
 	evidenceKey        []byte // active HMAC key for the auction_events hash chain (T4)
 
 	// snap collapses concurrent Snapshot(aid) reads of the same hot state hash
-	// into one HGetAll — 缓存防击穿 for the crash-restart reconnect stampede
+	// into one HGetAll - cache-stampede protection for the crash-restart reconnect surge
 	// (see store_singleflight.go). Zero value is ready to use.
 	snap snapFlight
 }
@@ -179,7 +179,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	)`); err != nil {
 		return fmt.Errorf("create evidence_chain_cache: %w", err)
 	}
-	// #121: optional 火山直播 play URL. Display-only (non-authoritative), off the hot path.
+	// #121: optional Volcengine Live play URL. Display-only (non-authoritative), off the hot path.
 	if err := s.ensureColumn(ctx, "auction_rules", "live_play_url", "VARCHAR(512) NOT NULL DEFAULT ''"); err != nil {
 		return err
 	}

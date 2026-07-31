@@ -1,6 +1,6 @@
 package server
 
-// crowd.go — 发布即人气 (#261-12a): when the anchor publishes an auction the
+// crowd.go - popularity on publish (#261-12a): when the anchor publishes an auction the
 // room should not open to crickets. A built-in, server-side crowd script
 // injects ~9997 simulated viewers and up to 3992 rule-abiding random bids so
 // the demo room feels like a real Douyin live auction from second one.
@@ -46,16 +46,16 @@ const (
 // upserted once per process so leaderboard rows and (if a sim user ever wins)
 // the order row have a real users entry.
 var crowdNicknames = []string{
-	"北京的马大瓜", "上海的设计狮", "广州的阿强", "杭州的小鹿", "深圳的老王",
-	"成都的椒椒", "重庆的山城辣妹", "南京的梧桐", "武汉的热干面", "西安的兵马俑",
-	"苏州的园林控", "天津的相声迷", "长沙的茶颜", "青岛的海风", "厦门的鼓浪屿",
-	"老表玩收藏", "鉴宝小能手", "捡漏大队长", "理性竞拍人", "出价不眨眼",
-	"腕表老饕", "包包鉴赏家", "球鞋研究员", "穿搭顾问Vv", "古着收藏家",
-	"直播间常客", "夜猫子买手", "周末淘货王", "精打细算阿姨", "壕气冲天",
-	"低调的神秘人", "路过的行家", "懂行的二叔", "凑热闹的小李", "蹲守三小时",
-	"志在必得君", "氪金玩家", "冷静分析帝", "一眼真大佬", "看走眼新手",
-	"快乐剁手党", "工资刚到账", "下个月吃土", "替媳妇出价", "帮老板举牌",
-	"匿名藏家007", "南方收藏协会", "北方拍卖常客",
+	"MarcusFromBeijing", "DanaTheDesigner", "AlexInGuangzhou", "LunaOfHangzhou", "WayneShenzhen",
+	"ChengduChili", "MountainCitySpice", "NanjingPlane", "WuhanNoodles", "XianTerracotta",
+	"SuzhouGardens", "TianjinComedy", "ChangshaTea", "QingdaoSeaBreeze", "XiamenIslander",
+	"CousinCollects", "AppraisalWhiz", "BargainCaptain", "SensibleBidder", "NeverBlinks",
+	"WatchGourmand", "BagConnoisseur", "SneakerAnalyst", "StylistVv", "VintageHoarder",
+	"RoomRegular", "NightOwlBuyer", "WeekendPicker", "PennyWiseAuntie", "BigSpenderEnergy",
+	"QuietMystery", "PassingExpert", "UncleKnowsBest", "CuriousLee", "ThreeHourStakeout",
+	"DeadSetOnIt", "WhalePlayer", "CalmAnalyst", "SpotsItInstantly", "RookieMisread",
+	"HappyCheckout", "PaydayJustLanded", "BrokeNextMonth", "BiddingForMyWife", "PaddleForTheBoss",
+	"AnonCollector007", "SouthernCollectors", "NorthernRegular",
 }
 
 // CrowdSim owns the per-auction crowd scripts. All methods are nil-safe so
@@ -210,8 +210,9 @@ func (c *CrowdSim) loop(ctx context.Context, aid string, run *crowdRun) {
 				c.broadcast(aid, model.RoomSocialData{
 					Kind:        "stats",
 					ViewerCount: int(v) + c.hub.viewerCount(aid),
-					// 诚实边界（#266 review）：模拟头数随帧自声明，客户端据此
-					// 渲染「模拟人气」徽标 — 永不冒充真实并发。
+					// Honesty boundary (#266 review): the simulated head count is self-declared on every
+					// frame so the client can render the simulated-crowd badge - it never passes itself
+					// off as real concurrency.
 					SimViewerCount: int(v),
 					LikeCount:      likes,
 					ServerTimeMs:   time.Now().UnixMilli(),

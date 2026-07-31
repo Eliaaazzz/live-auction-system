@@ -75,28 +75,28 @@ var (
 	// Free-form money pattern: currency symbol followed by digits.
 	// Tight to avoid matching legitimate auction prices in the canned
 	// fallback (those are formatted by the backend, not LLM-generated).
-	reMoney = regexp.MustCompile(`(¥|\$|元)\s*\d`)
+	reMoney = regexp.MustCompile(`[¥$€£]\s*\d|\d(?:[\d,.]*\d)?\s*(?i:yuan|rmb|cny|usd|eur|gbp)\b`)
 )
 
 // bannedWords mirrors compliance per spec. Production list lives in
 // apps/ai-sidecar/internal/badwords.json (or a Chinese sensitive-word
 // dict); this package ships a starter seed enforced by tests.
 var bannedWords = []string{
-	"绝对最低价",
-	"仅此一件",
-	"假一赔十",
-	"保真",
-	"百分百正品",
-	"原价回收",
+	"absolute lowest price",
+	"only one in existence",
+	"tenfold refund",
+	"guaranteed authentic",
+	"100% genuine",
+	"buyback at original price",
 }
 
 // canned per-trigger fallbacks used when LLM fails, guardrail fires, or
 // trigger is unknown. Keep these short, generic, and demo-safe.
 var canned = map[Trigger]string{
-	TriggerOpen:   "拍卖正式开始 · 各位准备出价。",
-	TriggerSurge:  "竞争升温 · 出价幅度明显加大。",
-	TriggerCold:   "场内沉寂 · 还有机会反手抢回。",
-	TriggerHammer: "落槌成交 · 恭喜得主。",
+	TriggerOpen:   "The auction is officially open - get your bids ready.",
+	TriggerSurge:  "The competition is heating up - the increments just jumped.",
+	TriggerCold:   "The room has gone quiet - there is still time to take it back.",
+	TriggerHammer: "Sold - congratulations to the winner.",
 }
 
 // HandlerFunc exposes the HTTP handler shape so the sidecar main.go can
@@ -129,7 +129,7 @@ type Generator func(req Request) (text string, err error)
 var activeModel = mockModelName
 
 // Select returns the generator chosen by env. A real OpenAI-compatible client
-// runs when LLM_API_KEY + LLM_MODEL are set — Volcengine Ark / 豆包 by default,
+// runs when LLM_API_KEY + LLM_MODEL are set - Volcengine Ark / Doubao by default,
 // or any OpenAI-compatible server (Ollama + Qwen2.5 for the open-source path)
 // via LLM_BASE_URL/LLM_MODEL. With no key it returns MockGenerator, so a box
 // without creds keeps emitting canned-but-trigger-aware commentary. main.go
@@ -149,9 +149,10 @@ func Select() Generator {
 // no URLs / phones / explicit money amounts / banned compliance words — so the
 // model's output rarely trips failsGuardrail (and the guardrail still catches it
 // when it does, falling back to canned text).
-const auctioneerSystem = "你是抖音直播拍卖的 AI 主播。根据给定的拍卖状态，用一句口语化中文解说（不超过 35 字），" +
-	"点出当前局势、带动气氛。严禁出现网址、电话、具体货币金额数字，以及" +
-	"“保真/百分百正品/假一赔十/绝对最低价/仅此一件/原价回收”等词。只输出解说词本身，不要引号、不要前缀。"
+const auctioneerSystem = "You are the AI auctioneer of a live-streamed auction. Given the auction state, write ONE spoken-style English line " +
+	"of at most 20 words that names the current situation and lifts the energy. Never include a URL, a phone number, a specific " +
+	"currency amount, or claims such as \"guaranteed authentic\", \"100% genuine\", \"tenfold refund\", \"absolute lowest price\", " +
+	"\"only one in existence\", or \"buyback at original price\". Output only the line itself, with no quotes and no prefix."
 
 // arkGenerator adapts an llm.Config into a Generator. context.Background() is
 // fine: llm.Complete bounds itself with cfg.Timeout, and the auctioneer call is
@@ -171,19 +172,19 @@ func arkGenerator(cfg llm.Config) Generator {
 func renderTriggerCtx(req Request) string {
 	winner := req.Ctx.WinnerDisplayName
 	if winner == "" {
-		winner = "暂无领先者"
+		winner = "nobody yet"
 	}
 	switch req.Trigger {
 	case TriggerOpen:
-		return fmt.Sprintf("场景=开拍。领先者=%s。请开场，提醒留意末 10 秒反狙击延时。", winner)
+		return fmt.Sprintf("Scene=auction opening. Leader=%s. Open the session and remind everyone about the last-10-seconds anti-snipe extension.", winner)
 	case TriggerSurge:
-		return fmt.Sprintf("场景=竞价升温，加价节奏明显加快。领先者=%s，已延时 %d 次。请渲染紧张感。", winner, req.Ctx.ExtendCount)
+		return fmt.Sprintf("Scene=bidding heating up, increments coming faster. Leader=%s, extended %d time(s). Build the tension.", winner, req.Ctx.ExtendCount)
 	case TriggerCold:
-		return fmt.Sprintf("场景=冷场，已沉寂 %d 秒。领先者=%s。请激励观众反手出价。", req.Ctx.SecondsSinceLastBid, winner)
+		return fmt.Sprintf("Scene=cold spell, quiet for %d seconds. Leader=%s. Push the room to bid back.", req.Ctx.SecondsSinceLastBid, winner)
 	case TriggerHammer:
-		return fmt.Sprintf("场景=落槌成交。得主=%s。请宣布成交并恭喜，提到编号已上链。", winner)
+		return fmt.Sprintf("Scene=hammer, sold. Winner=%s. Announce the sale, congratulate them, and mention the sequence is on the chain.", winner)
 	}
-	return "场景=拍卖进行中。"
+	return "Scene=auction in progress."
 }
 
 // MockGenerator returns canned-but-trigger-aware text in development.
@@ -192,17 +193,17 @@ func renderTriggerCtx(req Request) string {
 func MockGenerator(req Request) (string, error) {
 	winner := req.Ctx.WinnerDisplayName
 	if winner == "" {
-		winner = "海风_2024"
+		winner = "SeaBreeze_2024"
 	}
 	switch req.Trigger {
 	case TriggerOpen:
-		return "开拍 · " + winner + " 留意倒计时，机会就在前 10 秒。", nil
+		return "We are open - " + winner + ", watch the clock.", nil
 	case TriggerSurge:
-		return winner + " 一跃 +3 档 · 这是真的玩家。", nil
+		return winner + " jumps three steps at once - that is a serious bidder.", nil
 	case TriggerCold:
-		return fmt.Sprintf("沉寂 %ds · 谁来打破这场静默？", req.Ctx.SecondsSinceLastBid), nil
+		return fmt.Sprintf("Quiet for %ds - who is going to break the silence?", req.Ctx.SecondsSinceLastBid), nil
 	case TriggerHammer:
-		return "落槌 · " + winner + " 拿下，编号已上链。", nil
+		return "Hammer down - " + winner + " takes it; sequence on the chain.", nil
 	}
 	return "", errors.New("unknown trigger")
 }

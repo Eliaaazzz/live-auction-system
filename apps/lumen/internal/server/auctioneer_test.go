@@ -30,7 +30,7 @@ import (
 // ─── Guardrail · TC-T7-202 + general ─────────────────────────────────
 
 func TestAuctioneerGuardrail_Clean(t *testing.T) {
-	if reason, bad := failsAuctioneerGuardrail("开拍 · 海风_2024 留意倒计时。"); bad {
+	if reason, bad := failsAuctioneerGuardrail("We are open - SeaBreeze_2024, watch the clock."); bad {
 		t.Fatalf("clean text marked bad: reason=%s", reason)
 	}
 }
@@ -42,7 +42,7 @@ func TestAuctioneerGuardrail_RejectsEmptyText(t *testing.T) {
 }
 
 func TestAuctioneerGuardrail_RejectsLong(t *testing.T) {
-	long := strings.Repeat("一", 81)
+	long := strings.Repeat("a", 81)
 	if reason, bad := failsAuctioneerGuardrail(long); !bad || reason != "len" {
 		t.Fatalf("expected len violation, got reason=%s bad=%v", reason, bad)
 	}
@@ -65,15 +65,15 @@ func TestAuctioneerGuardrail_RejectsPhone(t *testing.T) {
 func TestAuctioneerGuardrail_RejectsMoney(t *testing.T) {
 	// Coverage matches ai_events.go's auctioneerCurrencyPattern (Elia
 	// #73 B1 fix). Tests both prefix (¥/$ symbol-first) and suffix
-	// (元/万 Chinese unit) forms — Chinese commentary is suffix-heavy,
+	// (currency-word) forms - commentary often writes the unit out,
 	// so the suffix gap was the practical prompt-injection vector.
 	for _, s := range []string{
-		"¥99999 立即拿下", // ¥ prefix + digit
-		"just $50",    // $ prefix + digit
-		"市价 1000元",    // mid-string 元 suffix (prompt-injection vector)
-		"成交价 5万",      // 万 suffix without 元 (rural Chinese form)
-		"参考价 100万元",   // 万元 compound suffix
-		"出价 ¥1",       // boundary: single digit
+		"¥99999 and it is yours",      // currency-symbol prefix + digit
+		"just $50",                    // $ prefix + digit
+		"market price 1000 yuan",      // mid-string currency-word suffix (prompt-injection vector)
+		"sold at 50000 CNY",           // currency-word suffix
+		"reference price 1000000 RMB", // currency-word suffix
+		"bid ¥1",                      // boundary: single digit
 	} {
 		if _, bad := failsAuctioneerGuardrail(s); !bad {
 			t.Errorf("%q: expected money block", s)
@@ -84,11 +84,11 @@ func TestAuctioneerGuardrail_RejectsMoney(t *testing.T) {
 func TestAuctioneerGuardrail_AcceptsTextWithoutPrices(t *testing.T) {
 	// Negative cases — text that mentions financial concepts but no
 	// actual numbers should pass. Prevents false-positive on commentary
-	// like "出价 / 报价 / 价格" that doesn't include a digit-bearing amount.
+	// like "bid / quote / price" that does not include a digit-bearing amount.
 	for _, s := range []string{
-		"出价踊跃 · 现场升温",
-		"价格屡创新高",
-		"竞价激烈 · 不容错过",
+		"Bidding is lively and the room is heating up",
+		"The price keeps hitting new highs",
+		"Fierce bidding - do not miss it",
 	} {
 		if reason, bad := failsAuctioneerGuardrail(s); bad {
 			t.Errorf("%q: false positive (reason=%s)", s, reason)
@@ -97,7 +97,7 @@ func TestAuctioneerGuardrail_AcceptsTextWithoutPrices(t *testing.T) {
 }
 
 func TestAuctioneerGuardrail_RejectsBannedWords(t *testing.T) {
-	for _, s := range []string{"100% 保真精品", "仅此一件！", "假一赔十承诺"} {
+	for _, s := range []string{"100% guaranteed authentic piece", "only one in existence!", "a tenfold refund promise"} {
 		if _, bad := failsAuctioneerGuardrail(s); !bad {
 			t.Errorf("%q: expected banned-word block", s)
 		}
@@ -286,7 +286,7 @@ func TestOnAuctionSold_FiresHammer(t *testing.T) {
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
 	a.OnAuctionSold(context.Background(), "auc_x", HammerContext{
-		AmountCents: "15000", WinnerDisplayName: "海风_2024",
+		AmountCents: "15000", WinnerDisplayName: "SeaBreeze_2024",
 	})
 
 	waitForCalls(t, calls, 1, 1*time.Second)
@@ -303,7 +303,7 @@ func TestFire_GuardrailFallsBackOnBannedWord(t *testing.T) {
 	// (Defense in depth — sidecar should also catch this, but the
 	// backend re-runs the check so a corrupt sidecar can't leak.)
 	srv, calls := mockSidecar(t, http.StatusOK,
-		`{"trigger":"open","commentary":"100% 保真精品 不容错过","fallback":false,"modelName":"x"}`)
+		`{"trigger":"open","commentary":"100% guaranteed authentic piece, do not miss it","fallback":false,"modelName":"x"}`)
 	defer srv.Close()
 	a := NewAuctioneerHooks(srv.URL, nil, srv.Client())
 
@@ -407,10 +407,10 @@ func waitForCalls(t *testing.T, rec *callRecorder, want int, timeout time.Durati
 	}
 }
 
-const openMockBody = `{"trigger":"open","commentary":"开拍 · 准备出价","fallback":false,"modelName":"mock-llm-T7"}`
-const surgeMockBody = `{"trigger":"surge","commentary":"竞争升温 · 出价升级","fallback":false,"modelName":"mock-llm-T7"}`
-const coldMockBody = `{"trigger":"cold","commentary":"沉寂中 · 谁来打破","fallback":false,"modelName":"mock-llm-T7"}`
-const hammerMockBody = `{"trigger":"hammer","commentary":"落槌成交 · 恭喜","fallback":false,"modelName":"mock-llm-T7"}`
+const openMockBody = `{"trigger":"open","commentary":"We are open - get ready to bid","fallback":false,"modelName":"mock-llm-T7"}`
+const surgeMockBody = `{"trigger":"surge","commentary":"Competition heating up - bids escalating","fallback":false,"modelName":"mock-llm-T7"}`
+const coldMockBody = `{"trigger":"cold","commentary":"All quiet - who breaks the silence","fallback":false,"modelName":"mock-llm-T7"}`
+const hammerMockBody = `{"trigger":"hammer","commentary":"Hammer down - congratulations","fallback":false,"modelName":"mock-llm-T7"}`
 
 // Ensure bytes pkg stays imported (used in fire() for body construction)
 var _ = bytes.NewReader

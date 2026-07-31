@@ -31,10 +31,10 @@ func TestEdge_SealedInvalidMax_FallsBack(t *testing.T) {
 
 // Rationale length boundary — exactly maxRationaleLen passes; +1 fails.
 func TestEdge_RationaleLenBoundary(t *testing.T) {
-	if _, bad := failsGuardrail(strings.Repeat("一", maxRationaleLen)); bad {
+	if _, bad := failsGuardrail(strings.Repeat("a", maxRationaleLen)); bad {
 		t.Errorf("exactly %d runes must PASS", maxRationaleLen)
 	}
-	if _, bad := failsGuardrail(strings.Repeat("一", maxRationaleLen+1)); !bad {
+	if _, bad := failsGuardrail(strings.Repeat("a", maxRationaleLen+1)); !bad {
 		t.Errorf("%d runes must FAIL", maxRationaleLen+1)
 	}
 }

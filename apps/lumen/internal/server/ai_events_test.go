@@ -33,7 +33,7 @@ var goldenVLMResponse = []byte(`{
     { "field": "category", "value": "watch", "confidence": 0.91, "highRisk": false },
     { "field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true }
   ],
-  "highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
+  "highRiskFieldsDisclaimer": "High-risk fields are seller statements and are not verified by AI.",
   "modelName": "mock-vlm-T1"
 }`)
 
@@ -70,7 +70,7 @@ func TestValidateVLMFactsResponse_MissingDisclaimer(t *testing.T) {
 func TestValidateVLMFactsResponse_ForwardCompatExtraField(t *testing.T) {
 	body := []byte(`{
 		"facts": [{"field":"x","value":"y","confidence":0.5,"highRisk":false}],
-		"highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
+		"highRiskFieldsDisclaimer": "High-risk fields are seller statements and are not verified by AI.",
 		"modelName": "doubao-vlm-T7",
 		"tokenUsage": 1234,
 		"modelVersion": "v2.0.0"
@@ -104,7 +104,7 @@ func TestValidateVLMFactsResponse_ConfidenceOutOfRange(t *testing.T) {
 func TestValidateVLMFactsResponse_EmptyFactsAllowed(t *testing.T) {
 	body := []byte(`{
 		"facts": [],
-		"highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
+		"highRiskFieldsDisclaimer": "High-risk fields are seller statements and are not verified by AI.",
 		"modelName": "mock-vlm-T1"
 	}`)
 	if err := ValidateVLMFactsResponse(body); err != nil {
@@ -160,7 +160,7 @@ func TestValidateVLMFactsResponse_RequiredFieldGaps(t *testing.T) {
 func TestValidateAuctioneerResponse_AllTriggersHappyPath(t *testing.T) {
 	for _, trig := range []string{"open", "surge", "cold", "hammer"} {
 		t.Run(trig, func(t *testing.T) {
-			body := []byte(`{"trigger":"` + trig + `","commentary":"全场起拍 · 雨过天晴","fallback":false,"modelName":"mock-llm-T7"}`)
+			body := []byte(`{"trigger":"` + trig + `","commentary":"Bidding opens across the room","fallback":false,"modelName":"mock-llm-T7"}`)
 			if err := ValidateAuctioneerResponse(body); err != nil {
 				t.Fatalf("trigger=%s happy path should validate, got: %v", trig, err)
 			}
@@ -172,7 +172,7 @@ func TestValidateAuctioneerResponse_AllTriggersHappyPath(t *testing.T) {
 func TestValidateAuctioneerResponse_BoundaryExactly80(t *testing.T) {
 	// 80 Chinese chars (each 1 rune, 3 bytes UTF-8). Pad with simple ASCII
 	// for readability of the assertion.
-	text := strings.Repeat("一", 80)
+	text := strings.Repeat("a", 80)
 	if r := []rune(text); len(r) != 80 {
 		t.Fatalf("test setup broken — want 80 runes, got %d", len(r))
 	}
@@ -184,7 +184,7 @@ func TestValidateAuctioneerResponse_BoundaryExactly80(t *testing.T) {
 
 // TC-T7-AUC-502 — boundary: 81 runes exceeds cap, must fail.
 func TestValidateAuctioneerResponse_Length81Fails(t *testing.T) {
-	text := strings.Repeat("一", 81)
+	text := strings.Repeat("a", 81)
 	body := []byte(`{"trigger":"open","commentary":"` + text + `","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
@@ -197,7 +197,7 @@ func TestValidateAuctioneerResponse_Length81Fails(t *testing.T) {
 
 // TC-T7-AUC-503 — URL pattern: any http(s) link triggers reject.
 func TestValidateAuctioneerResponse_RejectsURL(t *testing.T) {
-	body := []byte(`{"trigger":"open","commentary":"快上 https://example.com 抢","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"Grab it at https://example.com","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for URL in text, got nil")
@@ -210,7 +210,7 @@ func TestValidateAuctioneerResponse_RejectsURL(t *testing.T) {
 // TC-T7-AUC-504 — phone pattern: catches prompt-injection-induced contact-
 // number leaks (sometimes seen when description field is jailbroken).
 func TestValidateAuctioneerResponse_RejectsPhone(t *testing.T) {
-	body := []byte(`{"trigger":"open","commentary":"联系 13800138000 出价","fallback":false,"modelName":"m"}`)
+	body := []byte(`{"trigger":"open","commentary":"Call 13800138000 to bid","fallback":false,"modelName":"m"}`)
 	err := ValidateAuctioneerResponse(body)
 	if err == nil {
 		t.Fatal("expected error for phone in text, got nil")
@@ -224,13 +224,13 @@ func TestValidateAuctioneerResponse_RejectsPhone(t *testing.T) {
 // alternative price (which would mislead buyers). The auctioneer should
 // describe pacing / urgency, not echo numeric amounts. Three forms
 // covered per @fariZzzz #73 B1 review: ¥-prefix, $-prefix (English),
-// 元-suffix (Chinese yuan written out).
+// currency-word suffix.
 func TestValidateAuctioneerResponse_RejectsCurrency(t *testing.T) {
 	cases := []string{
-		"已达 ¥138,800 继续",   // ¥ prefix
-		"市价 50000元 起拍",     // 元 suffix (Chinese yuan written out)
-		"约值 1万元 左右",        // 万 suffix
-		"worth $500 today", // $ prefix (LLM English fallback)
+		"now at ¥138,800",         // currency-symbol prefix
+		"market price 50000 yuan", // currency-word suffix
+		"worth about 10000 CNY",   // currency-word suffix
+		"worth $500 today",        // $ prefix (LLM English fallback)
 	}
 	for _, text := range cases {
 		t.Run(text, func(t *testing.T) {
@@ -301,7 +301,7 @@ func TestValidateAuctioneerResponse_ForwardCompatExtraField(t *testing.T) {
 // frontend (auctioneerFallback in store) for UX styling, not for backend
 // gating.
 func TestValidateAuctioneerResponse_FallbackTrueAccepted(t *testing.T) {
-	body := []byte(`{"trigger":"open","commentary":"开拍 · 出价踊跃","fallback":true,"modelName":"static-fallback"}`)
+	body := []byte(`{"trigger":"open","commentary":"Open and bidding hard","fallback":true,"modelName":"static-fallback"}`)
 	if err := ValidateAuctioneerResponse(body); err != nil {
 		t.Fatalf("fallback=true response should validate, got: %v", err)
 	}

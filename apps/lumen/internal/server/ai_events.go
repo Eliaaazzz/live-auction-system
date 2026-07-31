@@ -126,7 +126,7 @@ type AuctioneerResponse struct {
 
 // auctioneerTriggers is the closed set of valid trigger values per PR #74's
 // spec. Mirrors `auctioneer.Trigger` constants in the sidecar package.
-// Adding a trigger = contract change = [全员 approve] surface; both this
+// Adding a trigger = contract change = an all-member-approval surface; both this
 // map and #74's sidecar enum must update together.
 var auctioneerTriggers = map[string]bool{
 	"open":   true,
@@ -156,10 +156,10 @@ var (
 	// BID_ACCEPTED envelope; the auctioneer shouldn't echo them.
 	//   ¥10000          — Chinese yuan prefix
 	//   $500            — USD prefix (LLM might output English)
-	//   1000元 / 1万元  — Chinese yuan suffix
-	// Without the suffix branch a prompt-injected "请提及 50000元" leaked
+	//   1000 yuan / 5000 CNY  - currency-word suffix
+	// Without the suffix branch a prompt-injected "mention 50000 yuan" leaked
 	// straight through (caught by @fariZzzz #73 review).
-	auctioneerCurrencyPattern = regexp.MustCompile(`(?:[¥$]\s*\d)|(?:\d+\s*[元万])`)
+	auctioneerCurrencyPattern = regexp.MustCompile(`(?:[¥$€£]\s*\d)|(?:\d(?:[\d,.]*\d)?\s*(?i:yuan|rmb|cny|usd|eur|gbp)\b)`)
 )
 
 // auctioneerMaxRunes is the PR #74 spec cap (80 characters, counted as

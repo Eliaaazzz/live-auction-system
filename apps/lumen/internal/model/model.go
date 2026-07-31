@@ -111,7 +111,7 @@ const (
 	// (`seq: null`), bid path NEVER awaits this. Spec lives in
 	// proto/ai-events.md §POST /llm/auctioneer.
 	TypeAICommentary = "AI_COMMENTARY"
-	// #261-7/8/10/12: room social broadcast (弹幕/礼物/点赞/人气). Same contract
+	// #261-7/8/10/12: room social broadcast (danmaku/gifts/likes/crowd). Same contract
 	// family as AI_COMMENTARY — additive under SchemaVersion 2, non-authoritative,
 	// no seq slot, never enters the Stream/evidence chain, and the bid path never
 	// reads or awaits it. Carries RoomSocialData.
@@ -310,10 +310,10 @@ type RoomSnapshotData struct {
 	WinnerID          string `json:"winnerId"`
 	EndAtMs           int64  `json:"endAtMs"`
 	Seq               int64  `json:"seq"`
-	ViewerCount       int    `json:"viewerCount"`         // live room occupancy (参与人数) at snapshot time
+	ViewerCount       int    `json:"viewerCount"`         // live room occupancy (participants) at snapshot time
 	LikeCount         int64  `json:"likeCount,omitempty"` // #261-10 running room likes at snapshot time (additive, display-only)
 	// SimViewerCount is how many of ViewerCount are DEMO-CROWD SIMULATED viewers
-	// (#266 review 诚实边界): >0 ⇒ clients MUST render an explicit 「模拟人气」
+	// (#266 review honesty boundary): >0 means clients MUST render an explicit simulated-crowd
 	// disclosure badge. The wire data self-declares the simulation so no UI can
 	// honestly present the crowd as real concurrency.
 	SimViewerCount int                `json:"simViewerCount,omitempty"`
@@ -321,7 +321,7 @@ type RoomSnapshotData struct {
 }
 
 // RoomSocialData is the ROOM_SOCIAL payload (#261-7/8/10/12a). Display-only
-// social signals: comments (弹幕), gifts, like toggles, and the periodic crowd
+// social signals: comments (danmaku), gifts, like toggles, and the periodic crowd
 // stats tick (viewer count + running likes). Like AI_COMMENTARY it is broadcast
 // gateway-locally with no seq and never persisted — losing one is harmless, the
 // next like/stats frame re-ships the running totals.
@@ -333,13 +333,13 @@ type RoomSocialData struct {
 	GiftID      string `json:"giftId,omitempty"`    // gift: client tier id
 	GiftName    string `json:"giftName,omitempty"`  // gift: display name
 	GiftEmoji   string `json:"giftEmoji,omitempty"` // gift: emoji glyph
-	LikeDelta   int64  `json:"likeDelta,omitempty"` // like: +1 / -1 (取消点赞)
+	LikeDelta   int64  `json:"likeDelta,omitempty"` // like: +1 / -1 (unlike)
 	// Running totals. No omitempty on LikeCount: a like withdrawn back to 0 must
 	// still reach clients, or their counter sticks at 1.
 	LikeCount   int64 `json:"likeCount"`
 	ViewerCount int   `json:"viewerCount,omitempty"` // stats: occupancy incl. crowd sim
-	// SimViewerCount: the simulated share of ViewerCount (#266 review 诚实边界).
-	// Clients render the 「模拟人气」badge whenever this is >0.
+	// SimViewerCount: the simulated share of ViewerCount (#266 review honesty boundary).
+	// Clients render the simulated-crowd badge whenever this is >0.
 	SimViewerCount int   `json:"simViewerCount,omitempty"`
 	ServerTimeMs   int64 `json:"serverTimeMs"`
 }
@@ -448,7 +448,7 @@ type Rules struct {
 	// accepted as a normal bid (no endAtMs bump, no AUCTION_EXTENDED).
 	MaxExtensions int64 `json:"maxExtensions"`
 	// LivePlayUrl is an optional live-stream play URL (HLS .m3u8 / HTTP-FLV) for
-	// the 直播间 (火山直播, #121). NON-authoritative display only — never gates
+	// the live room (Volcengine Live, #121). NON-authoritative display only - never gates
 	// bids/state; empty → the room falls back to the simulated feed.
 	LivePlayUrl string `json:"livePlayUrl,omitempty"`
 	// LiveStreamKey is operator material used to derive live push/play URLs.

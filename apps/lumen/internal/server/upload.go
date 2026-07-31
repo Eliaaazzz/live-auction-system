@@ -14,7 +14,7 @@ import (
 	"github.com/Eliaaazzz/live-auction-system/apps/lumen/internal/store"
 )
 
-// Product-image upload (商家端 竞拍发布 — spec asks for real upload, not a URL
+// Product-image upload (the seller's publish-auction form - the spec asks for a real upload, not a URL
 // field). Files land on local disk under uploadDir() and are served back at
 // /uploads/<name> by routes(); the create-product flow then stores that URL
 // in imageUrl exactly as before, so the room / VLM page need no changes.
@@ -79,7 +79,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 // handleUploadVideo — POST /api/upload/video, multipart field "file". The
 // auction-agnostic twin of handleUpload for live clips: it stores the bytes and
-// returns { url } WITHOUT binding them to any auction. The 竞拍发布 form uploads
+// returns { url } WITHOUT binding them to any auction. The publish-auction form uploads
 // a dropped clip here the moment it lands in the dragger (not at publish), so
 // the 64 MiB transfer overlaps the seller filling in the rest of the form; the
 // returned /uploads/<name> is then threaded into createAuction's
@@ -124,7 +124,7 @@ func (s *Server) handleUploadVideo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"url": "/uploads/" + name})
 }
 
-// maxVideoBytes caps a single 开始直播 clip. 64 MiB holds a short, looping
+// maxVideoBytes caps a single start-streaming clip. 64 MiB holds a short, looping
 // product walkaround at sane bitrate; anything heavier should be compressed so
 // the mobile room (which downloads it as a muted background loop) starts fast.
 const maxVideoBytes = 64 << 20

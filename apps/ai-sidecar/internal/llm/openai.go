@@ -3,12 +3,12 @@
 //
 // It speaks the OpenAI POST {BaseURL}/chat/completions schema, so the SAME code
 // drives any OpenAI-compatible server with nothing but env changes:
-//   - Volcengine Ark (火山方舟 / 豆包 Doubao) — the hosted path for this
+//   - Volcengine Ark (Doubao) - the hosted path for this
 //     ByteDance Douyin challenge. BaseURL https://ark.cn-beijing.volces.com/api/v3,
 //     Model = the inference endpoint id (ep-…) or a doubao-* model name.
 //   - Ollama / vLLM — a SELF-HOSTED open-source model (Qwen2.5, Llama, …).
 //     BaseURL http://host:11434/v1, Model qwen2.5:7b. This is the optional
-//     「开源模型调用」 path; same adapter, different env.
+//     "open-source model integration" path; same adapter, different env.
 //   - Any other OpenAI-compatible gateway (Groq, OpenAI, …).
 //
 // Non-authoritative by construction (V9 P3): every caller wraps Complete() in a

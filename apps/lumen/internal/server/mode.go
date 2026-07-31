@@ -25,7 +25,7 @@ func (m baseMode) NormalizeRules(r model.Rules) model.Rules { return boundAntiSn
 func (m baseMode) SealedDuringLive() bool                   { return false }
 
 // antiSnipeMaxExtensionsDefault bounds a misconfigured anti-snipe auction's
-// lifetime. The spec's "自动延时 …10-30 秒" implies a FINITE cap, but the engine
+// lifetime. The spec's "auto-extend by 10-30 seconds" implies a FINITE cap, but the engine
 // treats MaxExtensions==0 as *unlimited* — so two bidders bouncing the price
 // inside the window could push endAtMs forever. This is the conservative cap we
 // inject when the seller left it open.

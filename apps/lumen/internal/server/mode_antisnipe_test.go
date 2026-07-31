@@ -7,7 +7,7 @@ import (
 )
 
 // TestNormalizeRulesBoundsInfiniteAntiSnipe is the regression for spec deep-review
-// rule 4 ("自动延时…需有上限防无限延长"): the engine treats MaxExtensions==0 as
+// rule 4 ("auto-extension needs an upper bound so it cannot run forever"): the engine treats MaxExtensions==0 as
 // UNLIMITED, so an anti-snipe auction created without a cap could extend forever.
 // NormalizeRules must inject a finite cap when anti-snipe is on but the cap is
 // left open — and must NOT touch off/already-capped configs.

@@ -1,8 +1,8 @@
 package server
 
-// social.go — room social channel (#261-7/8/10): comments (弹幕), gifts and
-// likes were client-local before, so 买家A sending a gift was invisible on
-// 买家B's phone and like counts never agreed across devices. This adds the
+// social.go - room social channel (#261-7/8/10): comments (danmaku), gifts and
+// likes were client-local before, so a gift sent by buyer A was invisible on
+// buyer B's phone and like counts never agreed across devices. This adds the
 // smallest server piece that makes them REAL:
 //
 //   POST /api/auctions/{id}/social  {kind, text? | giftId/giftName/giftEmoji? | delta?}
@@ -90,8 +90,8 @@ func clampLikeDelta(d int64) int64 {
 }
 
 // handleSocial — POST /api/auctions/{id}/social. Auth-gated like the bid lane
-// so every social event carries a real userId + display name (排名/弹幕跨端
-// 同名同脸). The auction must exist; terminal rooms still accept social events
+// so every social event carries a real userId + display name (the same name and face for
+// rankings and danmaku across clients). The auction must exist; terminal rooms still accept social events
 // (people cheer at the hammer).
 func (s *Server) handleSocial(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)

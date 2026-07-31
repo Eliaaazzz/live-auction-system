@@ -102,7 +102,7 @@ func TestSanitizeSocialText(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"  hello \n world\t", "hello world"},
 		{"\r\n", ""},
-		{"这件 成色 绝了", "这件 成色 绝了"},
+		{"the condition on this is unreal", "the condition on this is unreal"},
 		{"a\x00b", "a b"},
 	}
 	for _, tc := range cases {
@@ -112,7 +112,7 @@ func TestSanitizeSocialText(t *testing.T) {
 	}
 	long := make([]rune, 0, 100)
 	for i := 0; i < 100; i++ {
-		long = append(long, '拍')
+		long = append(long, 'x')
 	}
 	if got := sanitizeSocialText(string(long), 60); len([]rune(got)) != 60 {
 		t.Errorf("cap: got %d runes, want 60", len([]rune(got)))

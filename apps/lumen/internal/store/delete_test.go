@@ -1,6 +1,6 @@
 package store
 
-// Hard-delete integration tests for the 后台「删除发布历史 / 近期成交」cleanup path.
+// Hard-delete integration tests for the admin delete-publish-history / delete-recent-sales cleanup path.
 // They need Redis + MySQL and run in CI (which provides both); they t.Skip
 // locally via newMySQLStore when the infra is unavailable. Each test uses a
 // UnixNano-unique auction id so it can't collide with parallel packages, and
@@ -32,7 +32,7 @@ func seedAuctionRow(t *testing.T, s *Store, aid, productID, sellerID, status str
 		}
 	}
 	exec(`INSERT INTO products (id, seller_id, name, image_url, description, status, created_at, updated_at)
-	      VALUES (?,?,?,?,?,?,?,?)`, productID, sellerID, "删除测试商品", "/uploads/x.png", "", "active", now, now)
+	      VALUES (?,?,?,?,?,?,?,?)`, productID, sellerID, "delete-test product", "/uploads/x.png", "", "active", now, now)
 	exec(`INSERT INTO auctions (id, product_id, seller_id, status, current_price_cents, winner_id, seq, facts_confirmed, created_at, updated_at)
 	      VALUES (?,?,?,?,?,?,?,?,?,?)`, aid, productID, sellerID, status, 50000, "user_win", 3, 1, now, now)
 	exec(`INSERT INTO auction_rules (auction_id, mode, start_price_cents, increment_cents, cap_price_cents, duration_sec)

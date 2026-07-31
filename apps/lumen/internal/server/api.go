@@ -675,12 +675,12 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 	}
 	// #261-10/12a: REST first-paint carries the live social numbers too, so a
 	// fresh room shows the crowd/likes before the WS snapshot lands. Display-only.
-	// SimViewerCount self-declares the simulated share (#266 review 诚实边界).
+	// SimViewerCount self-declares the simulated share (#266 review honesty boundary).
 	simViewers := s.crowd.ViewerBoost(aid)
 	snap.ViewerCount = s.hub.viewerCount(aid) + simViewers
 	snap.SimViewerCount = simViewers
 	snap.LikeCount = s.social.likeCount(aid)
-	// Surface the product (name / image / 介绍) so the room shows the real item
+	// Surface the product (name / image / description) so the room shows the real item
 	// and the VLM page can draft facts from its image. Best-effort: a missing
 	// product just yields empty fields, never a 500.
 	prod, _ := s.st.GetProduct(r.Context(), a.ProductID)
@@ -702,7 +702,7 @@ func (s *Server) handleGetAuction(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/auctions -> recent auctions (newest first), joined to product name +
-// image. Backs the seller 商品管理 table, the buyer browse list, and 历史竞拍记录.
+// image. Backs the seller product-management table, the buyer browse list, and the auction history.
 // Money is a string at the JS boundary (P1). Optional ?limit=N.
 func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 	limit := 0
@@ -725,7 +725,7 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 		CreatedAtMs       int64  `json:"createdAtMs"`
 		Mode              string `json:"mode"`
 		ParentAuctionID   string `json:"parentAuctionId,omitempty"`
-		// 商品管理 table columns (起拍价/固定加价/封顶价/出价次数). Money as
+		// product-management table columns (start price / increment / cap price / bid count). Money as
 		// string at the JS boundary (P1); bidCount is a plain counter.
 		StartPriceCents string `json:"startPriceCents"`
 		IncrementCents  string `json:"incrementCents"`
@@ -752,7 +752,7 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 		}
 		// LIVE rows: the MySQL columns are creation-time values — bids touch only
 		// the Redis state Hash, and AUCTION_EXTENDED never updates auctions.end_at.
-		// Merge the live Redis state so 商品管理「当前出价」/ buyer browse show the
+		// Merge the live Redis state so the product-management current-bid column and the buyer browse view show the
 		// real-time price and the post-extension countdown (#261-2). Best-effort —
 		// on a Redis miss the MySQL row stands. Snapshot() is single-flighted, and
 		// a list page holds only a handful of LIVE rows.
@@ -787,7 +787,7 @@ func (s *Server) handleListAuctions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"auctions": out})
 }
 
-// GET /api/auctions/{id}/order -> the settlement order (订单管理 成交详情 / 结果查看).
+// GET /api/auctions/{id}/order -> the settlement order (order management: sale details / result view).
 // The Order struct marshals money-as-string (model.Cents) per P1.
 func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	o, err := s.st.GetOrder(r.Context(), r.PathValue("id"))
@@ -802,7 +802,7 @@ func (s *Server) handleGetOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, o)
 }
 
-// POST /api/auctions/{id}/pay -> 模拟支付流程: mark the order paid. Idempotent.
+// POST /api/auctions/{id}/pay -> the simulated payment flow: mark the order paid. Idempotent.
 // Only the winning buyer can pay their own order.
 func (s *Server) handlePayOrder(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
@@ -832,8 +832,8 @@ func (s *Server) handlePayOrder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, paid)
 }
 
-// PATCH /api/auctions/{id} -> modify a pre-start auction's rules (商品管理:
-// 修改未开始竞拍的规则). Owner-only; allowed only while DRAFT/SCHEDULED.
+// PATCH /api/auctions/{id} -> modify a pre-start auction's rules (product management:
+// editing the rules of an auction that has not started). Owner-only; allowed only while DRAFT/SCHEDULED.
 func (s *Server) handlePatchAuction(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
 	if !ok {
@@ -1015,7 +1015,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			EndAtMs:         endAtMs,
 		})
 	}
-	// #261-12a: 发布即人气 — spawn the built-in crowd script (sim viewers +
+	// #261-12a: popularity on publish - spawn the built-in crowd script (sim viewers +
 	// rule-abiding sim bids). Fire-and-forget; never blocks the seller's
 	// response and never touches the bid path from here.
 	s.crowd.MaybeStart(aid, body.DemoCrowd)
@@ -1127,7 +1127,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 	}
 	// #261-12a: a cancelled room must stop its demo crowd immediately (the
 	// script would also self-detect on its next snapshot, this just makes the
-	// 取消异常竞拍 button feel instant).
+	// cancel-a-faulty-auction button feel instant).
 	s.crowd.Stop(aid)
 	writeJSON(w, http.StatusOK, map[string]any{"code": code})
 }
@@ -1192,7 +1192,7 @@ func (s *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 	// Stamp the response with the auction's current state seq so the client can
 	// reconcile by seq: it merge-MAXes the REST rows into its live board and never
 	// lets a late/stale REST response regress a row a ROOM_STATE_PATCH already
-	// advanced (跨端排名一致). Advisory — read via the (single-flighted) Snapshot;
+	// advanced (keeping the ranking consistent across clients). Advisory - read via the (single-flighted) Snapshot;
 	// the tiny race vs the ZREVRANGE is harmless because the client uses seq only
 	// to order REST applies, never as authoritative leaderboard data.
 	var seq int64
@@ -1321,9 +1321,9 @@ func evidenceSummary(mysqlStatus string, timeline []store.EvidenceEvent, order s
 // client-supplied identity is never trusted. Returns the auction on success.
 // DELETE /api/auctions/{id} -> permanently remove a TERMINAL auction and all of
 // its records (orders / coin_ledger / events / evidence / rules / bids + the
-// Redis keys), plus the product when unreferenced. Seller-only. Backs the 后台
-// 「删除发布历史 / 近期成交」history cleanup. 409 ERR_NOT_TERMINAL while the lot is
-// still DRAFT/SCHEDULED/LIVE — the seller must 下架/结束 it first.
+// Redis keys), plus the product when unreferenced. Seller-only. Backs the admin
+// delete-publish-history / delete-recent-sales cleanup. 409 ERR_NOT_TERMINAL while the lot is
+// still DRAFT/SCHEDULED/LIVE - the seller must withdraw or finish it first.
 func (s *Server) handleDeleteAuction(w http.ResponseWriter, r *http.Request) {
 	userID, ok := s.authUser(r)
 	if !ok {
@@ -1338,7 +1338,7 @@ func (s *Server) handleDeleteAuction(w http.ResponseWriter, r *http.Request) {
 	if !model.IsTerminal(a.Status) {
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"code":    "ERR_NOT_TERMINAL",
-			"message": "仅已结束的拍品可删除，请先下架或结束该拍品",
+			"message": "only finished lots can be deleted - withdraw or finish this lot first",
 		})
 		return
 	}
@@ -1347,7 +1347,7 @@ func (s *Server) handleDeleteAuction(w http.ResponseWriter, r *http.Request) {
 		if err == store.ErrAuctionNotDeletable {
 			writeJSON(w, http.StatusConflict, map[string]any{
 				"code":    "ERR_NOT_TERMINAL",
-				"message": "拍品状态已变化，无法删除",
+				"message": "the lot's status changed, so it cannot be deleted",
 			})
 			return
 		}
@@ -1435,13 +1435,15 @@ func slug(s string) string {
 		}
 	}
 	if b.Len() == 0 {
-		// 残基为空（纯 CJK/emoji/符号昵称）。旧实现把它们全部坍缩成同一个
-		// "anon" → 两台手机各输一个中文昵称会共享同一个 user_anon 账号，对端
-		// 把彼此的 ROOM_SOCIAL 广播误判为 self 并抑制点赞/礼物动画，看起来
-		// 就是「跨端不同步」（2026-06-10 深度排查）。改为对原始昵称取 FNV-1a
-		// 短哈希：不同昵称 → 不同 userId；同一昵称仍稳定映射同一账号。空昵称
-		// 维持 "anon"（handleLogin 上游已拒绝空昵称，这里只是防御）。ASCII
-		// 残基非空的路径保持不变 — 存量账号（如 买家A → user_a）不受影响。
+		// The residue is empty (a nickname made purely of non-ASCII letters, emoji, or symbols).
+		// The old implementation collapsed all of them into one "anon", so two phones each typing a
+		// non-ASCII nickname shared a single user_anon account; each side then mistook the other's
+		// ROOM_SOCIAL broadcast for its own and suppressed the like/gift animation, which looked
+		// exactly like cross-client desync (root-caused 2026-06-10). We now take a short FNV-1a hash
+		// of the original nickname: different nicknames map to different userIds, while the same
+		// nickname still maps stably to the same account. An empty nickname stays "anon"
+		// (handleLogin already rejects empty nicknames upstream; this is defence in depth). The path
+		// where the ASCII residue is non-empty is unchanged, so existing accounts are unaffected.
 		if s == "" {
 			return "anon"
 		}

@@ -282,7 +282,7 @@ func (h *Hub) leave(c *Conn) {
 	}
 }
 
-// viewerCount returns the number of connections currently in a room (参与人数).
+// viewerCount returns the number of connections currently in a room (participants).
 func (h *Hub) viewerCount(aid string) int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -881,7 +881,7 @@ func (c *Conn) closeWithCode(code int, reason string) {
 // T8 instrumentation: the BackpressureDrop counter is incremented on each
 // force-close so the load report ties slow-client trims to ack-p95 spikes
 // (V9 §4.3: "force-close of the slow client counts as a high sample, NOT
-// 剔除"). metrics may be nil if the conn was created without a registry (tests).
+// evicted"). metrics may be nil if the conn was created without a registry (tests).
 func (c *Conn) enqueueCritical(f outboundFrame, aid string) {
 	select {
 	case <-c.done:
@@ -1568,10 +1568,10 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 				}
 			}
 		}
-		// 参与人数 at join time (incl. self) + crowd-sim boost + running likes
+		// participants at join time (incl. self) + crowd-sim boost + running likes
 		// (#261-10/12a — display-only social numbers ride the snapshot).
-		// SimViewerCount self-declares the simulated share (#266 review 诚实边界)
-		// so the client badges 「模拟人气」 from the very first paint.
+		// SimViewerCount self-declares the simulated share (#266 review honesty boundary)
+		// so the client shows the simulated-crowd badge from the very first paint.
 		simViewers := s.crowd.ViewerBoost(d.AuctionID)
 		snap.ViewerCount = s.hub.viewerCount(d.AuctionID) + simViewers
 		snap.SimViewerCount = simViewers
@@ -1704,7 +1704,7 @@ func (s *Server) dispatchWS(ctx context.Context, c *Conn, env model.Envelope) {
 		// "click → toast" budget. Script_time is the same call's narrow EVALSHA
 		// portion (Lua exec + Redis RTT), measured separately so a hot-path Lua
 		// regression separates from a Go-side regression.
-		// TODO(T3, [全员 approve]): per-connection inbound bid rate limit + wire code
+		// TODO(T3, all-member approval): per-connection inbound bid rate limit + wire code
 		// ERR_RATE_LIMITED (§8). Deferred: the new code is an all-member-approve
 		// contract change and dedupe already makes retries cheap. At T2 scale (single
 		// gateway/Redis) the blast radius is bounded; revisit before multi-gateway T5.

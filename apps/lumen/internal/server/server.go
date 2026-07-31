@@ -39,7 +39,7 @@ type Server struct {
 	// social holds per-room like counters for the ROOM_SOCIAL channel
 	// (#261-7/8/10). Nil-safe accessors; in-process state (single-node demo).
 	social *socialState
-	// crowd is the 发布即人气 demo crowd script (#261-12a). Nil-safe; inert
+	// crowd is the popularity-on-publish demo crowd script (#261-12a). Nil-safe; inert
 	// unless an auction start enables it.
 	crowd *CrowdSim
 }
@@ -102,7 +102,7 @@ func Serve(ctx context.Context, cfg config.Config, mode string) error {
 	case "all", "gateway":
 		// goSupervised: a panic in a long-lived worker must NOT crash the gateway
 		// (net/http only recovers request-handler panics). Recover + restart, count
-		// goroutinePanics for alerting (spec deep-review: 异常兜底/稳定性).
+		// goroutinePanics for alerting (spec deep-review: failure fallback / stability).
 		goSupervised(ctx, "subscribe", s.metrics, func(c context.Context) {
 			s.hub.subscribe(c, st, s.auctioneer, s.metrics)
 		})
@@ -209,13 +209,13 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auctions/{id}/freeze", s.handleFreeze)
 	mux.HandleFunc("POST /api/auctions/{id}/start", s.handleStart)
 	mux.HandleFunc("POST /api/auctions/{id}/cancel", s.handleCancel)
-	mux.HandleFunc("DELETE /api/auctions/{id}", s.handleDeleteAuction) // 后台 删除发布历史/近期成交 (terminal-only hard delete)
+	mux.HandleFunc("DELETE /api/auctions/{id}", s.handleDeleteAuction) // admin: delete publish history / recent sales (terminal-only hard delete)
 	mux.HandleFunc("GET /api/auctions/{id}/prequalify-recommendation", s.handlePrequalifyRecommendation)
 	mux.HandleFunc("POST /api/auctions/{id}/spawn-formal", s.handleSpawnFormal) // issue #114 phase 6
 	mux.HandleFunc("POST /api/auctions/{id}/pay", s.handlePayOrder)
-	mux.HandleFunc("POST /api/auctions/{id}/social", s.handleSocial) // #261-7/8/10 弹幕/礼物/点赞 broadcast
+	mux.HandleFunc("POST /api/auctions/{id}/social", s.handleSocial) // #261-7/8/10 danmaku / gift / like broadcast
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
-	mux.HandleFunc("POST /api/upload/video", s.handleUploadVideo) // #261-12b 拖入即上传：竞拍发布拖入视频立即上传(无需 auctionId)，发布时随 rules.livePlayUrl 下发
+	mux.HandleFunc("POST /api/upload/video", s.handleUploadVideo) // #261-12b drop to upload: a video dropped into the publish form uploads immediately (no auctionId needed) and ships with rules.livePlayUrl at publish time
 	mux.HandleFunc("GET /ws", s.handleWS)
 
 	// Uploaded product media (see upload.go). Immutable names → long cache.

@@ -40,7 +40,7 @@ func Seed(ctx context.Context, cfg config.Config) error {
 		StartPriceCents: 10000, IncrementCents: 1000, CapPriceCents: 1000000,
 		DurationSec: 3600, ExtendWindowSec: 10, ExtendSec: 10, MaxExtensions: 5,
 	}
-	facts := `{"facts":[{"field":"category","value":"watch","highRisk":false}],"highRiskFieldsDisclaimer":"高风险字段为卖家声明，AI 未验证。"}`
+	facts := `{"facts":[{"field":"category","value":"watch","highRisk":false}],"highRiskFieldsDisclaimer":"High-risk fields are seller statements and are not verified by AI."}`
 	if err := st.CreateAuction(ctx, "auc_demo", "prod_demo", "seller_demo", rules, true, facts); err != nil {
 		return err
 	}

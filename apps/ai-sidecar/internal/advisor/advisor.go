@@ -93,11 +93,11 @@ type Response struct {
 
 const (
 	maxRationaleLen = 80
-	disclaimer      = "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。"
+	disclaimer      = "AI advice is for reference only: the seller confirms it, and the backend adjudicates the final sale and terminal state."
 	modelName       = "mock-advisor-111"
 	// safeRationale replaces a rationale that fails the guardrail (or the whole
 	// response on generator error). Generic, compliant, demo-safe.
-	safeRationale = "依据成交估值与在线人数给出建议；请卖家结合实际确认。"
+	safeRationale = "Derived from the item estimate and viewers online; the seller confirms it."
 )
 
 // Generator is the pluggable model call. Tests inject a deterministic impl;
@@ -213,10 +213,10 @@ func MockGenerator(req Request) (Advice, error) {
 	}
 
 	anchor := parseCents(req.Item.EstValueCents)
-	source := "卖家估值"
+	source := "the seller's estimate"
 	if hi := maxCents(req.Market.HistoricalSoldCents); hi > anchor {
 		anchor = hi
-		source = "历史成交"
+		source = "historical sales"
 	}
 	if anchor <= 0 {
 		return Advice{}, errors.New("no usable price signal")
@@ -225,12 +225,12 @@ func MockGenerator(req Request) (Advice, error) {
 	// Open English auction: start below the anchor to build the climb; step
 	// ≈ 1% of the anchor; reserve ≈ 80%.
 	mode := ModeOpen
-	rationale := source + "锚定 · 低起拍引导竞价爬升，保留价约 8 成。"
+	rationale := "Anchored on " + source + "; a low start draws bidding up, reserve ~80%."
 	// Many viewers → suggest a sealed warm-up to discover willingness-to-pay
 	// before the open auction (recommendation only — see package scope note).
 	if req.Market.OnlineViewers >= 200 {
 		mode = ModeSealedThenOpen
-		rationale = source + "锚定 · 人多，建议先暗拍预热探价，再开明拍。"
+		rationale = "Anchored on " + source + "; big crowd, so run a sealed warm-up first."
 	}
 	return Advice{
 		Mode:            mode,
@@ -260,7 +260,7 @@ func adviceFromSealed(s *SealedSummary) (Advice, error) {
 			StartPriceCents: itoa(second),
 			StepCents:       step,
 			ReserveCents:    itoa(second),
-			Rationale:       "暗拍最高价远超次高 · 建议直接成交，提前锁定。",
+			Rationale:       "The top sealed bid far exceeds the runner-up; close now and lock it in.",
 		}, nil
 	}
 	// Sparse / single sealed bid → median (and maybe second) are 0; never anchor
@@ -279,7 +279,7 @@ func adviceFromSealed(s *SealedSummary) (Advice, error) {
 		StartPriceCents: itoa(floor),
 		StepCents:       step,
 		ReserveCents:    itoa(floor),
-		Rationale:       "暗拍出价集中 · 建议从中位起拍，明拍叫向更高。",
+		Rationale:       "Sealed bids cluster; start at the median and let the open auction climb.",
 	}, nil
 }
 
@@ -291,16 +291,16 @@ func adviceFromSealed(s *SealedSummary) (Advice, error) {
 var (
 	reURL   = regexp.MustCompile(`(?i)\b(https?://|www\.)\S+`)
 	rePhone = regexp.MustCompile(`\b\d{11}\b|\b\+\d{1,3}[ -]?\d{4,}\b`)
-	reMoney = regexp.MustCompile(`(¥|\$|元)\s*\d`)
+	reMoney = regexp.MustCompile(`[¥$€£]\s*\d|\d(?:[\d,.]*\d)?\s*(?i:yuan|rmb|cny|usd|eur|gbp)\b`)
 )
 
 var bannedWords = []string{
-	"绝对最低价",
-	"仅此一件",
-	"假一赔十",
-	"保真",
-	"百分百正品",
-	"原价回收",
+	"absolute lowest price",
+	"only one in existence",
+	"tenfold refund",
+	"guaranteed authentic",
+	"100% genuine",
+	"buyback at original price",
 }
 
 // failsGuardrail returns (reason, true) when text violates any rule.

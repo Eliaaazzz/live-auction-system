@@ -13,13 +13,13 @@ import (
 // ─── Guardrail unit tests · TC-T7-202 ───────────────────────────────
 
 func TestGuardrail_OK(t *testing.T) {
-	if reason, bad := failsGuardrail("开拍 · 海风_2024 留意倒计时。"); bad {
+	if reason, bad := failsGuardrail("We are open - SeaBreeze_2024, watch the clock."); bad {
 		t.Fatalf("clean text marked bad: reason=%s", reason)
 	}
 }
 
 func TestGuardrail_LengthTruncation(t *testing.T) {
-	long := strings.Repeat("一", 81)
+	long := strings.Repeat("a", 81)
 	reason, bad := failsGuardrail(long)
 	if !bad || reason != "len" {
 		t.Fatalf("expected len violation, got reason=%s bad=%v", reason, bad)
@@ -28,11 +28,11 @@ func TestGuardrail_LengthTruncation(t *testing.T) {
 
 func TestGuardrail_LengthBoundary(t *testing.T) {
 	// Exactly 80 runes is OK; 81 is over.
-	ok := strings.Repeat("一", 80)
+	ok := strings.Repeat("a", 80)
 	if _, bad := failsGuardrail(ok); bad {
 		t.Fatal("80 runes should pass")
 	}
-	over := strings.Repeat("一", 81)
+	over := strings.Repeat("a", 81)
 	if _, bad := failsGuardrail(over); !bad {
 		t.Fatal("81 runes should fail")
 	}
@@ -61,7 +61,7 @@ func TestGuardrail_BlocksPhone(t *testing.T) {
 }
 
 func TestGuardrail_BlocksFreeFormMoney(t *testing.T) {
-	if reason, bad := failsGuardrail("出价 ¥99999 立即拿下"); !bad || reason != "money" {
+	if reason, bad := failsGuardrail("Bid ¥99999 and take it now"); !bad || reason != "money" {
 		t.Fatalf("expected money violation, got reason=%s bad=%v", reason, bad)
 	}
 	if reason, bad := failsGuardrail("just $50 today"); !bad || reason != "money" {
@@ -74,10 +74,10 @@ func TestGuardrail_BlocksBannedWords(t *testing.T) {
 		text string
 		want string // expected reason prefix
 	}{
-		{"绝对最低价 不容错过", "banned:绝对最低价"},
-		{"仅此一件 错过不再", "banned:仅此一件"},
-		{"假一赔十承诺", "banned:假一赔十"},
-		{"100% 保真精品", "banned:保真"},
+		{"absolute lowest price, do not miss it", "banned:absolute lowest price"},
+		{"only one in existence, gone forever", "banned:only one in existence"},
+		{"a tenfold refund promise", "banned:tenfold refund"},
+		{"100% guaranteed authentic piece", "banned:guaranteed authentic"},
 	}
 	for _, c := range cases {
 		reason, bad := failsGuardrail(c.text)
@@ -106,7 +106,7 @@ func TestGenerate_FallsBackOnGuardrailViolation(t *testing.T) {
 	// TC-T7-202: LLM returns banned word → fallback canned text + log.
 	req := Request{AuctionID: "auc_x", Trigger: TriggerHammer}
 	gen := func(_ Request) (string, error) {
-		return "保真精品 · 落槌价", nil
+		return "guaranteed authentic piece at the hammer price", nil
 	}
 	resp := generateWithGuardrail(req, gen)
 	if !resp.Fallback {
@@ -118,12 +118,12 @@ func TestGenerate_FallsBackOnGuardrailViolation(t *testing.T) {
 }
 
 func TestGenerate_PassesThroughCleanText(t *testing.T) {
-	req := Request{AuctionID: "auc_x", Trigger: TriggerSurge, Ctx: Ctx{WinnerDisplayName: "海风_2024"}}
+	req := Request{AuctionID: "auc_x", Trigger: TriggerSurge, Ctx: Ctx{WinnerDisplayName: "SeaBreeze_2024"}}
 	resp := generateWithGuardrail(req, MockGenerator)
 	if resp.Fallback {
 		t.Fatal("clean text should not fall back")
 	}
-	if !strings.Contains(resp.Commentary, "海风_2024") {
+	if !strings.Contains(resp.Commentary, "SeaBreeze_2024") {
 		t.Fatalf("expected winner name in surge text, got %q", resp.Commentary)
 	}
 }

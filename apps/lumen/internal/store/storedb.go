@@ -78,7 +78,7 @@ func (s *Store) CreateProduct(ctx context.Context, id, sellerID, name, imageURL,
 	return err
 }
 
-// Product is the listed item behind an auction (商品 名称/图片/介绍). Surfaced on
+// Product is the listed item behind an auction (name / image / description). Surfaced on
 // the auction detail so the room can show the real image and the VLM page can
 // draft facts from it.
 type Product struct {
@@ -224,7 +224,7 @@ func (s *Store) UpdateAuctionStatus(ctx context.Context, id, status string) erro
 // FinalizeAuctionSold persists the hammer outcome (final price + winner) onto the
 // auctions row when the persistence worker projects AUCTION_SOLD. Without it the
 // row keeps its creation-time current_price_cents forever — bids only ever touch
-// the Redis state Hash — so the auctions LIST (商品管理 / 买家浏览 / 历史记录)
+// the Redis state Hash - so the auctions LIST (product management / buyer browse / history)
 // would show the start price even after the hammer once the Redis state is gone.
 // Idempotent: re-projection rewrites the same values.
 func (s *Store) FinalizeAuctionSold(ctx context.Context, aid, winnerID string, amountCents int64) error {
@@ -243,7 +243,7 @@ func (s *Store) SetParentAuction(ctx context.Context, aid, parentAID string) err
 	return err
 }
 
-// UpdateRules replaces a pre-start auction's rules (商品管理: 修改未开始竞拍的规则).
+// UpdateRules replaces a pre-start auction's rules (product management: editing the rules of an auction that has not started).
 // The caller gates on status (DRAFT/SCHEDULED) and ownership; this validates +
 // writes. Also realigns the auctions display price with the new start price so
 // the room/snapshot reflects the edit before freeze.
@@ -270,7 +270,7 @@ func (s *Store) UpdateRules(ctx context.Context, aid string, r model.Rules) erro
 }
 
 // SetLivePlayURL points a single auction's live feed at a new play URL without
-// touching any other rule field (开始直播: 上传准备好的视频自动直播). Targeted
+// touching any other rule field (start streaming: upload a prepared video and stream it automatically). Targeted
 // UPDATE so it stays safe for a LIVE/frozen auction — no re-validation, no price
 // realignment, just the display-only feed URL the room snapshot reads back.
 func (s *Store) SetLivePlayURL(ctx context.Context, aid, url string) error {
@@ -285,8 +285,8 @@ func (s *Store) SetLivePlayURL(ctx context.Context, aid, url string) error {
 	return nil
 }
 
-// AuctionListItem is a row in the auctions list (商家 商品管理 / 买家 竞拍浏览 /
-// 历史竞拍记录). Joined to the product for display name + image. Nullable
+// AuctionListItem is a row in the auctions list (seller product management / buyer browse /
+// auction history). Joined to the product for display name + image. Nullable
 // winner/end columns are zero-valued when absent.
 type AuctionListItem struct {
 	ID                string
@@ -299,8 +299,8 @@ type AuctionListItem struct {
 	CreatedAtMs       int64
 	Mode              string
 	ParentAuctionID   string
-	// Rules + bid count back the 商品管理 table columns (起拍价 / 固定加价 /
-	// 封顶价 / 出价次数) so the console renders without N+1 detail fetches.
+	// Rules + bid count back the product-management table columns (start price / increment /
+	// cap price / bid count) so the console renders without N+1 detail fetches.
 	StartPriceCents int64
 	IncrementCents  int64
 	CapPriceCents   int64
@@ -308,15 +308,15 @@ type AuctionListItem struct {
 }
 
 // ListAuctions returns recent auctions (newest first), joined to their product.
-// Bounded by limit (default 100, max 200). Backs the seller 商品管理 table, the
-// buyer browse list, and 历史竞拍记录 — replacing the hardcoded mock rows.
+// Bounded by limit (default 100, max 200). Backs the seller product-management table, the
+// buyer browse list, and the auction history - replacing the hardcoded mock rows.
 func (s *Store) ListAuctions(ctx context.Context, limit int) ([]AuctionListItem, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	// bidCount counts projected BID_ACCEPTED events: nothing in the codebase
 	// ever INSERTs into the `bids` table (schema-only leftover), so the old
-	// `COUNT(*) FROM bids` was a constant 0 and 商品管理「出价次数」never moved.
+	// `COUNT(*) FROM bids` was a constant 0 and the product-management bid-count column never moved.
 	// auction_events is written by the persistence worker for every event, so
 	// the count is real (≤1 sweep behind, same freshness as the rest of the row).
 	rows, err := s.db.QueryContext(ctx,
@@ -405,7 +405,7 @@ func (s *Store) WithAuctionTransitionLock(ctx context.Context, aid string, fn fu
 
 // ErrAuctionNotDeletable means a hard delete was attempted on a non-terminal
 // auction (DRAFT/SCHEDULED/LIVE). Only finished auctions are removable history —
-// in-flight lots must be 下架/结束 first, then deleted.
+// in-flight lots must be withdrawn or finished first, then deleted.
 var ErrAuctionNotDeletable = errors.New("auction not terminal; cannot delete")
 
 // DeleteAuctionResult reports what a hard delete removed (operator visibility /
@@ -417,7 +417,7 @@ type DeleteAuctionResult struct {
 }
 
 // DeleteAuction permanently removes a TERMINAL auction and everything keyed to it
-// — the seller-facing「删除发布历史 / 成交记录」history cleanup. This is the only
+// - the seller-facing delete-publish-history / delete-sales-record cleanup. This is the only
 // hard-delete path in the system; the engine never deletes auctions (terminal
 // rows are the audit trail). The caller MUST have already verified seller
 // ownership (ownsAuction) — the store re-checks the seller + terminal state under
@@ -917,9 +917,9 @@ type Order struct {
 	ProductID   string      `json:"productId"`
 	BuyerID     string      `json:"buyerId"`
 	AmountCents model.Cents `json:"amountCents"` // money-as-string on the JSON boundary
-	Status      string      `json:"status"`      // created | paid (模拟支付)
+	Status      string      `json:"status"`      // created | paid (simulated payment)
 	CreatedAt   time.Time   `json:"createdAt"`
-	PaidAt      *time.Time  `json:"paidAt"` // nil until 模拟支付 marks it paid
+	PaidAt      *time.Time  `json:"paidAt"` // nil until the simulated payment marks it paid
 }
 
 // CreateOrderFromSold creates the buyer order for a hammered/cap-hit SOLD auction from
@@ -1029,7 +1029,7 @@ func (s *Store) GetOrder(ctx context.Context, aid string) (Order, error) {
 	return o, err
 }
 
-// PayOrder simulates the 模拟支付流程: marks a 'created' order 'paid' (paid_at=now).
+// PayOrder simulates the payment flow: marks a 'created' order 'paid' (paid_at=now).
 // Idempotent — paying an already-paid order is a no-op success. Returns the
 // resulting order (ErrNotFound if the auction has no order yet).
 func (s *Store) PayOrder(ctx context.Context, aid string) (Order, error) {

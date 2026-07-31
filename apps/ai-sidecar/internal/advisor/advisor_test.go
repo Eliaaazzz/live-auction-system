@@ -91,7 +91,7 @@ func TestRecommend_GuardrailSwapsRationaleKeepsNumbers(t *testing.T) {
 	resp := recommendWithGuardrail(Request{Item: Item{EstValueCents: "10000000"}}, func(Request) (Advice, error) {
 		return Advice{
 			Mode: ModeOpen, StartPriceCents: "6000000", StepCents: "100000",
-			ReserveCents: "8000000", Rationale: "保真 · 绝对最低价",
+			ReserveCents: "8000000", Rationale: "guaranteed authentic - absolute lowest price",
 		}, nil
 	})
 	if resp.Rationale != safeRationale {
@@ -152,7 +152,7 @@ func TestMock_SealedOutlier_RecommendsEarlyAccept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if !strings.Contains(adv.Rationale, "直接成交") {
+	if !strings.Contains(adv.Rationale, "close now") {
 		t.Fatalf("top bid far above pack → expected early-accept rationale, got %q", adv.Rationale)
 	}
 }
@@ -166,7 +166,7 @@ func TestMock_SealedCluster_RecommendsOpenClimb(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if strings.Contains(adv.Rationale, "直接成交") {
+	if strings.Contains(adv.Rationale, "close now") {
 		t.Fatalf("tight cluster should NOT advise early accept, got %q", adv.Rationale)
 	}
 }
@@ -183,7 +183,7 @@ func TestMock_SealedSingleBid_AnchorsOnMax(t *testing.T) {
 	if adv.StartPriceCents != "9000000" || adv.ReserveCents != "9000000" {
 		t.Fatalf("single sealed bid should anchor on max, got start=%q reserve=%q", adv.StartPriceCents, adv.ReserveCents)
 	}
-	if strings.Contains(adv.Rationale, "直接成交") {
+	if strings.Contains(adv.Rationale, "close now") {
 		t.Fatalf("single bid (no second) should not be early-accept, got %q", adv.Rationale)
 	}
 }
@@ -230,11 +230,11 @@ func TestMock_RationalesAreGuardrailClean(t *testing.T) {
 
 func TestGuardrail_BlocksUnsafeRationale(t *testing.T) {
 	cases := map[string]string{
-		"url":    "见 https://evil.example 详情",
-		"phone":  "联系 13912345678",
-		"money":  "底价 ¥99999 成交",
-		"banned": "保真 精品",
-		"len":    strings.Repeat("一", 81),
+		"url":    "see https://evil.example for details",
+		"phone":  "call 13912345678",
+		"money":  "floor price ¥99999 to close",
+		"banned": "guaranteed authentic and premium",
+		"len":    strings.Repeat("a", 81),
 	}
 	for want, text := range cases {
 		reason, bad := failsGuardrail(text)
