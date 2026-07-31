@@ -1,4 +1,4 @@
-# Beijing Tier-1 10k Runbook · 万人并发验证手册 (issue #231)
+# Beijing Tier-1 10k Runbook — 10k-concurrency verification handbook (issue #231)
 
 > **Goal:** produce a credible **10,000 concurrent WebSocket auction** proof for
 > the ByteDance mentor demo **without** the public-IP self-dial that failed every
@@ -207,18 +207,18 @@ with the named bottleneck — do not round up to a clean pass.
 
 ---
 
-## 10. Live demo script · 现场 3 分钟动线
+## 10. Live demo script — the 3-minute on-stage flow
 
-1. **同一个生产进程**: `curl http://<private-lb>/version` — show it matches the
-   evidence build. "演示用的就是生产二进制。"
-2. **拉起负载**: kick off the wsload run (or have it already at hold). Switch to
+1. **The same production process**: `curl http://<private-lb>/version` — show it matches the
+   evidence build. "What you are watching is the production binary."
+2. **Bring up the load**: kick off the wsload run (or have it already at hold). Switch to
    `wsdash.py` — narrate `activeConns` climbing to **10,000**, ack p95 sub-ms,
-   broadcast p95 ≪ 150 ms. "连接扇出已经到万人，服务端裁决依然亚毫秒。"
-3. **正确性锤击**: point at `seqGapCount=0` and `backpressureForceClose=0` while
-   bids hammer. "万人争抢，价格单调、恰好一个赢家、零序号空洞。"
-4. **可审计**: run `/lumen verify` → `consistent`. "Stream / Redis / MySQL 三方一致 + hash 链。"
-5. **诚实边界**: "连接扇出与竞价裁决在 10k 已实证；公网独立 worker 是 Tier-2，方案
-   就绪（私网 LB 已在链路上，加一台 VPC 外机器即可）。"
+   broadcast p95 ≪ 150 ms. "Connection fanout is already at 10k, and server-side adjudication is still sub-millisecond."
+3. **Hammer on correctness**: point at `seqGapCount=0` and `backpressureForceClose=0` while
+   bids hammer. "Ten thousand people competing: the price is monotonic, there is exactly one winner, and there are zero sequence holes."
+4. **Auditable**: run `/lumen verify` → `consistent`. "Stream / Redis / MySQL agree three ways, plus the hash chain."
+5. **Honest boundary**: "Connection fanout and bid adjudication are proven at 10k; an independent public-internet worker is Tier-2, and the plan
+   is ready (the private LB is already in the path; it just needs one machine outside the VPC)."
 
 ---
 
@@ -236,7 +236,7 @@ with the named bottleneck — do not round up to a clean pass.
 
 - **Tier-2 (public proof):** add **one** out-of-VPC / other-region ECS worker and
   point `-host` at the gateway's **public LB** (a real CLB/ALB, *not* the raw
-  EIP — that is what hairpins). Same pass bar; this is the "真公网万人" trophy.
+  EIP — that is what hairpins). Same pass bar; this is the "real public-internet 10k" trophy.
 - **Multi-worker scale-out (100k path):** shard tokens with
   `tools/loadtest/wsload/split-tokens.sh` and fan out across workers; the
   automated multi-worker SSH wrapper lands in PR #229

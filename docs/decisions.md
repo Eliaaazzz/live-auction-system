@@ -1,11 +1,11 @@
 # Decisions Log
 
-Public project decisions are recorded here so implementation issues and documents do not drift. Project name: **Lumen Auction：直播实时竞拍系统**.
+Public project decisions are recorded here so implementation issues and documents do not drift. Project name: **Lumen Auction: Real-Time Live-Streaming Auction System**.
 
-| 日期 | Q编号 | 议题 | 决策 | 拍板人 | 受影响 issue/file |
+| Date | Q# | Topic | Decision | Decided by | Affected issue/file |
 |---|---|---|---|---|---|
 | 2026-05-21 | Q1 | Deadline | External D-day is 2026-06-10; internal hard deadline is 2026-06-08; 2026-06-09 is bugfix, data, recording, and rehearsal only. | @Eliaaazzz | #11, `docs/charter.md` |
-| 2026-05-21 | Q2 | Project name | Use **Lumen Auction：直播实时竞拍系统**. Repo, README, architecture diagrams, and PPT title use `Lumen Auction`; Chinese subtitle uses `直播实时竞拍系统`; challenge mapping remains `实时竞拍大师`. | @Eliaaazzz | #11, public materials |
+| 2026-05-21 | Q2 | Project name | Use **Lumen Auction: Real-Time Live-Streaming Auction System**. Repo, README, architecture diagrams, and PPT title use `Lumen Auction`; the challenge mapping remains `Real-Time Auction Master`. | @Eliaaazzz | #11, public materials |
 | 2026-05-21 | Q3 | A/B/C ownership | @Eliaaazzz takes A / Realtime Engineer. B and C remain TBD; DB ownership is split by event-link tables vs business tables. *Pending @PDGGK and third member confirm.* | @Eliaaazzz | #11, `docs/RACI.md` |
 | 2026-05-21 | Q4 | P0 highlights | P0 keeps Replay Verifier, hash chain, 500 connected + 50 active stable load proof, and five fault-drill short videos. 1000 connected + 100 active is Stretch. | @Eliaaazzz | #1, #11, `docs/charter.md` |
 | 2026-05-21 | Q5 | Time commitment | Each member must state daily available hours, unavailable days, strongest area, and avoid area before Sprint 1 issue sizing. *@PDGGK pending confirm.* | @Eliaaazzz | #11 |

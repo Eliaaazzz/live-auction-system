@@ -1,48 +1,48 @@
-# 火山云生产部署 Runbook (Volcengine ECS + 云数据库 MySQL + 缓存 Redis)
+# Volcengine production deployment runbook (Volcengine ECS + managed MySQL + managed Redis)
 
-> **Status:** stretch / 加分项 (FAQ §3, optional). The local `make up` path (#9/#87) stays
+> **Status:** stretch / bonus item (FAQ §3, optional). The local `make up` path (#9/#87) remains
 > the demo fallback — this is *additional* production evidence, not a replacement.
 > **Method basis:** `docs/deploy-and-latency.md` (#112) — the server-side-SLO-vs-client-e2e
 > measurement boundary applies here verbatim.
-> 💰 **Cost:** 火山引擎 按量计费 ≈ ¥10–40/day (~¥25 typical) → ~¥350 for the challenge
-> window. **余额可退；测/演示完务必关停 (A9).**
-> 🔒 Secrets via `docs/secrets-workflow.md` — never commit/echo. Manual compose configs: `infra/docker-compose.prod.yml` + `infra/Caddyfile`; GitHub Actions CD uses runner-built systemd runtime and does not start Caddy.
+> 💰 **Cost:** Volcengine pay-as-you-go ≈ ¥10–40/day (~¥25 typical) → ~¥350 for the challenge
+> window. **The balance is refundable; always shut everything down after testing/demoing (A9).**
+> 🔒 Secrets go through `docs/secrets-workflow.md` — never commit or echo them. Manual compose configs: `infra/docker-compose.prod.yml` + `infra/Caddyfile`; GitHub Actions CD uses a runner-built systemd runtime and does not start Caddy.
 
-## A0 — 账号 (队长, one-time)
-1. 注册 + 实名认证: `https://console.volcengine.com/auth/login`.
-2. 费用中心 → 充值 (按经济情况；余额可退)。
+## A0 — Account (team lead, one-time)
+1. Register and complete real-name verification: `https://console.volcengine.com/auth/login`.
+2. Billing Center → top up (as your budget allows; the balance is refundable).
 
-## A1 — 云服务器 ECS
-产品服务 → 云服务器 → 创建实例:
-- **计费**: 按量计费 (切记测完关停)。
-- **地域/可用区**: 就近 (e.g. 华北2 北京)。**记下可用区** — MySQL/Redis 必须同 VPC+子网。
-- **规格**: 2C4G 起步，**推荐 4C8G**。
-- **镜像**: **Ubuntu 22.04 LTS**。
-- **系统盘**: ≥ **40 GB**。
-- **登录**: **SSH 密钥** (建密钥对，下载私钥；勿用密码)。
-- **网络**: 默认创建「私有网络 (VPC)」+「子网」— 记下它们 (A2/A3 复用)。
-- **安全组** (入方向规则):
-  - `22/tcp` ← **仅你的出口 IP** (SSH)。
-  - `80/tcp` + `443/tcp` ← `0.0.0.0/0` (Caddy: ACME + https/wss)。
-  - 不开 `8080` 对公网 (Caddy 内网转发)。
-- 创建后记录: **公网 IP** + **内网 IP**。
+## A1 — ECS instance
+Products & Services → Elastic Compute Service → Create Instance:
+- **Billing**: pay-as-you-go (remember to shut it down when done).
+- **Region/AZ**: pick a nearby one (e.g. North China 2, Beijing). **Note the AZ down** — MySQL/Redis must be in the same VPC + subnet.
+- **Spec**: 2C4G minimum, **4C8G recommended**.
+- **Image**: **Ubuntu 22.04 LTS**.
+- **System disk**: ≥ **40 GB**.
+- **Login**: **SSH key** (create a key pair and download the private key; do not use a password).
+- **Network**: it creates a default VPC plus subnet — note them down (reused in A2/A3).
+- **Security group** (inbound rules):
+  - `22/tcp` ← **your egress IP only** (SSH).
+  - `80/tcp` + `443/tcp` ← `0.0.0.0/0` (Caddy: ACME + https/wss).
+  - Do not expose `8080` publicly (Caddy forwards internally).
+- After creation, record the **public IP** and the **private IP**.
 
-## A2 — 云数据库 MySQL 版
-产品与服务 → 关系型数据库 → 云数据库 MySQL 版 → 创建:
-- **网络**: 选 **与 ECS 相同的 VPC + 子网/可用区** (否则内网不通)。
-- **白名单**: 加 **ECS 内网 IP** (`172.31.x.x`)。
-- **账号**: 建高权限账号 + 库 `lumen` (字符集 utf8mb4)。
-- 记下 **内网地址:端口** → 拼 DSN:
+## A2 — Managed MySQL
+Products & Services → Relational Database → MySQL → Create:
+- **Network**: choose **the same VPC + subnet/AZ as the ECS instance** (otherwise the private network will not route).
+- **Allowlist**: add the **ECS private IP** (`172.31.x.x`).
+- **Account**: create a privileged account plus the `lumen` database (charset utf8mb4).
+- Note the **private address:port** → assemble the DSN:
   `lumen:<pwd>@tcp(<rds_intranet_host>:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4`
 
-## A3 — 缓存数据库 Redis 版
-产品与服务 → NoSQL → 缓存数据库 Redis 版 → 创建:
-- **网络/白名单**: 同 A2 (同 VPC+子网，白名单加 ECS 内网 IP)。
-- **持久化**: 开 **AOF everysec** (V8/V9 冻结决策)。
-- **节点规格**: 4G ≈ ¥0.66/hr，按目标选 (节点规格对费用影响最大)。
-- 记下 **内网地址:端口** → `REDIS_ADDR=<redis_intranet_host>:6379`；若开启密码，另设 `REDIS_PASSWORD=<redis_pwd>`（不要把密码塞进 `REDIS_ADDR`）。
+## A3 — Managed Redis
+Products & Services → NoSQL → Redis → Create:
+- **Network/allowlist**: same as A2 (same VPC + subnet, add the ECS private IP to the allowlist).
+- **Persistence**: enable **AOF everysec** (a frozen V8/V9 decision).
+- **Node spec**: 4G ≈ ¥0.66/hr, pick per your target (node spec dominates the cost).
+- Note the **private address:port** → `REDIS_ADDR=<redis_intranet_host>:6379`; if a password is enabled, set `REDIS_PASSWORD=<redis_pwd>` separately (do not stuff the password into `REDIS_ADDR`).
 
-## A4 — ECS 装环境
+## A4 — Install the environment on ECS
 ```bash
 ssh -i <key.pem> ubuntu@<ECS_PUBLIC_IP>
 sudo apt-get update && sudo apt-get install -y git
@@ -52,8 +52,8 @@ sudo usermod -aG docker $USER && newgrp docker   # manual compose only
 git clone https://github.com/Eliaaazzz/live-auction-system.git && cd live-auction-system
 ```
 
-## A5 — 生产配置 (secrets + 接管理实例)
-在 ECS 上创建 `infra/.env.prod` (本地，**勿提交**)。GitHub Actions CD keeps this file in `CD_REMOTE_DIR`; the manual compose path also reads it before starting `infra/docker-compose.prod.yml`:
+## A5 — Production config (secrets + managed instances)
+Create `infra/.env.prod` on the ECS box (local only, **do not commit it**). GitHub Actions CD keeps this file in `CD_REMOTE_DIR`; the manual compose path also reads it before starting `infra/docker-compose.prod.yml`:
 ```bash
 cat > infra/.env.prod <<'EOF'
 MYSQL_DSN=lumen:<pwd>@tcp(<rds_intranet>:3306)/lumen?parseTime=true&loc=UTC&charset=utf8mb4
@@ -74,13 +74,13 @@ LUMEN_DOMAIN=<your-domain>
 # deploy identity for GET /version; set these at deploy time, not manually forever
 LUMEN_BUILD_SHA=unknown
 LUMEN_BUILD_TIME=unknown
-# 火山直播 (Part B；没配则直播间退回 sim sheen)
+# Volcengine Live (Part B; if unset, the room falls back to the simulated sheen)
 VOLCENGINE_LIVE_PUSH_DOMAIN=
 VOLCENGINE_LIVE_PLAY_DOMAIN=
 VOLCENGINE_LIVE_SIGN_KEY=
 EOF
 ```
-`config.go` §8 baseline 会校验: `APP_ENV=prod` 下必须非默认 JWT/evidence + `ENABLE_DEV_LOGIN=false` (compose 已设)。
+The `config.go` §8 baseline validates that under `APP_ENV=prod` the JWT/evidence secrets are non-default and `ENABLE_DEV_LOGIN=false` (compose already sets this).
 
 Before every deploy, export the current build identity so `/version` can catch stale binaries before a public load test:
 
@@ -112,26 +112,26 @@ systemctl restart lumen.service
 
 It gates the deploy with `/healthz`, `/version`, and `/metrics`. `/version.buildSha` must match the deployed commit or the workflow fails.
 
-## A6 — TLS + 反代 (manual compose/Caddy path)
-- 在域名 DNS 处加 **A 记录**: `<your-domain>` → ECS 公网 IP (生效后 Caddy 才能签证书)。
+## A6 — TLS + reverse proxy (manual compose/Caddy path)
+- Add an **A record** at your DNS provider: `<your-domain>` → the ECS public IP (Caddy can only issue a certificate once it resolves).
 - `infra/Caddyfile` belongs to the manual `docker compose -f infra/docker-compose.prod.yml` path and reverse-proxies to the compose service `lumen:8080`. The GitHub Actions systemd CD path above does not start Caddy.
-- (浏览器生产 wss 必须 TLS — use the Caddy compose path or another explicit reverse proxy in front of the systemd service.)
+- (Browser-side production wss requires TLS — use the Caddy compose path or another explicit reverse proxy in front of the systemd service.)
 
-## A7 — manual compose 起服 + 自检
+## A7 — Start via manual compose + self-check
 ```bash
 set -a; . infra/.env.prod; set +a
 export LUMEN_BUILD_SHA=$(git rev-parse --short HEAD)
 export LUMEN_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 docker compose -f infra/docker-compose.prod.yml up -d --build --wait
-curl -sf https://<your-domain>/healthz && echo OK     # 期望 200
+curl -sf https://<your-domain>/healthz && echo OK     # expect 200
 curl -sf https://<your-domain>/version               # schemaVersion + buildSha must match current deploy
-# 浏览器打开 https://<your-domain> → 走 wss 进直播间；seed 一个拍卖跑通出价
+# Open https://<your-domain> in a browser → enter a room over wss; seed an auction and place a bid end to end
 ```
 
 Do not start a public 10k run until `/version.buildSha` matches `git rev-parse --short HEAD` and a current-schema WS smoke has proved `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED` on a LIVE auction. For Actions CD without TLS, use `http://<ECS_PUBLIC_IP>` / `ws://<ECS_PUBLIC_IP>` targets; for domain HTTPS/wss, use the explicit Caddy/proxy path above.
 
-## A8 — 生产万人并发复测 (the win evidence)
-从**异地机**(非 ECS)打 `wss://<your-domain>`，复用现成 harness:
+## A8 — Production 10k-concurrency re-measurement (the win evidence)
+Drive `wss://<your-domain>` from an **out-of-region machine** (not the ECS box), reusing the existing harnesses:
 - k6: `HOST_WS=wss://<your-domain> AID=<aid> TOKENS=.k6-tokens k6 run tools/loadtest/k6-ws.js`
 - Locust: `python -m locust -f tools/loadtest/locustfile.py --headless -u 1500 -r 150 -t 60s --host wss://<your-domain>`
 - Go load harness / sharded runs: set `TARGET=https://<your-domain>` and **use production login**, not dev-login:
@@ -139,19 +139,19 @@ Do not start a public 10k run until `/version.buildSha` matches `git rev-parse -
   LOGIN_PATH=/api/login TARGET=https://<your-domain> LOAD_AUCTION_ID=<aid> \
     LOAD_RETRY_TOO_LOW=true LOAD_BIDS_PER_BIDDER=1 go run ./apps/lumen/cmd/lumen load
   ```
-- 采集 **两套口径** (per #112): 服务端 SLO (`/metrics`，RTT-insulated: ack p95<80 / broadcast-or-roomStatePatch p95<150 / seqGap=0) + 客户端 e2e (真实 RTT) → 填 `docs/perf-report.md` §8。
-- ⚠️ **不要为了压测重新打开 `ENABLE_DEV_LOGIN`**。生产 `POST /api/login` 只会签发 `role=user` 的普通买家 token；卖家/seed/load auction 应通过受控后台 seed、`seed-load`、或预先创建的 load auction 完成。跑完后删除临时 load auction/token artifacts；不要在 issue/日志里贴 token。
+- Collect **both measurement views** (per #112): server-side SLO (`/metrics`, RTT-insulated: ack p95<80 / broadcast-or-roomStatePatch p95<150 / seqGap=0) plus client e2e (real RTT) → fill in `docs/perf-report.md` §8.
+- ⚠️ **Do not re-enable `ENABLE_DEV_LOGIN` just to run a load test.** Production `POST /api/login` only issues an ordinary buyer token with `role=user`; seller/seed/load auctions should be created through a controlled backend seed, `seed-load`, or a pre-created load auction. Delete temporary load auctions and token artifacts afterwards, and never paste tokens into issues or logs.
 
-### A8.1 — 北京附近独立 worker 10k 验收
-最终 10k 证据必须从独立 Linux load worker 发起，不能用网关 ECS 自己拨自己的公网 IP。推荐在火山云北京同 VPC 临时开 2 台 2c/4g 或更高规格 ECS，只放开 controller SSH 到 worker；worker 目标优先打网关私网 IP 或私网 LB，例如 `ws://172.31.12.98:80`。这样避开公网 hairpin/NAT 连接失败，客户端 RTT 仍能代表北京附近流量。
+### A8.1 — 10k acceptance from an independent worker near Beijing
+The final 10k evidence must come from an independent Linux load worker; the gateway ECS must not dial its own public IP. The recommended setup is to spin up 2 temporary 2c/4g-or-larger ECS instances in the same Volcengine Beijing VPC, allow only the controller's SSH to reach the workers, and have the workers target the gateway's private IP or a private LB, e.g. `ws://172.31.12.98:80`. That avoids the public hairpin/NAT connection failures while client RTT still represents traffic near Beijing.
 
-Controller 准备项:
-- `/version.buildSha` 已匹配待验收 commit，`/healthz` 正常，当前 LIVE load auction 可 `ROOM_JOIN -> ROOM_SNAPSHOT` 和 `BID_PLACE -> BID_ACCEPTED`。
-- `TOKENS_FILE` 至少 10,000 个生产买家 token；不要把 token 内容写进 issue、PR、shell output。
-- `METRICS_RESET_TOKEN` 只通过环境变量传入，用于取得 clean run-window metrics。
-- `VERIFY_CMD` 指向生产网关上的 Replay Verifier，验收 `stream == mysql == snapshot_seq`。
+Controller preparation:
+- `/version.buildSha` already matches the commit under acceptance, `/healthz` is healthy, and the current LIVE load auction can do `ROOM_JOIN -> ROOM_SNAPSHOT` and `BID_PLACE -> BID_ACCEPTED`.
+- `TOKENS_FILE` holds at least 10,000 production buyer tokens; never write token contents into an issue, PR, or shell output.
+- `METRICS_RESET_TOKEN` is passed only through an environment variable, used to get clean run-window metrics.
+- `VERIFY_CMD` points at the Replay Verifier on the production gateway, to accept `stream == mysql == snapshot_seq`.
 
-示例:
+Example:
 
 ```bash
 cat >/tmp/lumen-wsload-hosts.tsv <<'EOF'
@@ -171,16 +171,16 @@ scripts/beijing-wsload-remote-10k-evidence.sh \
   --wsload-bin ./tools/loadtest/wsload/wsload-linux
 ```
 
-通过标准:
-- remote worker aggregate: `connect_ok=10000`, `connect_fail=0`, `closed_early=0`。
-- server metrics gate: `activeConns` 达到 10k；`ackLatencyMs.p95 < 80ms`；`roomStatePatchLatencyMs.p95 < 150ms`；`seqGapCount=0`；`backpressureForceClose=0`。
-- Replay Verifier: consistent，并记录 `stream/mysql/snapshot_seq` 三方一致。
+Pass criteria:
+- Remote worker aggregate: `connect_ok=10000`, `connect_fail=0`, `closed_early=0`.
+- Server metrics gate: `activeConns` reaches 10k; `ackLatencyMs.p95 < 80ms`; `roomStatePatchLatencyMs.p95 < 150ms`; `seqGapCount=0`; `backpressureForceClose=0`.
+- Replay Verifier: consistent, with `stream/mysql/snapshot_seq` three-way agreement recorded.
 
-## A9 — 成本收尾
-测/演示完: 控制台 **停止/释放** ECS + MySQL + Redis (按量计费持续扣费)。`docker compose -f infra/docker-compose.prod.yml down` 仅停容器，云资源要去控制台关。
+## A9 — Cost wrap-up
+After testing/demoing: **stop or release** ECS + MySQL + Redis in the console (pay-as-you-go keeps billing). `docker compose -f infra/docker-compose.prod.yml down` only stops containers — the cloud resources must be shut down in the console.
 
-## 验证 / 回滚
-- ✅ Actions CD: `http://<ECS_PUBLIC_IP>/healthz`=200 and `/version.schemaVersion` + `/version.buildSha` match the intended deploy. Manual Caddy path: `https://<domain>/healthz`=200, wss 可连, 出价→ack。`/metrics` 可达。
-- ✅ perf-report §8 填好 (服务端 SLO 在阈值内；e2e 记录真实 RTT)。
-- ✅ **本地兜底不变**: `make up` 仍能离线跑完整 demo (#9/#87) — 生产部署绝不是演示单点。
-- 回滚: `down` 容器 + 控制台关云资源；demo 回退本地。
+## Verification / rollback
+- ✅ Actions CD: `http://<ECS_PUBLIC_IP>/healthz`=200 and `/version.schemaVersion` + `/version.buildSha` match the intended deploy. Manual Caddy path: `https://<domain>/healthz`=200, wss connects, bid→ack works. `/metrics` is reachable.
+- ✅ perf-report §8 is filled in (server-side SLO within thresholds; e2e records real RTT).
+- ✅ **The local fallback is unchanged**: `make up` still runs the full demo offline (#9/#87) — production deployment is never a single point of failure for the demo.
+- Rollback: bring the containers `down` and shut the cloud resources off in the console; fall the demo back to local.

@@ -2,7 +2,7 @@
 
 Draft for PDGGK and Eliaaazzz review.
 
-`docs/decisions.md` Q7 is the governing rule for Doubao credentials: "Secrets never enter git, issue, PR, commit, log, or screenshot. Repo keeps only `.env.example`; local and deploy credentials stay in private channels / GitHub Secrets. AI Sidecar must degrade to mock, timeout fallback, and never block bidding." Operational shorthand: **绝不进 git、issue、PR、commit、log、screenshot；AI Sidecar 可降级**.
+`docs/decisions.md` Q7 is the governing rule for Doubao credentials: "Secrets never enter git, issue, PR, commit, log, or screenshot. Repo keeps only `.env.example`; local and deploy credentials stay in private channels / GitHub Secrets. AI Sidecar must degrade to mock, timeout fallback, and never block bidding." Operational shorthand: **never into git, issues, PRs, commits, logs, or screenshots; the AI Sidecar can degrade**.
 
 Local development uses `.env` copied from `.env.example`. The real `DOUBAO_API_KEY` is filled only on a developer machine. The repository should ignore `.env` before anyone stores local credentials; if the root `.gitignore` is absent, PDGGK should decide when to create it and include `.env`.
 

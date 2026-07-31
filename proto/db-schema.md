@@ -20,9 +20,9 @@ evidence_chain_cache(auction_id, verified_seq, events_count, chain_head,
 ai_usage_logs(id, scenario, model_name, input_summary, output_summary, human_reviewed, created_at)
 ```
 
-### Issue #121 (火山直播 video) addition
+### Issue #121 (Volcengine Live video) addition
 
-- **`auction_rules.live_play_url`** — `VARCHAR(512) NOT NULL DEFAULT ''`. Optional HLS `.m3u8` / mp4 / webm URL that the room player renders as the 直播画面. **Non-authoritative** (display-only, never gates bids or state). Empty string (default) → room falls back to the simulated feed (CSS sheen, #110). The PATCH `/api/auctions/{id}` partial-merge accepts an update to this field while the auction is `DRAFT` or `SCHEDULED` (owner-only; identical posture to other rules).
+- **`auction_rules.live_play_url`** — `VARCHAR(512) NOT NULL DEFAULT ''`. Optional HLS `.m3u8` / mp4 / webm URL that the room player renders as the live video feed. **Non-authoritative** (display-only, never gates bids or state). Empty string (default) → room falls back to the simulated feed (CSS sheen, #110). The PATCH `/api/auctions/{id}` partial-merge accepts an update to this field while the auction is `DRAFT` or `SCHEDULED` (owner-only; identical posture to other rules).
 
 ## Unique constraints (prove correctness)
 
@@ -41,7 +41,7 @@ row; existing rows default to version 1.
 
 ## Persistence (T1 → T4)
 
-Persistence Worker consumes the `auction:{aid}:events` Stream and writes one `auction_events` row per event (idempotent via UNIQUE(auction_id, seq)). **T4** added, on the same Stream-first projection: the `event_hash`/`prev_hash` chain (filled idempotently + self-healing) and an idempotent `orders` row on `AUCTION_SOLD` (UNIQUE(auction_id) ⇒ exactly-once). The hash algorithm + canonical serialization are the `[全员 approve]` surface in **`proto/evidence-card.md`**.
+Persistence Worker consumes the `auction:{aid}:events` Stream and writes one `auction_events` row per event (idempotent via UNIQUE(auction_id, seq)). **T4** added, on the same Stream-first projection: the `event_hash`/`prev_hash` chain (filled idempotently + self-healing) and an idempotent `orders` row on `AUCTION_SOLD` (UNIQUE(auction_id) ⇒ exactly-once). The hash algorithm + canonical serialization are the `[all-member approve]` surface in **`proto/evidence-card.md`**.
 
 `evidence_chain_cache` is a read-path acceleration for `VerifyEvidenceChain`: it stores
 the highest verified seq and chain head, but callers only trust it when the auction's

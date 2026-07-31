@@ -1,6 +1,6 @@
 # Project Charter
 
-Lumen Auction：直播实时竞拍系统 turns the challenge brief’s “实时竞拍大师” into a credible live auction kernel: a known-item auction flow where sellers publish goods, confirm AI-drafted facts, freeze rules, run real-time bidding, and close with auditable order/evidence material.
+Lumen Auction: Real-Time Live-Streaming Auction System turns the challenge brief's "Real-Time Auction Master" into a credible live auction kernel: a known-item auction flow where sellers publish goods, confirm AI-drafted facts, freeze rules, run real-time bidding, and close with auditable order/evidence material.
 
 The PDF scoring split is the planning lens: 50% technical implementation and engineering completeness, 25% technical depth and innovation, 15% AI use and landing effect, and 10% project materials. The project therefore cannot be only a pretty room UI or only an infrastructure demo. It must show a full auction loop, real-time correctness, AI usage that is traceable, and clear demo/report material.
 

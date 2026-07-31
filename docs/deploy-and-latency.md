@@ -15,7 +15,7 @@
   client-perceived latency ≈ server-side latency today. That hides the real-world delta.
 - A real deploy introduces: cross-host **RTT**, **TLS/`wss`** handshake, a **reverse proxy** hop,
   and **cloud-disk fsync** under `AOF everysec` (frozen V8/V9 decision — kept).
-- "latency 更真实" = we want (a) the **client end-to-end** number under real RTT, and (b) confidence
+- "more realistic latency" = we want (a) the **client end-to-end** number under real RTT, and (b) confidence
   the **server-side SLO** still holds.
 
 ## 2. Measurement boundary (decision)
@@ -103,7 +103,7 @@ cloud target — cheap, no secrets, reversible.
   loopback). `perf-report.md` §2 already has an *"AOF fsync stalls"* row — fill it from the real box.
 - **Reconnect / catchup under real jitter** → re-verify `ROOM_JOIN + lastSeq` replay and the
   *catchup 200 events < 1s* target on the deployed box (jitter changes the reconnect storm shape).
-- **Room isolation** holds across the proxy/TLS hop (房间级 WS 路由 — spec §3 / §技术架构).
+- **Room isolation** holds across the proxy/TLS hop (room-level WS routing — spec §3 / §Technical Architecture).
 
 ## 7. Acceptance (closes #112)
 
@@ -115,7 +115,7 @@ cloud target — cheap, no secrets, reversible.
 
 ## References
 
-- spec §8 (可用性 / 性能 / 稳定性 / 可观测性 — 50% bucket), §技术架构 (房间级 WS 路由隔离)
+- spec §8 (availability / performance / stability / observability — 50% bucket), §Technical Architecture (room-level WS routing isolation)
 - Issues: #8 (load plan), #87 (demo freeze), #92 (test surface audit), #94 (k6 5k stress)
 - `docs/perf-report.md`, `docs/architecture-scaling-v10k.md`, `docs/secrets-workflow.md`
 - `infra/toxiproxy/toxiproxy.json`, `tools/loadtest/k6-ws.js`, `apps/lumen/internal/server/load.go`

@@ -1,1 +1,1 @@
-后续不在范围内的观察记录，按时间追加
+Out-of-scope observations, appended in chronological order.

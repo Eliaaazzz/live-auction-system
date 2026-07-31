@@ -1,12 +1,12 @@
 # `tools/loadtest/` — high-concurrency WS stress harnesses
 
-> Drives **真·万人 (10,000) concurrent WebSocket sessions** against the lumen
+> Drives **a true 10,000 concurrent WebSocket sessions** against the lumen
 > stack. Beyond V9 §4.2 stretch lane (1k connected / 100 active). Used to
-> validate the "万人并发" claim with real numbers, not promises.
+> validate the "10k concurrency" claim with real numbers, not promises.
 >
 > **Three external harnesses, by job:**
 > - **`wsload/`** (Go) — the one that actually reaches **10k** on a single box
->   (one goroutine + 1 KB buffer per conn). **Start here for 万人.** ✅
+>   (one goroutine + 1 KB buffer per conn). **Start here for 10k.** ✅
 > - **`k6-ws.js`** (k6) — 5k mixed observer/bidder, rich JS metrics; per-VU JS
 >   VM caps it on RAM well before 10k.
 > - **`locustfile.py`** (Locust) — behavioural mixed load; Python/gevent tops
@@ -30,7 +30,7 @@ class of test:
 
 ---
 
-## `wsload/` — Go 万人 (10k) harness ✅
+## `wsload/` — Go 10k harness ✅
 
 `wsload/` is a purpose-built Go WS load generator. It exists because the other
 two harnesses hit **client**-side ceilings far below 10k (Locust ~2k/process;
@@ -208,7 +208,7 @@ load generators are separate ECS workers.
 
 Apples-to-apples: the **same binary** caps at 1,972 over Windows loopback (proxy
 RST) but reaches **10,000 cleanly** over the network — proving the **gateway**,
-not the fan-out design (#118), was never the limit. The production 火山云
+not the fan-out design (#118), was never the limit. The production Volcengine Cloud
 re-measure (Part A8 of #121) repeats this from a separate region.
 
 ---

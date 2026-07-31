@@ -40,7 +40,7 @@ services:
       # Real AI is OPT-IN: with no key these stay empty → the sidecar serves the
       # canned generators (demo path unchanged). To go live, drop the values into
       # infra/.env — ONE key flips both VLM + auctioneer:
-      #   ARK_API_KEY=…       (火山方舟 API key)
+      #   ARK_API_KEY=…       (Volcengine Ark API key)
       #   ARK_VLM_MODEL=ep-…  (FAST multimodal ep, doubao-seed-1.6-flash class —
       #                        reads the image AND writes the intro in one call)
       #   ARK_LLM_MODEL=ep-…  (text ep for the auctioneer — a DIFFERENT ep, or

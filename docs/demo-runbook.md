@@ -1,4 +1,4 @@
-# Demo Runbook · 演示手册 (T10)
+# Demo Runbook (T10)
 
 > **3-minute full-chain demo** for the ByteDance Douyin E-commerce AI Full-Stack
 > challenge. The governing rule (V9 §4.4): **every demo node has a corresponding
@@ -11,7 +11,7 @@
 
 ---
 
-## 0. One command · 一条命令
+## 0. One command
 
 ```bash
 make demo      # full §12 path, leaves the stack up so you can show the UI
@@ -27,21 +27,21 @@ For a fast wiring check (small N, no 500/50 wall-clock): `make demo-smoke`.
 
 ---
 
-## 1. The path · 演示动线 (V9 §12)
+## 1. The path (V9 §12)
 
-Each row: the on-screen moment, the **narration** (说什么), the **`make` command
+Each row: the on-screen moment, the **narration**, the **`make` command
 that proves it**, and the assertable signal to point at.
 
-| # | 节点 On-screen | 说 Narration (zh) | `make` 验证 | Assert / 可指 |
+| # | On-screen | Narration | `make` verification | Assert / what to point at |
 |---|---|---|---|---|
-| 1 | 卖家上传商品图，VLM 抽取事实 | "AI 抽取品牌/成色/瑕疵，高风险字段标注『卖家声明·AI 未验证』" | `make e2e-dummy-bid` (step: facts draft + factsConfirmed gate) | `highRiskFieldsDisclaimer` present; create-auction **forbidden** until confirmed |
-| 2 | 卖家 confirm/edit facts + 配规则 | "起拍价 / 加价步长 / 时长 / 反狙击窗口，卖家最终背书" | same e2e (freeze → `CodeOKFrozen`) | freeze returns `OK_FROZEN`; rules locked |
-| 3 | 开拍，多观众实时出价，AI 冒泡 | "开拍/跳涨/冷场30s/落锤四触发，AI 是旁路、非裁决" | same e2e (start → `OK_LIVE` → multi-WS bid → broadcast) | bidder **and** observer both get `BID_ACCEPTED` |
-| 4 | 末 N 秒反狙击，倒计时延长 | "最后时刻出价自动延时，反阻击" | `make demo-auction` (+ UI live) | two `AUCTION_EXTENDED` (`extendCount` 1→2, bounded by `MaxExtensions`) |
-| 5 | 落锤 → 证据卡 | "成交即生成证据卡：图/价/timeline + `events_hash`" | `make demo-auction` (→ `AUCTION_SOLD` + `eventsHash`) · `make verify-evidence` | demo-auction asserts hammer + non-empty `eventsHash`; verify-evidence: exit 0, no `hash_break` |
-| 6 | Replay Verifier consistent | "Stream / Redis / MySQL 三方一致 + hash 链校验" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
-| 7 | 监控面板 500/50 | "500 在线 + 50 活跃出价，ack/broadcast p95 达标，**seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
-| 8 | 故障演练 30s ×5 | "MySQL/WS/Timer/AI/Redis 各挂一段，证明降级 + 自愈" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; AI 挂时出价继续 (V9 P3) |
+| 1 | Seller uploads product photos, the VLM extracts facts | "AI extracts brand/condition/flaws, and high-risk fields are labelled 'seller statement, not verified by AI'" | `make e2e-dummy-bid` (step: facts draft + factsConfirmed gate) | `highRiskFieldsDisclaimer` present; create-auction **forbidden** until confirmed |
+| 2 | Seller confirms/edits facts and sets rules | "Start price / bid increment / duration / anti-snipe window — the seller gives the final endorsement" | same e2e (freeze → `CodeOKFrozen`) | freeze returns `OK_FROZEN`; rules locked |
+| 3 | Auction starts, many viewers bid live, AI commentary bubbles up | "Four triggers — start / price jump / 30s of silence / hammer — and AI is a sidecar, never an adjudicator" | same e2e (start → `OK_LIVE` → multi-WS bid → broadcast) | bidder **and** observer both get `BID_ACCEPTED` |
+| 4 | Anti-snipe in the final N seconds, countdown extends | "A bid at the last moment extends the clock automatically — anti-sniping" | `make demo-auction` (+ UI live) | two `AUCTION_EXTENDED` (`extendCount` 1→2, bounded by `MaxExtensions`) |
+| 5 | Hammer → evidence card | "A sale immediately produces an evidence card: photo / price / timeline + `events_hash`" | `make demo-auction` (→ `AUCTION_SOLD` + `eventsHash`) · `make verify-evidence` | demo-auction asserts hammer + non-empty `eventsHash`; verify-evidence: exit 0, no `hash_break` |
+| 6 | Replay Verifier consistent | "Stream / Redis / MySQL agree three ways, plus the hash-chain check" | `make verify` | `consistent`; no `mismatch_at_seq` / `hash_break_at_seq` |
+| 7 | Monitoring dashboard at 500/50 | "500 online + 50 actively bidding, ack/broadcast p95 within budget, **seq gap = 0**" | `make load` | p95 within §4.2 budgets; `seqGapCount=0`; post-load verify consistent |
+| 8 | Five 30s chaos drills | "MySQL/WS/Timer/AI/Redis each go down for a while, proving degradation and self-healing" | `make chaos` | 5× `CHAOS_OK` + `✓ T9 PASSED · 5/5`; bidding continues while AI is down (V9 P3) |
 
 > `make demo` runs all of it automatically: nodes 1–3 (`e2e-dummy-bid`), **4–5
 > (`demo-auction`: anti-snipe extend → hammer → evidence)**, 5 (`verify-evidence`),
@@ -50,27 +50,27 @@ that proves it**, and the assertable signal to point at.
 
 ---
 
-## 2. Three-minute script · 三分钟脚本
+## 2. Three-minute script
 
 Pre-flight (before the clock): `make up && make seed` so the stack is warm.
 Open two tabs: `/admin` (seller console) and `/room/auc_demo` (buyer room) — the
 designed React app, served by lumen at `http://localhost:8080`.
 
-| 时间 | 画面 | 旁白要点 |
+| Time | Screen | Narration points |
 |---|---|---|
-| 0:00–0:30 | admin: 上传图 → VLM facts → confirm → 配规则 → 开拍 | 节点 1–2：AI 抽取 + 卖家背书 + 规则冻结 |
-| 0:30–1:15 | room: 多端出价，价格 odometer + 排行榜飞行 + AI 气泡 | 节点 3：实时竞价氛围；强调 AI 旁路 |
-| 1:15–1:35 | room: 末段反狙击，倒计时 `+Ns`，`extendCount` 徽标 | 节点 4：反阻击是差异化亮点 |
-| 1:35–2:00 | 落锤 → 证据卡，展开 hash 链；切终端 `make verify-evidence` / `make verify` | 节点 5–6：可信成交 + 三方一致 |
-| 2:00–2:35 | Grafana 面板：500/50，p95，seq gap=0；终端 `make load` 尾巴 | 节点 7：工程承压 |
-| 2:35–3:00 | 故障演练剪辑（5×30s）或 `make chaos` 尾巴；收尾 AI 挂、出价继续 | 节点 8 + V9 P3：韧性收束 |
+| 0:00–0:30 | admin: upload photo → VLM facts → confirm → set rules → start | Nodes 1–2: AI extraction + seller endorsement + rules frozen |
+| 0:30–1:15 | room: bids from several clients, price odometer + leaderboard flight + AI bubbles | Node 3: the live bidding atmosphere; stress that AI is a sidecar |
+| 1:15–1:35 | room: late-stage anti-snipe, countdown `+Ns`, the `extendCount` badge | Node 4: anti-sniping is a differentiating highlight |
+| 1:35–2:00 | hammer → evidence card, expand the hash chain; switch to the terminal for `make verify-evidence` / `make verify` | Nodes 5–6: a trustworthy sale + three-way consistency |
+| 2:00–2:35 | Grafana panel: 500/50, p95, seq gap=0; the tail of `make load` in the terminal | Node 7: the system under engineering load |
+| 2:35–3:00 | The chaos-drill cut (5×30s) or the tail of `make chaos`; close on AI down while bidding continues | Node 8 + V9 P3: resilience as the closing note |
 
 Keep a terminal visible running `make demo` in parallel — the scrolling
 `CHAOS_OK` / `✓ ... PASSED` lines are the "not a mockup" proof judges respond to.
 
 ---
 
-## 2.5 Innovation cutaway · #114 模式亮点（可选 20–30 秒）
+## 2.5 Innovation cutaway · #114 modes (optional, 20–30 seconds)
 
 The main 3-minute path should stay focused. If the judges ask "what is the
 innovation beyond English auction?", use a short cutaway backed by `make demo-smoke`:
@@ -88,7 +88,7 @@ Narration points:
 
 - **Sealed / Vickrey**: hidden bids stay private during LIVE, then reveal atomically at close.
 - **HYBRID_REVEAL**: the room sees runner-up pressure, while the true leader is hidden until SOLD.
-- **ALL_PAY**: show only as a **virtual coin event** — explicitly say **「虚拟币 · 非真实支付 · 非赌博」**. The evidence card exposes `settlement: "VIRTUAL_COINS_ONLY"`, and the backend verifier asserts there are zero normal `orders` rows.
+- **ALL_PAY**: show only as a **virtual coin event** — say explicitly that it is **virtual coins, not a real payment, and not gambling**. The evidence card exposes `settlement: "VIRTUAL_COINS_ONLY"`, and the backend verifier asserts there are zero normal `orders` rows.
 - **PREQUALIFY**: a sealed parent seeds the formal auction's start price through `/spawn-formal`.
 
 This cutaway is optional for timing, but the commands are not hand-wavy: every mode
@@ -96,7 +96,7 @@ demo asserts its own state/event/evidence invariant.
 
 ---
 
-## 3. Anti-snipe (node 4) · 反狙击演示
+## 3. Anti-snipe (node 4)
 
 `e2e-dummy-bid` does a single bid and exits before the timer, so it does **not**
 drive an `AUCTION_EXTENDED`. That gap is now closed by **`make demo-auction`**
@@ -124,7 +124,7 @@ Wired into `make demo` / `make demo-smoke` as node 3.
 
 ---
 
-## 4. Fallback ladder · 兜底梯度
+## 4. Fallback ladder
 
 Rehearse **all three** on 2026-06-09. Never debug live — drop one rung.
 
@@ -141,7 +141,7 @@ if rung 2 isn't green at **T-2 min**, play rung 3. No live debugging on stage.
 
 ---
 
-## 5. Backup recording shot list · 备播清单 (@PDGGK)
+## 5. Backup recording shot list (@PDGGK)
 
 Pre-record so rung 3 is complete (each is independently playable):
 
@@ -150,12 +150,12 @@ Pre-record so rung 3 is complete (each is independently playable):
 - [ ] `make chaos` terminal run (or 5× 30s clips: ai / redis / mysql / ws / timer) showing `CHAOS_OK` + self-heal
 - [ ] `make load` + Grafana panel: 500/50, p95, **seq gap = 0**
 - [ ] Evidence card hash-chain expand (`prev_hash → curr_hash`, first 8 hex)
-- [ ] ALL_PAY evidence marker: `settlement: "VIRTUAL_COINS_ONLY"` / 「虚拟币 · 非真实支付 · 非赌博」
-- [ ] AI-offline moment: badge flips "拍卖师暂离", bidding continues (V9 P3)
+- [ ] ALL_PAY evidence marker: `settlement: "VIRTUAL_COINS_ONLY"` / "virtual coins, not a real payment, not gambling"
+- [ ] AI-offline moment: the badge flips to "the auctioneer has stepped away" and bidding continues (V9 P3)
 
 ---
 
-## 6. Pre-demo checklist · 演示前检查
+## 6. Pre-demo checklist
 
 - [ ] `make demo` green on the presenter laptop (full path) — **2026-06-09**
 - [ ] CI green for the demo atoms (`e2e-ai-offline`, `chaos-smoke`, `load-smoke`, frontend smokes); run `make demo-smoke` locally if wrapper-order confidence is needed

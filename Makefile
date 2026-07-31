@@ -257,7 +257,7 @@ chaos-mysql:     ## phase 3: MySQL — bid path stays alive (Redis hot path); pe
 	@#  1. setup auction A (seq=1 baseline) → captures CHAOS_AID + CHAOS_BUYER_TOKEN
 	@#     (token reuse avoids devLogin during the outage; devLogin writes to MySQL)
 	@#  2. stop mysql → 2 more bids using cached token → expect OK_ACCEPTED
-	@#     (Redis-only hot path is unaffected per V9 §3 "MySQL 不在出价热路径")
+	@#     (Redis-only hot path is unaffected per V9 §3 "MySQL is not on the bid hot path")
 	@#  3. start mysql → wait-events until events-count >= 3 (persistence catches up)
 	@#  4. verify A (consistent across stream/snapshot/mysql — the persistence
 	@#     worker's idempotency is the gate)
@@ -377,9 +377,9 @@ chaos-smoke:     ## CI-cheap chaos check: AI phase only (already wired, ~30s) �
 	@echo "=== chaos-smoke (AI phase) ==="
 	@$(MAKE) chaos-ai
 
-## --- T10 demo orchestration (V9 §12 demo 动线 / §4.4 验收) ---
+## --- T10 demo orchestration (V9 §12 demo flow / §4.4 acceptance) ---
 ## The whole point of T10: the demo path is a SEQUENCE OF MAKE TARGETS, not a
-## screen recording (§4.4 "每个 demo 节点须有对应 make 验证命令"). `make demo`
+## screen recording (§4.4: "every demo step must have a matching make verification command"). `make demo`
 ## runs the full §12 path end-to-end as one assertable run; it is green iff every
 ## node holds. That green run IS the T10 exit evidence ("3-min demo path = e2e
 ## suite green"). Each sub-target already exits non-zero on any failed assertion,

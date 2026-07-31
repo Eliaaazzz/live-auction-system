@@ -1,6 +1,6 @@
-# 火山云 (Volcengine) production stack — lumen + ai-sidecar + Caddy (auto-TLS).
+# Volcengine production stack — lumen + ai-sidecar + Caddy (auto-TLS).
 #
-# MySQL + Redis are MANAGED cloud services (云数据库MySQL版 + 缓存Redis版), NOT
+# MySQL + Redis are MANAGED cloud services (managed MySQL + managed Redis), NOT
 # containers — so this is a standalone compose (run it ALONE, not layered on the
 # base infra/docker-compose.yml which ships local mysql/redis).
 #
@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
     environment:
       SIDECAR_ADDR: ":8090"
-      # Real AI opt-in (火山方舟 / 豆包). Empty → canned generators (unchanged).
+      # Real AI opt-in (Volcengine Ark / Doubao). Empty → canned generators (unchanged).
       # Set in infra/.env on the prod host: ARK_API_KEY + ARK_VLM_MODEL +
       # ARK_LLM_MODEL. IMPORTANT: use TWO DIFFERENT inference endpoints (ep-…) —
       # sharing one ep puts VLM facts/intro and the high-frequency auctioneer in
@@ -62,7 +62,7 @@ services:
       # MySQL may be supplied as MYSQL_DSN or as MYSQL_HOST + component fields.
       # config.Load fails fast in APP_ENV=prod when neither path is set.
       MYSQL_DSN: "${MYSQL_DSN:-}"
-      REDIS_ADDR: "${REDIS_ADDR:?set to the 缓存Redis版 intranet host:port}"
+      REDIS_ADDR: "${REDIS_ADDR:?set to the managed Redis intranet host:port}"
       REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
       # ---- secrets (shell env / infra/.env.prod; never commit) ----
       JWT_SECRET: "${JWT_SECRET:?set a strong non-default JWT secret}"
@@ -106,7 +106,7 @@ services:
       MYSQL_PASSWORD: "${MYSQL_PASSWORD:-}"
       MYSQL_DATABASE: "${MYSQL_DATABASE:-lumen}"
       MYSQL_TLS: "${MYSQL_TLS:-}"
-      # ---- 火山直播 (optional; unset → the room falls back to the sim sheen) ----
+      # ---- Volcengine Live (optional; unset → the room falls back to the sim sheen) ----
       VOLCENGINE_LIVE_PUSH_DOMAIN: "${VOLCENGINE_LIVE_PUSH_DOMAIN:-}"
       VOLCENGINE_LIVE_PLAY_DOMAIN: "${VOLCENGINE_LIVE_PLAY_DOMAIN:-}"
       VOLCENGINE_LIVE_SIGN_KEY: "${VOLCENGINE_LIVE_SIGN_KEY:-}"

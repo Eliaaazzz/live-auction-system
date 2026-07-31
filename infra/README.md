@@ -47,7 +47,7 @@ The subcommand keeps its `--mode=pg-writer` name (matches PR #19 `apps/lumen/cmd
 
 | File | UID | Purpose |
 |---|---|---|
-| `grafana/dashboards/auction-realtime.json` | `lumen-auction-realtime` | ⭐ 12-panel primary dashboard. Maps to rubric 可观测性 line. Demo opens this. |
+| `grafana/dashboards/auction-realtime.json` | `lumen-auction-realtime` | ⭐ 12-panel primary dashboard. Maps to the observability line in the rubric. Demo opens this. |
 | `grafana/dashboards/ai-sidecar.json` | `lumen-ai-sidecar` | Doubao calls, tokens, fallback, ban-word hits. |
 | `grafana/dashboards/chaos.json` | `lumen-chaos` | State of active fault injection — populated by `tools/chaos-runner/` at T9. |
 | `grafana/dashboards/infra-base.json` | `lumen-infra-base` | Redis / MySQL / Go runtime underlay. |
@@ -94,7 +94,7 @@ open http://localhost:3000/d/lumen-auction-realtime
 
 ## Why this exists ahead of T1
 
-Per [#14 v2 §7a](https://github.com/Eliaaazzz/live-auction-system/issues/14) + [PR #16 component doc 13-observability](https://github.com/Eliaaazzz/live-auction-system/blob/farizzz/structure-v2-component-breakdown/docs/components/13-observability.md), the rubric line **可观测性（竞拍状态监控、异常告警）** is one of the things mentor reviewers look at directly. T2 also explicitly needs a perf smoke that requires the dashboard live.
+Per [#14 v2 §7a](https://github.com/Eliaaazzz/live-auction-system/issues/14) + [PR #16 component doc 13-observability](https://github.com/Eliaaazzz/live-auction-system/blob/farizzz/structure-v2-component-breakdown/docs/components/13-observability.md), the rubric line **observability (auction-state monitoring, anomaly alerting)** is one of the things mentor reviewers look at directly. T2 also explicitly needs a perf smoke that requires the dashboard live.
 
 Landing this scaffolding ahead of T1 means:
 1. The moment Eliaaazzz's T1 binary exposes `/metrics`, the dashboard lights up automatically.

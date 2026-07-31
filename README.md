@@ -1,250 +1,254 @@
-# Lumen Auction · 直播实时竞拍系统
+# Lumen Auction · Real-Time Live-Streaming Auction System
 
-> **字节跳动 · 抖音电商 AI 全栈挑战赛**参赛项目 — 对应赛题「实时竞拍大师」。
+> Entry for the **ByteDance · Douyin E-Commerce AI Full-Stack Challenge** — track "Real-Time Auction Master".
 > A real-time live-streaming **auction kernel** for known, single, high-value items: sellers publish goods, confirm AI-drafted facts, freeze rules, run a real-time bid loop, hammer, and close with an **auditable order + evidence chain**.
 
 <p align="left">
   <code>Go (Gin/Fiber + Gorilla WS)</code> ·
   <code>React + TypeScript</code> ·
   <code>MySQL 8 + Redis</code> ·
-  <code>Redis Lua 原子裁决</code> ·
+  <code>Redis Lua atomic adjudication</code> ·
   <code>Replay Verifier</code>
 </p>
 
-**Status / 状态**：trunk-driven `T0…T10`｜当前节点 **T10**（Demo materials + freeze；T0–T9 已完成）｜内部 freeze **2026-06-08**｜对外 D-day **2026-06-10**。
+**Status**: trunk-driven `T0…T10` | current step **T10** (Demo materials + freeze; T0–T9 complete) | internal freeze **2026-06-08** | public D-day **2026-06-10**.
 
 ---
 
-## Table of Contents · 目录
+## Table of Contents
 
-- [1. What it is · 一句话定位](#1-what-it-is--一句话定位)
-- [2. Scoring alignment · 评分对齐](#2-scoring-alignment--评分对齐)
-- [3. Design invariants · 核心不变量](#3-design-invariants--核心不变量)
-- [4. Architecture · 架构](#4-architecture--架构)
-- [5. Repo layout · 仓库结构](#5-repo-layout--仓库结构)
-- [6. Quick start · 快速开始](#6-quick-start--快速开始)
-- [7. Contracts (the seam) · 契约（系统接缝）](#7-contracts-the-seam--契约系统接缝)
-- [8. State machine · 状态机](#8-state-machine--状态机)
-- [9. WebSocket protocol · WS 协议](#9-websocket-protocol--ws-协议)
-- [10. Redis keys, Lua & MySQL · 数据契约](#10-redis-keys-lua--mysql--数据契约)
-- [11. AI sidecar (non-adjudicating) · AI 旁路](#11-ai-sidecar-non-adjudicating--ai-旁路)
-- [12. Evidence chain & Replay Verifier · 证据链与回放校验](#12-evidence-chain--replay-verifier--证据链与回放校验)
-- [13. Acceptance metrics (SLO) · 可验收指标](#13-acceptance-metrics-slo--可验收指标)
-- [14. Trunk roadmap T0–T10 · 主干路线图](#14-trunk-roadmap-t0t10--主干路线图)
-- [15. CI gates & testing · CI 门禁与测试](#15-ci-gates--testing--ci-门禁与测试)
-- [16. Security baseline · 安全基线](#16-security-baseline--安全基线)
-- [17. Compliance scope · 合规边界](#17-compliance-scope--合规边界)
-- [18. Collaboration · 协作模式](#18-collaboration--协作模式)
-- [19. Docs index · 文档索引](#19-docs-index--文档索引)
-
----
-
-## 1. What it is · 一句话定位
-
-**Lumen Auction** 是面向高价值非标品的**直播竞拍闭环系统**。三个展示点 / three things it sells on:
-
-1. **实时竞拍硬功 · Real-time hard skills** — WebSocket 出价、Redis Lua 原子裁决、单调 `seq`、断线 catchup、排行榜、反狙击 (anti-snipe)、定时落锤 (timer hammer)。
-2. **可裁决 + 可回放 · Adjudicable & replayable** — Redis Lua 单脚本写入 + Redis Stream（ID = `<seq>-0`）+ MySQL 幂等投影 + **Replay Verifier 三方一致校验** (Stream ↔ Redis snapshot ↔ MySQL projection)。
-3. **AI 旁路创新 · AI as a non-authoritative sidecar** — VLM facts draft（卖家 confirm 后才进核心）、LLM 拍卖师文案（guardrail + 禁词后置）。**AI 永不参与出价裁决** / AI never touches bid acceptance, winner, price, or terminal state.
-
-> 关键句 / In one line：把「实时正确性」做成可证明的硬功，把 AI 做成可下线的旁路。
+- [1. What it is](#1-what-it-is)
+- [2. Scoring alignment](#2-scoring-alignment)
+- [3. Design invariants](#3-design-invariants)
+- [4. Architecture](#4-architecture)
+- [5. Repo layout](#5-repo-layout)
+- [6. Quick start](#6-quick-start)
+- [7. Contracts (the seam)](#7-contracts-the-seam)
+- [8. State machine](#8-state-machine)
+- [9. WebSocket protocol](#9-websocket-protocol)
+- [10. Redis keys, Lua & MySQL](#10-redis-keys-lua--mysql)
+- [11. AI sidecar (non-adjudicating)](#11-ai-sidecar-non-adjudicating)
+- [12. Evidence chain & Replay Verifier](#12-evidence-chain--replay-verifier)
+- [13. Acceptance metrics (SLO)](#13-acceptance-metrics-slo)
+- [14. Trunk roadmap T0–T10](#14-trunk-roadmap-t0t10)
+- [15. CI gates & testing](#15-ci-gates--testing)
+- [16. Security baseline](#16-security-baseline)
+- [17. Compliance scope](#17-compliance-scope)
+- [18. Collaboration](#18-collaboration)
+- [19. Docs index](#19-docs-index)
 
 ---
 
-## 2. Scoring alignment · 评分对齐
+## 1. What it is
 
-赛题 PDF 的评分拆分即本项目的规划镜头 / The PDF rubric is the planning lens（`docs/spec/`）:
+**Lumen Auction** is an end-to-end **live-streaming auction system** for high-value non-standardized goods. Three things it sells on:
 
-| 权重 Weight | 维度 Dimension | 本项目如何命中 How we hit it |
+1. **Real-time hard skills** — WebSocket bidding, Redis Lua atomic adjudication, monotonic `seq`, reconnect catchup, leaderboard, anti-snipe, timer hammer.
+2. **Adjudicable & replayable** — a single Lua script does the write + Redis Stream (ID = `<seq>-0`) + idempotent MySQL projection + a **Replay Verifier that cross-checks all three sides** (Stream ↔ Redis snapshot ↔ MySQL projection).
+3. **AI as a non-authoritative sidecar** — VLM facts draft (only enters the core after the seller confirms), LLM auctioneer copy (guardrail + banned-word post-filter). **AI never touches bid acceptance, winner, price, or terminal state.**
+
+> In one line: make real-time correctness a provable hard skill, and keep AI a sidecar you can switch off.
+
+---
+
+## 2. Scoring alignment
+
+The rubric in the challenge PDF is the planning lens (`docs/spec/`):
+
+| Weight | Dimension | How we hit it |
 |---:|---|---|
-| **50%** | 技术实现与工程完整度 · Implementation & completeness | 完整拍卖闭环 + CI 门禁 + 命名回归测试套件 (§15) |
-| **25%** | 技术深度与创新 · Technical depth & innovation | Lua 原子热路径、单 `seq` 无 gap、Replay Verifier、hash chain (§12) |
-| **15%** | AI 使用与落地效果 · AI usage & landing | VLM/LLM 旁路 + 可追溯 `docs/ai-usage/` 日志 (§11) |
-| **10%** | 项目材料 · Project materials | README / 压测报告 / 演示脚本 / 5 段故障演练录像 (§14 T8–T10) |
+| **50%** | Implementation & engineering completeness | Full auction loop + CI gates + named regression suite (§15) |
+| **25%** | Technical depth & innovation | Lua atomic hot path, single `seq` with no gaps, Replay Verifier, hash chain (§12) |
+| **15%** | AI usage & landed effect | VLM/LLM sidecar + traceable `docs/ai-usage/` logs (§11) |
+| **10%** | Project materials | README / load-test report / demo script / 5 chaos-drill recordings (§14 T8–T10) |
 
-不是只做漂亮房间 UI，也不是只做基础设施 demo —— 必须展示**完整闭环 + 实时正确性 + 可追溯 AI + 清晰材料**。
+This is not a pretty-room UI demo, nor an infrastructure-only demo — it has to show a **complete loop + real-time correctness + traceable AI + clear materials**.
 
 ---
 
-## 3. Design invariants · 核心不变量
+## 3. Design invariants
 
-这些是 RFC v2 §0 冻结的工程边界 (frozen engineering boundaries)，整个仓库依此实现，**不轻易重开** / not to be casually reopened:
+These are the engineering boundaries frozen in RFC v2 §0. The whole repo is implemented against them and they are **not to be casually reopened**:
 
-| # | 不变量 Invariant | 说明 Why |
+| # | Invariant | Why |
 |---|---|---|
-| ① | **Hash tag `{<aid>}` 同 slot** | 房间内多 key Lua 落在同一 Redis slot，集群下不 `CROSSSLOT`。 |
-| ② | **Lua validate-before-write** | Lua 无 rollback → 先 type-guard + 校验，再写；业务代码**不得**直接改热 key。 |
-| ③ | **Stream ID = `<seq>-0`** | 事件日志 ID 与单调 `seq` 绑定，可回放、可对齐。 |
-| ④ | **Redis TIME 权威，边界 `>=`** | 时间裁决唯一源是 Redis TIME；过期边界 `now >= endAtMs`。 |
-| ⑤ | **Dedupe = Hash，重试返原 ack** | 同 `clientBidId` 重试逐字节返回原始 ack（**不是** `DUPLICATE`-as-error）。 |
-| ⑥ | **单一 `seq`** | 每个 auction 仅一个单调序列，严格无 gap（并发下亦然）。 |
-| ⑦ | **AOF everysec + 不承诺金融级** | Redis 挂 → 显式 `ERR_AUCTION_PAUSED`，**绝不**经 MySQL 静默接单。 |
-| ⑧ | **WS `bufferedAmount` 1MB / 4MB** | 慢客户端背压阈值；关键消息 (bid ack) 不被软流量阻塞。 |
-| ⑨ | **视频 non-authoritative** | 视频/AI 只做展示与辅助文案，**非**价格/胜者/时间裁决源。 |
+| ① | **Hash tag `{<aid>}` keeps one slot** | Multi-key Lua for a room lands in the same Redis slot, so no `CROSSSLOT` under cluster mode. |
+| ② | **Lua validate-before-write** | Lua has no rollback → type-guard and validate first, then write; business code **must not** mutate hot keys directly. |
+| ③ | **Stream ID = `<seq>-0`** | The event-log ID is bound to the monotonic `seq`, so it is replayable and alignable. |
+| ④ | **Redis TIME is authoritative, boundary is `>=`** | The only source for time adjudication is Redis TIME; expiry boundary is `now >= endAtMs`. |
+| ⑤ | **Dedupe = Hash, retry returns the original ack** | A retry with the same `clientBidId` returns the original ack byte-for-byte (**not** `DUPLICATE`-as-error). |
+| ⑥ | **A single `seq`** | Each auction has exactly one monotonic sequence, strictly gap-free (including under concurrency). |
+| ⑦ | **AOF everysec, no financial-grade promise** | If Redis is down → explicit `ERR_AUCTION_PAUSED`; **never** silently accept bids via MySQL. |
+| ⑧ | **WS `bufferedAmount` 1MB / 4MB** | Backpressure thresholds for slow clients; critical messages (bid ack) are never blocked by soft traffic. |
+| ⑨ | **Video is non-authoritative** | Video/AI only drive presentation and supporting copy; they are **not** a source of truth for price, winner, or time. |
 
-约定 / Conventions：金额在所有 JS 可见边界 (WS / REST / evidence / AI) 一律为 **string**（避免 JS number 失真）；线上时间字段为 **`endAtMs`**（DB 为 `end_at`）；Lua 脚本命名 `place_bid.lua` / `close_auction.lua` / `cancel_auction.lua` / `start_auction.lua` / `freeze_rules.lua`，**禁止** `*_v2.lua`（CI grep 守门）。
+Conventions: money is a **string** at every JS-visible boundary (WS / REST / evidence / AI) to avoid JS number precision loss; the wire time field is **`endAtMs`** (DB column is `end_at`); Lua scripts are named `place_bid.lua` / `close_auction.lua` / `cancel_auction.lua` / `start_auction.lua` / `freeze_rules.lua`, and `*_v2.lua` is **forbidden** (guarded by a CI grep).
 
 ---
 
-## 4. Architecture · 架构
+## 4. Architecture
 
-四层架构 / four layers — Client → Edge → Core → Data。**WS Gateway 水平扩展且不碰拍卖真相；Bid Engine 单实例 + Redis Lua 原子裁决。** 详见 [`docs/architecture.md`](docs/architecture.md)。
+Four layers — Client → Edge → Core → Data. **The WS Gateway scales horizontally and never touches auction truth; the Bid Engine is single-instance plus Redis Lua atomic adjudication.** See [`docs/architecture.md`](docs/architecture.md).
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Client Layer · 客户端                                         │
-│  Admin PC               Mobile H5            Load Bot          │
-│  商品上架/规则/订单      直播间/出价/榜单      500/50 P0 · 1k/100 S │
+│ Client Layer                                                 │
+│  Admin PC              Mobile H5           Load Bot          │
+│  listing/rules/orders  room/bid/board      500/50 P0·1k/100 S│
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ REST               │ WebSocket
 ┌───────────────▼────────────────────▼─────────────────────────┐
-│ Edge Layer · 边缘                                             │
-│  API Gateway · Auth & Rate Limit · REST BFF                   │
-│  WebSocket Gateway：room 隔离 / 心跳 / lastSeq 恢复 / 广播      │
-│  （水平扩展，never mutates auction truth）                     │
+│ Edge Layer                                                   │
+│  API Gateway · Auth & Rate Limit · REST BFF                  │
+│  WebSocket Gateway: room isolation / heartbeat /             │
+│                     lastSeq recovery / broadcast             │
+│  (horizontally scalable, never mutates auction truth)        │
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ REST cmd/query     │ bid command
 ┌───────────────▼────────────────────▼─────────────────────────┐
-│ Core Layer · 核心（单一职责）                                  │
-│  Auction Service     Bid Engine          Timer Worker          │
-│  开拍/取消/冻结规则    place_bid.lua（唯一  close_auction.lua    │
-│                       bid 入口，原子）     （唯一过期裁决）       │
-│  Order Service       Persistence Worker   Metrics API          │
-│  幂等订单             Stream → MySQL 幂等   压测指标            │
+│ Core Layer (single responsibility each)                      │
+│  Auction Service    Bid Engine           Timer Worker        │
+│  start/cancel/      place_bid.lua        close_auction.lua   │
+│  freeze rules       (sole bid entry,     (sole expiry        │
+│                      atomic)              adjudicator)       │
+│  Order Service      Persistence Worker   Metrics API         │
+│  idempotent orders  Stream → MySQL,      load-test metrics   │
+│                     idempotent                               │
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ atomic write       │ stream consume
 ┌───────────────▼────────────────────▼─────────────────────────┐
-│ Data Layer · 数据                                             │
-│  Redis（实时唯一热源 · hot authoritative path）                │
-│   auction:{id}:state / :leaderboard / :events(Stream)         │
-│   :dedupe:{userId} / auction:active                           │
-│  MySQL（事实库 · fact & audit store）                          │
-│   users / products / auctions / auction_rules                 │
-│   bids / orders / auction_events / ai_usage_logs              │
+│ Data Layer                                                   │
+│  Redis (the only real-time hot authoritative path)           │
+│   auction:{id}:state / :leaderboard / :events(Stream)        │
+│   :dedupe:{userId} / auction:active                          │
+│  MySQL (fact & audit store)                                  │
+│   users / products / auctions / auction_rules                │
+│   bids / orders / auction_events / ai_usage_logs             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-数据规则 / data rules：Redis 是实时热路径 (AOF everysec)；MySQL 存事实/审计/AI 日志供回放；**Pub/Sub 仅作唤醒/fanout，catchup 与持久化走 Redis Stream**；AI Sidecar 解耦可降级。
+Data rules: Redis is the real-time hot path (AOF everysec); MySQL stores facts/audit/AI logs for replay; **Pub/Sub is only a wake-up and fanout channel — catchup and durability go through Redis Stream**; the AI sidecar is decoupled and degradable.
 
 ---
 
-## 5. Repo layout · 仓库结构
+## 5. Repo layout
 
 ```text
 live-auction-system/
 ├── apps/
-│   ├── lumen/                  # Go 主服务 (monolith, --mode 可选 gateway)
-│   │   ├── cmd/lumen/          # 入口；子命令含 `seed`
+│   ├── lumen/                  # Go main service (monolith, --mode can select gateway)
+│   │   ├── cmd/lumen/          # entrypoint; subcommands include `seed`
 │   │   └── internal/
 │   │       ├── server/         # ws.go / api.go / timer.go / persistence.go
 │   │       │                   # perf.go / verify.go / e2e.go / seed.go
 │   │       ├── lua/            # place_bid / close_auction / cancel_auction
-│   │       │                   # start_auction / freeze_rules （5 个脚本）
-│   │       ├── seqguard/       # 客户端 seq 守卫（丢弃乱序/重复帧）
-│   │       ├── store/          # Redis + MySQL 存储 + Lua 集成测试
-│   │       ├── model/          # 纯函数状态机 / 规则
-│   │       ├── auth/           # dev-login / ownership / Origin 校验
+│   │       │                   # start_auction / freeze_rules (5 scripts)
+│   │       ├── seqguard/       # client-side seq guard (drops out-of-order/duplicate frames)
+│   │       ├── store/          # Redis + MySQL storage + Lua integration tests
+│   │       ├── model/          # pure-function state machine / rules
+│   │       ├── auth/           # dev-login / ownership / Origin validation
 │   │       └── config/
-│   └── ai-sidecar/             # 非裁决 AI 旁路 (VLM facts / LLM 拍卖师)
-├── proto/                      # ★ canonical 契约（the seam，全员 approve 边界）
-├── docs/                       # 决策真相源 + 架构 / 状态机 / 协议 / 压测 / dev-log
-│   └── spec/                   # 赛题 PDF
+│   └── ai-sidecar/             # non-adjudicating AI sidecar (VLM facts / LLM auctioneer)
+├── proto/                      # ★ canonical contracts (the seam, everyone approves changes)
+├── docs/                       # decision source of truth + architecture / state machine / protocol / load tests / dev-log
+│   └── spec/                   # challenge PDF
 ├── web/                        # admin.html / room.html / index.html
 ├── infra/                      # docker-compose.yml + redis.conf + mysql init
-├── Makefile                    # demo path = 一串 make 目标
-└── .github/workflows/ci.yml    # CI 门禁
+├── Makefile                    # the demo path is a chain of make targets
+└── .github/workflows/ci.yml    # CI gates
 ```
 
 ---
 
-## 6. Quick start · 快速开始
+## 6. Quick start
 
-**前置 / Prereqs**：Docker（含 Compose v2）跑全栈；本地纯 Go 检查需 Go 1.22。
+**Prereqs**: Docker (with Compose v2) for the full stack; Go 1.22 for pure-Go local checks.
 
 ```bash
-# 1) 复制环境变量模板（密钥永不进 git；本地/部署凭据走私有渠道）
+# 1) Copy the env template (secrets never enter git; local/deploy credentials go through private channels)
 cp .env.example .env        # secrets stay local — see §16
 
-# 2) 一键起全栈：redis + mysql + lumen + ai-sidecar
+# 2) Bring up the whole stack: redis + mysql + lumen + ai-sidecar
 make up                     # docker compose up -d --build --wait
 
-# 3) 灌入 dev 种子（user + product + 一个 LIVE auction，幂等）
+# 3) Load dev seed data (user + product + one LIVE auction, idempotent)
 make seed
 
-# 打开 / open:
-#   Admin  后台：http://localhost:8080/admin.html
-#   Mobile H5  ：http://localhost:8080/room.html?auction=auc_demo
+# open:
+#   Admin console : http://localhost:8080/admin.html
+#   Mobile H5     : http://localhost:8080/room.html?auction=auc_demo
 ```
 
-**Demo path = make targets**（每个 demo 节点都有机器可验命令，非仅录屏）。一条命令跑完整 §12 全链路，全绿即 T10 验收证据：
+**The demo path is a set of make targets** — every demo step has a machine-verifiable command, not just a screen recording. One command runs the full §12 chain end to end; all green is the T10 acceptance evidence:
 
 ```bash
-make demo        # up→seed→e2e→demo-auction→verify-evidence→verify→load→chaos；任一节点失败即中止
-make demo-smoke  # CI-cheap 变体（小 N load-smoke + chaos-smoke），编排回归网
+make demo        # up→seed→e2e→demo-auction→verify-evidence→verify→load→chaos; aborts on the first failing step
+make demo-smoke  # CI-cheap variant (small-N load-smoke + chaos-smoke), the orchestration regression net
 ```
-详见 [`docs/demo-runbook.md`](docs/demo-runbook.md)（3-min 脚本 + 节点↔命令映射 + 兜底梯度）。
 
-| 命令 Command | 作用 What it does | 验收 Gate |
+See [`docs/demo-runbook.md`](docs/demo-runbook.md) for the 3-minute script, the step↔command mapping, and the fallback ladder.
+
+| Command | What it does | Gate |
 |---|---|---|
-| `make up` / `make down` | 起 / 停全栈（`down` 清卷） | health `/healthz` 全绿 |
-| `make seed` | 幂等 dev 种子 | — |
-| `make e2e-dummy-bid` | T1 端到端：上架→facts→冻结→开拍→出价→ack→持久化 | **exit 0** 即通过 |
-| `make demo-auction` | T10 §12.4-5：反狙击延时 (`AUCTION_EXTENDED`) → 落锤 (`AUCTION_SOLD`) → 证据卡 (`eventsHash`) | exit 0 + `extendCount` 断言 |
-| `make perf-smoke` | T2 性能地板检查 (ack/broadcast p95 vs 兜底预算) | floor-check |
-| `make load` / `load-smoke` | T8 压测 500 connected + 50 active + 压测后 verify | p95 超预算 / seq gap≠0 → exit≠0 |
-| `make verify-evidence` | T4 证据链：重算 `event_hash` 链 | `hash_break` → exit≠0 |
-| `make verify` | T6 Replay Verifier：stream/redis/mysql 三方一致 | mismatch/hash_break → exit≠0 |
-| `make chaos` / `chaos-smoke` | T9 五项故障演练 (ai/redis/mysql/ws/timer) 降级+自愈 | 5× `CHAOS_OK` / 非 0 退出 |
-| `make e2e-ai-offline` | T7-5：AI 下线核心竞拍仍继续 (V9 P3) | exit 0 |
-| `make build / vet / test / fmt` | 纯 Go：编译 / vet / 测试 / 格式化 | CI 用 |
-| `make guard` | 禁 `*_v2.lua`、禁真实 DOUBAO endpoint id | CI grep |
+| `make up` / `make down` | Start / stop the stack (`down` clears volumes) | `/healthz` all green |
+| `make seed` | Idempotent dev seed | — |
+| `make e2e-dummy-bid` | T1 end to end: publish→facts→freeze→start→bid→ack→persist | **exit 0** means pass |
+| `make demo-auction` | T10 §12.4-5: anti-snipe extension (`AUCTION_EXTENDED`) → hammer (`AUCTION_SOLD`) → evidence card (`eventsHash`) | exit 0 + `extendCount` assertion |
+| `make perf-smoke` | T2 performance floor check (ack/broadcast p95 vs the floor budget) | floor check |
+| `make load` / `load-smoke` | T8 load test: 500 connected + 50 active, plus a post-load verify | p95 over budget / seq gap≠0 → exit≠0 |
+| `make verify-evidence` | T4 evidence chain: recompute the `event_hash` chain | `hash_break` → exit≠0 |
+| `make verify` | T6 Replay Verifier: stream/redis/mysql three-way consistency | mismatch/hash_break → exit≠0 |
+| `make chaos` / `chaos-smoke` | T9 five chaos drills (ai/redis/mysql/ws/timer): degrade + self-heal | 5× `CHAOS_OK` / non-zero exit |
+| `make e2e-ai-offline` | T7-5: the core auction keeps running with AI offline (V9 P3) | exit 0 |
+| `make build / vet / test / fmt` | Pure Go: build / vet / test / format | used by CI |
+| `make guard` | Forbid `*_v2.lua` and real DOUBAO endpoint ids | CI grep |
 
-> 测试需 Redis + MySQL：CI 以 service container 提供，**所有集成测试都是真实门禁，CI 内零 skip**（见 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)）。
+> Tests need Redis + MySQL: CI provides them as service containers, and **every integration test is a real gate with zero skips in CI** (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ---
 
-## 7. Contracts (the seam) · 契约（系统接缝）
+## 7. Contracts (the seam)
 
-低耦合靠**契约即接缝**：所有跨组件耦合收敛到 `proto/`。改契约 = 改 seam = **全员 approve**（@Eliaaazzz + @PDGGK + @fariZzzz）；组件 `internal/` 内的改动 leader 即可推进。`proto/` 为 canonical，`docs/` 同名文件为指针。
+Low coupling comes from **contracts as seams**: all cross-component coupling converges into `proto/`. Changing a contract means changing the seam, which requires **approval from everyone** (@Eliaaazzz + @PDGGK + @fariZzzz); changes inside a component's `internal/` can be driven by its owner. `proto/` is canonical and the same-named files under `docs/` are pointers.
 
-| 契约 Contract | Canonical 文件 | 约束 Key bounds |
+| Contract | Canonical file | Key bounds |
 |---|---|---|
-| WS envelope | [`proto/ws-envelope.md`](proto/ws-envelope.md) | `type` SCREAMING_SNAKE · 4 channel · 心跳/重连/catchup · `amountCents` string · `endAtMs`/`serverTimeMs` |
-| Redis keys + Lua | [`proto/redis-keys.md`](proto/redis-keys.md) | hash tag `{<aid>}` 同 slot · state Hash（单 `seq`）· Stream ID `<seq>-0` · dedupe Hash |
-| Error codes | [`proto/error-codes.md`](proto/error-codes.md) | Lua 内部码 ↔ 线上 wire 码映射表 |
-| DB schema | [`proto/db-schema.md`](proto/db-schema.md) | 事实/事件表 + 唯一约束 + `event_hash`/`prev_hash` |
-| AI events | [`proto/ai-events.md`](proto/ai-events.md) | VLM schema（含 `high_risk_fields_disclaimer`）+ LLM guardrail + SSRF 白名单 |
-| State machine | [`docs/state-machine.md`](docs/state-machine.md) | canonical 终态 + 边界 `>=` + Lua 校验顺序（见 §8） |
+| WS envelope | [`proto/ws-envelope.md`](proto/ws-envelope.md) | `type` in SCREAMING_SNAKE · 4 channels · heartbeat/reconnect/catchup · `amountCents` as string · `endAtMs`/`serverTimeMs` |
+| Redis keys + Lua | [`proto/redis-keys.md`](proto/redis-keys.md) | hash tag `{<aid>}` keeps one slot · state Hash (single `seq`) · Stream ID `<seq>-0` · dedupe Hash |
+| Error codes | [`proto/error-codes.md`](proto/error-codes.md) | mapping table from internal Lua codes to wire codes |
+| DB schema | [`proto/db-schema.md`](proto/db-schema.md) | fact/event tables + unique constraints + `event_hash`/`prev_hash` |
+| AI events | [`proto/ai-events.md`](proto/ai-events.md) | VLM schema (incl. `high_risk_fields_disclaimer`) + LLM guardrail + SSRF allowlist |
+| State machine | [`docs/state-machine.md`](docs/state-machine.md) | canonical terminal states + `>=` boundary + Lua validation order (see §8) |
 
-> 规划中 (DRAFT, per Plan V9 §6)：`proto/openapi.yaml`（REST + snapshot fallback shape）与 `proto/evidence-card.md`（证据卡字段 + hash 算法 + canonical 序列化）。
+> Planned (DRAFT, per Plan V9 §6): `proto/openapi.yaml` (REST + snapshot fallback shape) and `proto/evidence-card.md` (evidence card fields + hash algorithm + canonical serialization).
 
 ---
 
-## 8. State machine · 状态机
+## 8. State machine
 
-canonical 状态契约 = [`docs/state-machine.md`](docs/state-machine.md)。`AUCTION_EXTENDED` 是 **event 不是 state**；过期裁决也不是独立持久态。
+The canonical state contract is [`docs/state-machine.md`](docs/state-machine.md). `AUCTION_EXTENDED` is an **event, not a state**, and expiry adjudication is not a separate persisted state either.
 
 ```text
 DRAFT ──(confirm AI facts + freeze rules)──▶ SCHEDULED
                                                 │ start_auction.lua
                                                 ▼
-                                              LIVE ──┐ place_bid.lua（含 anti-snipe 分支）
+                                              LIVE ──┐ place_bid.lua (incl. anti-snipe branch)
    ┌──────────────────────────────────────────┤
-   │ cap reached / now>=endAtMs & 有最高价 ─────▶ SOLD ──(order)──▶ ORDER_CREATED
-   │ now>=endAtMs & 无出价 ─────────────────────▶ NO_BID
-   └ 异常取消 (DRAFT/SCHEDULED/LIVE 任一) ───────▶ CANCELLED   ← cancel_auction.lua
+   │ cap reached / now>=endAtMs with a top bid ─▶ SOLD ──(order)──▶ ORDER_CREATED
+   │ now>=endAtMs with no bid ──────────────────▶ NO_BID
+   └ abnormal cancel (from DRAFT/SCHEDULED/LIVE) ▶ CANCELLED   ← cancel_auction.lua
 ```
 
-- 终态 (`SOLD` / `NO_BID` / `CANCELLED` / `ORDER_CREATED`) 拒绝新 bid，wire code = `ERR_NOT_LIVE`（用户文案 `after_hammer` 映射到此码）。
-- **落锤边界 race（确定性裁决）**：`now >= endAtMs` 时到达的 `BID_PLACE` 与 `close_auction.lua` 竞争 → `place_bid.lua` 返 `ERR_AFTER_END`、`close_auction.lua` 返 `OK_SOLD`（落锤优先，迟到 bid 必拒）。
-- 反狙击：在 `place_bid.lua` **同一脚本内**更新 `endAtMs` + `extendCount` + 写 Stream + 广播 `AUCTION_EXTENDED`（无独立 `extend.lua`）。
-- `reserve`（保留价）为 **P1 OPEN DECISION**，未经全员 ratify 前不进 P0 状态/schema/Lua。
+- Terminal states (`SOLD` / `NO_BID` / `CANCELLED` / `ORDER_CREATED`) reject new bids with wire code `ERR_NOT_LIVE` (the user-facing `after_hammer` copy maps onto this code).
+- **Hammer-boundary race (deterministic adjudication)**: a `BID_PLACE` arriving at `now >= endAtMs` races `close_auction.lua` → `place_bid.lua` returns `ERR_AFTER_END` and `close_auction.lua` returns `OK_SOLD` (hammer wins, a late bid is always rejected).
+- Anti-snipe: `endAtMs`, `extendCount`, the Stream write, and the `AUCTION_EXTENDED` broadcast all happen **inside the same `place_bid.lua` script** (there is no separate `extend.lua`).
+- `reserve` (reserve price) is a **P1 OPEN DECISION** and does not enter the P0 state/schema/Lua before everyone ratifies it.
 
 ---
 
-## 9. WebSocket protocol · WS 协议
+## 9. WebSocket protocol
 
-完整契约见 [`proto/ws-envelope.md`](proto/ws-envelope.md)（canonical）/ [`docs/ws-protocol.md`](docs/ws-protocol.md)。JSON camelCase；money 字段为 string。
+The full contract is [`proto/ws-envelope.md`](proto/ws-envelope.md) (canonical) / [`docs/ws-protocol.md`](docs/ws-protocol.md). JSON is camelCase; money fields are strings.
 
 **Envelope**
 
@@ -253,36 +257,36 @@ type WsEnvelope<T = unknown> = {
   type: string            // SCREAMING_SNAKE
   auctionId?: string
   seq?: number
-  serverTimeMs: number    // 客户端据此校准 serverClockOffsetMs
+  serverTimeMs: number    // the client calibrates serverClockOffsetMs from this
   data: T
 }
 ```
 
-| C→S | 作用 | S→C | 作用 |
+| C→S | Purpose | S→C | Purpose |
 |---|---|---|---|
-| `ROOM_JOIN {auctionId,lastSeq?}` | 进房；`lastSeq` 触发 catchup —— 缺失的 Stream delta 通过**同一组 server→client 类型**重放（无独立 `CATCHUP_EVENTS`），`gap>200` → 仅快照 | `ROOM_SNAPSHOT` | 进房时房间状态：现价/胜者/`endAtMs`/`seq`/status |
-| `BID_PLACE {clientBidId,amountCents}` | 出价 | `BID_ACCEPTED` / `BID_REJECTED` | ack（含 `seq`/`endAtMs`/status）/ 拒绝（含 `code`） |
-| `PING` | 心跳 | `AUCTION_EXTENDED` | 反狙击延时（event，非 state） |
-| | | `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` | 终态事件 |
-| | | `PONG` | 心跳应答 |
+| `ROOM_JOIN {auctionId,lastSeq?}` | Join a room; `lastSeq` triggers catchup — the missing Stream delta is replayed through **the same set of server→client types** (there is no separate `CATCHUP_EVENTS`), and `gap>200` falls back to snapshot only | `ROOM_SNAPSHOT` | Room state on join: current price / leader / `endAtMs` / `seq` / status |
+| `BID_PLACE {clientBidId,amountCents}` | Place a bid | `BID_ACCEPTED` / `BID_REJECTED` | Ack (carries `seq`/`endAtMs`/status) / rejection (carries `code`) |
+| `PING` | Heartbeat | `AUCTION_EXTENDED` | Anti-snipe extension (an event, not a state) |
+| | | `AUCTION_SOLD` / `AUCTION_NO_BID` / `AUCTION_CANCELLED` | Terminal events |
+| | | `PONG` | Heartbeat reply |
 
-> 离房走 WS close（无显式 `ROOM_LEAVE` envelope）；聊天不在 V9 scope。**用户被超越提示** = `BID_REJECTED.code=ERR_TOO_LOW` + 前端 inline toast（roadmap：proxy bidding 落地后接 `USER_OUTBID`，见 [RFC #58](../../issues/58)）。
+> Leaving a room is just a WS close (there is no explicit `ROOM_LEAVE` envelope); chat is out of scope for V9. **The outbid notice** is `BID_REJECTED.code=ERR_TOO_LOW` plus a frontend inline toast (roadmap: once proxy bidding lands it wires to `USER_OUTBID`, see [RFC #58](../../issues/58)).
 
-**Error / result codes**：`OK_ACCEPTED` `OK_SOLD` `DUPLICATE` `ERR_NOT_LIVE` `ERR_TOO_LOW` `ERR_AFTER_END` `ERR_RATE_LIMITED` `ERR_AUCTION_PAUSED` `OK_CANCELLED` `OK_NO_BID` `ERR_NOT_DUE` `ERR_ALREADY_TERMINAL` `ERR_NOT_ALLOWED`。`DUPLICATE(previousResult)` 是幂等重放，**非**客户端拒绝。
+**Error / result codes**: `OK_ACCEPTED` `OK_SOLD` `DUPLICATE` `ERR_NOT_LIVE` `ERR_TOO_LOW` `ERR_AFTER_END` `ERR_RATE_LIMITED` `ERR_AUCTION_PAUSED` `OK_CANCELLED` `OK_NO_BID` `ERR_NOT_DUE` `ERR_ALREADY_TERMINAL` `ERR_NOT_ALLOWED`. `DUPLICATE(previousResult)` is an idempotent replay, **not** a client-side rejection.
 
-**背压 / backpressure（两 lane，T5）**（不变量 ⑧）：每连接分 **critical** lane（bid ack、`AUCTION_*` 事件、`ROOM_SNAPSHOT`、catchup —— socket 开着绝不静默丢；满则 force-close 让客户端重连重放）与 **best-effort** lane（`PONG`，以及未来的 presence/chat —— 满则丢该帧、保连接）。critical 以优先级排空，一个慢客户端不拖垮房间广播；`bufferedAmount` 1MB/4MB 阈值在 T8 压测下调优。
+**Backpressure (two lanes, T5)** (invariant ⑧): each connection has a **critical** lane (bid acks, `AUCTION_*` events, `ROOM_SNAPSHOT`, catchup — never silently dropped while the socket is open; when it fills, the connection is force-closed so the client reconnects and replays) and a **best-effort** lane (`PONG`, plus future presence/chat — when it fills, that frame is dropped and the connection is kept). The critical lane drains by priority, so one slow client cannot drag down room broadcast; the 1MB/4MB `bufferedAmount` thresholds were tuned under the T8 load test.
 
-**倒计时 / countdown**：`remainingMs = endAtMs - (clientNowMs + serverClockOffsetMs)`，`serverClockOffsetMs` 由快照/事件里的 `serverTimeMs` 校准。
+**Countdown**: `remainingMs = endAtMs - (clientNowMs + serverClockOffsetMs)`, where `serverClockOffsetMs` is calibrated from the `serverTimeMs` carried by snapshots and events.
 
 ---
 
-## 10. Redis keys, Lua & MySQL · 数据契约
+## 10. Redis keys, Lua & MySQL
 
-详见 [`docs/redis-keys.md`](docs/redis-keys.md) 与 [`docs/mysql-schema.md`](docs/mysql-schema.md)。
+See [`docs/redis-keys.md`](docs/redis-keys.md) and [`docs/mysql-schema.md`](docs/mysql-schema.md).
 
-**Redis 热键（同 hash tag `{<aid>}`）**：`:state`(Hash, 单 `seq`) · `:leaderboard`(ZSET) · `:dedupe:{userId}`(Hash, TTL 24h) · `:events`(Stream, ID `<seq>-0`) · `:pub`(Pub/Sub) · `auction:active`(ZSET, score=`endAtMs`) · `room:{<aid>}:online`。
+**Redis hot keys (same hash tag `{<aid>}`)**: `:state` (Hash, single `seq`) · `:leaderboard` (ZSET) · `:dedupe:{userId}` (Hash, TTL 24h) · `:events` (Stream, ID `<seq>-0`) · `:pub` (Pub/Sub) · `auction:active` (ZSET, score=`endAtMs`) · `room:{<aid>}:online`.
 
-**P0 Lua 脚本与返回码**（Lua 无 rollback → validate-before-write）：
+**P0 Lua scripts and return codes** (Lua has no rollback → validate before write):
 
 ```text
 place_bid.lua(aid,userId,clientBidId,amountCents,requestId)
@@ -292,138 +296,138 @@ close_auction.lua(aid)      → OK_SOLD | OK_NO_BID | ERR_NOT_DUE(msRemaining) |
 cancel_auction.lua(aid,sellerId,reason) → OK_CANCELLED | ERR_ALREADY_TERMINAL | ERR_NOT_ALLOWED
 ```
 
-接受金额 = `min(amountCents, capPriceCents)`；成功后递增单一 `seq` → 写 Stream → 再 publish。
+Accepted amount = `min(amountCents, capPriceCents)`; on success the single `seq` is incremented → the Stream is written → then publish.
 
-**MySQL 唯一约束（证明无重复 / 可回放）**：`bids UNIQUE(auction_id, seq)`、`bids UNIQUE(auction_id, user_id, client_bid_id)`、`orders UNIQUE(auction_id)`、`auction_events UNIQUE(auction_id, seq)`。
-
----
-
-## 11. AI sidecar (non-adjudicating) · AI 旁路
-
-两个展示点，**均不参与裁决** / two demo points, never authoritative:
-
-1. **VLM facts draft** — 从商品图起草事实卡，高风险字段带 `high_risk_fields_disclaimer`（标注「卖家声明 / AI 未验证」），**卖家 confirm/edit 后**才能进核心、才能开拍。
-2. **LLM 拍卖师** — 纯文本流式控场，4 个触发点：开拍 / 跳涨 / 冷场 30s / 落锤；guardrail + 禁词后置 regex；**AI 下线 → 徽章提示，核心竞拍照常继续**（`make e2e-ai-offline` 断言出价仍 ack）。
-
-安全 / safety：VLM 取图走白名单 origin、禁私网/IMDS、限大小+超时、不跟随 redirect；product 文本一律当**不可信数据**（防 prompt injection 伪造真伪声明）。AI 使用全程记录于 [`docs/ai-usage/`](docs/ai-usage/README.md)，公开材料用脱敏摘要，绝不记录 prompt 原文/密钥。
+**MySQL unique constraints (proof of no duplicates / replayability)**: `bids UNIQUE(auction_id, seq)`, `bids UNIQUE(auction_id, user_id, client_bid_id)`, `orders UNIQUE(auction_id)`, `auction_events UNIQUE(auction_id, seq)`.
 
 ---
 
-## 12. Evidence chain & Replay Verifier · 证据链与回放校验
+## 11. AI sidecar (non-adjudicating)
 
-**证据卡 / evidence card**：facts confirmed snapshot + 冻结规则 + 完整成功 bid timeline + `seq` 区间 + **`events_hash` 链**。
+Two demo points, neither of them authoritative:
 
-**Replay Verifier**（P0，T6）：重放 Stream，比对 **Stream ↔ Redis snapshot ↔ MySQL `auction_events` 三方一致**，输出 `consistent` / `mismatch_at_seq=X` / `hash_break_at_seq=Y`；`make verify` 在不一致时 **exit≠0**（CI/demo 门禁，非仅截图）。
+1. **VLM facts draft** — drafts a fact card from the product photos; high-risk fields carry `high_risk_fields_disclaimer` (labelled "seller statement / not verified by AI"), and the draft can only enter the core and start an auction **after the seller confirms or edits it**.
+2. **LLM auctioneer** — pure-text streaming commentary with 4 triggers: auction start / price jump / 30s of silence / hammer; guardrail plus a banned-word regex post-filter. **If AI goes offline, a badge is shown and the core auction keeps running** (`make e2e-ai-offline` asserts bids still get acked).
 
-**Hash chain 威胁模型（精确，不过度宣称）**：`event_hash = HMAC(key, prev_hash ‖ canonical(seq, event_type, payload))`；HMAC key 不与业务 DB 同库存放，chain head 在证据卡公示。**能防**事后单点篡改历史 payload（链断即 `hash_break_at_seq`）；**不等于**外部公证/区块链锚定。若 key 与写事件进程同库可读，措辞即降为「integrity/consistency check」。
+Safety: VLM image fetches use an origin allowlist, block private networks/IMDS, cap size and timeout, and do not follow redirects; product text is always treated as **untrusted data** (defence against prompt injection forging authenticity claims). All AI usage is logged under [`docs/ai-usage/`](docs/ai-usage/README.md); public materials use redacted summaries and never record raw prompts or keys.
 
 ---
 
-## 13. Acceptance metrics (SLO) · 可验收指标
+## 12. Evidence chain & Replay Verifier
 
-**正确性（0 容忍，全部为命名 CI 测试）**：`(auction_id, seq)` 唯一且并发下严格单调 **seq gap = 0**；同 `clientBidId` 重试返原 ack；终态拒 bid = `ERR_NOT_LIVE`；落锤 race pinned oracle；Replay Verifier `consistent`（**在压测后的 auction 上跑**）。
+**Evidence card**: the confirmed facts snapshot + frozen rules + the full successful-bid timeline + the `seq` range + the **`events_hash` chain**.
 
-**性能 / performance**（区分 P0-gate 与 Stretch）：
+**Replay Verifier** (P0, T6): replays the Stream and compares **Stream ↔ Redis snapshot ↔ MySQL `auction_events` for three-way consistency**, emitting `consistent` / `mismatch_at_seq=X` / `hash_break_at_seq=Y`; `make verify` **exits non-zero** on any inconsistency (a CI/demo gate, not just a screenshot).
 
-| 指标 Metric | P0 gate | 兜底 Floor | 类别 |
+**Hash chain threat model (precise, not overclaimed)**: `event_hash = HMAC(key, prev_hash ‖ canonical(seq, event_type, payload))`; the HMAC key is not stored in the same database as business data, and the chain head is published on the evidence card. It **does defend against** after-the-fact single-point tampering of historical payloads (a broken chain surfaces as `hash_break_at_seq`); it is **not equivalent to** external notarization or blockchain anchoring. If the key were readable from the same database as the event-writing process, the wording would be downgraded to "integrity/consistency check".
+
+---
+
+## 13. Acceptance metrics (SLO)
+
+**Correctness (zero tolerance, all of them named CI tests)**: `(auction_id, seq)` is unique and strictly monotonic under concurrency, so **seq gap = 0**; a retry with the same `clientBidId` returns the original ack; terminal states reject bids with `ERR_NOT_LIVE`; the hammer race has a pinned oracle; the Replay Verifier reports `consistent` (**run on an auction that has been through the load test**).
+
+**Performance** (P0 gates vs stretch goals):
+
+| Metric | P0 gate | Floor | Category |
 |---|---|---|---|
 | `BID_ACCEPTED` ack p95 | **< 80 ms** | < 200 ms | P0 gate |
-| Broadcast p95（Bid Engine → 末端观众） | **< 150 ms** | < 500 ms | P0 gate |
-| Hammer 广播 p95 | **< 500 ms** | < 2 s | P0 gate |
-| Reconnect catchup 200 events | **< 1 s** | < 3 s | P0 gate |
-| 单房 **500 connected + 50 active** | 稳定 60s+ | — | P0 gate |
-| 1k connected + 100 active | ack p99 < 100ms / broadcast p99 < 300ms | — | **Stretch（非 gate）** |
+| Broadcast p95 (Bid Engine → last viewer) | **< 150 ms** | < 500 ms | P0 gate |
+| Hammer broadcast p95 | **< 500 ms** | < 2 s | P0 gate |
+| Reconnect catchup, 200 events | **< 1 s** | < 3 s | P0 gate |
+| One room at **500 connected + 50 active** | stable for 60s+ | — | P0 gate |
+| 1k connected + 100 active | ack p99 < 100ms / broadcast p99 < 300ms | — | **Stretch (not a gate)** |
 
-> 热路径预算：`place_bid.lua` exec **p99 < 5 ms**（单线程 Redis，超则拆脚本 / 把 leaderboard ZADD 移出热路径）—— 这是 ack p95 < 80ms 的前置 gate。压测报告须含机器规格、gateway 拓扑、拒绝分布、慢客户端 `bufferedAmount` 曲线、`place_bid.lua` 耗时直方图、Stream/Persistence lag。
+> Hot-path budget: `place_bid.lua` exec **p99 < 5 ms** (Redis is single-threaded, so if it goes over we split the script or move the leaderboard ZADD off the hot path) — this is the prerequisite gate for ack p95 < 80ms. The load-test report must include machine specs, gateway topology, rejection distribution, slow-client `bufferedAmount` curves, a `place_bid.lua` latency histogram, and Stream/Persistence lag.
 
 ---
 
-## 14. Trunk roadmap T0–T10 · 主干路线图
+## 14. Trunk roadmap T0–T10
 
-推进单位是**一条每天可演示的 trunk**（替代旧的 4-Sprint）。每个 T = demo path 上一个可运行节点，跑完始终 end-to-end runnable。真相源 = [Issue #1 Plan V9](../../issues/1)。
+The unit of progress is **one trunk that is demoable every day** (this replaced the older 4-sprint plan). Each T is a runnable step on the demo path, and the system stays end-to-end runnable throughout. Source of truth: [Issue #1 Plan V9](../../issues/1).
 
-> 主轴 / demo path：`seller create → AI facts → freeze rules → live bid → hammer → order/evidence → replay/load/materials`
+> Main axis / demo path: `seller create → AI facts → freeze rules → live bid → hammer → order/evidence → replay/load/materials`
 
-| T | 节点 Step | 这步后能演示 | 状态 |
+| T | Step | What it demos | Status |
 |---|---|---|:--:|
-| **T0** | 契约冻结 + 骨架启动 | 契约可消费；`make up` 全绿；CI 门禁上线 | ✅ |
-| **T1** | Dummy bid roundtrip | 上架→facts→冻结→开拍→1 bid→ack+广播+持久化 | ✅ |
-| **T2** | 原子 bid core | 并发出价正确裁决 + 排行榜 + perf smoke | ✅ |
-| **T3** | Hammer + 反狙击 + cancel + durable stream | 到点自动落锤、最后一刻延时、异常取消、seq gap=0 | ✅ |
-| **T4** | Persistence + order + evidence v0 | 落锤生成幂等订单 + 证据卡时间线 + hash 链 | ✅ |
-| **T5** | Multi-gateway + catchup | 水平 gateway + 断线重连无缝续看（背压双 lane） | ✅ |
-| **T6** | **Replay Verifier + hash 校验 UI** | 一键验证三方一致 + 证据卡 verify 按钮 | ✅ |
-| **T7** | AI sidecar 全量（非裁决） | AI 控场冒泡 + 可下线（VLM facts + SSRF 白名单 + 4 触发器） | ✅ |
-| **T8** | 500/50 压测 + perf 调优 | 稳定压测 + 达标延时 + dashboard（p50/p95/p99 + seq gap=0） | ✅ |
-| **T9** | 5 项故障演练 | MySQL/WS/Timer/AI/Redis 故障可降级+自愈（`make chaos` 可断言） | ✅ |
-| **T10** | Demo materials + freeze | 公网 deploy + 本地 fallback + 备播 + 3-min demo（`make demo` + [demo-runbook](docs/demo-runbook.md)） | ⏳ 进行中 |
+| **T0** | Freeze contracts + boot the skeleton | Contracts are consumable; `make up` all green; CI gates live | ✅ |
+| **T1** | Dummy bid roundtrip | publish→facts→freeze→start→1 bid→ack+broadcast+persist | ✅ |
+| **T2** | Atomic bid core | Correct adjudication under concurrent bids + leaderboard + perf smoke | ✅ |
+| **T3** | Hammer + anti-snipe + cancel + durable stream | Auto hammer on time, last-second extension, abnormal cancel, seq gap=0 | ✅ |
+| **T4** | Persistence + order + evidence v0 | Hammer produces an idempotent order + evidence-card timeline + hash chain | ✅ |
+| **T5** | Multi-gateway + catchup | Horizontal gateways + seamless viewing across reconnects (two-lane backpressure) | ✅ |
+| **T6** | **Replay Verifier + hash verification UI** | One-click three-way consistency check + a verify button on the evidence card | ✅ |
+| **T7** | Full AI sidecar (non-adjudicating) | AI commentary bubbles + can be taken offline (VLM facts + SSRF allowlist + 4 triggers) | ✅ |
+| **T8** | 500/50 load test + perf tuning | Stable load run + latencies within budget + dashboard (p50/p95/p99 + seq gap=0) | ✅ |
+| **T9** | 5 chaos drills | MySQL/WS/Timer/AI/Redis failures degrade and self-heal (assertable via `make chaos`) | ✅ |
+| **T10** | Demo materials + freeze | Public deploy + local fallback + standby recording + 3-min demo (`make demo` + [demo-runbook](docs/demo-runbook.md)) | ⏳ in progress |
 
-**Stretch lane（并行、可砍、不阻塞）**：1k/100 压测、风控黄红灯、动态加价建议、邮箱 OTP、TTS、物理拆 socket、reserve（先 ratify）。
-
----
-
-## 15. CI gates & testing · CI 门禁与测试
-
-CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）以 **Redis + MySQL service container** 跑全部集成测试 —— **CI 内零 skip**，任何 `--- SKIP` 即失败。4 个 required check job：
-
-1. **`go`** — `go mod tidy` 干净 → `gofmt` → `go vet` → `go build` → **`go test -race`**（redis + mysql 真实集成，零 skip）。
-2. **`guards`** — 禁 `*_v2.lua`、禁真实 DOUBAO endpoint id、`proto/` 契约文件存在。
-3. **`e2e`** — 全栈起 + `/healthz` + seed，然后链式跑 demo path 各原子节点：`e2e-dummy-bid`（T1）→ `perf-smoke`（T2）→ `verifier`（T6 三方一致）→ `verify-evidence`（T4 hash 链）→ `e2e-ai-offline`（T7-5 / V9 P3）→ `chaos-smoke`（T9 AI 相）→ `load-smoke`（T8 + 压测后 verify）→ 前端 smoke 脚本（catchup/schema/401/antisnipe/snapshot）。
-4. **`web`** — 前端 Vitest 套件（design-token 漂移检查 + `npm run build` + `npm test`）。
-
-> 完整 5 项故障演练 (`make chaos`) 与全量 500/50 压测 (`make load`) 需 Docker + 分钟级时长，故走 operator-run / 彩排，不入 CI；`chaos-smoke` + `load-smoke` 作为 CI 内的回归网。
-
-**覆盖率分区 floor**：状态机（纯函数）≥ 95%；Lua 每个 return code 须有 harness 覆盖；envelope codec / catchup / persistence-idempotency / order-idempotency 各有命名测试；全局 ≥ 80%。
-
-**§4.1 → 命名回归套件**（从 T3 起每次 merge 跑）：并发 seq gap=0 · 同 `clientBidId` 逐字节同 ack · 终态拒 bid `ERR_NOT_LIVE` · 已终态 close → `ERR_ALREADY_TERMINAL`、未到期 → `ERR_NOT_DUE` · anti-snipe `endAtMs↑` + Stream 事件 · 落锤 race pinned · cancel → `OK_CANCELLED` + `AUCTION_CANCELLED`。
+**Stretch lane (parallel, cuttable, non-blocking)**: 1k/100 load test, risk-control amber/red lights, dynamic increment suggestions, email OTP, TTS, physically splitting the socket, reserve price (ratify first).
 
 ---
 
-## 16. Security baseline · 安全基线（T1 起生效）
+## 15. CI gates & testing
 
-| 面 Surface | 约束 Constraint |
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs every integration test against **Redis + MySQL service containers** — **zero skips in CI**, and any `--- SKIP` is a failure. Four required check jobs:
+
+1. **`go`** — `go mod tidy` clean → `gofmt` → `go vet` → `go build` → **`go test -race`** (real redis + mysql integration, zero skips).
+2. **`guards`** — forbid `*_v2.lua`, forbid real DOUBAO endpoint ids, require the `proto/` contract files to exist.
+3. **`e2e`** — bring up the stack + `/healthz` + seed, then chain through each atomic step of the demo path: `e2e-dummy-bid` (T1) → `perf-smoke` (T2) → `verifier` (T6 three-way consistency) → `verify-evidence` (T4 hash chain) → `e2e-ai-offline` (T7-5 / V9 P3) → `chaos-smoke` (T9 AI case) → `load-smoke` (T8 + post-load verify) → frontend smoke scripts (catchup/schema/401/antisnipe/snapshot).
+4. **`web`** — the frontend Vitest suite (design-token drift check + `npm run build` + `npm test`).
+
+> The full five chaos drills (`make chaos`) and the full 500/50 load test (`make load`) need Docker and take minutes, so they are operator-run / rehearsal steps rather than CI steps; `chaos-smoke` + `load-smoke` are the in-CI regression net.
+
+**Coverage floors by area**: state machine (pure functions) ≥ 95%; every Lua return code must be covered by a harness; envelope codec / catchup / persistence idempotency / order idempotency each have a named test; global ≥ 80%.
+
+**§4.1 → the named regression suite** (run on every merge from T3 onwards): concurrent seq gap=0 · same `clientBidId` returns a byte-identical ack · terminal states reject bids with `ERR_NOT_LIVE` · closing an already-terminal auction → `ERR_ALREADY_TERMINAL`, closing one that is not due → `ERR_NOT_DUE` · anti-snipe raises `endAtMs` + emits a Stream event · the hammer race is pinned · cancel → `OK_CANCELLED` + `AUCTION_CANCELLED`.
+
+---
+
+## 16. Security baseline (in force from T1)
+
+| Surface | Constraint |
 |---|---|
-| **Auth** | `ENABLE_DEV_LOGIN` 默认 false，非 dev 硬关（dev compose 显式 opt-in 设 `"true"`，见 `infra/docker-compose.yml`）；seller 动作服务端校验调用者**拥有该 auction**，**绝不信任 client 传的 `sellerId`**；非本地 `JWT_SECRET=change-me-local-only` 时启动失败。 |
-| **WS** | handshake 校验 token 并绑连接；**Origin 白名单**（`FRONTEND_ORIGIN`）防 CSWSH；max frame size；每连接出价 rate limit (`ERR_RATE_LIMITED`)。 |
-| **AI / SSRF** | VLM 取图走白名单 origin、禁私网/IMDS、限大小+超时、不跟随 redirect；product 文本当不可信数据防 prompt injection。 |
-| **Secrets** | 密钥**永不**进 git / issue / PR / commit / log / 截图；仓库只留 `.env.example`，本地与部署凭据走私有渠道 / GitHub Secrets；secret scan 跑全 commit + 全历史 baseline。 |
-| **Upload** | 图片按 magic-byte 校验 MIME + 限大小 + 服务端随机文件名 + `X-Content-Type-Options: nosniff`；`image_url` 套 SSRF 白名单。 |
+| **Auth** | `ENABLE_DEV_LOGIN` defaults to false and is hard-off outside dev (the dev compose opts in explicitly with `"true"`, see `infra/docker-compose.yml`); seller actions are server-side checked so the caller **owns that auction**, and a client-supplied `sellerId` is **never** trusted; startup fails if `JWT_SECRET=change-me-local-only` outside local. |
+| **WS** | The handshake validates the token and binds it to the connection; an **Origin allowlist** (`FRONTEND_ORIGIN`) blocks CSWSH; max frame size is capped; each connection has a bid rate limit (`ERR_RATE_LIMITED`). |
+| **AI / SSRF** | VLM image fetches use an origin allowlist, block private networks/IMDS, cap size and timeout, and do not follow redirects; product text is treated as untrusted data to defend against prompt injection. |
+| **Secrets** | Secrets **never** enter git / issues / PRs / commits / logs / screenshots; the repo only carries `.env.example`, while local and deploy credentials go through private channels / GitHub Secrets; the secret scan runs over every commit plus a full-history baseline. |
+| **Upload** | Images are MIME-checked by magic bytes, size-capped, given a server-side random filename, and served with `X-Content-Type-Options: nosniff`; `image_url` goes through the SSRF allowlist. |
 
 ---
 
-## 17. Compliance scope · 合规边界
+## 17. Compliance scope
 
-**透明的已知单品竞拍** / transparent, single, known-item auction。明确**不做** / explicitly out of scope：mystery box（盲盒）、抽奖 / random card break、平台真伪兜底/背书、真实支付/物流/售后承诺、数字分身。AI 输出显式标识、真人最终背书、LLM 受 schema 约束。
-
----
-
-## 18. Collaboration · 协作模式
-
-trunk-driven + dev-log + 全局 review（全员从全局视角 build / review，不切部门墙）。载体 = issue / PR / `docs/dev-log/`。
-
-不变量 / invariants：人读 dev-log 判断方向与风险，AI 读 log 也读 code；**合同 / security / secret / 评分关键路径仍要人看 diff**；reviewer 有 **blocking authority**；契约改动 = 全员 approve（§7）。决策真相源 = [`docs/decisions.md`](docs/decisions.md)（与本 README 冲突时以 decisions.md 为准）。
+A transparent, single, known-item auction. Explicitly out of scope: mystery boxes, lotteries / random card breaks, platform-backed authenticity guarantees or endorsements, real payment/logistics/after-sales commitments, and digital avatars. AI output is explicitly labelled, a human gives the final endorsement, and the LLM is schema-constrained.
 
 ---
 
-## 19. Docs index · 文档索引
+## 18. Collaboration
 
-| 文档 | 内容 |
+Trunk-driven + dev-log + whole-system review (everyone builds and reviews from a system-wide view rather than behind departmental walls). The carriers are issues, PRs, and `docs/dev-log/`.
+
+Invariants: humans read the dev-log to judge direction and risk, and AI reads both the log and the code; **contracts, security, secrets, and scoring-critical paths still need a human to read the diff**; a reviewer has **blocking authority**; contract changes need approval from everyone (§7). The decision source of truth is [`docs/decisions.md`](docs/decisions.md) (if it conflicts with this README, decisions.md wins).
+
+---
+
+## 19. Docs index
+
+| Doc | Contents |
 |---|---|
-| [`docs/decisions.md`](docs/decisions.md) | **决策真相源 (SoT)** — 拍板记录 + single-source 收口 |
-| [`docs/charter.md`](docs/charter.md) | 项目章程 + scope 分层 (P0/P1/P2) |
-| [`docs/architecture.md`](docs/architecture.md) | 四层架构 + Edge/Core/Data 规则 |
-| [`docs/state-machine.md`](docs/state-machine.md) | canonical 状态机契约 |
-| [`docs/ws-protocol.md`](docs/ws-protocol.md) · [`docs/redis-keys.md`](docs/redis-keys.md) · [`docs/mysql-schema.md`](docs/mysql-schema.md) | WS / Redis+Lua / MySQL 契约 |
-| [`proto/`](proto/README.md) | canonical 契约（the seam，全员 approve 边界） |
-| [`docs/roadmap.md`](docs/roadmap.md) | Sprint baseline（已被 T0–T10 取代，保留为基线） |
-| [`docs/demo-runbook.md`](docs/demo-runbook.md) | **T10 演示手册** — 3-min 脚本 + 节点↔`make` 映射 + 兜底梯度 + 备播清单 |
-| [`docs/t9-chaos.md`](docs/t9-chaos.md) | T9 五项故障演练 runbook（ai/redis/mysql/ws/timer） |
-| [`infra/`](infra/README.md) | 可观测性栈：Prometheus + Grafana dashboards + alerts；docker-compose 拓扑 |
-| [`docs/ai-usage/`](docs/ai-usage/README.md) | AI 使用日志（可追溯证据） |
-| [`docs/dev-log/`](docs/dev-log/) | 每节点开发叙事 |
-| [`docs/diagrams/`](docs/diagrams/) | Mermaid：系统/状态机/出价/重连/落锤/ER/RBAC |
-| [Issue #1](../../issues/1) · [Issue #2](../../issues/2) | Plan V9（T0–T10）· Architecture RFC v2 |
+| [`docs/decisions.md`](docs/decisions.md) | **Decision source of truth (SoT)** — the record of calls made + single-source consolidation |
+| [`docs/charter.md`](docs/charter.md) | Project charter + scope tiers (P0/P1/P2) |
+| [`docs/architecture.md`](docs/architecture.md) | Four-layer architecture + Edge/Core/Data rules |
+| [`docs/state-machine.md`](docs/state-machine.md) | The canonical state-machine contract |
+| [`docs/ws-protocol.md`](docs/ws-protocol.md) · [`docs/redis-keys.md`](docs/redis-keys.md) · [`docs/mysql-schema.md`](docs/mysql-schema.md) | WS / Redis+Lua / MySQL contracts |
+| [`proto/`](proto/README.md) | Canonical contracts (the seam, changes need everyone's approval) |
+| [`docs/roadmap.md`](docs/roadmap.md) | Sprint baseline (superseded by T0–T10, kept as a baseline) |
+| [`docs/demo-runbook.md`](docs/demo-runbook.md) | **T10 demo handbook** — 3-min script + step↔`make` mapping + fallback ladder + standby checklist |
+| [`docs/t9-chaos.md`](docs/t9-chaos.md) | T9 five-chaos-drill runbook (ai/redis/mysql/ws/timer) |
+| [`infra/`](infra/README.md) | Observability stack: Prometheus + Grafana dashboards + alerts; docker-compose topology |
+| [`docs/ai-usage/`](docs/ai-usage/README.md) | AI usage log (traceable evidence) |
+| [`docs/dev-log/`](docs/dev-log/) | Per-step development narrative |
+| [`docs/diagrams/`](docs/diagrams/) | Mermaid: system / state machine / bidding / reconnect / hammer / ER / RBAC |
+| [Issue #1](../../issues/1) · [Issue #2](../../issues/2) | Plan V9 (T0–T10) · Architecture RFC v2 |
 
 ---
 
-<sub>Lumen Auction · 直播实时竞拍系统 — ByteDance Douyin E-commerce AI Full Stack Challenge · 内部 freeze 2026-06-08 / 对外 D-day 2026-06-10.</sub>
+<sub>Lumen Auction · Real-Time Live-Streaming Auction System — ByteDance Douyin E-Commerce AI Full Stack Challenge · internal freeze 2026-06-08 / public D-day 2026-06-10.</sub>

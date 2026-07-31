@@ -16,15 +16,15 @@ Response (T1 mock returns this shape with canned values):
     { "field": "category", "value": "watch", "confidence": 0.91, "highRisk": false },
     { "field": "authenticity", "value": "unverified", "confidence": 0.0, "highRisk": true }
   ],
-  "highRiskFieldsDisclaimer": "高风险字段为卖家声明，AI 未验证。",
+  "highRiskFieldsDisclaimer": "High-risk fields are seller statements and are not verified by AI.",
   "modelName": "mock-vlm-T1",
-  "intro": "灯下一汪润光，上手温凉贴肤——眼缘对了就别犹豫。"
+  "intro": "A soft pool of light under the lamp, cool and smooth on the wrist - if it catches your eye, do not hesitate."
 }
 ```
 
-`facts[].field == "estimateCNY"` (ADDITIVE, #261-12b): the vision call also estimates a market reference price from the image — `value` is a digits-only CNY integer, always `highRisk: true` with `confidence ≤ 0.5` (an estimate is never an objective fact). It feeds ONLY the seller console's 「AI 推荐加价幅度」(≈2.5% ladder of the estimate); it must never appear in buyer-facing copy (frontend `composeIntro` excludes it; the intro money-guardrail bans prices anyway). The mock generator ships `estimateCNY: "12000"` so the UI path works without credentials.
+`facts[].field == "estimateCNY"` (ADDITIVE, #261-12b): the vision call also estimates a market reference price from the image — `value` is a digits-only CNY integer, always `highRisk: true` with `confidence ≤ 0.5` (an estimate is never an objective fact). It feeds ONLY the seller console's "AI-suggested bid increment" (a ladder of ~2.5% of the estimate); it must never appear in buyer-facing copy (frontend `composeIntro` excludes it; the intro money-guardrail bans prices anyway). The mock generator ships `estimateCNY: "12000"` so the UI path works without credentials.
 
-`intro` (ADDITIVE, optional — absent from mock/canned responses): the same vision call that extracts facts also drafts a short human, sales-ready intro (≤120 runes), so one image-capable model covers 识图+文案 in a single round-trip. Sidecar-side sanitizer (`vlm.sanitizeIntro`) drops the WHOLE intro on any violation — banned word (保真/正品/升值/投资/假一赔十 …; compliant 「不保真」/「0元起拍」 whitelisted), URL, phone, or free-form price — facts survive independently. The intro carries NO disclaimer; the frontend appends the fixed 平台不保真 tail deterministically. Empty/absent intro → frontend keeps its instant template. The seller still confirms/edits the final text before freeze (V9 P3: non-authoritative).
+`intro` (ADDITIVE, optional — absent from mock/canned responses): the same vision call that extracts facts also drafts a short human, sales-ready intro (≤120 runes), so one image-capable model covers both image recognition and copywriting in a single round-trip. Sidecar-side sanitizer (`vlm.sanitizeIntro`) drops the WHOLE intro on any violation — a banned claim ("guaranteed authentic" / "genuine" / "will appreciate" / "investment" / "tenfold refund if fake", and so on; the compliant phrases "not guaranteed authentic" and "starts at zero" are whitelisted), URL, phone, or free-form price — facts survive independently. The intro carries NO disclaimer; the frontend deterministically appends the fixed "the platform does not guarantee authenticity" tail. Empty/absent intro → frontend keeps its instant template. The seller still confirms/edits the final text before freeze (V9 P3: non-authoritative).
 
 Rules (enforced from T7 in `internal`/sidecar): VLM image fetch uses an **SSRF allowlist** (no private net / IMDS, size+timeout limits, no redirect-follow); product text is treated as **untrusted data** (never as instructions) to block prompt injection; `highRiskFieldsDisclaimer` is always present. The seller must `confirm/edit` facts before `freeze_rules` — AI output never auto-enters the core auction.
 
@@ -55,7 +55,7 @@ Request:
   "ctx": {
     "currentPriceCents":   "12880000",
     "stepCents":           "500000",
-    "winnerDisplayName":   "海风_2024",
+    "winnerDisplayName":   "SeaBreeze_2024",
     "extendCount":         2,
     "secondsSinceLastBid": 32
   }
@@ -66,7 +66,7 @@ Response (always 200; failures fall back to canned text):
 ```json
 {
   "trigger":   "open",
-  "commentary": "蓝面 5711 起拍价 ¥120,000 · 这只海风的对手在哪里？",
+  "commentary": "The blue-dial 5711 opens at 120,000 - who is going to challenge SeaBreeze?",
   "fallback":  false,
   "modelName": "mock-llm-T7"
 }
@@ -81,8 +81,8 @@ If the LLM output violates any of these, the sidecar returns the canned per-trig
 | `len(commentary) ≤ 80` (Chinese chars + ASCII mix) | UI typewriter budget; long text scrolls past viewport | Truncate + log + fallback |
 | No URL pattern (`https?://`, `www\.`) | Anti-phishing | Fallback + log |
 | No phone pattern (`\d{11}` or international format) | Anti-bypass | Fallback + log |
-| No `¥` or `$` or `元` followed by free-form numbers | Prevent LLM from inventing prices | Fallback + log |
-| No banned-word match (see `apps/ai-sidecar/internal/badwords.go`) | Compliance: 绝对最低价 / 仅此一件 / 假一赔十 / 保真 etc. | Fallback + log |
+| No currency symbol or yuan suffix followed by free-form numbers | Prevent LLM from inventing prices | Fallback + log |
+| No banned-word match (see `apps/ai-sidecar/internal/badwords.go`) | Compliance: "absolute lowest price" / "only one in existence" / "tenfold refund if fake" / "guaranteed authentic" and similar claims | Fallback + log |
 
 ### Wire broadcast: `AI_COMMENTARY` event (server → client)
 
@@ -97,7 +97,7 @@ After the sidecar returns, the backend wraps and broadcasts:
   "serverTimeMs":  1717819900000,
   "data": {
     "trigger":  "open",
-    "commentary": "蓝面 5711 起拍价 ¥120,000 · 这只海风的对手在哪里？",
+    "commentary": "The blue-dial 5711 opens at 120,000 - who is going to challenge SeaBreeze?",
     "fallback": false
   }
 }
@@ -157,8 +157,8 @@ Response (always 200; generator failure → canned advice with `fallback: true`)
   "startPriceCents": "9000000",
   "stepCents":       "100000",
   "reserveCents":    "9000000",
-  "rationale":       "暗拍最高价远超次高 · 建议直接成交，提前锁定。",
-  "disclaimer":      "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。",
+  "rationale":       "The top sealed bid far exceeds the runner-up - close now and lock it in early.",
+  "disclaimer":      "AI advice is for reference only: the seller confirms it, and the backend adjudicates the final sale and terminal state.",
   "fallback":        false,
   "modelName":       "mock-advisor-111"
 }
@@ -173,8 +173,8 @@ Second-stage advisory example:
   "startPriceCents": "9000000",
   "stepCents":       "100000",
   "reserveCents":    "9000000",
-  "rationale":       "先收集暗拍意向，再进入公开竞价。",
-  "disclaimer":      "AI 建议仅供参考：由卖家确认，后端裁决最终成交与终态。",
+  "rationale":       "Collect sealed interest first, then move into open bidding.",
+  "disclaimer":      "AI advice is for reference only: the seller confirms it, and the backend adjudicates the final sale and terminal state.",
   "fallback":        false,
   "modelName":       "mock-advisor-111"
 }

@@ -109,28 +109,28 @@ Stretch failure is **not** a P0 gate failure (V9 §4.2 explicit).
 
 ---
 
-## 7. Super-stretch (100k / 非 P0)
+## 7. Super-stretch (100k / not P0)
 
-用于对外场景的规模边界演练（企业级演示/审计前）
+A scale-boundary exercise for external scenarios (enterprise demos / pre-audit).
 
-目标不是将结果钉为 P0 阈值，而是给 `#112` / 部署复盘提供规模压测结果与瓶颈证据。
+The goal is not to pin the results as P0 thresholds, but to give `#112` and the deployment retrospective scale-test results and bottleneck evidence.
 
 ```bash
 make load-100k
 ```
 
-执行提示：
+Execution notes:
 
-- 建议在独立压测机执行（非本机开发环境）
-- 准备足够的 `ulimit -n`（文件描述符）与公开网卡并发连接能力
+- Run it on a dedicated load-generating machine (not the local dev environment)
+- Prepare a large enough `ulimit -n` (file descriptors) plus enough concurrent-connection capacity on the public NIC
 
-记录字段（仅建议、非硬门槛）：
+Fields to record (suggestions only, not hard gates):
 
-- `load` 退出码 / `load: PASS|FAIL`
+- `load` exit code / `load: PASS|FAIL`
 - `seqGapCount`
-- `observer` 的 `readErrors` / `dialErrors`
+- the `observer`'s `readErrors` / `dialErrors`
 - `backpressureForceClose`
-- 重点异常是否来自单一子系统（WS 握手、Redis roundtrip、broadcast、verify）
+- Whether the main anomalies come from a single subsystem (WS handshake, Redis roundtrip, broadcast, verify)
 
 ---
 

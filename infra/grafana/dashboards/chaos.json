@@ -1,5 +1,5 @@
 {
-  "description": "Chaos drill state — which fault is currently injected. Source: tools/chaos-runner publishes lumen_chaos_active gauge. Maps to rubric 异常兜底.",
+  "description": "Chaos drill state — which fault is currently injected. Source: tools/chaos-runner publishes lumen_chaos_active gauge. Maps to rubric failure fallback.",
   "editable": false,
   "id": null,
   "panels": [
@@ -39,7 +39,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 38,
-  "tags": ["lumen", "chaos", "rubric:异常兜底"],
+  "tags": ["lumen", "chaos", "rubric:failure fallback"],
   "templating": { "list": [] },
   "time": { "from": "now-1h", "to": "now" },
   "title": "Lumen Auction — Chaos",

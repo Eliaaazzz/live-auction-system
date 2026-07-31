@@ -29,7 +29,7 @@ Claude should treat this repository as a source-grounded project workspace. For 
 
 Primary sources are, in order:
 
-1. The original challenge PDF in `docs/spec/抖音电商AI全栈-直播竞拍全栈系统-宣讲版.pdf`.
+1. The original challenge PDF in `docs/spec/douyin-ecommerce-ai-fullstack-live-auction-challenge-brief.pdf`.
 2. GitHub Issue #1 Plan V8 for delivery scope, frozen engineering boundaries, and numeric acceptance thresholds.
 3. GitHub Issue #2 Architecture RFC v1 for the reviewed Edge/Core/Data architecture, state machine, Redis/MySQL design, WebSocket protocol, and implementation cautions.
 4. GitHub Issues #3-#9 for sub-contracts covering WebSocket, rules, Lua/Stream, AI, evidence, load testing, and demo fallback.

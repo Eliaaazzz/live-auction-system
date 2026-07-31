@@ -1,19 +1,19 @@
 # Demo product photos
 
-真实商品图，本地打包（demo 会场断网也不挂），经 Vite `public/` 在 `/demo/*.jpg`
-提供，dev 与生产构建（dist → 后端静态服务）路径一致。
+Real product photos, bundled locally (so the demo survives a venue with no network), served by Vite from `public/` at `/demo/*.jpg`
+with identical paths in dev and in the production build (dist served statically by the backend).
 
-| 文件 | 内容 | 用途 |
+| File | Contents | Used for |
 |---|---|---|
-| watch-explorer.jpg | 劳力士 Explorer 黑面特写 | 主 demo 商品（preview 房间 / 发布表单默认 / 商品列表行 1） |
-| watch-airking.jpg | 劳力士 Air-King · 暗红书面 | 商品列表行 2 |
-| jewelry-pearl.jpg | 珍珠项链 · 首饰盒 | 商品列表行 3 |
-| watch-seiko.jpg | 精工黑面皮带 | 商品列表行 4 |
-| watch-braun.jpg | 博朗黑面石英 | 商品列表行 5 |
-| watch-minimal.jpg | 简约玫瑰金白面 | 商品列表行 6（暗拍） |
+| watch-explorer.jpg | Rolex Explorer, black dial close-up | The main demo item (preview room / publish-form default / product list row 1) |
+| watch-airking.jpg | Rolex Air-King, dark red dial | Product list row 2 |
+| jewelry-pearl.jpg | Pearl necklace in a jewellery box | Product list row 3 |
+| watch-seiko.jpg | Seiko, black dial, leather strap | Product list row 4 |
+| watch-braun.jpg | Braun, black dial, quartz | Product list row 5 |
+| watch-minimal.jpg | Minimal rose-gold, white dial | Product list row 6 (sealed bid) |
 
-来源：Unsplash（unsplash.com），[Unsplash License](https://unsplash.com/license)
-— 免费商用/非商用，无需署名，不得用于复刻竞品图库服务。下载尺寸 w=900 q=80。
+Source: Unsplash (unsplash.com), [Unsplash License](https://unsplash.com/license)
+— free for commercial and non-commercial use, no attribution required, and not to be used to build a competing stock-photo service. Downloaded at w=900 q=80.
 
-约定：demo 文案必须与照片实物一致（如 Explorer 配 Explorer 文案），
-不要写照片支撑不了的型号——评委里有表迷。
+Convention: the demo copy must match the actual item in the photo (an Explorer photo gets Explorer copy),
+and never claim a model the photo cannot support — some of the judges are watch people.

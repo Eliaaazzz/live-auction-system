@@ -1,6 +1,6 @@
 # RACI
 
-This file records Sprint 1 ownership boundaries for **Lumen Auction：直播实时竞拍系统**. Role labels are stable; B and C names remain TBD until the remaining members confirm.
+This file records Sprint 1 ownership boundaries for **Lumen Auction: Real-Time Live-Streaming Auction System**. Role labels are stable; B and C names remain TBD until the remaining members confirm.
 
 | Role | Owner | Primary scope | Accountable deliverables |
 |---|---|---|---|

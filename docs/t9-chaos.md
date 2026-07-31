@@ -20,7 +20,7 @@
 | 4 | `chaos-ws` | `docker compose stop lumen` | host `curl /healthz` refused | `start lumen` → catchup w/ `lastSeq=1` → `ROOM_SNAPSHOT.seq >= 1` (no gap), then `OK_ACCEPTED` | ✓ (original aid) |
 | 5 | `chaos-timer` | recreate lumen w/ `LUMEN_CHAOS_DISABLE_TIMER=1` | auction state stays `LIVE` past `endAtMs` AND bid → `ERR_AFTER_END` | recreate without env → state → `SOLD` within scan tick | ✓ (original aid) |
 
-> V9 §6 hard rule ⑦: "Redis 挂 显式 `ERR_AUCTION_PAUSED`". The Redis drill is
+> V9 §6 hard rule ⑦: "if Redis is down, return an explicit `ERR_AUCTION_PAUSED`". The Redis drill is
 > the direct test of that contract. The mapping lives in
 > `apps/lumen/internal/server/ws.go::bidErrCode` — any non-`NOSCRIPT` EVALSHA
 > transport error → `CodeErrPaused`.
@@ -85,7 +85,7 @@ verifier: aid=auc_def456 status=consistent ...
 
 ### 4.1 AI (`chaos-ai`)
 - Already wired as `make e2e-ai-offline` (T7-5 gate). T9 reuses it as
-  phase 1 so we don't duplicate the orchestration. V9 P3: "AI 不参与
+  phase 1 so we don't duplicate the orchestration. V9 P3: "AI does not participate in
   bid acceptance" — the e2e drill proves the bid path stays green with
   the sidecar stopped.
 
@@ -102,7 +102,7 @@ verifier: aid=auc_def456 status=consistent ...
   limitation called out in the dev compose, not a chaos finding.
 
 ### 4.3 MySQL (`chaos-mysql`)
-- V9 hot-path invariant: "MySQL 不在出价热路径" — bids during the MySQL
+- V9 hot-path invariant: "MySQL is not on the bid hot path" — bids during the MySQL
   outage **must still ack**. The drill places 2 bids while MySQL is
   down and asserts they ack. The persistence worker's idempotency
   projection (`auction_events` `UNIQUE(auction_id, seq)`) handles the
@@ -158,7 +158,7 @@ gates. The chaos harness's own correctness is covered by:
 
 ## 6. Demo runbook (T10)
 
-The demo录像 per §10 "录像" line: record one terminal session running
+The demo recording per the §10 "recording" line: record one terminal session running
 `make chaos` end-to-end. The single command produces a continuous
 ~3-4 min log proving all five drills pass. Recording sources:
 

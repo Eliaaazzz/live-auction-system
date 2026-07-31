@@ -20,7 +20,7 @@
       }
     ]
   },
-  "description": "Lumen Auction — real-time system health. Maps to rubric 可观测性 line. Panels follow docs/components/13-observability.md.",
+  "description": "Lumen Auction — real-time system health. Maps to rubric observability line. Panels follow docs/components/13-observability.md.",
   "editable": false,
   "graphTooltip": 1,
   "id": null,
@@ -383,7 +383,7 @@
   ],
   "refresh": "5s",
   "schemaVersion": 38,
-  "tags": ["lumen", "rubric:可观测性", "p0"],
+  "tags": ["lumen", "rubric:observability", "p0"],
   "templating": { "list": [] },
   "time": { "from": "now-15m", "to": "now" },
   "timepicker": {},

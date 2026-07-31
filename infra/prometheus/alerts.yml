@@ -17,7 +17,7 @@ groups:
         for: 30s
         labels:
           severity: critical
-          rubric: 稳定性-数据一致性
+          rubric: stability-data-consistency
         annotations:
           summary: "Auction seq gap > 0 on {{ $labels.auction_id }}"
           runbook: "docs/runbook.md#seq-gap"
@@ -34,7 +34,7 @@ groups:
         for: 2m
         labels:
           severity: warn
-          rubric: 系统可用性
+          rubric: system-availability
         annotations:
           summary: "bid ack p95 > 100ms (SLO×1.25 — early warning)"
           target: "p95 < 80ms gate per V9 §4.2"
@@ -47,7 +47,7 @@ groups:
         for: 1m
         labels:
           severity: critical
-          rubric: 系统可用性
+          rubric: system-availability
         annotations:
           summary: "bid ack p95 > 200ms (floor breached)"
           target: "p95 < 80ms gate; < 200ms floor per V9 §4.2"
@@ -60,7 +60,7 @@ groups:
         for: 2m
         labels:
           severity: warn
-          rubric: 系统可用性
+          rubric: system-availability
         annotations:
           summary: "broadcast p95 > 200ms (SLO×1.33 — early warning)"
           target: "p95 < 150ms gate per V9 §4.2"
@@ -73,7 +73,7 @@ groups:
         for: 1m
         labels:
           severity: critical
-          rubric: 系统可用性
+          rubric: system-availability
         annotations:
           summary: "broadcast p95 > 500ms (floor breached)"
           target: "p95 < 150ms gate; < 500ms floor per V9 §4.2"

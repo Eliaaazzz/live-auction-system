@@ -8,47 +8,47 @@ Lumen Auction is organized as four layers. Client surfaces handle seller admin, 
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
-│ Client Layer                                                  │
+│ Client Layer                                                 │
 │                                                              │
-│  Admin PC              Mobile H5             Load Bot         │
-│  商品上架/规则/订单     直播间/出价/榜单       500/50 P0·1k/100 S │
+│  Admin PC              Mobile H5             Load Bot        │
+│  listing/rules/orders  room/bid/leaderboard 500/50 P0 · 1k/10│
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ REST               │ WebSocket
                 ▼                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Edge Layer                                                    │
+│ Edge Layer                                                   │
 │                                                              │
-│  Nginx/API Gateway                                            │
-│  Auth & Rate Limit                                            │
-│  REST BFF                                                     │
-│  WebSocket Gateway：room 隔离 / 心跳 / lastSeq 恢复             │
+│  Nginx/API Gateway                                           │
+│  Auth & Rate Limit                                           │
+│  REST BFF                                                    │
+│  WebSocket Gateway: room isolation / heartbeat / lastSeq reco│
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ REST command/query │ bid command
                 ▼                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Core Layer                                                    │
+│ Core Layer                                                   │
 │                                                              │
-│  Auction Service       Bid Engine          Timer Worker       │
-│  开拍/取消/规则校验      place_bid.lua       close_auction.lua  │
+│  Auction Service       Bid Engine          Timer Worker      │
+│  start/cancel/rules    place_bid.lua       close_auction.lua │
 │                                                              │
-│  Order Service         Persistence Worker   Metrics API        │
-│  幂等订单生成            Stream → MySQL      压测指标输出        │
+│  Order Service         Persistence Worker   Metrics API      │
+│  idempotent orders     Stream → MySQL      load-test metrics │
 └───────────────┬────────────────────┬─────────────────────────┘
                 │ atomic write       │ stream consume
                 ▼                    ▼
 ┌──────────────────────────────────────────────────────────────┐
-│ Data Layer                                                    │
+│ Data Layer                                                   │
 │                                                              │
-│  Redis：实时唯一热源                                          │
-│  - auction:{id}:state                                         │
-│  - auction:{id}:leaderboard                                   │
-│  - auction:{id}:events Stream                                 │
-│  - auction:{id}:dedupe:{userId}                               │
-│  - auction:active                                             │
+│  Redis: the only real-time hot source                        │
+│  - auction:{id}:state                                        │
+│  - auction:{id}:leaderboard                                  │
+│  - auction:{id}:events Stream                                │
+│  - auction:{id}:dedupe:{userId}                              │
+│  - auction:active                                            │
 │                                                              │
-│  MySQL：事实库                                                │
-│  - users / products / auctions / auction_rules                │
-│  - bids / orders / auction_events / ai_usage_logs             │
+│  MySQL: the fact store                                       │
+│  - users / products / auctions / auction_rules               │
+│  - bids / orders / auction_events / ai_usage_logs            │
 └──────────────────────────────────────────────────────────────┘
 ```
 

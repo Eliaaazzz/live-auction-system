@@ -1,5 +1,5 @@
 // Command wsload is a lightweight Go WebSocket load generator for the Lumen
-// live-auction gateway — built to actually prove 万人 (10k+) concurrent WS
+// live-auction gateway — built to actually prove 10k+ concurrent WS
 // sessions from a single box.
 //
 // Why a third harness (we already have k6 + Locust):
@@ -8,7 +8,7 @@
 //   - k6 spins a full goja JS VM per VU; at 10k VUs that is tens of GB of RAM.
 //   - This opens ONE goroutine per connection (a few KB of stack + a 1KB
 //     read/write buffer each), so 10k live WS sessions cost ~150–250 MB and
-//     a single box reaches 万人 with headroom.
+//     a single box reaches 10k with headroom.
 //
 // It deliberately does NOT compute the SLO verdict. The server's /metrics is
 // the RTT-insulated source of truth (docs/deploy-and-latency.md §"measurement

@@ -1,5 +1,5 @@
 {
-  "description": "AI Sidecar — Doubao calls, token cost, fallback rate, guardrail hits. Maps to rubric AI 使用与落地.",
+  "description": "AI Sidecar — Doubao calls, token cost, fallback rate, guardrail hits. Maps to rubric AI usage and landing.",
   "editable": false,
   "graphTooltip": 1,
   "id": null,

@@ -1,4 +1,4 @@
-# Caddy auto-TLS reverse proxy for the Lumen gateway (火山云 prod).
+# Caddy auto-TLS reverse proxy for the Lumen gateway (Volcengine Cloud prod).
 #
 # $LUMEN_DOMAIN (set in infra/docker-compose.prod.yml from the shell/.env.prod)
 # must be a registered domain whose A record points at this ECS public IP.

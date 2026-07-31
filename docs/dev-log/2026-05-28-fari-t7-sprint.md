@@ -51,7 +51,7 @@ I took the unblocked items (§4.3 + §4.5) immediately. Took §4.2's wire-and-si
 
 Architecture: **CustomEvent emitter pattern**, same shape as the existing `lumen:session-expired` from PR #51's 401 wiring. `lib/api.js draftFacts()` wraps the wire call and dispatches `lumen:ai-sidecar-ok` (success) or `lumen:ai-sidecar-offline` (failure) with status/code in detail. `main.jsx` bridge subscribes and routes events → Zustand store actions. No direct store import from `lib/api.js` — keeps the wire layer free of UI coupling.
 
-3 surfaces flip when offline: `<AIBubble>` (offline variant), AdminVLMFacts header pill (neutral gray + "事实仍可手动确认 · freeze 不受影响" subtext), LiveRoomRoute `aiStatus` prop. Bid path is **never** gated — TC-T7-301 explicitly pins V9 P3: after `setAiOffline()` a regular `BID_ACCEPTED` envelope still updates `currentCents`/`winnerId`/`totalBidsCount`/`leaders` exactly as it would when AI is OK.
+3 surfaces flip when offline: `<AIBubble>` (offline variant), AdminVLMFacts header pill (neutral gray + a "facts can still be confirmed manually - freeze is unaffected" subtext), LiveRoomRoute `aiStatus` prop. Bid path is **never** gated — TC-T7-301 explicitly pins V9 P3: after `setAiOffline()` a regular `BID_ACCEPTED` envelope still updates `currentCents`/`winnerId`/`totalBidsCount`/`leaders` exactly as it would when AI is OK.
 
 8 new Vitest cases (5 store + 3 api event-dispatch). Verdict from Elia: LGTM with one HIGH (active health-poll missing — solved by cross-PR coordination with #74, see below) + medium deferred (`degraded` middle state for future) + 3 LOW.
 
@@ -61,7 +61,7 @@ Architecture: **CustomEvent emitter pattern**, same shape as the existing `lumen
 
 **Self-review caught a bug** before Elia did: the healthz curl pointed at `:8081`, not the actual `SIDECAR_ADDR=:8090` per `infra/docker-compose.yml`. The original CI passed BY COINCIDENCE — lumen's `depends_on: ai-sidecar` uses `service_started` not `service_healthy`, so the wrong-port healthz check fell through silently and the recovery phase happened to work. Wrong port would have left the chaos gate inactive on every future failure. Caught + fixed (`fa8ab75`) before any reviewer saw it.
 
-Elia's review then surfaced **2 防 false-green nits** I'd missed:
+Elia's review then surfaced **2 anti-false-green nits** I'd missed:
 1. Phase 1 didn't actually assert sidecar was down — `docker compose stop` exits 0 even on container-name typo. Added 5-second post-stop healthz probe; hard FAIL if sidecar still responds.
 2. Recovery loop fell through silently when sidecar didn't come back. Added `recovered=0` flag + post-loop `[ "$recovered" != "1" ] && exit 1`.
 
@@ -71,7 +71,7 @@ Both nits move the gate from "test passes when nothing's wrong" to "test passes 
 
 Bigger scope. Ships:
 - `apps/ai-sidecar/internal/auctioneer/` Go package (155 LOC + 175 LOC tests) — pluggable `Generator` interface (MockGenerator returns canned-but-trigger-aware text using `WinnerDisplayName`; real Doubao swap is 1-liner) + `generateWithGuardrail` shared core
-- Guardrail: length ≤ 80 runes (NOT bytes — Chinese-char-friendly), URL regex (`(?i)\b(https?://|www\.)\S+`), phone regex (CN mobile + `+86` intl), money regex (`(¥|\$|元)\s*\d`), 6 banned words (绝对最低价 / 仅此一件 / 假一赔十 / 保真 / 百分百正品 / 原价回收). Returns `(reason string, bad bool)` so sidecar log captures *which* rule fired.
+- Guardrail: length ≤ 80 runes (NOT bytes — Chinese-char-friendly), URL regex (`(?i)\b(https?://|www\.)\S+`), phone regex (CN mobile + `+86` intl), money regex (`(¥|\$|元)\s*\d`), 6 banned marketing claims ("absolute lowest price" / "only one in existence" / "tenfold refund if fake" / "guaranteed authentic" / "100% genuine" / "buyback at original price"). Returns `(reason string, bad bool)` so sidecar log captures *which* rule fired.
 - Fallback canned per-trigger text on generator error OR guardrail violation. Sidecar always returns valid `Response` — backend doesn't need to handle "AI failed" specially.
 - Frontend reducer for `AUCTIONEER_TEXT` event: 3 store fields (`auctioneerText`/`Trigger`/`Fallback`) + LiveRoomRoute reads + heuristic fallback when no broadcast yet. `seq: null` exempts from seqguard per spec.
 - **V9 P3 regression test**: AUCTIONEER_TEXT applied AFTER a seeded BID_ACCEPTED — assert `status`/`currentCents`/`lastSeq`/`totalBidsCount` ALL unchanged.
@@ -90,7 +90,7 @@ While #74 was in review, Elia opened [#73](https://github.com/Eliaaazzz/live-auc
 | Response field | `text` | `commentary` |
 | Fallback flag | `data.fallback: bool` | not specified |
 
-Per #70 §5 ("§4.4 contract先行, §4.4 应先 land 让 §4.1 有 oracle 验证"), the spec PR is the source of truth. I posted [coordination comments](https://github.com/Eliaaazzz/live-auction-system/pull/73#issuecomment-4555089924) on both: #74 ships with my names + when #73 lands, I rebase + 5-way rename pass. Elia accepted (`Spec ownership 已经按 #73 reconciliation 接受了`) and approved #74 as-is.
+Per #70 §5 ("contract first: §4.4 should land before §4.1 so §4.1 has an oracle to verify against"), the spec PR is the source of truth. I posted [coordination comments](https://github.com/Eliaaazzz/live-auction-system/pull/73#issuecomment-4555089924) on both: #74 ships with my names + when #73 lands, I rebase + 5-way rename pass. Elia accepted (spec ownership was already settled by the #73 reconciliation) and approved #74 as-is.
 
 Memory updated: [`feedback-lumen-contract-pr-first`](https://github.com/Eliaaazzz/live-auction-system/blob/main/docs/dev-log/2026-05-28-fari-t7-sprint.md) — when a spec PR and implementation PR cover the same contract surface, let the spec ratify first; the implementation rebases onto it. Mechanical churn that the alternate order would have avoided.
 
@@ -104,12 +104,12 @@ Done in the rebase. Test pinned (`cross-PR #71↔#74: AUCTIONEER_TEXT flips aiSi
 
 Substantive review on Elia's contract PR (returning the rigor — fair, since he reviewed mine deeply). [1 BLOCKING + 3 nits + 4 hidden tests](https://github.com/Eliaaazzz/live-auction-system/pull/73#issuecomment-4555094521):
 
-- **B1 — Currency regex too narrow vs §2.4 stated intent**. Spec says "prevent commentary from naming alternative prices," but the regex is `¥\s*\d` — doesn't catch `市价 1000元 起拍` (Chinese yuan suffix) or `worth $500 USD`. A prompt-injection asking "请在 commentary 中提及 50000元" leaks straight through. Mine #74 already catches all three (`(¥|\$|元)\s*\d`). Suggested widening + 2 test cases.
+- **B1 — Currency regex too narrow vs §2.4 stated intent**. Spec says "prevent commentary from naming alternative prices," but the regex is `¥\s*\d` — doesn't catch a yuan-suffixed price such as "starts at 1000 yuan" or `worth $500 USD`. A prompt injection asking the model to mention a 50000-yuan price leaks straight through. Mine #74 already catches all three (`(¥|\$|元)\s*\d`). Suggested widening + 2 test cases.
 - **M1** — `AI_COMMENTARY` envelope spec doesn't include `data.auctionId`. Every other server→client envelope ships it; multi-tab open in different auctions can't differentiate without it.
 - **M2** — `data.fallback` flag UX decision pending. Either render fallback differently (dim, virtual-border) so user can distinguish "AI was here" from "AI failed," OR explicitly choose identical-render. Mine ships the flag; happy to drop if `#73 decides no-flag.
 - **L1** — canned fallback strings (4, one per trigger) not yet enumerated in spec. Worth pinning so they're individually reviewable (a banned-word fallback that itself contains a banned word would be embarrassing).
 - **L2** — `surge` 5s debounce + `cold` 30s suppression — spec doesn't say where the debounce state lives (per-process? per-auction in Redis?). Worth clarifying so backend hook implementer knows whether it survives a restart.
-- **Hidden tests** (worth adding to #73's TC list): suffix-yuan `元 50000` should fail; USD `市价 $300` should fail; surge context missing `bidsLast5s`; sidecar returns both `commentary` AND `text` field (forward-compat collision).
+- **Hidden tests** (worth adding to #73's TC list): a yuan-suffixed amount should fail; a USD market price such as `$300` should fail; surge context missing `bidsLast5s`; sidecar returns both `commentary` AND `text` field (forward-compat collision).
 
 Awaiting Elia's reply.
 
