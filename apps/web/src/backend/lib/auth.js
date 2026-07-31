@@ -22,9 +22,9 @@ const NICK_KEY = 'lumen.nick';
 // the full-screen /m buyer and the /admin seller ever use, so its storage
 // keys + behavior are byte-for-byte unchanged (zero risk to those routes).
 //
-// The desktop Showcase, however, renders THREE apps in one tab (买家A +
-// 后台 + 买家B). Without seats they'd all share one token + one userId, so
-// "买家A" and "买家B" would be the SAME backend account and their bids
+// The desktop Showcase, however, renders THREE apps in one tab (buyer A +
+// the console + buyer B). Without seats they'd all share one token + one userId, so
+// "buyer A" and "buyer B" would be the SAME backend account and their bids
 // indistinguishable. Named seats ('A','B',...) give each its own nickname,
 // token, userId and storage slot — genuinely separate accounts.
 const sessionKey = (seat) => (seat ? `${STORAGE_KEY}.${seat}` : STORAGE_KEY);
@@ -32,11 +32,11 @@ const nickKey = (seat) => (seat ? `${NICK_KEY}.${seat}` : NICK_KEY);
 const _sessions = new Map(); // seat('' = default) -> cached session object
 
 // No real auth backend yet, but every DEVICE/seat should be a DISTINCT user
-// (so two people on two phones — or 买家A vs 买家B in the Showcase — aren't the
+// (so two people on two phones - or buyer A vs buyer B in the Showcase - aren't the
 // same account). We persist a per-seat nickname; the backend /api/login mints a
 // stable userId from it. Users can rename themselves (setNickname).
 export function deviceNickname(seat = '') {
-  const fallback = () => (seat ? `买家${seat}` : '买家' + Math.floor(1000 + Math.random() * 9000));
+  const fallback = () => (seat ? `Buyer ${seat}` : 'Buyer ' + Math.floor(1000 + Math.random() * 9000));
   try {
     let n = localStorage.getItem(nickKey(seat));
     if (!n) {
@@ -93,7 +93,7 @@ export function currentRole(seat = '') {
  * mints a `seller_*`-namespace session the backend's creation endpoints trust.
  * Stored in the DEFAULT seat so every admin page's ensureSession('seller-demo')
  * finds a matching cached session and does NOT plain-re-login over it.
- * Throws Error('密钥不正确') on a 403 (server has LUMEN_SELLER_KEY set and the
+ * Throws an error on a 403 (the server has LUMEN_SELLER_KEY set and the
  * key mismatched); with no key configured server-side any non-empty key passes.
  */
 export async function sellerLogin(sellerKey, nickname = 'seller-demo') {
@@ -102,7 +102,7 @@ export async function sellerLogin(sellerKey, nickname = 'seller-demo') {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ nickname, sellerKey: String(sellerKey || '').trim() }),
   });
-  if (res.status === 403) throw new Error('卖家密钥不正确');
+  if (res.status === 403) throw new Error('Incorrect seller key');
   if (!res.ok) throw new Error(`login ${res.status}`);
   const session = await res.json();
   if (!session.nickname) session.nickname = nickname;

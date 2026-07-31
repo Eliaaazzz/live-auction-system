@@ -1,9 +1,9 @@
 // src/lib/bidding.js
-// Suggested minimum-increment ladder (meeting follow-up: 最低加价逻辑 —
-// 后台可根据起拍价动态调整最低加价).
+// Suggested minimum-increment ladder (meeting follow-up: minimum-increment logic -
+// the console can scale the minimum increment from the start price).
 //
 // The ladder follows the cross-platform research synthesis (eBay's published
-// bid-increment table + 阿里拍卖 convention): the minimum increment scales
+// bid-increment table plus common Chinese auction-platform convention): the minimum increment scales
 // with price, landing around 1–5% of the current/starting price — dense at
 // the low end so cheap lots stay lively, sparse at the high end so a
 // million-yuan lot doesn't crawl ¥50 at a time.

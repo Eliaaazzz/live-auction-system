@@ -63,22 +63,23 @@ export function VideoBackground({ lot, liveUrl }: { lot: Lot; liveUrl?: string }
       ) : (
         <div className="lm-video-base" style={{ background: `linear-gradient(165deg, ${lot.tone} 0%, #0a0a10 80%)` }} />
       )}
-      {/* 去掉彩色蒙层「背景」，只显示商品本身；仅保留顶/底 scrim 以保证叠加文字可读。 */}
+      {/* No coloured backdrop - show the product itself; only the top/bottom scrims remain so overlay text stays readable. */}
       <div className="lm-scrim-top" /><div className="lm-scrim-bottom" />
     </div>
   );
 }
 
 export function LiveHeader({ room, viewers, simViewers = 0, followed, onToggleFollow, onClose, account }: { room: Room; viewers?: number; simViewers?: number; followed: boolean; onToggleFollow: () => void; onClose: () => void; account?: React.ReactNode }) {
-  // #261-12a: 在线人数实时来自服务端（ROOM_SNAPSHOT + 人气脚本 stats 广播），
-  // 不再是建房时的静态数。viewers 缺省时退回 room.viewers（mock 模式）。
+  // #261-12a: the viewer count comes live from the server (ROOM_SNAPSHOT plus the crowd script's stats
+  // broadcast) rather than a static number fixed at room creation. When viewers is absent we fall back
+  // to room.viewers (mock mode).
   const liveViewers = viewers != null && viewers > 0 ? viewers : room.viewers;
   return (
     <div className="lm-header">
       <div className="lm-anchor">
         <Avatar src={room.anchorAvatar} size={32} ring="rgba(255,255,255,0.9)" />
-        <div className="lm-anchor-meta"><div className="lm-anchor-name">{room.anchorName}</div><div className="lm-anchor-fans">{room.fans}粉丝</div></div>
-        <button className={'lm-follow' + (followed ? ' is-followed' : '')} onClick={onToggleFollow}>{followed ? (<><Icon name="check" size={13} stroke={2.6} /> 已关注</>) : ('关注')}</button>
+        <div className="lm-anchor-meta"><div className="lm-anchor-name">{room.anchorName}</div><div className="lm-anchor-fans">{room.fans} followers</div></div>
+        <button className={'lm-follow' + (followed ? ' is-followed' : '')} onClick={onToggleFollow}>{followed ? (<><Icon name="check" size={13} stroke={2.6} /> Following</>) : ('Follow')}</button>
       </div>
       <div className="lm-header-right">
         {account}
@@ -91,24 +92,24 @@ export function LiveHeader({ room, viewers, simViewers = 0, followed, onToggleFo
             </div>
             <Icon name="eye" size={13} /><span className="tnum">{fmtCount(liveViewers)}</span>
           </div>
-          {/* #266 review 诚实边界：人气脚本在跑时显式声明模拟，绝不冒充真实并发。 */}
-          {simViewers > 0 && <div className="lm-simtag">模拟人气 · 演示</div>}
+          {/* #266 review honesty boundary: while the crowd script is running we declare it as simulated and never pass it off as real concurrency. */}
+          {simViewers > 0 && <div className="lm-simtag">Simulated crowd - demo</div>}
         </div>
-        <button className="lm-close" onClick={onClose} aria-label="关闭"><Icon name="close" size={16} /></button>
+        <button className="lm-close" onClick={onClose} aria-label="Close"><Icon name="close" size={16} /></button>
       </div>
     </div>
   );
 }
 
 export function LotChip({ lot, onOpenIntro }: { lot: Lot; onOpenIntro?: () => void }) {
-  // #261-12b: 有 AI 介绍时商品卡可点开「宝贝介绍」。
+  // #261-12b: when an AI description exists, the lot card opens the item description.
   return (
     <div className={'lm-lotchip' + (onOpenIntro ? ' has-intro' : '')} onClick={onOpenIntro} role={onOpenIntro ? 'button' : undefined}>
       <ProductImg lot={lot} radius={8} className="lm-lotchip-img" />
       <div className="lm-lotchip-meta">
-        <div className="lm-lotchip-no">第 {lot.index} 件 · 竞拍中</div>
+        <div className="lm-lotchip-no">Lot {lot.index} - bidding</div>
         <div className="lm-lotchip-title">{lot.title}</div>
-        {onOpenIntro && <div className="lm-lotchip-more">宝贝介绍 <Icon name="chevronR" size={9} /></div>}
+        {onOpenIntro && <div className="lm-lotchip-more">About this item <Icon name="chevronR" size={9} /></div>}
       </div>
     </div>
   );
@@ -139,7 +140,7 @@ export function ActionRail({ likes, liked, onToggleLike, likeBurst = 0, onOpenCo
   };
   return (
     <div className="lm-rail">
-      <button className="lm-rail-btn" onClick={like} aria-label={liked ? '取消点赞' : '点赞'}>
+      <button className="lm-rail-btn" onClick={like} aria-label={liked ? 'Unlike' : 'Like'}>
         <div className="lm-rail-ic" style={{ color: liked ? '#fe2c55' : '#fff', position: 'relative' }}>
           <Icon name="heart" size={23} fill={liked} />
           {floats.map((f) => (<span key={f.id} className="lm-heart-float" style={{ marginLeft: f.x, color: f.color }}><Icon name={f.icon} size={18} fill /></span>))}
@@ -148,11 +149,11 @@ export function ActionRail({ likes, liked, onToggleLike, likeBurst = 0, onOpenCo
       </button>
       <button className="lm-rail-btn" onClick={onOpenGift}>
         <div className="lm-rail-ic" style={{ color: '#ffce54' }}><Icon name="gift" size={22} /></div>
-        <span className="lm-rail-num">礼物</span>
+        <span className="lm-rail-num">Gift</span>
       </button>
       <button className="lm-rail-btn" onClick={onShare}>
         <div className="lm-rail-ic"><Icon name="share" size={22} /></div>
-        <span className="lm-rail-num">分享</span>
+        <span className="lm-rail-num">Share</span>
       </button>
     </div>
   );
@@ -161,15 +162,15 @@ export function ActionRail({ likes, liked, onToggleLike, likeBurst = 0, onOpenCo
 // ---------- Gift panel (Douyin style) ----------
 export interface GiftTier { id: string; name: string; emoji: string; coins: number; }
 const GIFT_TIERS: GiftTier[] = [
-  { id: 'rose', name: '玫瑰', emoji: '🌹', coins: 1 },
-  { id: 'like', name: '点赞', emoji: '👍', coins: 5 },
-  { id: 'beer', name: '啤酒', emoji: '🍺', coins: 10 },
-  { id: 'mic', name: '麦克风', emoji: '🎤', coins: 33 },
-  { id: 'star', name: '星空', emoji: '🌌', coins: 66 },
-  { id: 'car', name: '跑车', emoji: '🏎️', coins: 520 },
-  { id: 'rocket', name: '火箭', emoji: '🚀', coins: 1314 },
-  { id: 'crown', name: '皇冠', emoji: '👑', coins: 3344 },
-  { id: 'diamond', name: '守护钻', emoji: '💎', coins: 6666 },
+  { id: 'rose', name: 'Rose', emoji: '🌹', coins: 1 },
+  { id: 'like', name: 'Thumbs up', emoji: '👍', coins: 5 },
+  { id: 'beer', name: 'Beer', emoji: '🍺', coins: 10 },
+  { id: 'mic', name: 'Microphone', emoji: '🎤', coins: 33 },
+  { id: 'star', name: 'Starry sky', emoji: '🌌', coins: 66 },
+  { id: 'car', name: 'Sports car', emoji: '🏎️', coins: 520 },
+  { id: 'rocket', name: 'Rocket', emoji: '🚀', coins: 1314 },
+  { id: 'crown', name: 'Crown', emoji: '👑', coins: 3344 },
+  { id: 'diamond', name: 'Guardian diamond', emoji: '💎', coins: 6666 },
 ];
 
 interface GiftFloat { id: number; emoji: string; x: number; }
@@ -196,8 +197,8 @@ export function GiftPanel({ roomId, open, onClose, onSend }: { roomId: string; o
       <div className="lm-giftsheet">
         <div className="lm-tabsheet-head">
           <div className="lm-tabsheet-grip" onClick={onClose} />
-          <span className="lm-tabsheet-title">送礼物</span>
-          <button className="lm-tabsheet-x" onClick={onClose} aria-label="收起"><Icon name="chevronD" size={18} /></button>
+          <span className="lm-tabsheet-title">Send a gift</span>
+          <button className="lm-tabsheet-x" onClick={onClose} aria-label="Collapse"><Icon name="chevronD" size={18} /></button>
         </div>
         <div className="lm-gift-grid">
           {GIFT_TIERS.map((g) => (
@@ -209,7 +210,7 @@ export function GiftPanel({ roomId, open, onClose, onSend }: { roomId: string; o
           ))}
         </div>
         <button className="lm-gift-send" onClick={send}>
-          赠送 {selected.emoji} {selected.name} · 🪙 {selected.coins}
+          Send {selected.emoji} {selected.name} - 🪙 {selected.coins}
         </button>
       </div>
       {floats.map((f) => (<span key={f.id} className="lm-gift-float" style={{ marginLeft: f.x }} aria-hidden>{f.emoji}</span>))}
@@ -236,10 +237,10 @@ export function ShareModal({ roomId, open, onClose }: { roomId: string; open: bo
   return (
     <div className="lm-share-mask" onClick={onClose}>
       <div className="lm-share-card" onClick={(e) => e.stopPropagation()}>
-        <div className="lm-share-hd"><Icon name="share" size={18} style={{ color: '#ff8fa3' }} /> 分享直播间</div>
+        <div className="lm-share-hd"><Icon name="share" size={18} style={{ color: '#ff8fa3' }} /> Share this room</div>
         <input ref={inputRef} className="lm-share-url" readOnly value={url} onFocus={(e) => e.currentTarget.select()} />
-        <button className="lm-share-copy" onClick={copy}>{copied ? '已复制，可粘贴发给好友' : '复制链接'}</button>
-        <div className="lm-share-hint">朋友打开链接即可免登录观看 / 出价 / 查看订单</div>
+        <button className="lm-share-copy" onClick={copy}>{copied ? 'Copied - paste it to a friend' : 'Copy link'}</button>
+        <div className="lm-share-hint">Anyone opening the link can watch, bid, and view the order without logging in</div>
       </div>
     </div>
   );
@@ -265,7 +266,7 @@ export function EmotionFX({ fx }: { fx: FxToken | null }) {
   return (<div key={fx.id} className={'lm-fx ' + fx.type}><Icon name={icon} size={18} fill={fx.type === 'lead'} /> {fx.text}</div>);
 }
 
-export function SwipeHint() { return (<div className="lm-swipe-hint"><Icon name="chevronD" size={18} /><span>上滑切换下一个直播间</span></div>); }
+export function SwipeHint() { return (<div className="lm-swipe-hint"><Icon name="chevronD" size={18} /><span>Swipe up for the next room</span></div>); }
 
 export function Confetti({ count = 40 }: { count?: number }) {
   const colors = ['#fe2c55', '#ffce54', '#7fd6ff', '#9bd24e', '#ff8fa3', '#fff'];

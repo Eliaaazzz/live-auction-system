@@ -5,7 +5,7 @@ import { ChromeWindow } from '../frames/ChromeWindow';
 import MobileApp from '../mobile/MobileApp';
 import AdminApp from '../admin/AdminApp';
 
-const TAGS = ['0元起拍', '固定加价', '封顶成交', '自动延时', '毫秒级实时排名', '骨架屏兜底'];
+const TAGS = ['Starts at zero', 'Fixed increment', 'Cap closes the sale', 'Auto-extension', 'Millisecond live ranking', 'Skeleton fallback'];
 
 // Natural (1:1) stage geometry. The whole triptych is laid out at these fixed
 // sizes, then uniformly scaled to fit the viewport width — so a MacBook (≈1512 /
@@ -54,16 +54,16 @@ export default function Showcase() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ width: 44, height: 44, borderRadius: 13, background: 'linear-gradient(135deg,#ff5f7e,#fe2c55)', display: 'grid', placeItems: 'center', fontSize: 24 }}>🔨</div>
           <div>
-            <div style={{ fontSize: 22, fontWeight: 800 }}>抖音直播竞拍全栈系统</div>
-            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>双端实时同框 · 移动端用户竞拍 + PC 商家 / 主播后台 · 毫秒级实时出价</div>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>Douyin live auction full-stack system</div>
+            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>Both sides live in one frame - mobile buyers bidding plus the PC merchant/host console - millisecond bidding</div>
           </div>
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', gap: 10 }}>
             <Link to="/m" style={btn('#fe2c55')}>
-              ▶ 全屏体验移动端
+              ▶ Full-screen mobile
             </Link>
             <Link to="/admin" style={btn('rgba(255,255,255,0.12)')}>
-              🖥 全屏打开后台
+              🖥 Open the console full screen
             </Link>
           </div>
         </div>
@@ -76,7 +76,7 @@ export default function Showcase() {
         </div>
       </div>
 
-      {/* stage — uniformly scaled triptych: 📱买家A · 🖥 后台 · 📱买家B */}
+      {/* stage — uniformly scaled triptych: 📱buyer A · 🖥 console · 📱buyer B */}
       <div ref={wrapRef} style={{ width: '100%' }}>
         <div style={{ display: 'flex', justifyContent: 'center' }}>
           {/* footprint reserves the SCALED size so the footer below never overlaps */}
@@ -94,7 +94,7 @@ export default function Showcase() {
             >
               {/* mobile — buyer A */}
               <div style={{ width: PHONE_W }}>
-                <SectionLabel title="移动端 · 买家 A" desc="全屏视频 + 浮层竞拍 · 5 Tab · 上滑切换直播间" />
+                <SectionLabel title="Mobile - buyer A" desc="Full-screen video with an overlay auction - 5 tabs - swipe up for the next room" />
                 <IOSDevice dark width={PHONE_W} height={PHONE_H}>
                   <MobileApp startIndex={0} seat="A" />
                 </IOSDevice>
@@ -102,22 +102,22 @@ export default function Showcase() {
 
               {/* admin in chrome frame — center, sidebar foldable. #261-2: start
                   COLLAPSED inside the 1000px showcase window so the content area
-                  (监控/商品表格) gets the full width — 展示全貌；点顶栏按钮可展开。 */}
+                  (monitor / product table) gets the full width so everything is visible; the top-bar button expands it. */}
               <div style={{ width: ADMIN_W }}>
-                <SectionLabel title="PC 端 · 商家 / 主播后台" desc="竞拍发布 · 直播商品 · 订单 · 实时竞拍监控 · 左侧栏可折叠" />
-                <ChromeWindow url="seller.auction-master.com/admin" width={ADMIN_W} height={PHONE_H} tabs={[{ title: '实时竞拍大师 · 后台' }]}>
+                <SectionLabel title="Desktop - merchant / host console" desc="Publish auction - live products - orders - live monitor - collapsible sidebar" />
+                <ChromeWindow url="seller.auction-master.com/admin" width={ADMIN_W} height={PHONE_H} tabs={[{ title: 'Real-Time Auction Master - Admin' }]}>
                   <AdminApp embedded defaultCollapsed />
                 </ChromeWindow>
               </div>
 
               {/* mobile — buyer B. SAME room as buyer A (startIndex 0): the whole
-                  triptych story is 买家A vs 买家B bidding against each other in one
-                  auction — 同场竞价. With startIndex=1, B silently opened the NEXT
+                  triptych story is buyer A vs buyer B bidding against each other in one
+                  auction - the same session. With startIndex=1, B silently opened the NEXT
                   live room whenever more than one auction was live, so A and B
                   never saw each other's bids. Viewers can still swipe to other
                   rooms by hand. */}
               <div style={{ width: PHONE_W }}>
-                <SectionLabel title="移动端 · 买家 B" desc="同场竞价 · 出价与排名毫秒级实时同步" />
+                <SectionLabel title="Mobile - buyer B" desc="Same session - bids and ranking sync in milliseconds" />
                 <IOSDevice dark width={PHONE_W} height={PHONE_H}>
                   <MobileApp startIndex={0} seat="B" />
                 </IOSDevice>
@@ -128,8 +128,8 @@ export default function Showcase() {
       </div>
 
       <div style={{ maxWidth: STAGE_W, margin: '18px auto 0', fontSize: 12.5, color: 'rgba(255,255,255,0.45)', lineHeight: 1.7 }}>
-        移动端在手机 / 窄屏中直接访问 <code style={{ color: '#ff8fa3' }}>#/m</code> 获得全屏体验；商家后台访问 <code style={{ color: '#ff8fa3' }}>#/admin</code>。
-        全链路实时数据：JWT 鉴权 → REST 快照 → WebSocket 长连接，服务端原子裁决，毫秒级实时排名。
+        On a phone or narrow screen, open <code style={{ color: '#ff8fa3' }}>#/m</code> directly for the full-screen experience; the merchant console is at <code style={{ color: '#ff8fa3' }}>#/admin</code>.
+        Real-time data end to end: JWT auth, REST snapshot, and a long-lived WebSocket, with atomic server-side adjudication and millisecond ranking.
       </div>
     </div>
   );

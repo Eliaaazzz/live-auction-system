@@ -1,5 +1,5 @@
 // mapBackend — translate backend REST shapes (string-CENTS) into the prototype's
-// Room / Lot view models (YUAN numbers). Keeps the antd/抖音 UI unchanged while
+// Room / Lot view models (YUAN numbers). Keeps the antd/Douyin-style UI unchanged while
 // the data underneath is real.
 
 import type { Room, Lot } from './types';
@@ -36,8 +36,8 @@ export function isJunk(name?: string): boolean {
 
 /**
  * Terminal auction states a seller may permanently delete (history cleanup —
- * 删除发布历史 / 近期成交). In-flight lots (DRAFT/SCHEDULED/LIVE) are NOT deletable;
- * they must be 下架/结束 first. Mirrors the backend model.IsTerminal gate.
+ * deleting publish history / recent sales). In-flight lots (DRAFT/SCHEDULED/LIVE) are NOT deletable;
+ * they must be withdrawn or finished first. Mirrors the backend model.IsTerminal gate.
  */
 export const DELETABLE_STATUSES = ['SOLD', 'ORDER_CREATED', 'NO_BID', 'CANCELLED'];
 export function isDeletableAuction(status?: string): boolean {
@@ -56,7 +56,7 @@ function hashNum(s: string): number {
 }
 
 const MODE_LABEL: Record<string, string> = {
-  ENGLISH: '英式拍卖', SEALED: '暗拍', VICKREY: '二价拍', HYBRID_REVEAL: '混合明暗', ALL_PAY: '全付拍', PREQUALIFY: '资格预审',
+  ENGLISH: 'English auction', SEALED: 'Sealed bid', VICKREY: 'Vickrey', HYBRID_REVEAL: 'Hybrid reveal', ALL_PAY: 'All-pay', PREQUALIFY: 'Prequalify',
 };
 
 /** Map one backend auction → a prototype Lot (YUAN). Real numbers refine over WS. */
@@ -65,8 +65,8 @@ export function auctionToLot(a: BackendAuction): Lot {
   return {
     id: a.auctionId,
     index: 1,
-    title: a.productName || '直播拍品',
-    subtitle: '单品竞拍 · 0 元起拍 · 服务端裁决',
+    title: a.productName || 'Live lot',
+    subtitle: 'Single-item auction - starts at zero - adjudicated server-side',
     image: a.imageUrl || PROD.watch,
     // No fake fallback loop: the real stream URL arrives later via the per-room
     // snapshot (engine livePlayUrl). With no real stream, VideoBackground shows
@@ -81,21 +81,21 @@ export function auctionToLot(a: BackendAuction): Lot {
     deposit: 0,
     durationSec: 60,
     extendSec: 30,
-    category: MODE_LABEL[a.mode || 'ENGLISH'] || '英式拍卖',
+    category: MODE_LABEL[a.mode || 'ENGLISH'] || 'English auction',
     estimate: '',
   };
 }
 
 /** Map a backend auction → a prototype Room (anchor/header chrome derived). */
 export function auctionToRoom(a: BackendAuction): Room {
-  const name = (a.productName || '直播').slice(0, 8);
+  const name = (a.productName || 'Live').slice(0, 12);
   return {
     id: a.auctionId,
-    anchorName: `${name} · 拍卖间`,
+    anchorName: `${name} - auction room`,
     anchorAvatar: avatar(hashNum(a.auctionId)),
     fans: '—',
     viewers: 0,
-    tagline: a.status === 'LIVE' ? '正在直播竞拍' : '即将开拍',
+    tagline: a.status === 'LIVE' ? 'Live auction in progress' : 'Starting soon',
     lot: auctionToLot(a),
   };
 }

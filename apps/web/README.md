@@ -185,7 +185,7 @@ budget; `.surface-calm` (frame-budget auto-degrade) and
    the `<BidButton>`.
 4. **Admin VLM facts** is the publish gate — backend's `POST /freeze`
    refuses with `ERR_FACTS_NOT_CONFIRMED` until seller has confirmed all 5
-   facts. The UI should disable "全部确认后开拍 →" until `confirmedN === total`
+   facts. The UI should disable the "confirm all, then go live" action until `confirmedN === total`
    and then call `api.freeze()` followed by `api.startLive()`.
 5. **`LiveRoomRoute` is the canonical wiring example.** Mirror its
    ensure-session → REST snapshot → optional REST refresh → open WS pattern

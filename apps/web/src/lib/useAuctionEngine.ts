@@ -45,7 +45,7 @@ const ENDING_WINDOW_MS = 10_000;
 
 // stable pseudo-avatar (the backend has no avatar field). Hash the DISPLAY NAME,
 // not the userId: identity.defaultAvatarFor(nickname) uses the same hash, so
-// "买家A" gets the SAME face on their own phone (seat selfAvatar), on the other
+// "Buyer A" gets the SAME face on their own phone (seat selfAvatar), on the other
 // buyer's pane, and on the admin monitor. userId-hashing gave one person two faces.
 function hashNum(s: string): number {
   let h = 0;
@@ -80,7 +80,7 @@ function bidFromLeader(l: any, rank: number): Bid {
   return {
     id: `${uid}-${l?.cents ?? 0}`,
     userId: uid,
-    userName: l?.displayName || l?.userId || '匿名买家',
+    userName: l?.displayName || l?.userId || 'Anonymous buyer',
     avatar: peerAvatar(l?.displayName, uid),
     amount: yuan(l?.cents),
     ts: Date.now(),
@@ -91,7 +91,7 @@ function bidFromLeader(l: any, rank: number): Bid {
 export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const { running = true, onEvent, nickname, seat = '', selfAvatar } = opts;
   const auctionId = lot.id;
-  // Per-SEAT room store: a named Showcase seat (买家A/买家B) gets its OWN store
+  // Per-SEAT room store: a named Showcase seat (buyer A / buyer B) gets its OWN store
   // instance so its snapshot/leaderboard/yourUserId never clobber the other
   // seat's. The default seat ('') keeps the shared singleton — identical to the
   // single-room /m + /admin behavior. Held in a ref so the instance is created
@@ -104,13 +104,14 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   const rafRef = useRef<number>(0);
   const onEventRef = useRef(onEvent);
   const lastEmitRef = useRef<string>('');
-  const wasLeadingRef = useRef(false); // #261-3/6: 仅在「领先→被反超」跳变时报 outbid
+  const wasLeadingRef = useRef(false); // #261-3/6: only report outbid on the leading -> outbid transition
   const [autoBidMax, setAutoBidMaxState] = useState<number | null>(null);
   const [livePlayUrl, setLivePlayUrl] = useState<string>(''); // real HLS from REST snapshot (#121)
-  const [intro, setIntro] = useState<string>(''); // 商品介绍 from REST snapshot (#261-12b — shown in the room)
-  // selfAvatar 由调用方（LiveRoom）从身份层下传：真实 /m 用全局登录身份，Showcase 座位
-  // 用该座位的固定头像。用它覆盖所有「自己」行的头像，消除「同一个我，出价/送礼头像不
-  // 一样」(#3)，且让 买家A / 买家B 各自的自我头像互不串台。
+  const [intro, setIntro] = useState<string>(''); // product description from the REST snapshot (#261-12b - shown in the room)
+  // selfAvatar is passed down by the caller (LiveRoom) from the identity layer: the real /m uses the
+  // global login identity while a Showcase seat uses that seat's fixed avatar. It overrides the avatar on
+  // every "self" row, removing the "same me, different face on a bid vs a gift" mismatch (#3) and keeping
+  // buyer A's and buyer B's own avatars from crossing over.
   const autoMaxRef = useRef<number | null>(null);
   useEffect(() => { onEventRef.current = onEvent; });
 
@@ -145,7 +146,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
           // #261-10/12a: REST first-paint carries the social numbers so the room
           // shows the live crowd/likes before the WS snapshot lands.
           viewerCount: (snap as any).viewerCount ?? 0,
-          simViewerCount: (snap as any).simViewerCount ?? 0, // #266 模拟人气自声明
+          simViewerCount: (snap as any).simViewerCount ?? 0, // #266 self-declared simulated crowd
           likeCount: (snap as any).likeCount ?? 0,
         });
         if ((snap as any).livePlayUrl) setLivePlayUrl(String((snap as any).livePlayUrl));
@@ -214,7 +215,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     }
   }
 
-  // translate a backend envelope into the prototype's EngineEvent (overlays/撒花)
+  // translate a backend envelope into the prototype's EngineEvent (overlays / confetti)
   function emitEngineEvent(env: any) {
     const cb = onEventRef.current;
     if (!cb) return;
@@ -226,13 +227,13 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       case EventType.BID_ACCEPTED: {
         const self = s.yourUserId && env.data?.userId === s.yourUserId;
         if (self) {
-          // 我的出价被接受 = 我现在领先
+          // my bid was accepted = I am now leading
           cb({ kind: 'leading', amount: yuan(env.data?.amountCents) });
           wasLeadingRef.current = true;
         } else {
-          // 别人出价被接受 = 他现在领先。仅当我此前领先才算「被反超」，
-          // 否则不再对每一笔他人出价误报 outbid（#261-3/6）。
-          if (wasLeadingRef.current) cb({ kind: 'outbid', by: env.data?.displayName || '竞拍者', amount: yuan(env.data?.amountCents) });
+          // someone else's bid was accepted = they are now leading. It only counts as being outbid if I was
+          // leading before, so we no longer report outbid on every other person's bid (#261-3/6).
+          if (wasLeadingRef.current) cb({ kind: 'outbid', by: env.data?.displayName || 'a bidder', amount: yuan(env.data?.amountCents) });
           wasLeadingRef.current = false;
         }
         break;
@@ -255,7 +256,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
     const leaders = (store.leaders ?? []) as any[];
     const ranking: RankRow[] = leaders.map((l, i) => ({
       userId: l.userId,
-      userName: l.displayName || l.userId || '匿名买家',
+      userName: l.displayName || l.userId || 'Anonymous buyer',
       avatar: (l.isYou && selfAvatar) ? selfAvatar : peerAvatar(l.displayName, l.userId ?? `u${i}`),
       amount: yuan(l.cents),
       self: !!l.isYou,
@@ -268,7 +269,7 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
       .map((e: any) => ({
         id: String(e.seq ?? e.ts ?? Math.random()),
         userId: e.data.userId,
-        userName: e.data.displayName || e.data.userId || '匿名买家',
+        userName: e.data.displayName || e.data.userId || 'Anonymous buyer',
         avatar: (store.yourUserId && e.data.userId === store.yourUserId && selfAvatar) ? selfAvatar : peerAvatar(e.data.displayName, e.data.userId),
         amount: yuan(e.data.amountCents),
         ts: e.ts ?? Date.now(),
@@ -311,8 +312,8 @@ export function useAuctionEngine(lot: Lot, opts: Opts = {}) {
   // ── placeBid: HTTP command lane + WS fallback (server adjudicates) ──
   const placeBid = useCallback((amount: number): { ok: boolean; reason?: string } => {
     const s = storeApi.getState();
-    if (s.status !== 'LIVE') return { ok: false, reason: '当前不可出价' };
-    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return { ok: false, reason: '竞拍已结束' };
+    if (s.status !== 'LIVE') return { ok: false, reason: 'Bidding is not open right now' };
+    if (s.endAtMs && msRemaining(s.endAtMs) <= 0) return { ok: false, reason: 'The auction has ended' };
     const amountCents = String(Math.round(amount) * 100);
     const clientBidId = makeBidId();
     void submitBid(storeApi, auctionId, { clientBidId, amountCents }, clientRef.current, seat);
@@ -361,7 +362,7 @@ async function submitBid(storeApi: any, auctionId: string, payload: any, client:
 
 async function placeBidHttp(auctionId: string, payload: any, seat: string) {
   // A named seat bids under its OWN token so the backend attributes the bid to
-  // 买家A/买家B (not the default-seat session). Default seat → undefined → api
+  // buyer A / buyer B (not the default-seat session). Default seat -> undefined -> api
   // falls back to the device token (unchanged single-room behavior).
   const token = seat ? currentToken(seat) : undefined;
   if (typeof AbortController === 'undefined') return api.placeBid(auctionId, payload, { token, seat });

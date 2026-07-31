@@ -30,9 +30,10 @@ function readRoomParam(): string | null {
   return new URLSearchParams(q).get('room');
 }
 
-// #260 需求#7: #/m?as=<昵称> → 免登录固定身份。每个昵称一个独立 seat（自己的
-// 后端 userId/token + 房间 store），同一台机器开两个窗口（?as=买家甲 / ?as=买家乙)
-// 就能双账号对拍演示，互不串号。跳过登录门，不碰全局登录身份。
+// #260 requirement 7: #/m?as=<nickname> gives a fixed identity with no login. Each nickname is its own seat
+// (its own backend userId/token plus room store), so opening two windows on one machine
+// (?as=buyerOne / ?as=buyerTwo) gives a two-account head-to-head demo with no crossover. It skips the login
+// gate and never touches the global login identity.
 function readAsParam(): string | null {
   if (typeof window === 'undefined') return null;
   const q = window.location.hash.split('?')[1] || '';
@@ -50,11 +51,11 @@ export default function MobileApp({ startIndex = 0, autoGuest = false, seat = ''
   const ready = useIdentity((s) => s.ready);
   const resolve = useIdentity((s) => s.resolve);
   const continueAsGuest = useIdentity((s) => s.continueAsGuest);
-  // Showcase seats (买家A/买家B) own a FIXED per-seat identity + their own backend
+  // Showcase seats (buyer A / buyer B) own a FIXED per-seat identity + their own backend
   // session (minted inside the engine, keyed by seat). They never touch the global
   // login store — that global singleton is exactly what collapsed A and B into one
   // account before. So seat panes skip the login gate entirely.
-  // ?as=<昵称> reuses the same seat machinery: a synthetic 'as-<昵称>' seat.
+  // ?as=<nickname> reuses the same seat machinery: a synthetic 'as-<nickname>' seat.
   const asNick = seat ? null : readAsParam();
   const effSeat = seat || (asNick ? 'as-' + asNick : '');
   const seatIdent = useMemo<SeatIdentity | null>(() => {
@@ -69,7 +70,7 @@ export default function MobileApp({ startIndex = 0, autoGuest = false, seat = ''
 
   if (orderId) return <OrderView auctionId={orderId} />;
   if (effSeat && seatIdent) return <BuyerRail startIndex={startIndex} seat={effSeat} identity={seatIdent} />;
-  if (!ready) return autoGuest ? <CenterMsg text="正在进入直播间…" sub="LOADING" /> : <LoginGate />;
+  if (!ready) return autoGuest ? <CenterMsg text="Entering the room..." sub="LOADING" /> : <LoginGate />;
   return <BuyerRail startIndex={startIndex} />;
 }
 
@@ -79,8 +80,9 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
   // It's only the initial room; safeIndex below clamps it once rooms load.
   const [index, setIndex] = useState(startIndex);
   const [dir, setDir] = useState<'up' | 'down'>('up');
-  // 退出直播间（V8「竞拍结束需要有推出界面」）：真实 /m 的结束终态屏 / 顶部 X → 退出态，
-  // 不再被困在出价流里无限循环。showcase seat 不注入 onExit（保留三屏自动滚动），故只在真 /m 触发。
+  // Leaving the room (V8's "the end of an auction needs a way out"): on the real /m the end screen or the
+  // top X moves to the exited state, so the user is no longer stuck in an endless bidding loop. The
+  // showcase seat does not inject onExit (keeping the three-screen auto-scroll), so this only fires on the real /m.
   const [exited, setExited] = useState(false);
   const cooldown = useRef(false);
   const touchY = useRef<number | null>(null);
@@ -129,7 +131,7 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
   // effect — which depends on this callback's identity — fires exactly once.
   const indexRef = useRef(index); indexRef.current = index;
   const lenRef = useRef(list.length); lenRef.current = list.length;
-  // 一件拍品结束(流拍/落槌) 5s 后自动「进入下一件」：等同向上滑到下一个直播间。
+  // Five seconds after a lot ends (no bid or hammer) it advances to the next lot automatically - the same as swiping up to the next room.
   const advance = useCallback(() => {
     const len = lenRef.current;
     if (len < 2 || cooldown.current) return;
@@ -160,8 +162,8 @@ function BuyerRail({ startIndex = 0, seat = '', identity }: { startIndex?: numbe
     touchY.current = null;
   };
 
-  if (rooms === null) return <CenterMsg text="正在加载直播场次…" sub="LOADING LIVE AUCTIONS" />;
-  if (list.length === 0) return <CenterMsg text="暂无正在直播的竞拍" sub="卖家可在管理后台「竞拍发布」开播" />;
+  if (rooms === null) return <CenterMsg text="Loading live sessions..." sub="LOADING LIVE AUCTIONS" />;
+  if (list.length === 0) return <CenterMsg text="No auction is live right now" sub="Sellers can go live from Publish auction in the admin console" />;
   if (exited) return <ExitedScreen onReenter={() => { setExited(false); setIndex(0); }} />;
 
   const safeIndex = Math.min(index, list.length - 1);
@@ -194,15 +196,15 @@ function sameIds(a: Room[] | null, b: Room[]): boolean {
   return a.every((r, i) => r.id === b[i].id);
 }
 
-// 退出直播间后的终态屏（V8「推出界面」）：明确「已退出」，给一键「返回直播」重进直播场。
+// The terminal screen after leaving the room (V8's "way out"): it states plainly that you have left and offers one tap back into the live sessions.
 function ExitedScreen({ onReenter }: { onReenter: () => void }) {
   return (
     <div className="lm-exited">
       <div className="lm-exited-card">
         <div className="lm-exited-emoji" aria-hidden>👋</div>
-        <div className="lm-exited-title">已退出直播间</div>
-        <div className="lm-exited-sub">感谢观看本场竞拍</div>
-        <button className="lm-exited-btn" onClick={onReenter}>返回直播 ›</button>
+        <div className="lm-exited-title">You have left the room</div>
+        <div className="lm-exited-sub">Thanks for watching this auction</div>
+        <button className="lm-exited-btn" onClick={onReenter}>Back to live ›</button>
       </div>
     </div>
   );

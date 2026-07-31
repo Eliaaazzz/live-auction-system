@@ -3,7 +3,7 @@
    Pairs with the Web Audio SFX in lib/sound.ts.
    ============================================================ */
 
-/* 截拍中：全屏红色脉冲暗角，营造最后冲刺的紧张感 */
+/* Closing: a full-screen red pulsing vignette that builds tension for the final sprint */
 @keyframes la-vignette {
   0%, 100% { box-shadow: inset 0 0 60px 8px rgba(254, 44, 85, 0.22); }
   50% { box-shadow: inset 0 0 96px 26px rgba(254, 44, 85, 0.5); }
@@ -16,7 +16,7 @@
   animation: la-vignette 1s ease-in-out infinite;
 }
 
-/* 事件全屏一闪：领先金 / 被超越红 */
+/* Full-screen event flash: gold for taking the lead, red for being outbid */
 @keyframes la-screenflash {
   0% { opacity: 0.5; }
   100% { opacity: 0; }
@@ -31,7 +31,7 @@
 .lm-flash.gold { background: radial-gradient(circle at 50% 62%, rgba(255, 206, 84, 0.5), transparent 70%); }
 .lm-flash.red { background: radial-gradient(circle at 50% 62%, rgba(254, 44, 85, 0.55), transparent 70%); }
 
-/* 新出价：金额向上飘 +¥X */
+/* A new bid: the amount floats upward as +¥X */
 @keyframes la-gainfloat {
   0% { transform: translate(-50%, 0) scale(0.8); opacity: 0; }
   18% { opacity: 1; }
@@ -51,7 +51,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 价格跳动 */
+/* Price rollover */
 @keyframes la-pricepop {
   0% { transform: scale(1); }
   30% { transform: scale(1.16); color: #ffce54; }
@@ -59,7 +59,7 @@
 }
 .lm-pricepop { animation: la-pricepop 0.45s ease; display: inline-block; }
 
-/* 被超越：出价条抖动 */
+/* Outbid: the bid bar shakes */
 @keyframes la-barshake {
   0%, 100% { transform: translateX(0); }
   20% { transform: translateX(-5px); }
@@ -69,8 +69,8 @@
 }
 .lm-shake { animation: la-barshake 0.4s ease; }
 
-/* 声音开关按钮 */
-/* #UIUX 右上拍品簇(lm-lotstack)正下方：避开合并后的商品卡+倒计时。 */
+/* Sound toggle button */
+/* #UIUX directly under the top-right lot cluster (lm-lotstack), clearing the merged lot card and countdown. */
 .lm-sound-btn {
   position: absolute;
   top: 168px;
@@ -89,14 +89,14 @@
 }
 .lm-sound-btn.off { color: rgba(255, 255, 255, 0.45); }
 
-/* 最后 5 秒倒计时数字猛跳 */
+/* The countdown digits jump hard in the last 5 seconds */
 @keyframes la-cdpunch {
   0% { transform: scale(1.25); }
   100% { transform: scale(1); }
 }
 .lm-cd.urgent .tnum { display: inline-block; animation: la-cdpunch 0.32s ease; }
 
-/* 落槌：成交弹层的金额做一次重击缩放 */
+/* Hammer: the amount on the sale overlay does one heavy scale punch */
 @keyframes la-hammerhit {
   0% { transform: scale(0.4) rotate(-8deg); opacity: 0; }
   55% { transform: scale(1.18) rotate(2deg); opacity: 1; }

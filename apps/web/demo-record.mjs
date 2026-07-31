@@ -1,8 +1,8 @@
 // Prod-equivalent full-stack demo recorder (Playwright).
 // Drives BOTH ends against the REAL local stack (lumen + redis + mysql +
-// ai-sidecar with real Doubao) serving the new antd/抖音 frontend:
-//   1) 主播端 /#/admin  — 竞拍发布 → 真 createProduct→freeze→start→LIVE
-//   2) 买家端 /#/m       — 进直播间 → 我要参与 → 立即出价 (真 WS + Redis Lua 裁决)
+// ai-sidecar with real Doubao) serving the new antd/Douyin-style frontend:
+//   1) host side /#/admin  - Publish auction -> real createProduct->freeze->start->LIVE
+//   2) buyer side /#/m     - enter the room -> Join -> Bid now (real WS + Redis Lua adjudication)
 // Records an MP4/webm per end + step screenshots. Run from apps/web:
 //   node C:/Users/Aufb/AppData/Local/Temp/lumen-demo/record.mjs
 import { chromium } from 'playwright';
@@ -24,22 +24,22 @@ async function recordAdmin(browser) {
     recordVideo: { dir: OUT, size: { width: 1440, height: 900 } },
   });
   const page = await ctx.newPage();
-  let auctionName = '【真拍】百达翡丽年历计时腕表 · demo';
+  let auctionName = '[Live] Patek Philippe Annual Calendar Chronograph - demo';
   try {
     await page.goto(`${BASE}/#/admin`, { waitUntil: 'networkidle' });
     await sleep(1500); await shot(page, '01-admin-home');
-    // open 竞拍发布
-    await page.getByText('竞拍发布', { exact: true }).first().click();
+    // open Publish auction
+    await page.getByText('Publish auction', { exact: true }).first().click();
     await sleep(1200); await shot(page, '02-admin-publish-form');
-    // fill 商品名称
-    const nameInput = page.getByPlaceholder(/百达翡丽/).first();
+    // fill in the product name
+    const nameInput = page.getByPlaceholder(/Patek Philippe/i).first();
     await nameInput.click(); await nameInput.fill(auctionName);
     await sleep(400); await shot(page, '03-admin-filled');
     // publish → real createProduct→freeze→start→LIVE
-    await page.getByRole('button', { name: /立即发布开拍/ }).click();
+    await page.getByRole('button', { name: /Publish and go live/i }).click();
     await sleep(3500); await shot(page, '04-admin-published');
-    // jump to 直播商品 to show it live in the real list
-    await page.getByText('直播商品', { exact: true }).first().click();
+    // jump to Live products to show it live in the real list
+    await page.getByText('Live products', { exact: true }).first().click();
     await sleep(2500); await shot(page, '05-admin-product-list');
   } catch (e) {
     log('admin flow error:', e.message); await shot(page, 'admin-error');
@@ -61,14 +61,14 @@ async function recordBuyer(browser) {
     await page.goto(`${BASE}/#/m`, { waitUntil: 'networkidle' });
     await sleep(2800); await shot(page, '06-buyer-room'); // LiveRoom on the real LIVE auction
     // 1) open the join sheet (bottom CTA → setSheetTab('join'))
-    await page.getByText('我要参与竞拍', { exact: false }).first().click();
+    await page.getByText('Join this auction', { exact: false }).first().click();
     await sleep(900); await shot(page, '07a-join-sheet');
-    // 2) agree (.lm-checkbox) → 3) 同意条款并参与 → real join (sheet → bid panel)
+    // 2) agree (.lm-checkbox) -> 3) Accept and join -> real join (sheet -> bid panel)
     await page.locator('.lm-checkbox').first().click();
     await sleep(400); await shot(page, '07b-agreed');
-    await page.getByRole('button', { name: /同意条款并参与/ }).click();
+    await page.getByRole('button', { name: /Accept and join/i }).click();
     await sleep(1300); log('joined'); await shot(page, '07c-joined');
-    // 4) REAL bids via quick-bid chips (+1档 → placeBid → POST /api/auctions/{id}/bids)
+    // 4) REAL bids via quick-bid chips (+1 step -> placeBid -> POST /api/auctions/{id}/bids)
     for (let i = 0; i < 5; i++) {
       const chips = page.locator('.lm-chip');
       if (await chips.count()) {
@@ -79,7 +79,7 @@ async function recordBuyer(browser) {
       } else { log('no bid chip'); break; }
     }
     // show the real leaderboard / my rank
-    const overview = page.getByText('概览', { exact: false }).first();
+    const overview = page.getByText('Overview', { exact: false }).first();
     if (await overview.count()) { await overview.click(); await sleep(1600); await shot(page, '09-buyer-leaderboard'); }
     await sleep(1500); await shot(page, '10-buyer-final');
   } catch (e) {
@@ -92,10 +92,10 @@ async function recordBuyer(browser) {
 
 (async () => {
   const browser = await chromium.launch({ headless: true });
-  log('=== ADMIN (主播端) ===');
+  log('=== ADMIN (host side) ===');
   await recordAdmin(browser);
   await sleep(1500); // let the new LIVE auction propagate to /api/auctions
-  log('=== BUYER (买家端) ===');
+  log('=== BUYER (buyer side) ===');
   await recordBuyer(browser);
   await browser.close();
   log('DONE → videos + screenshots in', OUT);

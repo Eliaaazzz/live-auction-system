@@ -1,6 +1,6 @@
 /* ============================================================
    Global reset — kills the white border / default margins.
-   (Follow-up task: 去除页面外部白色边框, html margin/padding = 0)
+   (Follow-up task: remove the outer white border on the page, html margin/padding = 0)
    ============================================================ */
 *,
 *::before,
@@ -102,13 +102,13 @@ body {
   --r-lg: 22px;
   --r-md: 16px;
   --r-sm: 10px;
-  /* #UIUX 语义圆角 token — 统一各表面圆角，消除手调不一致（按钮/卡片/底部表单/居中弹层/胶囊）。 */
+  /* #UIUX semantic corner-radius tokens - one radius vocabulary across surfaces, removing hand-tuned inconsistency (buttons / cards / bottom sheets / centred modals / pills). */
   --r-pill: 999px;   /* chips / pills */
-  --r-btn: 14px;     /* 主操作按钮 */
-  --r-card: 14px;    /* 卡片 / 列表项 */
-  --r-sheet: 18px;   /* 底部 sheet 顶角 */
-  --r-modal: 20px;   /* 居中弹层 */
-  /* #UIUX 描边 token — 普通卡=低透明白；领先=金；被反超/危险=红 */
+  --r-btn: 14px;     /* primary action button */
+  --r-card: 14px;    /* card / list item */
+  --r-sheet: 18px;   /* top corners of a bottom sheet */
+  --r-modal: 20px;   /* centred modal */
+  /* #UIUX border tokens - a normal card is low-opacity white, leading is gold, outbid/danger is red */
   --bd-soft: 1px solid rgba(255,255,255,0.1);
   --bd-gold: 1.5px solid rgba(255,206,84,0.4);
   --bd-danger: 1.5px solid rgba(254,44,85,0.5);
@@ -116,7 +116,7 @@ body {
 }
 
 /* Number readability: tabular figures so prices don't jitter while ticking.
-   #18 nowrap: a price/amount must never wrap to a 2nd line ("横着变竖着") when its
+   #18 nowrap: a price/amount must never wrap to a 2nd line when its
    container is narrow — it stays on one line and the container clips/ellipsizes. */
 .tnum {
   font-variant-numeric: tabular-nums;
@@ -134,7 +134,7 @@ body {
 }
 
 /* ============================================================
-   Keyframes — auction "气氛感" effects
+   Keyframes - the auction atmosphere effects
    ============================================================ */
 @keyframes la-pop {
   0% { transform: scale(0.7); opacity: 0; }
@@ -178,7 +178,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* Skeleton shimmer — used for every loading / "卡住" state */
+/* Skeleton shimmer - used for every loading / stalled state */
 .la-skeleton {
   background: linear-gradient(
     100deg,

@@ -1,23 +1,23 @@
 // Money + number formatting.
-// Follow-up task: 数字展示规范 — 中文语境下的分隔/简写规则 + 出价榜溢出处理。
+// Follow-up task: number display conventions - separator and compact rules, plus overflow handling on the bid board.
 
-/** 标准千分位：9000 -> "9,000"（价格主显示用） */
+/** Standard thousands separator: 9000 -> "9,000" (used for the main price display) */
 export function fmtMoney(n: number): string {
   if (!Number.isFinite(n)) return '0';
   return Math.round(n).toLocaleString('en-US');
 }
 
-/** 带 ¥ 前缀 */
+/** With the ¥ prefix */
 export function fmtYuan(n: number): string {
   return '¥' + fmtMoney(n);
 }
 
 /**
- * 中文简写：用于排行榜/溢出场景，避免超长数字撑破布局。
+ * Compact form: used on the leaderboard and in overflow cases so long numbers do not break the layout.
  *  9,000      -> "9,000"
- *  12,800     -> "1.28万"
- *  5,000,000  -> "500万"
- *  120,000,000-> "1.2亿"
+ *  12,800     -> "12.8K"
+ *  5,000,000  -> "5M"
+ *  120,000,000-> "120M"
  */
 export function fmtCompact(n: number): string {
   if (!Number.isFinite(n)) return '0';
@@ -25,10 +25,10 @@ export function fmtCompact(n: number): string {
   if (v < 10000) return v.toLocaleString('en-US');
   if (v < 1_0000_0000) {
     const wan = v / 10000;
-    return trim(wan) + '万';
+    return trim(wan) + 'K';
   }
   const yi = v / 1_0000_0000;
-  return trim(yi) + '亿';
+  return trim(yi) + 'M';
 }
 
 export function fmtCompactYuan(n: number): string {
@@ -36,11 +36,11 @@ export function fmtCompactYuan(n: number): string {
 }
 
 function trim(x: number): string {
-  // 最多两位小数，去掉末尾 0
+  // at most two decimals, trailing zeros removed
   return parseFloat(x.toFixed(2)).toString();
 }
 
-/** 毫秒 -> mm:ss（用于一般倒计时） */
+/** Milliseconds -> mm:ss (for the general countdown) */
 export function fmtClock(ms: number): string {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(s / 60);
@@ -48,7 +48,7 @@ export function fmtClock(ms: number): string {
   return `${pad(m)}:${pad(sec)}`;
 }
 
-/** 毫秒 -> { m, s, cs } 用于「最后冲刺」高精度展示（秒 + 厘秒） */
+/** Milliseconds -> { m, s, cs } for the high-precision final-sprint display (seconds plus centiseconds) */
 export function splitClock(ms: number): { m: string; s: string; cs: string } {
   const clamped = Math.max(0, ms);
   const totalSec = Math.floor(clamped / 1000);
@@ -62,8 +62,8 @@ function pad(n: number): string {
   return n < 10 ? '0' + n : String(n);
 }
 
-/** 浏览人数：12800 -> "1.3万" */
+/** Viewer count: 12800 -> "12.8K" */
 export function fmtCount(n: number): string {
   if (n < 10000) return n.toLocaleString('en-US');
-  return trim(n / 10000) + '万';
+  return trim(n / 1000) + 'K';
 }

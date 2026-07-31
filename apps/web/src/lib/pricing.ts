@@ -1,4 +1,4 @@
-// Dynamic bid increment ("加价幅度") for the buyer H5.
+// Dynamic bid increment for the buyer H5.
 //
 // The backend Lua adjudicator enforces a hard step floor (lot.increment /
 // stepCents). This module only ever RAISES the suggested client-side step above
@@ -44,16 +44,16 @@ export function computeIncrement(valueYuan: number, online: number, baseStepYuan
 export const RECOMMEND_INCREMENT_PCT = 0.025;
 
 /**
- * Recommend a FIXED bid increment (加价幅度) for the SELLER to set BEFORE the
+ * Recommend a FIXED bid increment for the SELLER to set BEFORE the
  * auction, from the lot's cap / value. This is NOT computeIncrement: that one is
  * the live, heat-driven dynamic step used DURING bidding (and stays unchanged —
  * it has 4 live callers). This is a one-shot, value-PROPORTIONAL suggestion, so a
  * high-value lot finally gets a meaningful step instead of a cheap flat tier:
  *
- *   ¥50,000 劳力士 → ¥1,300   (old tier gave ¥250 — a luxury watch climbing in
+ *   a ¥50,000 Rolex -> ¥1,300   (the old tier gave ¥250 - a luxury watch climbing in
  *                              ¥250 steps took ~200 bids and felt insulting)
- *   ¥12,000 玉镯   → ¥300
- *   ¥200 食品      → ¥10
+ *   a ¥12,000 jade bangle -> ¥300
+ *   a ¥200 food item -> ¥10
  *
  * ≈2.5% of the lot value, snapped to a nice number, floored by the value tier so
  * a cheap lot still gets a usable step. No fake "heat": the seller's fixed

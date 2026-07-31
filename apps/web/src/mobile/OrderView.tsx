@@ -1,7 +1,7 @@
 // Login-free, shareable order/result page for the mobile H5.
 // Reached via #/m?order=<auctionId> — a seller/winner copies the link (ShareModal
 // / win overlay) and sends it over any IM; the friend opens it WITHOUT logging in
-// and sees the public auction result (same data the admin 订单详情 shows).
+// and sees the public auction result (the same data the admin order details show).
 // Uses the public GET /api/auctions snapshot (no winner-only fields required).
 
 import { useEffect, useState } from 'react';
@@ -12,12 +12,12 @@ import { ProductImg } from './components';
 import { Icon } from './icons';
 
 const STATUS_TEXT: Record<string, { t: string; sub: string; tone: string }> = {
-  LIVE: { t: '正在竞拍中', sub: '点击进入直播间实时出价', tone: '#fe2c55' },
-  SCHEDULED: { t: '即将开拍', sub: '关注直播间，开拍提醒', tone: '#ffce54' },
-  SOLD: { t: '已成交', sub: '恭喜买家拍得此拍品', tone: '#2fd6a8' },
-  ORDER_CREATED: { t: '已成交 · 待付款', sub: '订单已生成，等待买家付款', tone: '#2fd6a8' },
-  NO_BID: { t: '已流拍', sub: '本场无人出价', tone: '#9aa0b4' },
-  CANCELLED: { t: '已取消', sub: '该场竞拍已取消，保证金解冻', tone: '#9aa0b4' },
+  LIVE: { t: 'Bidding now', sub: 'Tap to enter the room and bid live', tone: '#fe2c55' },
+  SCHEDULED: { t: 'Starting soon', sub: 'Follow the room to get a start reminder', tone: '#ffce54' },
+  SOLD: { t: 'Sold', sub: 'Congratulations to the winning buyer', tone: '#2fd6a8' },
+  ORDER_CREATED: { t: 'Sold - awaiting payment', sub: 'The order is created and waiting on the buyer', tone: '#2fd6a8' },
+  NO_BID: { t: 'No bid', sub: 'Nobody bid in this session', tone: '#9aa0b4' },
+  CANCELLED: { t: 'Cancelled', sub: 'This auction was cancelled and deposits released', tone: '#9aa0b4' },
 };
 
 export default function OrderView({ auctionId }: { auctionId: string }) {
@@ -39,8 +39,8 @@ export default function OrderView({ auctionId }: { auctionId: string }) {
 
   const enterRoom = () => { window.location.hash = '#/m'; };
 
-  if (state === 'loading') return <Centered title="正在加载订单…" sub="ORDER" />;
-  if (state === 'missing' || !a) return <Centered title="未找到该订单" sub="链接可能已失效，或拍品已下架" action={{ label: '进入直播间', onClick: enterRoom }} />;
+  if (state === 'loading') return <Centered title="Loading the order..." sub="ORDER" />;
+  if (state === 'missing' || !a) return <Centered title="Order not found" sub="The link may have expired, or the lot was withdrawn" action={{ label: 'Enter the room', onClick: enterRoom }} />;
 
   const lot = auctionToLot(a);
   const meta = STATUS_TEXT[a.status || ''] || STATUS_TEXT.LIVE;
@@ -50,8 +50,8 @@ export default function OrderView({ auctionId }: { auctionId: string }) {
   return (
     <div className="ov-page">
       <div className="ov-top">
-        <span className="ov-brand">🔨 实时竞拍大师</span>
-        <span className="ov-free">免登录查看 · 可转发好友</span>
+        <span className="ov-brand">🔨 Real-Time Auction Master</span>
+        <span className="ov-free">No login needed - share it with friends</span>
       </div>
       <div className="ov-card">
         <div className="ov-status" style={{ color: meta.tone }}>
@@ -62,28 +62,28 @@ export default function OrderView({ auctionId }: { auctionId: string }) {
           <ProductImg lot={lot} radius={14} className="ov-img" />
           <div className="ov-lot-meta">
             <div className="ov-lot-title">{lot.title}</div>
-            <div className="ov-lot-cat">{lot.category} · 0 元起拍 · 服务端裁决</div>
+            <div className="ov-lot-cat">{lot.category} - starts at zero - adjudicated server-side</div>
           </div>
         </div>
         <div className="ov-pricebox">
           <div>
-            <div className="k">{sold ? '成交价' : '当前价'}</div>
-            <div className="v" style={{ color: meta.tone }}>{price > 0 ? fmtYuan(price) : '0 元起'}</div>
+            <div className="k">{sold ? 'Final price' : 'Current price'}</div>
+            <div className="v" style={{ color: meta.tone }}>{price > 0 ? fmtYuan(price) : 'From zero'}</div>
           </div>
           <div style={{ textAlign: 'right' }}>
-            <div className="k">封顶价</div>
-            <div className="v2">{lot.capPrice > 0 ? fmtYuan(lot.capPrice) : '不封顶'}</div>
+            <div className="k">Cap price</div>
+            <div className="v2">{lot.capPrice > 0 ? fmtYuan(lot.capPrice) : 'No cap'}</div>
           </div>
         </div>
         {sold && (
           <div className="ov-steps">
-            <span className="on">拍下成交</span><i />
-            <span className={a.status === 'ORDER_CREATED' ? '' : 'on'}>买家付款</span><i />
-            <span>卖家发货</span><i /><span>交易完成</span>
+            <span className="on">Won at auction</span><i />
+            <span className={a.status === 'ORDER_CREATED' ? '' : 'on'}>Buyer paid</span><i />
+            <span>Seller shipped</span><i /><span>Transaction complete</span>
           </div>
         )}
-        <button className="ov-cta" onClick={enterRoom}>进入直播间 · 查看更多拍品</button>
-        <div className="ov-note">本页展示该拍品的公开竞拍结果，可直接转发给好友，无需登录即可查看。</div>
+        <button className="ov-cta" onClick={enterRoom}>Enter the room - see more lots</button>
+        <div className="ov-note">This page shows the public auction result for the lot; it can be shared directly and viewed without logging in.</div>
       </div>
     </div>
   );

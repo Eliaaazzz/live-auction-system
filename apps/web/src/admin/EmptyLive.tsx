@@ -3,17 +3,18 @@ import { Button } from 'antd';
 import { VideoCameraOutlined, RightOutlined } from '@ant-design/icons';
 
 /**
- * 行动导向空状态（直播商品 / 实时竞拍监控）：不说「暂无 X」，直接告诉卖家
- * 下一步干嘛，并给一个跳「竞拍发布」的 CTA。文案与图标按页面语境定制：
- * 商品列表 →「快去上架商品」，实时监控 →「快去直播」。
- * 样式见 admin.css `.empty-live*`（呼吸光环 + 渐变 CTA，reduced-motion 自动关动画）。
+ * An action-oriented empty state (live products / live monitor): instead of "nothing here", it tells the
+ * seller what to do next and offers a CTA into Publish auction. Copy and icon are tailored per page:
+ * the product list says "list your first product", the live monitor says "go live".
+ * Styles live in admin.css `.empty-live*` (a breathing halo plus a gradient CTA, with animation disabled
+ * automatically under reduced-motion).
  */
 export function EmptyLive({
   onGo,
   icon = <VideoCameraOutlined />,
-  title = '快去直播吧',
-  hint = '发布一场竞拍，这里马上热闹起来',
-  cta = '去竞拍发布开拍',
+  title = 'Go live',
+  hint = 'Publish an auction and this page comes alive',
+  cta = 'Go to Publish auction',
 }: {
   onGo?: () => void;
   icon?: ReactNode;

@@ -28,23 +28,23 @@
 .mon-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 16px; }
 @media (max-width: 1100px) { .mon-grid { grid-template-columns: 1fr; } }
 .mon-price { font-size: 40px; font-weight: 900; color: #fe2c55; font-variant-numeric: tabular-nums; line-height: 1.1; }
-/* #261-1: 实时出价流水固定高度，内置滚动条；条数再多面板高度也不变。 */
+/* #261-1: the live bid feed has a fixed height with its own scrollbar, so the panel height never changes with the number of rows. */
 .mon-feed { height: 340px; overflow-y: auto; padding-right: 6px; }
 .mon-bid { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; background: #fafafa; animation: monin 0.3s ease; }
 .mon-bid.lead { background: linear-gradient(90deg,#fff7e6,#fff); border: 1px solid #ffe7ba; }
 .mon-bid.self { background: linear-gradient(90deg,#fff0f3,#fff); border: 1px solid #ffd6df; }
-/* #261-2: 买家名横排 — CJK 名字在窄 flex 列里会逐字竖排折行，钳住不换行 + 省略。 */
+/* #261-2: buyer names stay on one line - in a narrow flex column a name can wrap one character per row, so clamp to nowrap plus ellipsis. */
 .mon-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px; flex-shrink: 0; }
 .mon-time { color: #bbb; font-size: 12px; white-space: nowrap; flex-shrink: 0; }
 @keyframes monin { from { transform: translateY(-6px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 .mon-amt { margin-left: auto; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
-/* #261-2 监控全貌：grid 子项允许收缩，避免右卡被裁、买家名被挤成竖排 */
+/* #261-2 full monitor view: grid children may shrink, so the right card is not clipped and buyer names are not squeezed into a vertical stack */
 .mon-grid > * { min-width: 0; }
 .mon-bid > .mon-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mon-bid > .ant-avatar, .mon-bid > .ant-tag { flex-shrink: 0; }
 .mon-bid > span:not(.mon-name):not(.mon-amt) { flex-shrink: 0; white-space: nowrap; }
 
-/* #261-13 直播中左侧发布历史 */
+/* #261-13 publish history on the left while live */
 .mon-layout { display: flex; gap: 16px; align-items: flex-start; }
 .mon-main { flex: 1 1 auto; min-width: 0; }
 .mon-history { width: 216px; flex-shrink: 0; background: #fff; border: 1px solid #f0f0f0; border-radius: 10px; padding: 12px; max-height: 560px; display: flex; flex-direction: column; }
@@ -65,7 +65,7 @@
   .mon-history-item { min-width: 210px; }
 }
 
-/* #261-13: 发布历史 | 表单 | 预览 三栏 */
+/* #261-13: three columns - publish history | form | preview */
 .pub-grid { display: grid; grid-template-columns: 248px 1fr 320px; gap: 24px; }
 @media (max-width: 1280px) { .pub-grid { grid-template-columns: 1fr 320px; } .pub-history { display: none; } }
 @media (max-width: 1080px) { .pub-grid { grid-template-columns: 1fr; } }
@@ -116,13 +116,13 @@
 }
 
 /* ============================================================
-   行动导向空状态（EmptyLive：直播商品 / 实时竞拍监控）
-   不说「暂无 X」，直接说下一步：快去直播 / 上架商品。
+   An action-oriented empty state (EmptyLive: live products / live monitor).
+   Instead of "nothing here", it states the next step: go live / list a product.
    ============================================================ */
 .empty-live { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 56px 20px 60px; text-align: center; }
 .empty-live-badge { position: relative; width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 20px; background: linear-gradient(135deg, #ffe3e9, #fff5f7); box-shadow: 0 10px 28px rgba(254, 44, 85, 0.14), inset 0 0 0 1px rgba(254, 44, 85, 0.08); }
 .empty-live-badge > .anticon { font-size: 38px; color: #fe2c55; }
-/* 两圈错峰呼吸光环：把空页讲成「即将开播」的期待感，而不是出错感。 */
+/* Two offset breathing halos: they make an empty page feel like anticipation of going live rather than an error. */
 .empty-live-badge::before,
 .empty-live-badge::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 1.5px solid rgba(254, 44, 85, 0.32); animation: empty-pulse 2.8s ease-out infinite; pointer-events: none; }
 .empty-live-badge::after { animation-delay: 1.4s; }
@@ -140,7 +140,7 @@
 }
 
 /* ============================================================
-   竞拍发布 · 草稿箱 —— 存草稿真的存下来，并且有一个地方看得到。
+   Publish auction - the draft box. Saving a draft really persists it, and there is a place to see it.
    ============================================================ */
 .draft-box { margin-top: 28px; padding: 16px 16px 8px; border: 1px solid #ffe3e9; border-radius: 14px; background: linear-gradient(180deg, #fff8fa, #fff 56%); }
 .draft-box-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -162,7 +162,7 @@
 }
 
 /* ============================================================
-   #261-13 竞拍发布 · 左侧发布历史 — 主播一眼看到这场直播发过什么。
+   #261-13 publish auction - the publish history on the left, so the host sees at a glance what this stream has published.
    ============================================================ */
 .pub-history { position: sticky; top: 8px; align-self: start; }
 .pub-history-head { display: flex; align-items: center; gap: 7px; font-weight: 800; font-size: 14px; color: #1f1f28; margin-bottom: 10px; }
@@ -175,12 +175,12 @@
 .pub-hist-meta { flex: 1; min-width: 0; }
 .pub-hist-name { font-weight: 700; font-size: 12.5px; color: #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pub-hist-sub { margin-top: 2px; color: #9a9aa5; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 发布历史管理（多选/全选删除）— 仅终态拍品可删 */
+/* Publish-history management (multi-select / select-all delete) - only terminal lots can be deleted */
 .pub-hist-toolbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 10px; }
 .pub-hist-toolbar-spacer { flex: 1; }
 .pub-hist-check { flex-shrink: 0; }
 .pub-hist-item.selected { border-color: #fe2c55; box-shadow: 0 0 0 2px rgba(254, 44, 85, 0.10); }
 
-/* #261-12b 视频拖拽上传框 */
+/* #261-12b the drag-and-drop video upload box */
 .pub-video-dragger .ant-upload-drag { border-radius: 12px; }
 .pub-video-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: #52c41a; font-weight: 600; }

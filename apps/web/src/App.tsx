@@ -6,12 +6,13 @@ import SellerGate from './admin/SellerGate';
 
 /**
  * Routes
- *  /            桌面：两端同框展示；手机：自动进入 /m 全屏可上滑的真移动端
- *  /m           移动端用户端 — 全屏可交互（手机直接访问即原生体验）
- *  /admin/*     PC 管理后台 — Ant Design 完整后台
+ *  /            desktop: both sides shown in one frame; phone: goes straight to the full-screen,
+ *               swipeable /m mobile app
+ *  /m           the mobile buyer app - full screen and interactive (a phone gets the native experience directly)
+ *  /admin/*     the PC admin console - a full Ant Design back office
  */
 function Home() {
-  // 手机/窄屏一进公网就直接进全屏移动直播间（可上滑切换），而不是桌面同框稿。
+  // A phone or narrow screen goes straight into the full-screen mobile room (swipeable) rather than the desktop side-by-side view.
   const isMobile = typeof navigator !== 'undefined'
     && (/Android|iPhone|iPad|iPod|HarmonyOS|Mobile/i.test(navigator.userAgent) || window.innerWidth < 820);
   return isMobile ? <Navigate to="/m" replace /> : <Showcase />;

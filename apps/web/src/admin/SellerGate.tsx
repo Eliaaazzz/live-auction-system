@@ -4,19 +4,20 @@ import { ShopOutlined, KeyOutlined } from '@ant-design/icons';
 import { currentRole, sellerLogin } from '../backend/lib/auth.js';
 
 /**
- * SellerGate (#260-4) — 包裹 /admin/* 的卖家登录守卫。
+ * SellerGate (#260-4) - the seller login guard wrapping /admin/*.
  *
- * 之前任何人打开 /admin 都直接进商家后台。现在需要先用「卖家密钥」换一个
- * seller_* 命名空间的会话（auth.js sellerLogin）：服务端配置 LUMEN_SELLER_KEY
- * 时密钥必须匹配，且商品/拍卖/上传等创建接口只认 seller_* 身份（requireSeller）；
- * 未配置时为开放模式（向后兼容 dev/演示/压测种子流程），任意非空密钥可进。
+ * Previously anyone opening /admin landed straight in the merchant console. Now a seller key must first be
+ * exchanged for a session in the seller_* namespace (auth.js sellerLogin): when the server sets
+ * LUMEN_SELLER_KEY the key must match, and the create endpoints for products/auctions/uploads only accept a
+ * seller_* identity (requireSeller). When it is unset the gate is open (backwards compatible with dev,
+ * demo, and load-seed flows) and any non-empty key gets in.
  *
- * 固定昵称 'seller-demo'：admin 各页面硬编码 ensureSession('seller-demo')，
- * 守卫用同一昵称登录，页面侧的会话复用检查（昵称相同）就会命中缓存，
- * 不会用普通登录把 seller 会话顶掉。
+ * The fixed nickname 'seller-demo': every admin page hard-codes ensureSession('seller-demo'), and the guard
+ * logs in with the same nickname, so the page-side session reuse check (same nickname) hits the cache and an
+ * ordinary login cannot displace the seller session.
  *
- * 桌面 Showcase 直接内嵌 <AdminApp/>（演示三联屏），不经过本守卫 —— 那是
- * 评委演示面板；真正的资产创建在服务端仍受 requireSeller 保护。
+ * The desktop Showcase embeds <AdminApp/> directly (the three-panel demo) and bypasses this guard - that is
+ * the judges' demo panel, and real asset creation is still protected server-side by requireSeller.
  */
 export default function SellerGate({ children }: { children: ReactNode }) {
   const [ok, setOk] = useState(() => currentRole() === 'seller');
@@ -24,7 +25,7 @@ export default function SellerGate({ children }: { children: ReactNode }) {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Token 失效（api.js 401 → clearSession）时回到登录门。
+  // On an invalid token (api.js 401 -> clearSession) fall back to the login gate.
   useEffect(() => {
     const onExpired = () => setOk(currentRole() === 'seller');
     window.addEventListener('lumen:session-expired', onExpired);
@@ -35,14 +36,14 @@ export default function SellerGate({ children }: { children: ReactNode }) {
 
   const submit = async () => {
     const k = key.trim();
-    if (!k) { setErr('请输入卖家密钥'); return; }
+    if (!k) { setErr('Enter the seller key'); return; }
     setBusy(true);
     setErr(null);
     try {
       await sellerLogin(k);
       setOk(true);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : '登录失败，请重试');
+      setErr(e instanceof Error ? e.message : 'Sign-in failed, please retry');
     } finally {
       setBusy(false);
     }
@@ -70,8 +71,8 @@ export default function SellerGate({ children }: { children: ReactNode }) {
             >
               <ShopOutlined />
             </div>
-            <Typography.Title level={4} style={{ margin: 0 }}>卖家中心</Typography.Title>
-            <Typography.Text type="secondary">输入卖家密钥进入直播竞拍管理后台</Typography.Text>
+            <Typography.Title level={4} style={{ margin: 0 }}>Seller centre</Typography.Title>
+            <Typography.Text type="secondary">Enter the seller key to open the live auction console</Typography.Text>
           </div>
 
           {err && <Alert type="error" message={err} showIcon />}
@@ -79,17 +80,17 @@ export default function SellerGate({ children }: { children: ReactNode }) {
           <Input.Password
             size="large"
             prefix={<KeyOutlined style={{ color: 'rgba(0,0,0,0.3)' }} />}
-            placeholder="卖家密钥"
+            placeholder="Seller key"
             value={key}
             onChange={(e) => setKey(e.target.value)}
             onPressEnter={submit}
             autoFocus
           />
           <Button type="primary" size="large" block loading={busy} onClick={submit}>
-            进入卖家中心
+            Enter the seller centre
           </Button>
           <Typography.Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block' }}>
-            买家请访问手机端 /m 参与竞拍
+            Buyers should go to /m on mobile to take part
           </Typography.Text>
         </Space>
       </Card>

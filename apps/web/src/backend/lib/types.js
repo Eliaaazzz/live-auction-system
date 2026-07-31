@@ -43,7 +43,7 @@ export const EventType = Object.freeze({
   AUCTION_NO_BID:    'AUCTION_NO_BID',
   AUCTION_CANCELLED: 'AUCTION_CANCELLED',
   AI_COMMENTARY:     'AI_COMMENTARY',  // T7 §4.2: LLM auctioneer commentary, non-authoritative (proto/ai-events.md)
-  ROOM_SOCIAL:       'ROOM_SOCIAL',    // #261-7/8/10/12a: 弹幕/礼物/点赞/人气 social broadcast, non-authoritative, no seq
+  ROOM_SOCIAL:       'ROOM_SOCIAL',    // #261-7/8/10/12a: danmaku/gift/like/crowd social broadcast, non-authoritative, no seq
   PONG:              'PONG',
 
   // evidence-only (evidence-card.md §1 timeline)
@@ -74,14 +74,14 @@ export const BidErrorCode = Object.freeze({
 });
 
 export const bidRejectCopy = Object.freeze({
-  ERR_NOT_LIVE:        '本场已结束 · 无法继续出价',
-  ERR_AFTER_END:       '已过截止时间',
-  ERR_TOO_LOW:         '出价低于最低加价或超过上限',
-  ERR_RATE_LIMITED:    '操作过快，请稍后再试',
-  ERR_AUCTION_PAUSED:  '系统正在恢复 · 请稍候再试',
-  ERR_NOT_ALLOWED:     '当前账号不能出价此场',
-  ERR_BAD_INPUT:       '出价参数有误',
-  ERR_INTERNAL:        '服务器繁忙 · 请重试',
+  ERR_NOT_LIVE:        'This session has ended - bidding is closed',
+  ERR_AFTER_END:       'Past the closing time',
+  ERR_TOO_LOW:         'The bid is below the minimum increment or over the cap',
+  ERR_RATE_LIMITED:    'Too many requests - please try again shortly',
+  ERR_AUCTION_PAUSED:  'The system is recovering - please try again shortly',
+  ERR_NOT_ALLOWED:     'This account cannot bid in this session',
+  ERR_BAD_INPUT:       'Invalid bid parameters',
+  ERR_INTERNAL:        'The server is busy - please retry',
 });
 
 // ─── Connection lifecycle (drives <ConnectionBar>) ───────────────
@@ -107,4 +107,4 @@ export const VLM_MODEL_DEFAULT = Object.freeze({
 // Hint for VLM facts that cannot be objectively verified by the model.
 // Backend sets `highRisk: true` + ships the per-response disclaimer string
 // in `highRiskFieldsDisclaimer`; this is the fallback copy.
-export const HIGH_RISK_DISCLAIMER = '此项不可由 VLM 客观验证 · 信息以卖家声明为准';
+export const HIGH_RISK_DISCLAIMER = 'This item cannot be objectively verified by the VLM - the information is per the seller\'s statement';

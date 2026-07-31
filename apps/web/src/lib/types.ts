@@ -56,7 +56,7 @@ export interface Room {
   lot: Lot;
 }
 
-/** One ROOM_SOCIAL frame (#261-7/8/10) — 弹幕/礼物/点赞 from ANY client in the room. */
+/** One ROOM_SOCIAL frame (#261-7/8/10) - danmaku/gift/like from ANY client in the room. */
 export interface SocialItem {
   kind: 'comment' | 'gift' | 'like' | 'stats';
   userId?: string;
@@ -68,7 +68,7 @@ export interface SocialItem {
   likeDelta?: number;
   likeCount?: number;
   viewerCount?: number;
-  /** true when the engine matched userId to this client's session (本机显示「我」). */
+  /** true when the engine matched userId to this client's session (rendered as "Me" locally). */
   self?: boolean;
 }
 
@@ -91,7 +91,7 @@ export interface AuctionState {
   bids: Bid[];
   ranking: RankRow[];
   participants: number;
-  /** #266 review 诚实边界：participants 里的模拟人气头数（>0 ⇒ UI 必须挂「模拟人气」徽标）。 */
+  /** #266 review honesty boundary: how many of the participants are simulated crowd (>0 means the UI must show the simulated-crowd badge). */
   simViewers: number;
   /** #261-10 server-authoritative room likes (synced across every client). */
   likes: number;

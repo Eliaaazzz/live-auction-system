@@ -25,7 +25,7 @@ async function request(path, { method = 'GET', body, signal, auth = true, token,
   const headers = { 'content-type': 'application/json' };
   if (auth) {
     // An explicit `token` (a Showcase seat's own JWT) wins over the default-seat
-    // session, so 买家A/买家B bid under their OWN identity — not whichever seat
+    // session, so buyer A and buyer B bid under their OWN identity - not whichever seat
     // logged in last. Omitted (single-room /m + /admin) → the device token.
     const tok = token ?? currentToken();
     if (tok) headers.Authorization = `Bearer ${tok}`;
@@ -80,7 +80,7 @@ export const api = {
   /** Snapshot fallback used by LiveRoomRoute before the WS opens. */
   getAuction: (id) => request(`/auctions/${id}`),
 
-  /** Seller/owner: live-stream descriptor for 开始直播. Returns { streamKey, pushUrl, livePlayUrl }. */
+  /** Seller/owner: the live-stream descriptor for starting a stream. Returns { streamKey, pushUrl, livePlayUrl }. */
   getStream: (id) => request(`/auctions/${id}/stream`),
 
   /**
@@ -114,7 +114,7 @@ export const api = {
   getLeaderboard: (id, n = 10) => request(`/auctions/${id}/leaderboard?n=${n}`),
 
   /**
-   * #261-7/8/10: room social channel — comments (弹幕) / gifts / like toggles.
+   * #261-7/8/10: room social channel - comments (danmaku) / gifts / like toggles.
    * payload = { kind: 'comment'|'gift'|'like', text?, giftId?, giftName?,
    * giftEmoji?, delta? }. Auth like the bid lane; opts {token, seat} let a
    * Showcase seat speak under its OWN identity. The send is display-only —
@@ -126,7 +126,7 @@ export const api = {
 
   /** Buyer command lane. Falls back to WS in LiveRoomRoute when unavailable.
    *  opts: { signal?, token?, seat? } — `token`/`seat` let a Showcase seat bid under
-   *  its OWN identity (买家A/买家B). NB: a destructured default `({ signal, token,
+   *  its OWN identity (buyer A / buyer B). NB: a destructured default `({ signal, token,
    *  seat = '' } = {})` makes TS infer the param as `{ seat? }` only (binding-default
    *  gotcha) and reject the engine's `{ token, signal }` call (tsc --noEmit fails even
    *  though it runs fine). Taking `opts` ({}-typed) accepts any caller object and
@@ -173,10 +173,10 @@ export const api = {
 
   /**
    * Seller: upload a live clip (multipart, ≤64MB, mp4/webm) WITHOUT binding it
-   * to an auction yet — returns { url: "/uploads/<name>" }. The 竞拍发布 form
+   * to an auction yet - returns { url: "/uploads/<name>" }. The publish-auction form
    * calls this the moment a clip is dropped (upload-on-drop), then threads the
    * returned url into createDraft's rules.livePlayUrl so the clip is in place at
-   * the auction's 0th second and 立即发布 stays instant. Contrast
+   * the auction's 0th second and publishing stays instant. Contrast
    * uploadStreamVideo(id, …), which re-uploads + retargets an EXISTING auction.
    * Same multipart rule as uploadImage: no JSON content-type header.
    */
@@ -212,7 +212,7 @@ export const api = {
   /**
    * Seller: DRAFT → SCHEDULED.
    * Seller usually submits `{ factsConfirmed: true, confirmedFacts: <json> }`
-   * after VLM核对 so the backend can persist the confirmed snapshot.
+   * after the VLM facts are reviewed so the backend can persist the confirmed snapshot.
    * Returns `{ code: 'OK_FROZEN' | 'ERR_FACTS_NOT_CONFIRMED' | 'ERR_BAD_STATE' }`.
    */
   freeze: (id, body) => request(`/auctions/${id}/freeze`, { method: 'POST', body }),
@@ -227,7 +227,7 @@ export const api = {
    * to a client-side timer that calls startLive() at the chosen instant.
    */
   startLive: (id, { durationMs, demoCrowd } = {}) => {
-    // demoCrowd (#261-12a): true/false toggles the server's 发布即人气 crowd
+    // demoCrowd (#261-12a): true/false toggles the server's popularity-on-publish crowd
     // script for THIS auction; omitted → server env default (on).
     const body = {};
     if (durationMs) body.durationMs = durationMs;
@@ -244,9 +244,9 @@ export const api = {
 
   /**
    * Seller/owner: permanently delete a TERMINAL auction and all its records
-   * (orders/events/evidence/rules + Redis keys). Backs the 后台「删除发布历史 /
-   * 近期成交」history cleanup. 409 ERR_NOT_TERMINAL if the lot is still
-   * DRAFT/SCHEDULED/LIVE — 下架/结束 it first. Irreversible.
+   * (orders/events/evidence/rules + Redis keys). Backs the admin's delete-publish-history and
+   * delete-recent-sales cleanup. 409 ERR_NOT_TERMINAL if the lot is still
+   * DRAFT/SCHEDULED/LIVE - withdraw or finish it first. Irreversible.
    */
   deleteAuction: (id) => request(`/auctions/${id}`, { method: 'DELETE' }),
 
@@ -259,10 +259,10 @@ export const api = {
   /** Seller: create or reuse the formal open auction spawned from a sealed warm-up parent. */
   spawnFormal: (id, payload) => request(`/auctions/${id}/spawn-formal`, { method: 'POST', body: payload }),
 
-  // ---------- Orders / 模拟支付 ----------
+  // ---------- Orders / simulated payment ----------
   /** Settlement order for a SOLD auction (404 if not sold yet). */
   getOrder: (id) => request(`/auctions/${id}/order`),
-  /** 模拟支付流程: mark the won order paid (idempotent; winner-only). */
+  /** Simulated payment flow: mark the won order paid (idempotent; winner-only). */
   pay: (id) => request(`/auctions/${id}/pay`, { method: 'POST' }),
 
   // ---------- VLM facts (ai-events.md) ----------

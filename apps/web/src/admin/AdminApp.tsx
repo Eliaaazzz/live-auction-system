@@ -25,30 +25,31 @@ const { Sider, Header, Content } = Layout;
 type PageKey = 'dashboard' | 'products' | 'publish' | 'orders' | 'monitor';
 
 const MENU = [
-  { key: 'dashboard', icon: <DashboardOutlined />, label: '数据概览' },
-  { key: 'publish', icon: <CloudUploadOutlined />, label: '竞拍发布' },
-  { key: 'products', icon: <AppstoreOutlined />, label: '直播商品' },
-  { key: 'orders', icon: <FileDoneOutlined />, label: '订单管理' },
-  { key: 'monitor', icon: <FundOutlined />, label: '实时竞拍监控' },
+  { key: 'dashboard', icon: <DashboardOutlined />, label: 'Dashboard' },
+  { key: 'publish', icon: <CloudUploadOutlined />, label: 'Publish auction' },
+  { key: 'products', icon: <AppstoreOutlined />, label: 'Live products' },
+  { key: 'orders', icon: <FileDoneOutlined />, label: 'Orders' },
+  { key: 'monitor', icon: <FundOutlined />, label: 'Live monitor' },
 ];
 
 const TITLES: Record<PageKey, string> = {
-  dashboard: '数据概览',
-  publish: '竞拍发布',
-  products: '直播商品管理',
-  orders: '订单管理',
-  monitor: '实时竞拍监控',
+  dashboard: 'Dashboard',
+  publish: 'Publish auction',
+  products: 'Live product management',
+  orders: 'Order management',
+  monitor: 'Live auction monitor',
 };
 
 /**
  * AdminApp
- *  embedded         在展示页（Showcase）的 Chrome 窗口里渲染时为 true：用 height:100% 充满窗口，
- *                   而不是 100vh（否则会超出固定高度的窗口被裁掉）。
- *  defaultCollapsed 侧栏初始是否折叠。
+ *  embedded         true when rendered inside the Showcase page's Chrome window: uses height:100% to fill
+ *                   the window rather than 100vh (which would overflow the fixed-height window and get clipped).
+ *  defaultCollapsed whether the sidebar starts collapsed.
  *
- * 侧栏折叠：不用 AntD 默认的 position:fixed 触发条（它锚定到浏览器视口底部，会被
- * Showcase 窗口的 overflow:hidden 裁掉，导致“折不动”）。改为在顶栏放一个折叠按钮，
- * 两种场景（/admin 全屏 & Showcase 内嵌）都能稳定折叠。
+ * Sidebar collapse: we do not use AntD's default position:fixed trigger bar (it anchors to the bottom of
+ * the browser viewport and gets clipped by the Showcase window's overflow:hidden, so it appears stuck).
+ * Instead a collapse button sits in the top bar, which works in both cases (full-screen /admin and
+ * embedded in Showcase).
  */
 export default function AdminApp({
   embedded = false,
@@ -84,7 +85,7 @@ export default function AdminApp({
           >
             <div className="admin-logo">
               <span className="mark">🔨</span>
-              {!collapsed && <span>实时竞拍大师 · 后台</span>}
+              {!collapsed && <span>Real-Time Auction Master - Admin</span>}
             </div>
             <Menu
               theme="dark"
@@ -100,17 +101,17 @@ export default function AdminApp({
             <Header className="admin-header" style={{ height: 56, lineHeight: '56px' }}>
               <Button
                 type="text"
-                aria-label={collapsed ? '展开侧栏' : '折叠侧栏'}
+                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
                 className="admin-fold"
                 icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setCollapsed((c) => !c)}
               />
               <span className="title">{TITLES[page]}</span>
               <div style={{ flex: 1 }} />
-              <Badge status="processing" text={<span style={{ color: '#fe2c55', fontWeight: 600 }}>直播中</span>} />
+              <Badge status="processing" text={<span style={{ color: '#fe2c55', fontWeight: 600 }}>Live</span>} />
               <BellOutlined style={{ fontSize: 18, color: '#666' }} />
               <Avatar size={32} icon={<UserOutlined />} style={{ background: '#fe2c55' }} />
-              <span className="seller-name">马大瓜珠宝</span>
+              <span className="seller-name">Marcus Fine Jewellery</span>
             </Header>
 
             <Content
@@ -134,5 +135,5 @@ export default function AdminApp({
   );
 }
 
-/** 与移动端共用的展示主题色 */
+/** The display theme colour shared with the mobile side */
 export { theme };

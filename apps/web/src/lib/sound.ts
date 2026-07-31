@@ -69,14 +69,15 @@ function noise(dur: number, gain: number, when = 0): void {
   src.start(c.currentTime + when);
 }
 
-// ── #261-6 语音播报（Web Speech API）─────────────────────────────
-// 领先 / 被反超 / 成交时用中文语音播报，与音效共用同一个静音开关。
-// speechSynthesis 缺失（旧 WebView）时静默降级为纯音效。每次播报前 cancel()
-// 排队中的旧播报：竞价高频反超时只读最新状态，不读历史。
-// Chromium 坑：cancel() 同一 tick 内紧跟 speak() 会让新 utterance 卡在
-// pending 队列里不出声，竞价高频互相 cancel 时全部积压，落槌后才把过期的
-// 「您已领先」吐出来。所以 cancel 和 speak 之间必须隔一拍，并用代际计数
-// 把已被新文案取代的旧播报直接丢弃。
+// ── #261-6 spoken announcements (Web Speech API) ─────────────────
+// Taking the lead / being outbid / a sale are announced aloud, sharing the mute switch with the sound
+// effects. When speechSynthesis is missing (older WebViews) it degrades silently to sound only.
+// Each announcement cancel()s anything still queued: under rapid bidding we read out the latest state,
+// not the history.
+// Chromium gotcha: calling speak() in the same tick as cancel() leaves the new utterance stuck in the
+// pending queue with no sound, so rapid bids that cancel each other pile up and only spit out a stale
+// "you are in the lead" after the hammer. So cancel and speak must be a tick apart, and a generation
+// counter drops any announcement that a newer one has already superseded.
 let lastSpeakAt = 0;
 let lastSpeakText = '';
 let speakGen = 0;
@@ -86,7 +87,7 @@ export function speak(text: string, minGapMs = 2500): void {
   const synth = window.speechSynthesis;
   if (!synth || typeof SpeechSynthesisUtterance === 'undefined') return;
   const now = Date.now();
-  // 同文案节流：自动出价连环反超时不会复读机；不同文案（领先→被反超）立即插播。
+  // Throttle identical lines: chained auto-bid flips do not turn it into a parrot; a different line (lead -> outbid) cuts in immediately.
   if (text === lastSpeakText && now - lastSpeakAt < minGapMs) return;
   lastSpeakAt = now;
   lastSpeakText = text;
@@ -94,9 +95,9 @@ export function speak(text: string, minGapMs = 2500): void {
   if (speakTimer !== undefined) clearTimeout(speakTimer);
   try { synth.cancel(); } catch { /* ignore */ }
   speakTimer = setTimeout(() => {
-    if (gen !== speakGen) return; // 已被更新的播报取代
+    if (gen !== speakGen) return; // superseded by a newer announcement
     try {
-      synth.resume(); // Chromium 偶发停在 paused 态，先恢复再说话
+      synth.resume(); // Chromium occasionally sticks in the paused state, so resume before speaking
       const u = new SpeechSynthesisUtterance(text);
       u.lang = 'zh-CN';
       u.rate = 1.12;
@@ -107,7 +108,7 @@ export function speak(text: string, minGapMs = 2500): void {
   }, 60);
 }
 
-// 结拍等终态时冲掉在途/待播的过期播报（领先、被反超），避免落槌后还在喊领先。
+// On a terminal state such as the close, flush any in-flight or pending stale announcements (lead, outbid) so it does not still be shouting "in the lead" after the hammer.
 export function cancelSpeak(): void {
   speakGen++;
   if (speakTimer !== undefined) clearTimeout(speakTimer);
@@ -117,43 +118,43 @@ export function cancelSpeak(): void {
 }
 
 export const sfx = {
-  /** 任意一笔新出价 —— 轻快短促 */
+  /** Any new bid - short and light */
   bid: () => tone(760, 0.08, 'triangle', 0.1),
-  /** 我领先 —— 上行三音 */
+  /** I am leading - a rising three-note figure */
   lead: () => {
     tone(660, 0.1, 'sine', 0.16, 0);
     tone(880, 0.12, 'sine', 0.16, 0.08);
     tone(1175, 0.18, 'sine', 0.16, 0.17);
   },
-  /** 被超越 —— 下行刺耳 */
+  /** Outbid - a harsh descending figure */
   outbid: () => {
     tone(320, 0.16, 'sawtooth', 0.14, 0, 180);
     tone(240, 0.2, 'sawtooth', 0.12, 0.06, 150);
   },
-  /** 自动延时 —— 双声提示 */
+  /** Auto-extension - a two-tone alert */
   extend: () => {
     tone(520, 0.08, 'square', 0.1, 0);
     tone(720, 0.1, 'square', 0.1, 0.09);
   },
-  /** 倒计时滴答 */
+  /** Countdown tick */
   tick: () => tone(1180, 0.04, 'square', 0.07),
-  /** 最后 5 秒急促滴答 */
+  /** Urgent ticking in the last 5 seconds */
   tickUrgent: () => tone(1560, 0.05, 'square', 0.12),
-  /** 落槌 —— 低频闷响 + 噪声 */
+  /** Hammer - a low thud plus noise */
   hammer: () => {
     tone(170, 0.2, 'triangle', 0.24, 0, 90);
     noise(0.14, 0.14, 0.0);
   },
-  /** 竞拍成功 —— 上行琶音 */
+  /** Auction won - a rising arpeggio */
   win: () => {
     [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.2, 'sine', 0.16, i * 0.1));
   },
-  /** 流拍 —— 低落两音 */
+  /** No bid - two downcast notes */
   lose: () => {
     tone(400, 0.18, 'sine', 0.12, 0, 300);
     tone(300, 0.22, 'sine', 0.1, 0.12, 220);
   },
-  /** 送礼物 —— 轻快上行双音叮咚 */
+  /** Gift sent - a bright rising two-note chime */
   gift: () => {
     tone(880, 0.1, 'triangle', 0.14, 0);
     tone(1320, 0.14, 'triangle', 0.14, 0.08);

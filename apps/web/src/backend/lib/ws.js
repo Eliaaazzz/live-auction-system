@@ -120,7 +120,7 @@ export class RoomClient {
           return;
 
         case EventType.ROOM_SOCIAL:
-          // #261-7/8/10/12a: 弹幕/礼物/点赞/人气 — same contract family as
+          // #261-7/8/10/12a: danmaku/gift/like/crowd - same contract family as
           // AI_COMMENTARY (non-authoritative, no seq, display-only). Forwarded;
           // the engine routes it to the social reducer, never the seqguard.
           this.onEvent(env);

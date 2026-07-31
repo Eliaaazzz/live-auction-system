@@ -22,9 +22,9 @@ const DEFAULT_STATE = {
   status: AuctionStatus.DRAFT,
   connStatus: ConnStatus.IDLE,
   connDetail: null,
-  viewerCount: 0, // 参与人数 — real room occupancy from ROOM_SNAPSHOT (+ crowd sim via ROOM_SOCIAL stats)
+  viewerCount: 0, // participants - real room occupancy from ROOM_SNAPSHOT (+ crowd sim via ROOM_SOCIAL stats)
   likeCount: 0,   // #261-10 — server-authoritative room likes (ROOM_SNAPSHOT seed + ROOM_SOCIAL updates)
-  simViewerCount: 0, // #266 review 诚实边界 — viewerCount 里的模拟人气头数；>0 ⇒ UI 必须挂「模拟人气」徽标
+  simViewerCount: 0, // #266 review honesty boundary - how many of viewerCount are simulated crowd; >0 means the UI must show the simulated-crowd badge
 
   // pricing — ALL string-cents (blueprint P1).
   //
@@ -95,7 +95,7 @@ const DEFAULT_STATE = {
 
   // T7-2: LLM auctioneer commentary from `AI_COMMENTARY` events
   // (proto/ai-events.md §POST /llm/auctioneer). Replace the hardcoded
-  // "正在等待出价" placeholder in LiveRoomRoute. Resets on init() — each
+  // the "waiting for a bid" placeholder in LiveRoomRoute. Resets on init() - each
   // room starts empty until backend's first trigger hook fires.
   //
   // V9 P3: AI_COMMENTARY is non-authoritative; the reducer does NOT
@@ -109,8 +109,8 @@ const DEFAULT_STATE = {
 //
 // Was a single module-level singleton, which is correct when a browser context
 // holds exactly one room (full-screen /m buyer, /admin monitor). But the desktop
-// Showcase runs TWO buyer rooms side by side (买家A + 买家B) in one context; a
-// shared store means 买家B's snapshot/leaderboard/yourUserId clobber 买家A's. Each
+// Showcase runs TWO buyer rooms side by side (buyer A + buyer B) in one context; a
+// shared store means buyer B's snapshot/leaderboard/yourUserId clobber buyer A's. Each
 // seat now gets its own instance via this factory. The default singleton below
 // preserves every existing single-room call-site unchanged.
 export function createAuctionStore() {
@@ -140,8 +140,8 @@ export function createAuctionStore() {
 
   // ── leaderboard reconcile (after REST GET /leaderboard) ──────
   // MERGE-MAX into the live board, never wholesale-overwrite: a late/stale REST
-  // response must not regress a row a ROOM_STATE_PATCH already advanced (跨端排名
-  // 一致). snapSeq (from the backend response) gates the apply so an out-of-order
+  // response must not regress a row a ROOM_STATE_PATCH already advanced (keeping the
+  // ranking consistent across clients). snapSeq (from the backend response) gates the apply so an out-of-order
   // older REST response can't clobber a newer one; merge-max itself guarantees no
   // regression even without it. snapSeq omitted (older backend) => always merge.
   setLeaders: (leaders, snapSeq) => set((s) => {
@@ -185,7 +185,7 @@ export function createAuctionStore() {
     const kind = data?.kind;
     if (kind === 'stats') {
       if (typeof data.viewerCount === 'number' && data.viewerCount > 0) next.viewerCount = data.viewerCount;
-      // 模拟头数自声明（#266 review 诚实边界）：0 也要应用 — 人气脚本停了徽标要摘掉。
+      // self-declared simulated head count (#266 review honesty boundary): apply it even at 0 - when the crowd script stops, the badge must come off.
       if (typeof data.simViewerCount === 'number' && data.simViewerCount >= 0) next.simViewerCount = data.simViewerCount;
       if (typeof data.likeCount === 'number' && data.likeCount >= 0) next.likeCount = Math.max(s.likeCount, data.likeCount);
     } else if (kind === 'like') {
@@ -235,9 +235,9 @@ export function createAuctionStore() {
           next.winnerId       = data.winnerId ?? null;
           next.endAtMs        = data.endAtMs ?? null;
           next.lastSeq        = data.seq ?? 0;
-          if (data.viewerCount != null) next.viewerCount = data.viewerCount; // 参与人数
-          if (data.likeCount != null) next.likeCount = data.likeCount;       // #261-10 点赞数 seed
-          if (data.simViewerCount != null) next.simViewerCount = data.simViewerCount; // #266 模拟人气自声明 seed
+          if (data.viewerCount != null) next.viewerCount = data.viewerCount; // participants
+          if (data.likeCount != null) next.likeCount = data.likeCount;       // #261-10 like-count seed
+          if (data.simViewerCount != null) next.simViewerCount = data.simViewerCount; // #266 simulated-crowd self-declaration seed
           // The snapshot is just as authoritative an owner signal as REST
           // init(): claim the room here too, so if getAuction failed (WS-only
           // rebuild path) useAuctionEngine's `ready` doesn't stay false
@@ -294,7 +294,7 @@ export function createAuctionStore() {
             next.overtakeBanner = true;
             scheduleClear('overtakeBanner', 5000);
           }
-          // F13 黑马 — jump of ≥ 5 × step
+          // F13 dark horse - jump of >= 5 x step
           if (s.stepCents && s.stepCents !== '0') {
             try {
               const jump = BigInt(data.amountCents) - BigInt(s.currentCents);
@@ -449,7 +449,7 @@ function mergeLeader(leaders, entry) {
 }
 
 // mergeLeadersMax reconciles a REST /leaderboard snapshot into the live board.
-// CRITICAL (跨端排名一致): it MUST NOT wholesale-overwrite — a late/stale REST
+// CRITICAL (ranking consistency across clients): it MUST NOT wholesale-overwrite - a late/stale REST
 // response must never regress a row the user watched climb via ROOM_STATE_PATCH.
 // So it keeps max(existing.cents, rest.cents) per user, ADDS rows it hasn't seen,
 // and never drops a live-only row. The auction ZSET is monotonic max-per-user, so

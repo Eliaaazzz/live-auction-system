@@ -1,16 +1,16 @@
 // identity — ONE source of truth for "who am I" on the buyer H5.
 //
 // Before this, the room had THREE conflicting identities: the backend session
-// (yourUserId / nickname "买家XXXX", used for bids + leaderboard), a hardcoded
+// (yourUserId / a "Buyer XXXX" nickname, used for bids + leaderboard), a hardcoded
 // mock `ME` (id:'me', avatar(15), used for gifts/comments), and a broken
-// `=== 'me'` win check. So the same "我" showed a different face on a gift than
-// on a bid, and the winner never got the win screen. (#3 送礼账号矛盾)
+// `=== 'me'` win check. So the same "me" showed a different face on a gift than
+// on a bid, and the winner never got the win screen. (#3 gift-account mismatch)
 //
 // This store unifies them: the logged-in nickname + avatar drive bids, gifts,
 // comments AND win detection. It reuses the existing backend /api/login
 // (nickname → stable userId) via backend/lib/auth.js — no new backend needed
-// (#4 轻量昵称登录). Lightweight on purpose: a nickname + an avatar, switchable,
-// with a "先逛逛" guest path so deep-links / quick demos stay one tap away.
+// (#4 lightweight nickname login). Lightweight on purpose: a nickname + an avatar, switchable,
+// with a "just browse" guest path so deep-links / quick demos stay one tap away.
 
 import { create } from 'zustand';
 import { avatar } from './assets';
@@ -42,22 +42,23 @@ export function defaultAvatarFor(seed: string): string {
 export type SeatIdentity = { nickname: string; avatar: string };
 
 // Showcase seats: deterministic, visibly-DISTINCT buyers so the triptych shows
-// 买家A and 买家B as two genuinely separate accounts (their own nickname, face,
+// buyer A and buyer B as two genuinely separate accounts (their own nickname, face,
 // and — via auth.js seats — their own backend userId/token). Stable across
 // reloads so a returning viewer keeps the same two faces. Real /m never calls
 // this; it uses the full useIdentity login store above.
 // Avatars MUST be defaultAvatarFor(nickname): every other pane renders a peer's
 // face as hash(displayName) (useAuctionEngine), so a fixed avatar(15) here would
-// give 买家A one face on their own phone and another on 买家B's / the admin
+// give buyer A one face on their own phone and another on buyer B's / the admin
 // monitor. Same hash → same face on all three panes.
-// #261-9: 买家A = Jason，买家B = Elia。后台监控/对方手机显示真名；在「自己的」
-// 手机上，排名/出价/评论/送礼一律渲染「我」（self 标记由引擎按 userId 判定）。
+// #261-9: buyer A = Jason, buyer B = Elia. The admin monitor and the other phone show the real name; on
+// your own phone the ranking, bids, comments, and gifts all render as "Me" (the self flag is decided by the
+// engine from the userId).
 const SEAT_IDENTITIES: Record<string, SeatIdentity> = {
   A: { nickname: 'Jason', avatar: defaultAvatarFor('Jason') },
   B: { nickname: 'Elia', avatar: defaultAvatarFor('Elia') },
 };
 export function seatIdentity(seat: string): SeatIdentity {
-  return SEAT_IDENTITIES[seat] ?? { nickname: '买家' + seat, avatar: defaultAvatarFor('seat-' + seat) };
+  return SEAT_IDENTITIES[seat] ?? { nickname: 'Buyer ' + seat, avatar: defaultAvatarFor('seat-' + seat) };
 }
 
 function ls(key: string): string | null {
@@ -86,7 +87,7 @@ interface IdentityState {
   nickname: string;
   avatar: string;
   ready: boolean;    // identity resolved (logged in or guest) — gate the buyer rail on this
-  loggedIn: boolean; // true = real nickname login; false = guest ("先逛逛")
+  loggedIn: boolean; // true = real nickname login; false = guest ("just browse")
   busy: boolean;
   /** Resolve/refresh the backend session (userId) for the current identity. */
   resolve: () => Promise<void>;
@@ -94,7 +95,7 @@ interface IdentityState {
   login: (nickname: string, avatarUrl: string) => Promise<void>;
   /** Continue without naming yourself — a stable per-device guest identity. */
   continueAsGuest: () => Promise<void>;
-  /** Re-open the login gate (prefilled) without dropping the session — 切换/编辑. */
+  /** Re-open the login gate (prefilled) without dropping the session - switch/edit. */
   openLogin: () => void;
   /** Drop the identity entirely → login gate shows empty. */
   logout: () => void;
