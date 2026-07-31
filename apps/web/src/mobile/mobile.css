@@ -21,8 +21,9 @@
   position: absolute; inset: 0;
   width: 100%; height: 100%;
   object-fit: cover;
-  /* #5 背景重设：去掉重高斯模糊 + 大幅压暗，让商品主体清晰干净地铺满直播间；
-     轻微提亮/饱和即可，顶/底 scrim 仍负责保证浮层文字可读。 */
+  /* #5 background reset: drop the heavy gaussian blur and strong darkening so the product fills the room
+     cleanly; a slight lift in brightness/saturation is enough, and the top/bottom scrims still keep the
+     overlay text readable. */
   filter: saturate(1.04) brightness(0.94);
 }
 .lm-video-tint { position: absolute; inset: 0; }
@@ -30,10 +31,11 @@
 .lm-scrim-bottom { position: absolute; bottom: 0; left: 0; right: 0; height: 56%; background: linear-gradient(0deg, rgba(0,0,0,0.78) 6%, rgba(0,0,0,0.25) 60%, transparent); z-index: 5; pointer-events: none; }
 
 /* ---------- header ---------- */
-/* #16 顶部安全区：刘海/灵动岛设备 top 跟随 env(safe-area-inset-top)，header 不被挖空区遮住。 */
+/* #16 top safe area: on notch / Dynamic Island devices, top follows env(safe-area-inset-top) so the header is not covered by the cutout. */
 .lm-header { position: absolute; top: max(46px, calc(env(safe-area-inset-top, 0px) + 8px)); left: 12px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 8px; }
-/* #19 已关注横排：anchor flex:1 优先吃剩余宽度、min-width:0 让主播名省略号截断而非挤垮
-   关注按钮（按钮 nowrap+flex-shrink:0 永不竖排）；header-right 不收缩，保证名字跨宽度一致可读。 */
+/* #19 followed state stays on one line: anchor takes the remaining width with flex:1 and min-width:0 so
+   the host name ellipsises rather than crushing the follow button (which is nowrap + flex-shrink:0 and
+   never stacks); header-right does not shrink, keeping the name readable across widths. */
 .lm-anchor { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; min-width: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 4px 3px 3px; }
 .lm-anchor-meta { display: flex; flex-direction: column; min-width: 0; line-height: 1.12; padding-right: 2px; }
 .lm-anchor-name { font-size: 12.5px; font-weight: 700; max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -41,28 +43,31 @@
 .lm-follow { display: inline-flex; align-items: center; gap: 3px; margin-left: 2px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; border: none; border-radius: 999px; font-size: 12px; font-weight: 700; padding: 6px 12px; white-space: nowrap; flex-shrink: 0; cursor: pointer; }
 .lm-follow.is-followed { background: rgba(255,255,255,0.16); color: rgba(255,255,255,0.78); }
 .lm-header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-/* #18 观众数 1.28万 不竖排：chip 整体 nowrap+不收缩，万级数字永远横排一行。 */
+/* #18 the viewer count never stacks vertically: the whole chip is nowrap and does not shrink, so large numbers always stay on one line. */
 .lm-viewers { display: flex; align-items: center; gap: 5px; white-space: nowrap; flex-shrink: 0; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border-radius: 999px; padding: 3px 9px 3px 5px; font-size: 12px; font-weight: 600; }
 .lm-viewers-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-/* #266 review 诚实边界：演示人气在跑时的显式「模拟」声明徽标 */
+/* #266 review honesty boundary: an explicit "simulated" badge while the demo crowd is running */
 .lm-simtag { font-size: 9px; font-weight: 700; letter-spacing: 0.3px; color: #ffd98a; background: rgba(246,166,9,0.18); border: 1px solid rgba(246,166,9,0.45); border-radius: 999px; padding: 1px 7px; backdrop-filter: blur(6px); }
 .lm-viewer-avs { display: flex; }
 .lm-viewer-avs > * { margin-left: -7px; }
 .lm-viewer-avs > *:first-child { margin-left: 0; }
 .lm-close { width: 28px; height: 28px; border-radius: 50%; background: rgba(0,0,0,0.32); backdrop-filter: blur(8px); border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
-/* #19 跟进：手机宽度(≤430px，覆盖 360/375/390/414/430 全系)header 拥挤时，观众 chip 里
-   3 个纯装饰头像(~46px)会把主播名/粉丝挤到不可读。手机端隐藏它们（只保留眼睛图标+人数），
-   把宽度让给「头像 + 名字(省略号截断) + 粉丝 + 关注按钮」；平板/桌面(showcase)宽度足够照常显示。 */
+/* #19 follow-up: at phone widths (430px and below, covering 360/375/390/414/430) the header gets tight
+   and the 3 purely decorative avatars in the viewer chip (~46px) squeeze the host name and follower
+   count until they are unreadable. Hide them on phones (keeping just the eye icon and the count) and
+   give the width to avatar + name (ellipsised) + followers + follow button; tablet/desktop (showcase)
+   has room and shows them as usual. */
 @media (max-width: 430px) {
   .lm-viewer-avs { display: none; }
 }
 
-/* #UIUX 榜单标签降饱和：从刺眼的实心金渐变改成半透明深底+金字，与其它 chip 同语言，
-   不再和竞拍状态抢视觉焦点（红/金只留给「行动/领先」）。 */
+/* #UIUX toned-down leaderboard label: from a harsh solid gold gradient to a translucent dark background
+   with gold text, matching the other chips and no longer competing with the auction status for
+   attention (red/gold is reserved for action and leading). */
 .lm-rankchip { position: absolute; top: 82px; left: 12px; z-index: 20; display: inline-flex; align-items: center; gap: 5px; background: rgba(0,0,0,0.34); backdrop-filter: blur(8px); color: var(--gold, #ffce54); border: 1px solid rgba(255,206,84,0.28); border-radius: 999px; padding: 4px 9px; font-size: 11px; font-weight: 700; }
 
-/* ---------- lot mini chip + countdown （右上「拍品状态」chip 簇） ---------- */
-/* #UIUX 商品卡 + 倒计时合并为右上竖向簇：两者紧贴读作一体，顶部少一个分散浮层。 */
+/* ---------- lot mini chip + countdown (the top-right "lot status" chip cluster) ---------- */
+/* #UIUX the lot card and countdown merge into one vertical cluster in the top right, so they read as a unit and the top has one fewer floating layer. */
 .lm-lotstack { position: absolute; top: 88px; right: 12px; z-index: 20; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .lm-lotchip { display: flex; align-items: center; gap: 7px; background: rgba(0,0,0,0.4); backdrop-filter: blur(10px); border-radius: 12px; padding: 5px 9px 5px 5px; max-width: 188px; }
 .lm-lotchip-img { width: 34px; height: 34px; flex-shrink: 0; }
@@ -72,7 +77,7 @@
 .lm-lotchip.has-intro { cursor: pointer; }
 .lm-lotchip-more { font-size: 9px; color: rgba(255,255,255,0.65); display: inline-flex; align-items: center; gap: 1px; margin-top: 1px; }
 
-/* ---------- #261-12b 宝贝介绍（AI 识图生成）---------- */
+/* ---------- #261-12b item description (AI-generated from the photo) ---------- */
 .lm-introsheet {
   position: absolute; left: 0; right: 0; bottom: 116px; z-index: 30;
   max-height: 62%;
@@ -91,17 +96,19 @@
 .lm-intro-text { font-size: 13px; line-height: 1.7; color: rgba(255,255,255,0.92); background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.07); border-radius: 12px; padding: 10px 12px; }
 .lm-intro-ai { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: #7fd6ff; margin-top: 9px; }
 
-/* #261-4a / #UIUX: 排名卡是「我」时的强调描边。改中性白环（"这是你"），不用红——
-   红只代表「被反超/需行动」，领先态(金卡)不该套红描边。 */
+/* #261-4a / #UIUX: the emphasis ring on a ranking card that is you. Now a neutral white ring ("this is
+   you") rather than red - red means outbid / action needed, and the leading state (gold card) should
+   not be wrapped in red. */
 .lm-rankcard.me { outline: 1.5px solid rgba(255,255,255,0.7); outline-offset: -1.5px; }
 
-/* ---------- countdown pill（现在流式排在 .lm-lotstack 内，商品卡正下方） ---------- */
+/* ---------- countdown pill (now flows inside .lm-lotstack, directly under the lot card) ---------- */
 .lm-cd { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.42); backdrop-filter: blur(8px); border-radius: 999px; padding: 5px 11px; font-size: 13px; }
 .lm-cd.end { background: linear-gradient(96deg, #ff5f6d, #d61f3a); box-shadow: 0 6px 16px rgba(214,31,58,0.4); animation: la-pulse-ring 1.5s infinite; }
 
 /* ---------- right action rail ---------- */
-/* #UIUX 右侧操作栏：圆环视觉缩到 40 + 更通透(0.24)，少挡商品；但整按钮(含文字)仍是
-   ≥44px 触达区，不破坏可点性（缩到 <44 的图标会伤触达，非 best practice）。 */
+/* #UIUX right-hand action rail: the ring shrinks to 40 and becomes more transparent (0.24) so it covers
+   less of the product; the whole button (including the label) still keeps a 44px or larger hit area, so
+   tappability is preserved (shrinking the target below 44 hurts reach and is not best practice). */
 .lm-rail { position: absolute; right: 10px; bottom: 320px; z-index: 18; display: flex; flex-direction: column; gap: 14px; align-items: center; }
 .lm-rail-btn { display: flex; flex-direction: column; align-items: center; gap: 3px; background: none; border: none; color: #fff; cursor: pointer; }
 .lm-rail-ic { width: 40px; height: 40px; border-radius: 50%; background: rgba(0,0,0,0.24); backdrop-filter: blur(6px); display: grid; place-items: center; position: relative; }
@@ -127,7 +134,7 @@
   display: flex; align-items: stretch;
   background: rgba(10,10,14,0.96); border-top: 1px solid rgba(255,255,255,0.07);
 }
-/* #17 tab 不堆叠：每个按钮 flex:1 min-width:0 均分，标签 nowrap 永不竖排折行。 */
+/* #17 tabs never stack: each button splits the width evenly with flex:1 and min-width:0, and labels are nowrap so they never wrap. */
 .lm-tabbtn { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; padding: 0; }
 .lm-tabbtn.on { color: #fe2c55; }
 .lm-tabbtn-ic { position: relative; display: grid; place-items: center; height: 22px; }
@@ -136,8 +143,9 @@
 .lm-tabdot { position: absolute; top: -2px; right: -5px; width: 6px; height: 6px; border-radius: 50%; background: #fe2c55; }
 .lm-tabdot.gold { background: #ffce54; }
 
-/* #15 shake 不再位移出价条：shell 全屏 inset:0（containing block = 视口），承接 .lm-shake
-   的 transform；pointer-events:none 让空白处点击穿透，只有 .lm-bidbar 自身可点。 */
+/* #15 shake no longer displaces the bid bar: the shell is full-screen inset:0 (containing block = the
+   viewport) and absorbs .lm-shake's transform; pointer-events:none lets taps on empty space fall
+   through, so only .lm-bidbar itself is clickable. */
 .lm-bidbar-shell { position: absolute; inset: 0; z-index: 26; pointer-events: none; }
 .lm-bidbar-shell > .lm-bidbar { pointer-events: auto; }
 .lm-bidbar {
@@ -149,9 +157,10 @@
 .lm-stepper { display: flex; align-items: center; background: rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; flex-shrink: 0; }
 .lm-stepper button { width: 34px; height: 46px; background: none; border: none; color: #fff; cursor: pointer; display: grid; place-items: center; }
 .lm-stepper .val { min-width: 56px; text-align: center; font-size: 14px; font-weight: 800; padding: 0 4px; white-space: nowrap; }
-/* #18 数字永不竖排：CTA 主文案 nowrap（含金额）。min-width:0 让 flex 正常分配；
-   字号 14 + 出价条更紧的 padding/gap，让「反超第一 · ¥14,800」在 360px 也整段放下
-   不折行、不裁切（金额必须完整可见）。 */
+/* #18 numbers never stack: the CTA's main label is nowrap (including the amount). min-width:0 lets flex
+   distribute normally; a 14px font plus tighter padding/gap on the bid bar keeps a line like
+   "Retake 1st - ¥14,800" whole at 360px without wrapping or clipping (the amount must stay fully
+   visible). */
 .lm-bidcta { flex: 1; min-width: 0; height: 48px; border: none; border-radius: var(--r-btn, 14px); background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14px; font-weight: 800; cursor: pointer; display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-bidcta > span.sub { font-size: 10px; font-weight: 600; opacity: 0.9; }
 .lm-bidcta.lead { background: linear-gradient(96deg, #ffce54, #f6a609); color: #4a2c00; box-shadow: 0 6px 18px rgba(246,166,9,0.35); }
@@ -166,8 +175,9 @@
 .lm-sheet-backdrop { position: absolute; inset: 0; z-index: 23; background: rgba(0,0,0,0.32); animation: la-rise 0.2s ease; }
 .lm-tabsheet {
   position: absolute; left: 0; right: 0; bottom: 116px; z-index: 24;
-  /* #261-1: 固定高度（不随条数伸缩）——出价历史/评论列表显示长度恒定，
-     超出部分在 .lm-tabsheet-body 内滚动（内置滚动条），面板不忽高忽低。 */
+  /* #261-1: fixed height (it does not stretch with the number of rows) - the bid history and comment lists
+     keep a constant display height and anything beyond scrolls inside .lm-tabsheet-body (its own
+     scrollbar), so the panel does not jump around. */
   height: 58%;
   background: rgba(18,18,24,0.98); backdrop-filter: blur(16px);
   border-top-left-radius: 18px; border-top-right-radius: 18px;
@@ -206,7 +216,7 @@
 .lm-gap .l { font-size: 10.5px; color: rgba(255,255,255,0.55); }
 .lm-lead-note { display: flex; align-items: center; gap: 6px; background: rgba(255,206,84,0.12); border: 1px solid rgba(255,206,84,0.32); color: var(--gold, #ffce54); border-radius: 12px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; }
 
-/* #UIUX 排名面板「最近出价」紧凑列表 — 填满面板、解释「为何继续出价」，避免空黑半成品感 */
+/* #UIUX compact recent-bids list in the ranking panel - fills the panel and explains why to keep bidding, avoiding an empty, unfinished look */
 .lm-recent { margin-top: 14px; }
 .lm-recent-h { display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgba(255,255,255,0.55); margin-bottom: 4px; }
 .lm-recent-row { display: flex; align-items: center; gap: 8px; padding: 7px 2px; border-bottom: 1px solid rgba(255,255,255,0.05); }
@@ -219,7 +229,7 @@
 
 .lm-hist-row { display: flex; align-items: center; gap: 8px; padding: 8px 2px; border-bottom: 1px solid rgba(255,255,255,0.06); }
 .lm-hist-row.self { background: rgba(254,44,85,0.12); border-radius: 8px; padding-inline: 6px; }
-/* #261-1 出价历史固定高 + 内置滚动条 */
+/* #261-1 bid history has a fixed height with its own scrollbar */
 .lm-hist-list { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
 .lm-hist-list::-webkit-scrollbar { width: 5px; }
 .lm-hist-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.22); border-radius: 999px; }
@@ -306,8 +316,8 @@
 .lm-ov-sub { text-align: center; font-size: 12.5px; color: rgba(255,255,255,0.6); margin-bottom: 16px; }
 .lm-ov-lot { display: flex; gap: 12px; align-items: center; background: rgba(255,255,255,0.05); border-radius: 14px; padding: 12px; margin-bottom: 14px; }
 .lm-ov-lot .img { width: 56px; height: 56px; flex-shrink: 0; }
-/* #UIUX 浮层拍品标题：text-wrap:balance 让两行长度均衡，杜绝「玫瑰金蓝/盘」单字孤行；
-   最多两行截断，奢侈品卡片不再出现断行瑕疵。 */
+/* #UIUX overlay lot title: text-wrap:balance evens out the two lines and stops a single orphaned word on
+   the second line; it truncates at two lines, so the luxury cards no longer show ragged breaks. */
 .lm-ov-lot-title { font-size: 15px; font-weight: 700; line-height: 1.35; text-wrap: balance; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .lm-ov-price { font-size: 26px; font-weight: 900; }
 .lm-ov-price.win { color: var(--gold, #ffce54); }
@@ -342,9 +352,9 @@
 .lm-dots i { width: 4px; height: 14px; border-radius: 4px; background: rgba(255,255,255,0.3); transition: background 0.2s, height 0.2s; }
 .lm-dots i.on { background: #fff; height: 22px; }
 
-/* ---------- history: 当前领先 tag (50-row list) ---------- */
+/* ---------- history: the leading tag (50-row list) ---------- */
 .lm-hist-lead { flex-shrink: 0; font-size: 9.5px; font-weight: 800; color: var(--gold, #ffce54); background: rgba(255,206,84,0.16); border: 1px solid rgba(255,206,84,0.34); border-radius: 999px; padding: 1px 7px; }
-/* #266 review 诚实边界：模拟出价者行内声明（user_sim* 前缀自识别） */
+/* #266 review honesty boundary: an inline declaration for simulated bidders (detected from the user_sim* prefix) */
 .lm-hist-sim { flex-shrink: 0; font-size: 9px; font-weight: 700; color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.16); border-radius: 999px; padding: 1px 6px; }
 
 /* ---------- gift panel (Douyin style) ---------- */
@@ -396,7 +406,7 @@
 .lm-share-copy { width: 100%; height: 46px; border: none; border-radius: 13px; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 14.5px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 .lm-share-hint { text-align: center; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 10px; line-height: 1.45; }
 
-/* #UIUX 高额出价二次确认弹层（居中，z 高于出价条/sheet，低于登录门） */
+/* #UIUX large-bid confirmation sheet (centred, above the bid bar and sheet, below the login gate) */
 .lm-confirm-mask { position: absolute; inset: 0; z-index: 50; background: rgba(0,0,0,0.55); backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center; padding: 0 28px; animation: la-rise 0.2s ease; }
 .lm-confirm { width: 100%; max-width: 320px; background: #1a1a22; border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-modal, 20px); padding: 20px 18px 16px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.3s ease; }
 .lm-confirm-hd { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 15px; font-weight: 800; }
@@ -433,15 +443,16 @@
 /* ---------- share-order button on win / hammer overlays ---------- */
 .lm-share-order { width: 100%; margin-top: 10px; height: 42px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.08); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 
-/* ---------- 结束浮层底部：退出直播间 / 继续看其他场（V8「竞拍结束需要有推出界面」） ----------
-   顶部细分隔线把「退出/继续」与上方结算/分享动作分开，避免误触。 */
+/* ---------- bottom of the end overlay: leave the room / browse other sessions (V8's "the end of an
+   auction needs a way out") ---------- a thin divider separates leave/continue from the settlement and
+   share actions above, to prevent mistaps. */
 .lm-ov-foot { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.09); display: flex; flex-direction: column; gap: 8px; }
 .lm-ov-exit { width: 100%; height: 44px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.92); font-size: 14px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; transition: background 0.15s ease; }
 .lm-ov-exit:active { background: rgba(255,255,255,0.12); }
 .lm-ov-continue { background: none; border: none; color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 2px; padding: 2px; }
 .lm-ov-continue:active { color: #fff; }
 
-/* ---------- 退出直播间后的终态屏 ---------- */
+/* ---------- the terminal screen after leaving the room ---------- */
 .lm-exited { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: radial-gradient(120% 80% at 50% 0%, #241024 0%, #0b0b12 60%); }
 .lm-exited-card { text-align: center; animation: la-pop 0.34s ease; }
 .lm-exited-emoji { font-size: 46px; margin-bottom: 12px; }
@@ -450,7 +461,7 @@
 .lm-exited-btn { height: 46px; padding: 0 30px; border-radius: 14px; border: none; background: var(--bid-grad, linear-gradient(96deg,#ff5f7e,#fe2c55)); color: #fff; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 18px rgba(254,44,85,0.35); }
 
 /* ============================================================
-   Account / login (#3/#4 统一身份) — full-screen gate + sheet + header chip
+   Account / login (#3/#4 unified identity) - full-screen gate + sheet + header chip
    ============================================================ */
 .lm-login { position: absolute; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 0 22px; background: radial-gradient(120% 80% at 80% -10%, #2a1430 0%, #0b0b12 60%); }
 .lm-login-card { width: 100%; max-width: 340px; background: rgba(20,20,28,0.96); border: 1px solid rgba(255,255,255,0.08); border-radius: var(--r-modal, 20px); padding: 22px 20px; box-shadow: 0 24px 60px rgba(0,0,0,0.6); animation: la-pop 0.34s ease; }
@@ -481,8 +492,9 @@
 .lm-acct-row.danger { color: #ff6b81; border-color: rgba(255,107,129,0.3); background: rgba(255,107,129,0.08); }
 .lm-acct-note { font-size: 11px; color: rgba(255,255,255,0.45); line-height: 1.5; padding: 4px 18px 0; }
 
-/* ---------- AI 主播实时解说气泡（真豆包 LLM 中文解说，AI_COMMENTARY 事件驱动） ---------- */
-/* #UIUX 移到顶部 chrome 下方、全宽：原 top:108 right:116 会被合并后的右上拍品簇盖住右半截。
-   现作为一条左对齐的 AI 解说字幕，整句可读、不和任何浮层重叠。 */
+/* ---------- the AI host's live commentary bubble (real Doubao LLM commentary, driven by AI_COMMENTARY events) ---------- */
+/* #UIUX moved below the top chrome and made full width: the old top:108 right:116 had its right half
+   covered by the merged top-right lot cluster. It is now a left-aligned AI commentary subtitle, fully
+   readable and not overlapping any other layer. */
 .lm-aibubble { position: absolute; top: 206px; left: 12px; right: 12px; z-index: 19; display: inline-flex; align-items: center; gap: 6px; background: rgba(20,20,28,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(127,214,255,0.38); color: #d6efff; border-radius: 12px; padding: 6px 10px; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: la-rise 0.3s ease; }
 .lm-aibubble .dot { width: 6px; height: 6px; border-radius: 50%; background: #7fd6ff; box-shadow: 0 0 8px #7fd6ff; flex-shrink: 0; animation: la-pulse-ring 1.6s infinite; }

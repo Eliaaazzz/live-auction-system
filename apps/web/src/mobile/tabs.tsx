@@ -28,18 +28,18 @@ interface SheetProps {
 }
 
 const TAB_META: { key: TabKey; label: string; icon: IconName }[] = [
-  { key: 'overview', label: '概览', icon: 'trophy' },
-  { key: 'history', label: '历史', icon: 'clock' },
-  { key: 'comments', label: '评论', icon: 'comment' },
-  { key: 'join', label: '我要参与', icon: 'gavel' },
-  { key: 'rules', label: '规则', icon: 'shield' },
+  { key: 'overview', label: 'Overview', icon: 'trophy' },
+  { key: 'history', label: 'History', icon: 'clock' },
+  { key: 'comments', label: 'Comments', icon: 'comment' },
+  { key: 'join', label: 'Join', icon: 'gavel' },
+  { key: 'rules', label: 'Rules', icon: 'shield' },
 ];
 
 export function BottomTabs({ active, joined, unread, leadDot, onTap }: { active: TabKey | null; joined: boolean; unread: number; leadDot: boolean; onTap: (t: TabKey) => void; }) {
   return (
     <div className="lm-tabbar">
       {TAB_META.map((t) => {
-        const label = t.key === 'join' ? (joined ? '拍卖' : '我要参与') : t.label;
+        const label = t.key === 'join' ? (joined ? 'Bid' : 'Join') : t.label;
         const on = active === t.key;
         return (
           <button key={t.key} className={'lm-tabbtn' + (on ? ' on' : '')} onClick={() => onTap(t.key)}>
@@ -58,7 +58,7 @@ export function BottomTabs({ active, joined, unread, leadDot, onTap }: { active:
 
 export function TabSheet({ active, onClose, ...p }: SheetProps & { active: TabKey | null; onClose: () => void }) {
   if (!active) return null;
-  const title = active === 'overview' ? '实时排名' : active === 'history' ? '出价历史' : active === 'comments' ? '评论区' : active === 'join' ? (p.joined ? '出价竞拍' : '参与竞拍') : '竞拍规则';
+  const title = active === 'overview' ? 'Live ranking' : active === 'history' ? 'Bid history' : active === 'comments' ? 'Comments' : active === 'join' ? (p.joined ? 'Place a bid' : 'Join the auction') : 'Auction rules';
   return (
     <>
       <div className="lm-sheet-backdrop" onClick={onClose} />
@@ -66,7 +66,7 @@ export function TabSheet({ active, onClose, ...p }: SheetProps & { active: TabKe
         <div className="lm-tabsheet-head">
           <div className="lm-tabsheet-grip" onClick={onClose} />
           <span className="lm-tabsheet-title">{title}</span>
-          <button className="lm-tabsheet-x" onClick={onClose} aria-label="收起"><Icon name="chevronD" size={18} /></button>
+          <button className="lm-tabsheet-x" onClick={onClose} aria-label="Collapse"><Icon name="chevronD" size={18} /></button>
         </div>
         <div className="lm-tabsheet-body no-sb">
           {active === 'overview' && <OverviewTab {...p} />}
@@ -85,53 +85,54 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
   const second = state.ranking[1];
   const iLead = state.myRank === 1;
   const gap = state.myMaxBid != null ? Math.max(0, state.currentPrice - state.myMaxBid) : state.currentPrice;
-  // #261-4/9: 第一/第二名是自己时显示「我」（本机视角），他人显示真名。
-  const nameOf = (r?: { userName: string; self?: boolean }) => (r ? (r.self ? '我' : r.userName) : '虚位以待');
+  // #261-4/9: when first or second place is you, show "Me" (this client's view); otherwise show the real name.
+  const nameOf = (r?: { userName: string; self?: boolean }) => (r ? (r.self ? 'Me' : r.userName) : 'Open spot');
   return (
     <div>
-      <div className="lm-section-t"><Icon name="trophy" size={13} /> 实时排名 · 参与 {state.participants} 人 · 出价 {state.bidCount} 次</div>
+      <div className="lm-section-t"><Icon name="trophy" size={13} /> Live ranking - {state.participants} participants - {state.bidCount} bids</div>
       <div className="lm-podium">
         <div className={'lm-rankcard r1' + (first?.self ? ' me' : '')}>
-          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 第一名 · 领先</div>
+          <div className="lm-rank-badge"><Icon name="crown" size={12} fill /> 1st - leading</div>
           <div className="lm-rank-user">{first ? <Avatar src={first.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(first)}</span></div>
           <div className="lm-rank-amt tnum">{first ? fmtCompactYuan(first.amount) : fmtYuan(0)}</div>
         </div>
         <div className={'lm-rankcard r2' + (second?.self ? ' me' : '')}>
-          <div className="lm-rank-badge">第二名 · 紧追</div>
+          <div className="lm-rank-badge">2nd - close behind</div>
           <div className="lm-rank-user">{second ? <Avatar src={second.avatar} size={22} /> : <span className="lm-rank-ph" />}<span className="lm-rank-nm">{nameOf(second)}</span></div>
           <div className="lm-rank-amt tnum">{second ? fmtCompactYuan(second.amount) : '—'}</div>
         </div>
       </div>
       {iLead ? (
-        <div className="lm-lead-note"><Icon name="lock" size={14} /> 您当前锁定第 1 名！建议加固防止被反超</div>
+        <div className="lm-lead-note"><Icon name="lock" size={14} /> You are holding 1st place - consider raising your bid to stay ahead</div>
       ) : joined && state.myRank != null ? (
         <div className="lm-myrow">
-          <div className="left"><span className="lm-myrank-pill">第 {state.myRank} 名</span><div><div style={{ fontSize: 12.5, fontWeight: 700 }}>我的最高出价</div><div className="tnum" style={{ fontSize: 14, fontWeight: 800, color: '#ffce54' }}>{fmtYuan(state.myMaxBid ?? 0)}</div></div></div>
-          <div className="lm-gap"><div className="v tnum">{fmtCompactYuan(gap)}</div><div className="l">与第一名差距</div></div>
+          <div className="left"><span className="lm-myrank-pill">#{state.myRank}</span><div><div style={{ fontSize: 12.5, fontWeight: 700 }}>My highest bid</div><div className="tnum" style={{ fontSize: 14, fontWeight: 800, color: '#ffce54' }}>{fmtYuan(state.myMaxBid ?? 0)}</div></div></div>
+          <div className="lm-gap"><div className="v tnum">{fmtCompactYuan(gap)}</div><div className="l">Gap to 1st</div></div>
         </div>
       ) : (
         <div className="lm-myrow" style={{ cursor: 'pointer' }} onClick={() => setActive('join')}>
-          <div className="left"><span className="lm-myrank-pill">未上榜</span><div style={{ fontSize: 12.5 }}>点击「我要参与」加入竞拍，争夺第一名</div></div>
+          <div className="left"><span className="lm-myrank-pill">Unranked</span><div style={{ fontSize: 12.5 }}>Tap Join to enter the auction and go for 1st</div></div>
           <Icon name="chevronR" size={18} style={{ color: '#ff8fa3' }} />
         </div>
       )}
-      {/* #UIUX 排名面板补内容：排名卡下方加「最近出价」列表，面板不再下半片空黑；
-          告诉用户「价高者得、还在涨」，解释为何要继续出价；底部链到完整历史。 */}
+      {/* #UIUX fill out the ranking panel: a recent-bids list under the ranking card, so the lower half is
+          no longer empty black; it shows that the highest bid wins and the price is still climbing, which
+          explains why to keep bidding, and links to the full history at the bottom. */}
       {state.bids.length > 0 ? (
         <div className="lm-recent">
-          <div className="lm-recent-h"><Icon name="clock" size={12} /> 最近出价</div>
+          <div className="lm-recent-h"><Icon name="clock" size={12} /> Recent bids</div>
           {state.bids.slice(0, 6).map((b, i) => (
             <div className={'lm-recent-row' + (b.self ? ' self' : '')} key={b.id}>
               <Avatar src={b.avatar} size={20} />
-              <span className="nm">{b.self ? '我' : b.userName}</span>
-              {i === 0 && <span className="tag">领先</span>}
+              <span className="nm">{b.self ? 'Me' : b.userName}</span>
+              {i === 0 && <span className="tag">Leading</span>}
               <span className="amt tnum">{fmtCompactYuan(b.amount)}</span>
             </div>
           ))}
-          <div className="lm-recent-more" onClick={() => setActive('history')}>查看全部出价历史 ›</div>
+          <div className="lm-recent-more" onClick={() => setActive('history')}>See the full bid history ›</div>
         </div>
       ) : (
-        <div className="lm-recent-empty">开拍后这里实时显示最近出价 · 价高者得</div>
+        <div className="lm-recent-empty">Recent bids appear here live once the auction opens - highest bid wins</div>
       )}
     </div>
   );
@@ -140,19 +141,19 @@ function OverviewTab({ state, joined, setActive }: SheetProps) {
 function HistoryTab({ state }: { state: AuctionState }) {
   const rows = state.bids.slice(0, 50);
   const now = Date.now();
-  const ago = (ts: number) => { const s = Math.max(0, Math.round((now - ts) / 1000)); return s < 60 ? `${s}s前` : `${Math.floor(s / 60)}m前`; };
+  const ago = (ts: number) => { const s = Math.max(0, Math.round((now - ts) / 1000)); return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`; };
   return (
     <div>
-      <div className="lm-section-t"><Icon name="clock" size={13} /> 出价历史 · 共 {state.bidCount} 次（最近 50 条）</div>
-      {rows.length === 0 && <div className="lm-empty">暂无出价，快来抢第一口</div>}
-      {/* #261-1 固定高度 + 内置滚动条，列表再长也不会顶开面板 */}
+      <div className="lm-section-t"><Icon name="clock" size={13} /> Bid history - {state.bidCount} in total (latest 50)</div>
+      {rows.length === 0 && <div className="lm-empty">No bids yet - be the first</div>}
+      {/* #261-1 fixed height with its own scrollbar, so a long list never pushes the panel open */}
       <div className="lm-hist-list">
         {rows.map((b, i) => (
           <div className={'lm-hist-row' + (b.self ? ' self' : '')} key={b.id}>
             <Avatar src={b.avatar} size={26} />
-            <span className="lm-hist-nm">{b.self ? '我' : b.userName}</span>
-            {String(b.userId || '').startsWith('user_sim') && <span className="lm-hist-sim">模拟</span>}
-            {i === 0 && <span className="lm-hist-lead">当前领先</span>}
+            <span className="lm-hist-nm">{b.self ? 'Me' : b.userName}</span>
+            {String(b.userId || '').startsWith('user_sim') && <span className="lm-hist-sim">sim</span>}
+            {i === 0 && <span className="lm-hist-lead">Leading</span>}
             <span className={'lm-hist-amt tnum' + (i === 0 ? ' lead' : '')}>{fmtCompactYuan(b.amount)}</span>
             <span className="lm-hist-t">{ago(b.ts)}</span>
           </div>
@@ -176,8 +177,8 @@ function CommentsTab({ comments, onSend }: { comments: CommentItem[]; onSend: (t
         ))}
       </div>
       <div className="lm-cmt-input">
-        <input className="lm-input" placeholder="说点什么…" value={text} maxLength={50} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
-        <button className="lm-send" onClick={send} aria-label="发送"><Icon name="send" size={18} /></button>
+        <input className="lm-input" placeholder="Say something..." value={text} maxLength={50} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && send()} />
+        <button className="lm-send" onClick={send} aria-label="Send"><Icon name="send" size={18} /></button>
       </div>
     </div>
   );
@@ -188,16 +189,16 @@ function ParticipateTab({ lot, agreed, onAgree, onJoin }: SheetProps) {
     <div>
       <div className="lm-join-hd">
         <Icon name="gavel" size={24} style={{ color: '#ff8fa3' }} />
-        <div><div style={{ fontSize: 15, fontWeight: 800 }}>参与本场竞拍</div><div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.55)' }}>完成以下步骤即可出价</div></div>
+        <div><div style={{ fontSize: 15, fontWeight: 800 }}>Join this auction</div><div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.55)' }}>Complete the steps below to start bidding</div></div>
       </div>
-      <div className="lm-req"><Icon name="check" size={15} style={{ color: '#2fd6a8' }} /> 实名认证已完成</div>
-      <div className="lm-req"><Icon name="check" size={15} style={{ color: '#2fd6a8' }} /> 已绑定支付方式与收货地址</div>
-      <div className="lm-req"><Icon name="shield" size={15} style={{ color: '#ffce54' }} /> 缴纳保证金 <b style={{ color: '#ffce54' }}>{fmtYuan(lot.deposit)}</b>（付款后退回 / 未成交解冻）</div>
+      <div className="lm-req"><Icon name="check" size={15} style={{ color: '#2fd6a8' }} /> Identity verification complete</div>
+      <div className="lm-req"><Icon name="check" size={15} style={{ color: '#2fd6a8' }} /> Payment method and shipping address linked</div>
+      <div className="lm-req"><Icon name="shield" size={15} style={{ color: '#ffce54' }} /> Deposit of <b style={{ color: '#ffce54' }}>{fmtYuan(lot.deposit)}</b> (refunded after payment, released if you do not win)</div>
       <div className="lm-terms">
         <div className={'lm-checkbox' + (agreed ? ' on' : '')} onClick={() => onAgree(!agreed)}>{agreed && <Icon name="check" size={12} stroke={3} />}</div>
-        <div>我已阅读并同意 <a>《直播竞拍服务条款》</a> 与 <a>《保证金与履约规则》</a>。竞拍出价为<b style={{ color: '#ff8fa3' }}>具有法律约束力</b>的购买承诺，弃标将扣除保证金。</div>
+        <div>I have read and accept the <a>Live Auction Terms of Service</a> and the <a>Deposit and Performance Rules</a>. An auction bid is a <b style={{ color: '#ff8fa3' }}>legally binding</b> commitment to buy, and withdrawing forfeits the deposit.</div>
       </div>
-      <button className="lm-cta" disabled={!agreed} style={!agreed ? { opacity: 0.5, boxShadow: 'none' } : undefined} onClick={onJoin}>同意条款并参与 · 冻结保证金 {fmtYuan(lot.deposit)}</button>
+      <button className="lm-cta" disabled={!agreed} style={!agreed ? { opacity: 0.5, boxShadow: 'none' } : undefined} onClick={onJoin}>Accept and join - hold a {fmtYuan(lot.deposit)} deposit</button>
     </div>
   );
 }
@@ -205,31 +206,31 @@ function ParticipateTab({ lot, agreed, onAgree, onJoin }: SheetProps) {
 function AuctionTab(p: SheetProps) {
   const { lot, state, nextMinBid, placeBid, autoBidMax, setAutoBidMax, onOpenSheetBid } = p;
   const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : state.currentPrice, state.participants, lot.increment));
-  const effCap = lot.capPrice > 0 ? lot.capPrice : Number.MAX_SAFE_INTEGER; // 封顶价 0 = 不封顶
+  const effCap = lot.capPrice > 0 ? lot.capPrice : Number.MAX_SAFE_INTEGER; // a cap price of 0 means no cap
   const [custom, setCustom] = useState('');
   const [autoOn, setAutoOn] = useState(autoBidMax != null);
   const [autoVal, setAutoVal] = useState(String(autoBidMax ?? state.currentPrice + lot.increment * 6));
   const [msg, setMsg] = useState<string | null>(null);
-  const ratios = [{ label: '+1档', value: nextMinBid }, { label: '+3档', value: state.currentPrice + dynStep * 3 }, { label: '+5档', value: state.currentPrice + dynStep * 5 }];
-  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `已提交出价 ${fmtYuan(v)} · 等待服务端裁决` : r.reason ?? '出价失败'); setTimeout(() => setMsg(null), 1800); };
-  const bidCustom = () => { const v = parseInt(custom, 10); if (!Number.isFinite(v)) { setMsg('请输入有效金额'); return; } tryBid(v); setCustom(''); };
+  const ratios = [{ label: '+1 step', value: nextMinBid }, { label: '+3 steps', value: state.currentPrice + dynStep * 3 }, { label: '+5 steps', value: state.currentPrice + dynStep * 5 }];
+  const tryBid = (v: number) => { const r = placeBid(v); setMsg(r.ok ? `Bid of ${fmtYuan(v)} submitted - waiting on server adjudication` : r.reason ?? 'Bid failed'); setTimeout(() => setMsg(null), 1800); };
+  const bidCustom = () => { const v = parseInt(custom, 10); if (!Number.isFinite(v)) { setMsg('Enter a valid amount'); return; } tryBid(v); setCustom(''); };
   const toggleAuto = () => { const next = !autoOn; setAutoOn(next); setAutoBidMax(next ? parseInt(autoVal, 10) || null : null); };
   return (
     <div>
-      <div className="lm-section-t"><Icon name="bolt" size={13} /> 快捷出价 · 当前 <b className="tnum" style={{ color: '#fff' }}>{fmtYuan(state.currentPrice)}</b> · 加价幅度 ¥{dynStep} <span style={{ color: '#ff8fa3' }}>随热度动态</span></div>
+      <div className="lm-section-t"><Icon name="bolt" size={13} /> Quick bid - now <b className="tnum" style={{ color: '#fff' }}>{fmtYuan(state.currentPrice)}</b> - increment ¥{dynStep} <span style={{ color: '#ff8fa3' }}>scales with activity</span></div>
       <div className="lm-quickbids">{ratios.map((r) => (<div className="lm-chip" key={r.label} onClick={() => tryBid(Math.min(r.value, effCap))}><div className="x">{r.label}</div><div className="v tnum">{fmtYuan(Math.min(r.value, effCap))}</div></div>))}</div>
       <div className="lm-field">
-        <label>自定义出价</label>
+        <label>Custom bid</label>
         <input className="lm-num tnum" inputMode="numeric" placeholder={`≥ ${nextMinBid}`} value={custom} onChange={(e) => setCustom(e.target.value.replace(/[^0-9]/g, ''))} />
-        <button className="lm-mini-cta" onClick={bidCustom}>出价</button>
+        <button className="lm-mini-cta" onClick={bidCustom}>Bid</button>
       </div>
       <div className="lm-field">
-        <label>自动出价上限</label>
+        <label>Auto-bid ceiling</label>
         <input className="lm-num tnum" inputMode="numeric" disabled={!autoOn} value={autoVal} onChange={(e) => { const v = e.target.value.replace(/[^0-9]/g, ''); setAutoVal(v); if (autoOn) setAutoBidMax(parseInt(v, 10) || null); }} style={!autoOn ? { opacity: 0.4 } : undefined} />
         <div className={'lm-switch' + (autoOn ? ' on' : '')} onClick={toggleAuto}><i /></div>
       </div>
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>设定你愿意出到的最高价（上限）。出价不会超过此金额，帮你守住预算、理性竞拍。</div>
-      <button className="lm-cta ghost" onClick={onOpenSheetBid}>精确出价 / 一次加多笔</button>
+      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>Set the highest price you are willing to pay. Bids never go above it, so you stay within budget.</div>
+      <button className="lm-cta ghost" onClick={onOpenSheetBid}>Exact bid / raise several steps at once</button>
       {msg && <div className="lm-warn">{msg}</div>}
     </div>
   );
@@ -238,16 +239,16 @@ function AuctionTab(p: SheetProps) {
 function RulesTab({ lot, online }: { lot: Lot; online: number }) {
   const dynStep = Math.max(lot.increment, computeIncrement(lot.capPrice > 0 ? lot.capPrice : lot.startPrice, online, lot.increment));
   const rules: { ic: IconName; t: string; d: string }[] = [
-    { ic: 'tag', t: lot.startPrice === 0 ? '0 元起拍' : `起拍价 ${fmtYuan(lot.startPrice)}`, d: '所有通过认证的用户均可参与出价。' },
-    { ic: 'bolt', t: `加价幅度 ¥${dynStep}`, d: `按商品价值与在线人数动态计算，最低 ¥${lot.minIncrement}。` },
-    { ic: 'gavel', t: lot.capPrice > 0 ? `封顶价 ${fmtYuan(lot.capPrice)}` : '不封顶（无限加价）', d: lot.capPrice > 0 ? '出价达到封顶价立即成交，竞拍结束。' : '本场不设封顶价，价高者得。' },
-    { ic: 'clock', t: `自动延时 ${lot.extendSec}s`, d: `结束前 10 秒内有人出价，倒计时自动延长 ${lot.extendSec} 秒。` },
-    { ic: 'shield', t: `保证金 ${fmtYuan(lot.deposit)}`, d: '参与即冻结，成交付款后退回；弃标扣除。' },
-    { ic: 'bell', t: '异常取消', d: '主播 / 平台可对异常竞拍随时取消，保证金即时解冻。' },
+    { ic: 'tag', t: lot.startPrice === 0 ? 'Starts at zero' : `Start price ${fmtYuan(lot.startPrice)}`, d: 'Any verified user can take part.' },
+    { ic: 'bolt', t: `Increment ¥${dynStep}`, d: `Computed from the item's value and the number of viewers online, with a floor of ¥${lot.minIncrement}.` },
+    { ic: 'gavel', t: lot.capPrice > 0 ? `Cap price ${fmtYuan(lot.capPrice)}` : 'No cap (unlimited)', d: lot.capPrice > 0 ? 'A bid that reaches the cap closes the sale immediately.' : 'This session has no cap - the highest bid wins.' },
+    { ic: 'clock', t: `Auto-extend ${lot.extendSec}s`, d: `A bid in the last 10 seconds extends the countdown by ${lot.extendSec} seconds.` },
+    { ic: 'shield', t: `Deposit ${fmtYuan(lot.deposit)}`, d: 'Held when you join and refunded after payment; forfeited if you withdraw.' },
+    { ic: 'bell', t: 'Abnormal cancellation', d: 'The host or the platform can cancel a faulty auction at any time, releasing deposits immediately.' },
   ];
   return (
     <div>
-      <div className="lm-section-t"><Icon name="shield" size={13} /> 竞拍规则 · {lot.category}</div>
+      <div className="lm-section-t"><Icon name="shield" size={13} /> Auction rules - {lot.category}</div>
       {rules.map((r, i) => (<div className="lm-rule" key={i}><span className="ic"><Icon name={r.ic} size={17} /></span><div><div className="t">{r.t}</div><div className="d">{r.d}</div></div></div>))}
     </div>
   );

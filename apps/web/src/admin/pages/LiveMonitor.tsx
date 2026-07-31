@@ -14,7 +14,7 @@ const POLL_MS = 10_000;
 
 export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {}) {
   const [liveList, setLiveList] = useState<BackendAuction[]>([]);
-  const [allList, setAllList] = useState<BackendAuction[]>([]); // #261-13 发布历史（任意状态）
+  const [allList, setAllList] = useState<BackendAuction[]>([]); // #261-13 publish history (any status)
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -46,7 +46,7 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
       <div style={{ margin: 18 }}>
         <Card>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 12, padding: 40, color: '#999' }}>
-            <Spin /> 正在加载直播场次…
+            <Spin /> Loading live sessions...
           </div>
         </Card>
       </div>
@@ -59,20 +59,20 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
     <div style={{ margin: 18 }}>
       <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <VideoCameraOutlined style={{ color: '#fe2c55' }} />
-        <span style={{ color: '#444', fontWeight: 600 }}>监控商品</span>
+        <span style={{ color: '#444', fontWeight: 600 }}>Monitored lot</span>
         <Select
           value={selectedId}
-          placeholder="选择要监控的直播拍品"
+          placeholder="Choose a live lot to monitor"
           style={{ minWidth: 340 }}
           onChange={setSelectedId}
           options={liveList.map((a) => ({ value: a.auctionId, label: a.productName || a.auctionId }))}
-          notFoundContent="快去竞拍发布开拍"
+          notFoundContent="Publish an auction to get started"
         />
-        <Tag color="red">共 {liveList.length} 件在拍</Tag>
+        <Tag color="red">{liveList.length} lot(s) live</Tag>
       </div>
 
       <div className="mon-layout">
-        {/* #261-13 直播中左侧发布历史：让主播看到自己发布了什么，点 LIVE 项可切换监控 */}
+        {/* #261-13 publish history on the left while live: the host can see what they published, and tapping a LIVE item switches the monitor to it */}
         <PublishHistory
           items={allList}
           selectedId={selectedId}
@@ -83,7 +83,7 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
             // key by id so switching pick remounts the engine cleanly.
             <MonitorView key={selected.auctionId} lot={auctionToLot(selected)} onCancelled={refresh} />
           ) : (
-            <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} title="快去直播吧" hint="开播带拍后，这里实时跳动出价与人气" cta="去竞拍发布开拍" /></Card>
+            <Card styles={{ body: { padding: 0 } }}><EmptyLive onGo={() => onGo?.('publish')} title="Go live" hint="Once you start streaming a lot, bids and popularity update here live" cta="Go to Publish auction" /></Card>
           )}
         </div>
       </div>
@@ -92,21 +92,21 @@ export default function LiveMonitor({ onGo }: { onGo?: (p: string) => void } = {
 }
 
 const STATUS_TAG: Record<string, { label: string; color: string }> = {
-  LIVE: { label: '直播中', color: 'red' },
-  SCHEDULED: { label: '已排期', color: 'gold' },
-  SOLD: { label: '已成交', color: 'green' },
-  UNSOLD: { label: '流拍', color: 'default' },
-  CANCELLED: { label: '已取消', color: 'default' },
+  LIVE: { label: 'Live', color: 'red' },
+  SCHEDULED: { label: 'Scheduled', color: 'gold' },
+  SOLD: { label: 'Sold', color: 'green' },
+  UNSOLD: { label: 'No bid', color: 'default' },
+  CANCELLED: { label: 'Cancelled', color: 'default' },
 };
 
-/** #261-13 发布历史栏：展示本商家已发布的拍品（排除草稿），LIVE 项可点选监控。 */
+/** #261-13 publish-history rail: shows this merchant's published lots (drafts excluded); tapping a LIVE item switches the monitor. */
 function PublishHistory({ items, selectedId, onPick }: { items: BackendAuction[]; selectedId: string | null; onPick: (a: BackendAuction) => void }) {
   const published = items.filter((a) => a.status && a.status !== 'DRAFT');
   return (
     <aside className="mon-history">
-      <div className="mon-history-hd">发布历史 <span>{published.length}</span></div>
+      <div className="mon-history-hd">Publish history <span>{published.length}</span></div>
       <div className="mon-history-list">
-        {published.length === 0 && <div className="mon-history-empty">还没有发布记录</div>}
+        {published.length === 0 && <div className="mon-history-empty">No publish records yet</div>}
         {published.map((a) => {
           const t = STATUS_TAG[a.status || ''] || { label: a.status || '—', color: 'default' };
           const live = a.status === 'LIVE';
@@ -116,11 +116,11 @@ function PublishHistory({ items, selectedId, onPick }: { items: BackendAuction[]
               type="button"
               className={'mon-history-item' + (live ? ' live' : '') + (a.auctionId === selectedId ? ' active' : '')}
               onClick={() => onPick(a)}
-              title={live ? '点击监控这场' : a.productName}
+              title={live ? 'Tap to monitor this session' : a.productName}
             >
               <Avatar shape="square" size={34} src={a.imageUrl} style={{ flexShrink: 0 }} />
               <div className="mon-history-meta">
-                <div className="mon-history-name">{a.productName || '直播拍品'}</div>
+                <div className="mon-history-name">{a.productName || 'Live lot'}</div>
                 <Tag color={t.color} style={{ marginInlineEnd: 0, width: 'fit-content' }}>{t.label}</Tag>
               </div>
             </button>
@@ -133,7 +133,7 @@ function PublishHistory({ items, selectedId, onPick }: { items: BackendAuction[]
 
 function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }) {
   const { message } = AntdApp.useApp();
-  // Monitor as the seller/owner (seller-demo) so 取消异常竞拍 is authorized.
+  // Monitor as the seller/owner (seller-demo) so cancelling a faulty auction is authorized.
   const { state, nextMinBid, restart } = useAuctionEngine(lot, { running: true, nickname: 'seller-demo' });
   const [cancelling, setCancelling] = useState(false);
 
@@ -143,10 +143,10 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
     try {
       await ensureSession('seller-demo');
       await api.cancel(lot.id, {});
-      message.warning(`已取消「${lot.title.slice(0, 8)}…」，保证金即时解冻`);
+      message.warning(`Cancelled "${lot.title.slice(0, 8)}..." - deposits released immediately`);
       onCancelled();
     } catch (e: any) {
-      message.error('取消失败：' + (e?.message || e));
+      message.error('Cancel failed: ' + (e?.message || e));
     } finally {
       setCancelling(false);
     }
@@ -155,7 +155,7 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
   const now = Date.now();
   const ago = (ts: number) => {
     const s = Math.max(0, Math.round((now - ts) / 1000));
-    return s < 60 ? `${s}s前` : `${Math.floor(s / 60)}m前`;
+    return s < 60 ? `${s}s ago` : `${Math.floor(s / 60)}m ago`;
   };
   const capPct = lot.capPrice > 0 ? Math.min(100, Math.round((state.currentPrice / lot.capPrice) * 100)) : 0;
 
@@ -168,46 +168,46 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
     <div className="mon-grid">
       <Card
         title={<span style={{ display: 'inline-flex', alignItems: 'center' }}><Avatar shape="square" size={40} src={lot.image} style={{ marginRight: 10 }} />{lot.title}</span>}
-        extra={<Tag color="red">直播中</Tag>}
+        extra={<Tag color="red">Live</Tag>}
       >
         <Steps
           size="small"
           current={STEP_INDEX[state.status]}
           status={state.status === 'unsold' ? 'error' : 'process'}
-          items={[{ title: '已上架' }, { title: '竞拍中' }, { title: '截拍中' }, { title: state.status === 'unsold' ? '流拍' : '成交' }]}
+          items={[{ title: 'Listed' }, { title: 'Bidding' }, { title: 'Closing' }, { title: state.status === 'unsold' ? 'No bid' : 'Sold' }]}
           style={{ marginBottom: 22 }}
         />
 
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, marginBottom: 6 }}>
           <div>
-            <div style={{ fontSize: 12, color: '#999' }}>当前最高价</div>
+            <div style={{ fontSize: 12, color: '#999' }}>Current highest bid</div>
             <div className="mon-price">¥{fmtMoney(state.currentPrice)}</div>
           </div>
           <div style={{ paddingBottom: 8 }}>
-            {state.leader ? <Tag icon={<CrownOutlined />} color="gold">{state.leader.userName} 领先</Tag> : <Tag>暂无出价</Tag>}
+            {state.leader ? <Tag icon={<CrownOutlined />} color="gold">{state.leader.userName} leading</Tag> : <Tag>No bids yet</Tag>}
           </div>
         </div>
 
         <div style={{ marginBottom: 18 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: '#999', marginBottom: 4 }}>
-            <span>{lot.capPrice > 0 ? `距封顶价 ¥${fmtMoney(lot.capPrice)}` : '不封顶（价高者得）'}</span>
+            <span>{lot.capPrice > 0 ? `Cap price ¥${fmtMoney(lot.capPrice)}` : 'No cap (highest bid wins)'}</span>
             <span>{lot.capPrice > 0 ? `${capPct}%` : ''}</span>
           </div>
           <Progress percent={capPct} showInfo={false} strokeColor={{ from: '#ff5f7e', to: '#fe2c55' }} />
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12 }}>
-          <Statistic title="距结束" value={fmtClock(state.remainingMs)} valueStyle={{ color: state.status === 'ending' ? '#fe2c55' : undefined, fontSize: 20 }} prefix={<FireOutlined />} />
-          <Statistic title="出价次数" value={feedCount} valueStyle={{ fontSize: 20 }} prefix={<ThunderboltOutlined />} />
-          <Statistic title={state.simViewers > 0 ? '参与人数（含模拟人气）' : '参与人数'} value={state.participants} valueStyle={{ fontSize: 20 }} prefix={<TeamOutlined />} suffix={state.simViewers > 0 ? <Tag color="orange" style={{ marginInlineStart: 6, fontSize: 11 }}>演示</Tag> : undefined} />
-          <Statistic title="下次最低出价" value={nextMinBid} prefix="¥" valueStyle={{ fontSize: 20 }} />
+          <Statistic title="Ends in" value={fmtClock(state.remainingMs)} valueStyle={{ color: state.status === 'ending' ? '#fe2c55' : undefined, fontSize: 20 }} prefix={<FireOutlined />} />
+          <Statistic title="Bids" value={feedCount} valueStyle={{ fontSize: 20 }} prefix={<ThunderboltOutlined />} />
+          <Statistic title={state.simViewers > 0 ? 'Participants (incl. simulated crowd)' : 'Participants'} value={state.participants} valueStyle={{ fontSize: 20 }} prefix={<TeamOutlined />} suffix={state.simViewers > 0 ? <Tag color="orange" style={{ marginInlineStart: 6, fontSize: 11 }}>demo</Tag> : undefined} />
+          <Statistic title="Next minimum bid" value={nextMinBid} prefix="¥" valueStyle={{ fontSize: 20 }} />
         </div>
 
         <div style={{ marginTop: 22, display: 'flex', gap: 10 }}>
-          <Popconfirm title="取消异常竞拍" description="将立即结束本场竞拍并解冻所有保证金，确认？" okText="确认取消" cancelText="再想想" okButtonProps={{ danger: true }} onConfirm={doCancel}>
-            <Button danger icon={<StopOutlined />} loading={cancelling}>取消异常竞拍</Button>
+          <Popconfirm title="Cancel a faulty auction" description="This ends the session immediately and releases every deposit. Continue?" okText="Cancel the auction" cancelText="Go back" okButtonProps={{ danger: true }} onConfirm={doCancel}>
+            <Button danger icon={<StopOutlined />} loading={cancelling}>Cancel faulty auction</Button>
           </Popconfirm>
-          <Button icon={<ReloadOutlined />} onClick={() => { restart(); message.success('已重新同步本场数据'); }}>重置 / 刷新</Button>
+          <Button icon={<ReloadOutlined />} onClick={() => { restart(); message.success('Session data re-synced'); }}>Reset / refresh</Button>
         </div>
       </Card>
 
@@ -216,17 +216,17 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
           items={[
             {
               key: 'feed',
-              label: `实时出价流水 (${feedCount})`,
+              label: `Live bid feed (${feedCount})`,
               children: (
                 <div className="mon-feed">
-                  {feed.length === 0 && <div style={{ color: '#bbb', padding: 20, textAlign: 'center' }}>等待第一笔出价…</div>}
+                  {feed.length === 0 && <div style={{ color: '#bbb', padding: 20, textAlign: 'center' }}>Waiting for the first bid...</div>}
                   {feed.slice(0, 40).map((b, i) => (
                     <div key={b.id} className={'mon-bid' + (i === 0 ? ' lead' : b.self ? ' self' : '')}>
                       <Avatar size={26} src={b.avatar} style={{ flexShrink: 0 }} />
-                      {/* #261-2: 买家名横排（.mon-name nowrap）— 不再竖着一字一行 */}
-                      <span className="mon-name">{b.self ? '我' : b.userName}</span>
-                      {String(b.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>模拟</Tag>}
-                      {i === 0 && <Tag color="gold" style={{ marginInlineStart: 4, flexShrink: 0 }}>领先</Tag>}
+                      {/* #261-2: buyer names stay on one line (.mon-name nowrap) instead of wrapping one character per row */}
+                      <span className="mon-name">{b.self ? 'Me' : b.userName}</span>
+                      {String(b.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>sim</Tag>}
+                      {i === 0 && <Tag color="gold" style={{ marginInlineStart: 4, flexShrink: 0 }}>leading</Tag>}
                       <span className="mon-time">{ago(b.ts)}</span>
                       <span className="mon-amt" style={{ color: i === 0 ? '#fe2c55' : '#333' }}>¥{fmtMoney(b.amount)}</span>
                     </div>
@@ -236,7 +236,7 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
             },
             {
               key: 'rank',
-              label: '实时排行榜',
+              label: 'Live leaderboard',
               children: (
                 <div className="mon-feed">
                   {state.ranking.slice(0, 10).map((r, i) => (
@@ -245,8 +245,8 @@ function MonitorView({ lot, onCancelled }: { lot: Lot; onCancelled: () => void }
                         {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                       </span>
                       <Avatar size={26} src={r.avatar} style={{ flexShrink: 0 }} />
-                      <span className="mon-name">{r.self ? '我' : r.userName}</span>
-                      {String(r.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>模拟</Tag>}
+                      <span className="mon-name">{r.self ? 'Me' : r.userName}</span>
+                      {String(r.userId || '').startsWith('user_sim') && <Tag style={{ marginInlineStart: 2, flexShrink: 0, fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>sim</Tag>}
                       <span className="mon-amt">¥{fmtCompact(r.amount)}</span>
                     </div>
                   ))}

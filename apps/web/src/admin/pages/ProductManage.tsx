@@ -14,7 +14,7 @@ const yuan = (c?: string | number | null): number => {
   if (c == null || c === '') return 0;
   try { return Math.round(Number(BigInt(String(c))) / 100); } catch { return Math.round(Number(c) / 100) || 0; }
 };
-// Drop load-test / placeholder lots so the 直播商品 list shows only real lots.
+// Drop load-test / placeholder lots so the live-products list shows only real lots.
 function isJunk(name?: string): boolean {
   const n = (name || '').trim();
   if (n === '') return true;
@@ -31,7 +31,7 @@ function mapStatus(s?: string): Prod['status'] {
 function toProd(a: any): Prod {
   return {
     key: a.auctionId,
-    name: a.productName || '直播拍品',
+    name: a.productName || 'Live lot',
     id: a.auctionId,
     image: a.imageUrl || PROD.watch,
     tags: a.mode && a.mode !== 'ENGLISH' ? [a.mode] : [],
@@ -71,7 +71,7 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      // limit 500 与 数据概览/实时监控 同参 — 三处看到同一份列表（#261-4b 一一对应）。
+      // limit 500 matches the dashboard and live monitor, so all three views see the same list (#261-4b one-to-one).
       const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
       setProducts(auctions.filter((a: any) => !isJunk(a.productName)).map(toProd));
     } catch {
@@ -86,14 +86,14 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
     try {
       await ensureSession('seller-demo');
       await api.cancel(id, {});
-      message.warning(`已取消「${name.slice(0, 6)}…」，保证金即时解冻`);
+      message.warning(`Cancelled "${name.slice(0, 6)}..." - deposits released immediately`);
       load();
     } catch (e: any) {
-      message.error('取消失败：' + (e?.message || e));
+      message.error('Cancel failed: ' + (e?.message || e));
     }
   };
 
-  // 开始直播：取该拍品的推流密钥，弹出推流/播放地址（主播用 OBS/抖音直播伴侣 推流即开播）。
+  // Start streaming: fetch this lot's stream key and show the push/play URLs (the host goes live by pushing from OBS or Douyin Live Companion).
   const startLive = async (r: Prod) => {
     try {
       await ensureSession('seller-demo');
@@ -105,22 +105,22 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
       const play = s?.livePlayUrl || `${location.origin}/live/${key}.m3u8`;
       // A previously-uploaded clip lives on as the auction's livePlayUrl (an
       // /uploads/… path, not the .m3u8 push stream) — reflect it so re-opening
-      // 开始直播 shows "已设置直播视频" instead of a blank upload prompt.
+      // Start streaming shows "live video is set" instead of a blank upload prompt.
       const videoUrl = typeof s?.livePlayUrl === 'string' && s.livePlayUrl.includes('/uploads/') ? s.livePlayUrl : undefined;
       setStreamInfo({ id: r.id, name: r.name, push, play, videoUrl });
       setLiveStarted((prev) => new Set(prev).add(r.id));
     } catch (e: any) {
-      message.error('开始直播失败：' + (e?.message || e));
+      message.error('Failed to start streaming: ' + (e?.message || e));
     }
   };
 
-  // 用准备好的视频自动直播：把这一场的 livePlayUrl 指向上传的 mp4/webm，观众端
-  // 直播间会自动循环播放（无需 OBS 推流）。返回 false 阻止 antd 默认上传行为。
+  // Auto-stream from a prepared video: point this session's livePlayUrl at the uploaded mp4/webm and the
+  // viewer's room loops it automatically (no OBS push needed). Returning false blocks antd's default upload.
   const onPickVideo = (file: File): boolean => {
     const info = streamInfo;
     if (!info) return false;
-    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
-    if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
+    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('Only mp4 / webm are supported'); return false; }
+    if (file.size > 64 * 1024 * 1024) { message.error('The video must be 64MB or smaller - please compress it first'); return false; }
     setUploadingVideo(true);
     (async () => {
       try {
@@ -128,9 +128,9 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
         const res: any = await api.uploadStreamVideo(info.id, file);
         const url = res?.livePlayUrl || '';
         setStreamInfo((cur) => (cur && cur.id === info.id ? { ...cur, videoUrl: url } : cur));
-        message.success('直播视频已设置，观众进直播间将自动循环播放');
+        message.success('Live video set - it loops automatically when viewers enter the room');
       } catch (e: any) {
-        message.error('上传失败：' + (e?.message || e));
+        message.error('Upload failed: ' + (e?.message || e));
       } finally {
         setUploadingVideo(false);
       }
@@ -138,14 +138,14 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
     return false;
   };
 
-  // 后台「直播商品」只显示在拍的（LIVE），历史已结束/已取消项不再堆积。
+  // The admin "live products" list only shows what is actually LIVE, so finished and cancelled items no longer pile up.
   const rows = products
     .filter((p) => (tab === 'live' ? p.status === 'live' : p.status === 'waiting'))
     .filter((p) => (search ? p.name.includes(search) || p.id.includes(search) : true));
 
   const columns: ColumnsType<Prod> = [
     {
-      title: '商品', dataIndex: 'name', width: 360,
+      title: 'Product', dataIndex: 'name', width: 360,
       render: (_, r) => (
         <div className="prod-cell">
           <img className="prod-thumb" src={r.image} alt="" loading="lazy" />
@@ -153,54 +153,54 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
             <Tooltip title={r.name}><div className="name">{r.name}</div></Tooltip>
             <div className="id">ID: {r.id}</div>
             <Space size={4} wrap>
-              {r.status === 'live' && <Tag color="red">竞拍中</Tag>}
-              {r.status === 'done' && <Tag color="default">已结束</Tag>}
-              {r.status === 'waiting' && <Tag color="gold">待开拍</Tag>}
+              {r.status === 'live' && <Tag color="red">Bidding</Tag>}
+              {r.status === 'done' && <Tag color="default">Ended</Tag>}
+              {r.status === 'waiting' && <Tag color="gold">Upcoming</Tag>}
               {r.tags.map((t) => (<Tag key={t} bordered={false} style={{ background: '#f5f5f5', color: '#666' }}>{t}</Tag>))}
             </Space>
           </div>
         </div>
       ),
     },
-    { title: '起拍价', dataIndex: 'start', align: 'right', width: 100, render: (v: number) => <span className="num-strong">{v === 0 ? '0 元起' : '¥' + fmtMoney(v)}</span> },
-    { title: '固定加价', dataIndex: 'step', align: 'right', width: 96, render: (v: number) => <span className="num-strong">¥{fmtMoney(v)}</span> },
-    { title: '封顶价', dataIndex: 'cap', align: 'right', width: 110, render: (v: number) => <span className="num-strong">{v === 0 ? '不封顶' : '¥' + fmtMoney(v)}</span> },
-    { title: '当前出价', dataIndex: 'current', align: 'right', width: 120, render: (v: number, r) => (r.status === 'waiting' ? <span style={{ color: '#bbb' }}>—</span> : <span className="num-red">¥{fmtMoney(v)}</span>) },
-    { title: '出价次数', dataIndex: 'bids', align: 'right', width: 96, render: (v: number) => (<a className="count-bar">{v} <LinkOutlined style={{ fontSize: 11 }} /></a>) },
+    { title: 'Start price', dataIndex: 'start', align: 'right', width: 110, render: (v: number) => <span className="num-strong">{v === 0 ? 'From zero' : '¥' + fmtMoney(v)}</span> },
+    { title: 'Increment', dataIndex: 'step', align: 'right', width: 96, render: (v: number) => <span className="num-strong">¥{fmtMoney(v)}</span> },
+    { title: 'Cap price', dataIndex: 'cap', align: 'right', width: 110, render: (v: number) => <span className="num-strong">{v === 0 ? 'No cap' : '¥' + fmtMoney(v)}</span> },
+    { title: 'Current bid', dataIndex: 'current', align: 'right', width: 120, render: (v: number, r) => (r.status === 'waiting' ? <span style={{ color: '#bbb' }}>—</span> : <span className="num-red">¥{fmtMoney(v)}</span>) },
+    { title: 'Bids', dataIndex: 'bids', align: 'right', width: 96, render: (v: number) => (<a className="count-bar">{v} <LinkOutlined style={{ fontSize: 11 }} /></a>) },
     {
-      title: '状态', key: 'status', width: 160,
+      title: 'Status', key: 'status', width: 160,
       render: (_, r) => {
         if (r.status === 'live') return (
           <Space direction="vertical" size={2}>
-            <Tag color="red" style={{ marginInlineEnd: 0, fontWeight: 700 }}>竞价中</Tag>
+            <Tag color="red" style={{ marginInlineEnd: 0, fontWeight: 700 }}>Bidding</Tag>
             {r.endTs && (
               <span style={{ fontSize: 15, fontWeight: 700, color: '#fe2c55', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                竞价中 <LiveCountdown endTs={r.endTs} />
+                Bidding <LiveCountdown endTs={r.endTs} />
               </span>
             )}
           </Space>
         );
-        if (r.status === 'done') return <Tag color="green">已结束</Tag>;
-        return <Tag color="gold">待开拍</Tag>;
+        if (r.status === 'done') return <Tag color="green">Ended</Tag>;
+        return <Tag color="gold">Upcoming</Tag>;
       },
     },
     {
-      title: '操作', key: 'op', fixed: 'right', width: 430,
+      title: 'Actions', key: 'op', fixed: 'right', width: 460,
       render: (_, r) => (
         <Space size={4} wrap>
           {r.status === 'live' && (
             <Button size="small" type="primary" icon={<VideoCameraOutlined />} onClick={() => startLive(r)}
               style={liveStarted.has(r.id) ? { background: '#52c41a', borderColor: '#52c41a' } : undefined}>
-              {liveStarted.has(r.id) ? '直播设置' : '开始直播'}
+              {liveStarted.has(r.id) ? 'Stream settings' : 'Start streaming'}
             </Button>
           )}
-          <Button size="small" type={explaining === r.key ? 'primary' : 'default'} icon={<SoundOutlined />} onClick={() => { setExplaining(explaining === r.key ? null : r.key); message.info(explaining === r.key ? '已取消讲解' : '开始讲解中'); }}>{explaining === r.key ? '取消讲解' : '讲解'}</Button>
-          <Button size="small" onClick={() => message.info('提词器已打开（演示）')}>设置提词</Button>
-          <Button size="small" onClick={() => message.info('卖点信息编辑（演示）')}>卖点</Button>
-          <Popconfirm title="确认下架该拍品？" okText="确认下架" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => cancelAuction(r.id, r.name)}>
-            <Button size="small" danger>下架</Button>
+          <Button size="small" type={explaining === r.key ? 'primary' : 'default'} icon={<SoundOutlined />} onClick={() => { setExplaining(explaining === r.key ? null : r.key); message.info(explaining === r.key ? 'Commentary stopped' : 'Commentary started'); }}>{explaining === r.key ? 'Stop commentary' : 'Commentary'}</Button>
+          <Button size="small" onClick={() => message.info('Teleprompter opened (demo)')}>Teleprompter</Button>
+          <Button size="small" onClick={() => message.info('Selling-point editor (demo)')}>Selling points</Button>
+          <Popconfirm title="Withdraw this lot?" okText="Withdraw" cancelText="Cancel" okButtonProps={{ danger: true }} onConfirm={() => cancelAuction(r.id, r.name)}>
+            <Button size="small" danger>Withdraw</Button>
           </Popconfirm>
-          <Dropdown menu={{ items: [{ key: 'cancel', label: <span style={{ color: '#fe2c55' }}>取消异常竞拍</span>, danger: true }], onClick: ({ key }) => { if (key === 'cancel') cancelAuction(r.id, r.name); } }}>
+          <Dropdown menu={{ items: [{ key: 'cancel', label: <span style={{ color: '#fe2c55' }}>Cancel a faulty auction</span>, danger: true }], onClick: ({ key }) => { if (key === 'cancel') cancelAuction(r.id, r.name); } }}>
             <Button size="small" icon={<EllipsisOutlined />} />
           </Dropdown>
         </Space>
@@ -210,67 +210,67 @@ export default function ProductManage({ onGo }: { onGo?: (p: string) => void } =
 
   return (
     <div className="admin-content">
-      <Tabs activeKey={tab} onChange={setTab} items={[{ key: 'live', label: `直播商品 (${products.filter((p) => p.status === 'live').length})` }, { key: 'waiting', label: `待上架商品 (${products.filter((p) => p.status === 'waiting').length})` }]} />
+      <Tabs activeKey={tab} onChange={setTab} items={[{ key: 'live', label: `Live products (${products.filter((p) => p.status === 'live').length})` }, { key: 'waiting', label: `Upcoming products (${products.filter((p) => p.status === 'waiting').length})` }]} />
       <div className="admin-toolbar">
-        <Checkbox>全选</Checkbox>
-        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder="请输入商品名称 / ID" style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
-        <Button icon={<FilterOutlined />}>筛选</Button>
-        <span style={{ marginLeft: 8, color: '#fe2c55', fontWeight: 600, fontSize: 13 }}>● 直播中</span>
+        <Checkbox>Select all</Checkbox>
+        <Input allowClear prefix={<SearchOutlined style={{ color: '#bbb' }} />} placeholder="Search by product name or ID" style={{ width: 240 }} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <Button icon={<FilterOutlined />}>Filter</Button>
+        <span style={{ marginLeft: 8, color: '#fe2c55', fontWeight: 600, fontSize: 13 }}>● Live</span>
         <div className="spacer" />
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => load()}>刷新列表</Button>
-        <Button icon={<AppstoreOutlined />}>查看分组</Button>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => (onGo ? onGo('publish') : message.info('请前往「竞拍发布」添加商品'))}>添加商品</Button>
+        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => load()}>Refresh</Button>
+        <Button icon={<AppstoreOutlined />}>View groups</Button>
+        <Button type="primary" icon={<PlusOutlined />} onClick={() => (onGo ? onGo('publish') : message.info('Go to Publish auction to add a product'))}>Add product</Button>
       </div>
-      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: <EmptyLive onGo={() => onGo?.('publish')} icon={<AppstoreAddOutlined />} title="快去上架商品吧" hint="发布第一件拍品，直播间立刻开拍" cta="去竞拍发布上架" /> }} pagination={{ pageSize: 6, showTotal: (t) => `共 ${t} 件拍品` }} scroll={{ x: 1480 }} size="middle" />
+      <Table<Prod> columns={columns} dataSource={rows} loading={loading} rowKey="key" rowSelection={{ type: 'checkbox' }} locale={{ emptyText: <EmptyLive onGo={() => onGo?.('publish')} icon={<AppstoreAddOutlined />} title="List your first product" hint="Publish the first lot and the room goes live immediately" cta="Go to Publish auction" /> }} pagination={{ pageSize: 6, showTotal: (t) => `${t} lot(s) in total` }} scroll={{ x: 1480 }} size="middle" />
 
       <Modal
         open={!!streamInfo}
-        title={<span><VideoCameraOutlined style={{ color: '#fe2c55' }} /> 开始直播 · {streamInfo?.name}</span>}
+        title={<span><VideoCameraOutlined style={{ color: '#fe2c55' }} /> Start streaming - {streamInfo?.name}</span>}
         onCancel={() => setStreamInfo(null)}
-        footer={[<Button key="ok" type="primary" onClick={() => setStreamInfo(null)}>知道了</Button>]}
+        footer={[<Button key="ok" type="primary" onClick={() => setStreamInfo(null)}>Got it</Button>]}
         width={620}
       >
-        <p style={{ color: '#52c41a', fontWeight: 600, marginTop: 0 }}>● 推流通道已就绪 · 上传视频或用 OBS 推流后，观众即可在移动端实时观看</p>
+        <p style={{ color: '#52c41a', fontWeight: 600, marginTop: 0 }}>● The stream channel is ready - upload a video or push from OBS and viewers can watch live on mobile</p>
 
-        {/* 推荐路径：上传准备好的视频，观众端自动循环播放，无需 OBS。 */}
+        {/* Recommended path: upload a prepared video and it loops automatically for viewers, no OBS needed. */}
         <div style={{ marginBottom: 18, padding: '14px 16px', background: '#fff7f8', border: '1px solid #ffd6dd', borderRadius: 10 }}>
           <div style={{ fontWeight: 700, marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-            <VideoCameraOutlined style={{ color: '#fe2c55' }} /> 用准备好的视频直播 <Tag color="red" bordered={false} style={{ marginInlineStart: 2 }}>推荐 · 无需 OBS</Tag>
+            <VideoCameraOutlined style={{ color: '#fe2c55' }} /> Stream a prepared video <Tag color="red" bordered={false} style={{ marginInlineStart: 2 }}>Recommended - no OBS</Tag>
           </div>
           {streamInfo?.videoUrl ? (
             <>
               <div style={{ color: '#52c41a', fontWeight: 600, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <CheckCircleFilled /> 已设置直播视频 · 观众进直播间将自动循环播放
+                <CheckCircleFilled /> Live video is set - it loops automatically when viewers enter the room
               </div>
               <Upload accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} disabled={uploadingVideo}>
-                <Button size="small" icon={<UploadOutlined />} loading={uploadingVideo}>更换视频</Button>
+                <Button size="small" icon={<UploadOutlined />} loading={uploadingVideo}>Replace video</Button>
               </Upload>
             </>
           ) : (
             <>
-              <div style={{ color: '#666', fontSize: 13, marginBottom: 10 }}>上传一段 mp4 / webm（≤64MB），观众端直播间会自动循环播放你的视频，无需打开 OBS。</div>
+              <div style={{ color: '#666', fontSize: 13, marginBottom: 10 }}>Upload an mp4 / webm (64MB max) and the viewer's room loops it automatically - no need to open OBS.</div>
               <Upload accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} disabled={uploadingVideo}>
-                <Button type="primary" icon={<UploadOutlined />} loading={uploadingVideo}>选择视频上传</Button>
+                <Button type="primary" icon={<UploadOutlined />} loading={uploadingVideo}>Choose a video to upload</Button>
               </Upload>
             </>
           )}
         </div>
 
-        {/* 备选路径：用 OBS / 直播伴侣 推真实镜头（保留原有能力）。 */}
+        {/* Alternative path: push a real camera with OBS or Live Companion (the original capability is kept). */}
         <details>
-          <summary style={{ cursor: 'pointer', color: '#666', fontWeight: 600, marginBottom: 10 }}>或：用 OBS / 抖音直播伴侣 推真实镜头</summary>
+          <summary style={{ cursor: 'pointer', color: '#666', fontWeight: 600, marginBottom: 10 }}>Or: push a real camera with OBS / Douyin Live Companion</summary>
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>推流地址（OBS / 抖音直播伴侣）</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Push URL (OBS / Douyin Live Companion)</div>
             <Typography.Paragraph copyable={{ text: streamInfo?.push }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.push}</Typography.Paragraph>
           </div>
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>播放地址（观众端 HLS）</div>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>Play URL (viewer-side HLS)</div>
             <Typography.Paragraph copyable={{ text: streamInfo?.play }} style={{ background: '#f6f6f6', padding: '8px 10px', borderRadius: 6, marginBottom: 0, wordBreak: 'break-all' }}>{streamInfo?.play}</Typography.Paragraph>
           </div>
           <ol style={{ color: '#666', fontSize: 13, paddingLeft: 18, marginBottom: 0 }}>
-            <li>打开 OBS / 抖音直播伴侣 → 设置 → 推流 → 服务器填入上方「推流地址」；</li>
-            <li>点「开始推流」即把你的真实镜头（商品全方位）推上直播间；</li>
-            <li>观众在移动端直播间实时拉流观看，竞价同步进行。</li>
+            <li>Open OBS / Douyin Live Companion, go to Settings, Stream, and paste the push URL above into Server;</li>
+            <li>Click Start Streaming to send your real camera feed (the product from every angle) to the room;</li>
+            <li>Viewers watch the live pull stream on mobile while bidding runs in parallel.</li>
           </ol>
         </details>
       </Modal>

@@ -13,24 +13,25 @@ const yuanOf = (c?: string | number | null): number => {
 };
 const maskBuyer = (id?: string): string => {
   const n = String(id || '').replace(/^user_/, '');
-  return n ? n.slice(0, 1) + '***' : '匿名';
+  return n ? n.slice(0, 1) + '***' : 'Anonymous';
 };
 
-// 品类启发式归类（列表 DTO 不带 category；按名称关键词归桶，仅用于占比图示意）。
+// Heuristic category bucketing (the list DTO carries no category; bucket by name keywords, used only for the share chart).
 const CAT_RULES: { k: string; re: RegExp; c: string }[] = [
-  { k: '名表', re: /表|时计|chrono|watch/i, c: '#fe2c55' },
-  { k: '箱包', re: /包|bag|tote/i, c: '#1677ff' },
-  { k: '鞋履', re: /鞋|sneaker|靴/i, c: '#faad14' },
-  { k: '服饰', re: /衣|裙|套装|外套|服/i, c: '#52c41a' },
+  { k: 'Watches', re: /watch|chrono|timepiece|rolex|patek|seiko/i, c: '#fe2c55' },
+  { k: 'Bags', re: /bag|tote|purse|handbag/i, c: '#1677ff' },
+  { k: 'Shoes', re: /shoe|sneaker|boot|loafer/i, c: '#faad14' },
+  { k: 'Apparel', re: /suit|dress|jacket|coat|apparel|tweed/i, c: '#52c41a' },
 ];
 function catOf(name: string): { k: string; c: string } {
   for (const r of CAT_RULES) if (r.re.test(name)) return { k: r.k, c: r.c };
-  return { k: '其他', c: '#b98cf2' };
+  return { k: 'Other', c: '#b98cf2' };
 }
 
-// #261-4b/5/11: 数据概览全面真数据 — 累计成交额 / 成交订单 / 近期成交 / 实时出价
-// 次数全部从同一份 GET /api/auctions 推导（同源必同步），不再用迪奥等假占位数据
-// 垫底。没有数据时给行动化空状态，而不是看起来像成交了的假列表。
+// #261-4b/5/11: the dashboard is entirely real data - total GMV, sold orders, recent sales, and the
+// live bid count are all derived from the same GET /api/auctions response (one source, always in sync)
+// instead of placeholder rows. With no data it shows an actionable empty state rather than a fake list
+// that looks like real sales.
 export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
   const { message } = AntdApp.useApp();
   const [auctions, setAuctions] = useState<any[]>([]);
@@ -48,8 +49,9 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
     return () => clearInterval(t);
   }, [load]);
 
-  // 近期成交管理（查看 + 多选/全选硬删除）。成交项均为终态，可直接删除；删除走后端
-  // DELETE /api/auctions/{id}，连带订单/事件一并清除，不可恢复（与发布历史同源）。
+  // Recent-sales management (view plus multi-select / select-all hard delete). Sold items are terminal so
+  // they can be deleted directly; deletion goes through the backend DELETE /api/auctions/{id}, which also
+  // removes the order and events and is not recoverable (same source as the publish history).
   const [manage, setManage] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -59,9 +61,9 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
   const gmv = sold.reduce((s, a) => s + yuanOf(a.currentPriceCents), 0);
   const liveBids = live.reduce((s, a) => s + (Number(a.bidCount) || 0), 0);
   const liveLot = live[0];
-  // 平时看最近 4 笔；进入管理后展开更多（最多 20）方便逐条清理。
+  // Normally shows the latest 4; management mode expands to more (up to 20) for easier cleanup.
   const recent = (manage ? sold.slice(0, 20) : sold.slice(0, 4)).map((a) => ({
-    id: a.auctionId as string, img: a.imageUrl || PROD.watch, name: a.productName || '拍品',
+    id: a.auctionId as string, img: a.imageUrl || PROD.watch, name: a.productName || 'Lot',
     price: yuanOf(a.currentPriceCents), buyer: maskBuyer(a.winnerId),
   }));
   const shownIds = recent.map((r) => r.id);
@@ -76,25 +78,25 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
   const exitManage = () => { setManage(false); setSelected(new Set()); };
   const onDeleteSelected = async () => {
     const ids = shownIds.filter((id) => selected.has(id));
-    if (ids.length === 0) { message.warning('请勾选要删除的成交'); return; }
+    if (ids.length === 0) { message.warning('Select the sales to delete'); return; }
     setDeleting(true);
     try {
       await ensureSession('seller-demo');
       const results = await Promise.allSettled(ids.map((id) => api.deleteAuction(id)));
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const fail = results.length - ok;
-      if (ok > 0) message.success(`已永久删除 ${ok} 笔成交${fail ? `，${fail} 笔失败` : ''}`);
-      else message.error('删除失败：' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || '请重试'));
+      if (ok > 0) message.success(`Permanently deleted ${ok} sale(s)${fail ? `, ${fail} failed` : ''}`);
+      else message.error('Delete failed: ' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || 'please retry'));
       setSelected(new Set());
       await load();
     } catch (e: any) {
-      message.error('删除失败：' + (e?.message || e));
+      message.error('Delete failed: ' + (e?.message || e));
     } finally {
       setDeleting(false);
     }
   };
 
-  // 各品类成交占比 — 从真实成交推导；无成交不渲染假图。
+  // Share of sales by category - derived from real sales; with no sales we do not render a fake chart.
   const catAgg = new Map<string, { v: number; c: string }>();
   for (const a of sold) {
     const { k, c } = catOf(String(a.productName || ''));
@@ -111,28 +113,28 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
       <Row gutter={16}>
         <Col xs={12} md={6}>
           <Card>
-            <Statistic title="累计成交额" value={gmv} prefix="¥" valueStyle={{ color: '#fe2c55' }} />
+            <Statistic title="Total GMV" value={gmv} prefix="¥" valueStyle={{ color: '#fe2c55' }} />
             <div style={{ fontSize: 12, color: sold.length ? '#52c41a' : '#999', marginTop: 6 }}>
-              <RiseOutlined /> {sold.length ? `共 ${sold.length} 笔成交` : '落锤成交后实时累计'}
+              <RiseOutlined /> {sold.length ? `${sold.length} sale(s)` : 'Accumulates live once lots are hammered'}
             </div>
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card>
-            <Statistic title="成交订单" value={sold.length} prefix={<FileDoneOutlined />} />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>与订单管理实时同步</div>
+            <Statistic title="Sold orders" value={sold.length} prefix={<FileDoneOutlined />} />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>Synced live with order management</div>
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card>
-            <Statistic title="在拍商品" value={live.length} prefix={<ShoppingOutlined />} valueStyle={live.length ? { color: '#fe2c55' } : undefined} />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>{live.length ? '与直播商品页一一对应' : '快去开拍'}</div>
+            <Statistic title="Live lots" value={live.length} prefix={<ShoppingOutlined />} valueStyle={live.length ? { color: '#fe2c55' } : undefined} />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>{live.length ? 'One-to-one with the live products page' : 'Start an auction'}</div>
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card>
-            <Statistic title="实时出价次数" value={liveBids} prefix={<ThunderboltOutlined />} valueStyle={{ color: '#1677ff' }} />
-            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>在拍商品累计出价 · 与出价历史同步</div>
+            <Statistic title="Live bids" value={liveBids} prefix={<ThunderboltOutlined />} valueStyle={{ color: '#1677ff' }} />
+            <div style={{ fontSize: 12, color: '#999', marginTop: 6 }}>Total bids on live lots - synced with the bid history</div>
           </Card>
         </Col>
       </Row>
@@ -142,12 +144,12 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
           <Card
             title={
               <span>
-                <FireOutlined style={{ color: '#fe2c55' }} /> 正在直播 · 当前拍品
+                <FireOutlined style={{ color: '#fe2c55' }} /> Live now - current lot
               </span>
             }
             extra={
               <Button type="link" onClick={() => onGo('monitor')}>
-                进入实时监控 <ArrowRightOutlined />
+                Open live monitor <ArrowRightOutlined />
               </Button>
             }
           >
@@ -155,52 +157,52 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
               <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                 <Avatar shape="square" size={72} src={liveLot.imageUrl || PROD.watch} />
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, fontSize: 15 }}>{liveLot.productName || '直播拍品'}</div>
-                  <div style={{ color: '#999', fontSize: 13, margin: '4px 0 10px' }}>0 元起拍 · 加价 ¥{fmtMoney(yuanOf(liveLot.incrementCents))} · {yuanOf(liveLot.capPriceCents) > 0 ? `封顶 ¥${fmtMoney(yuanOf(liveLot.capPriceCents))}` : '不封顶'}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{liveLot.productName || 'Live lot'}</div>
+                  <div style={{ color: '#999', fontSize: 13, margin: '4px 0 10px' }}>Starts at zero - increment ¥{fmtMoney(yuanOf(liveLot.incrementCents))} - {yuanOf(liveLot.capPriceCents) > 0 ? `cap ¥${fmtMoney(yuanOf(liveLot.capPriceCents))}` : 'no cap'}</div>
                   <div style={{ display: 'flex', gap: 24 }}>
-                    <Statistic title="当前价" value={yuanOf(liveLot.currentPriceCents)} prefix="¥" valueStyle={{ color: '#fe2c55', fontSize: 22 }} />
-                    <Statistic title="出价次数" value={Number(liveLot.bidCount) || 0} valueStyle={{ fontSize: 22 }} />
-                    <Statistic title="状态" value="直播中" valueStyle={{ fontSize: 22 }} />
+                    <Statistic title="Current price" value={yuanOf(liveLot.currentPriceCents)} prefix="¥" valueStyle={{ color: '#fe2c55', fontSize: 22 }} />
+                    <Statistic title="Bids" value={Number(liveLot.bidCount) || 0} valueStyle={{ fontSize: 22 }} />
+                    <Statistic title="Status" value="Live" valueStyle={{ fontSize: 22 }} />
                   </div>
                 </div>
               </div>
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无正在直播的拍品" style={{ margin: '24px 0' }}>
-                <Button type="primary" onClick={() => onGo('publish')}>去竞拍发布开拍</Button>
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No lot is live right now" style={{ margin: '24px 0' }}>
+                <Button type="primary" onClick={() => onGo('publish')}>Go to Publish auction</Button>
               </Empty>
             )}
           </Card>
         </Col>
         <Col xs={24} lg={10}>
           <Card
-            title="近期成交"
+            title="Recent sales"
             extra={sold.length > 0 && (manage ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <Popconfirm
-                  title={`永久删除选中的 ${selectedCount} 笔成交？`}
-                  description="将从后端彻底删除（含订单 / 竞价记录），不可恢复"
-                  okText="永久删除"
-                  cancelText="再想想"
+                  title={`Permanently delete the ${selectedCount} selected sale(s)?`}
+                  description="This deletes them from the backend for good (including orders and bid records) and cannot be undone"
+                  okText="Delete permanently"
+                  cancelText="Cancel"
                   okButtonProps={{ danger: true }}
                   onConfirm={onDeleteSelected}
                   disabled={selectedCount === 0}
                 >
                   <Button danger size="small" icon={<DeleteOutlined />} loading={deleting} disabled={selectedCount === 0}>
-                    删除{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                    Delete{selectedCount > 0 ? ` (${selectedCount})` : ''}
                   </Button>
                 </Popconfirm>
-                <Button type="link" size="small" onClick={exitManage}>完成</Button>
+                <Button type="link" size="small" onClick={exitManage}>Done</Button>
               </span>
             ) : (
-              <Button type="link" size="small" icon={<DeleteOutlined />} onClick={() => setManage(true)}>管理</Button>
+              <Button type="link" size="small" icon={<DeleteOutlined />} onClick={() => setManage(true)}>Manage</Button>
             ))}
           >
             {recent.length ? (
               <>
                 {manage && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '2px 0 12px', borderBottom: '1px solid #f5f5f5', marginBottom: 4 }}>
-                    <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} onChange={toggleSelectAll}>全选</Checkbox>
-                    <span style={{ color: '#999', fontSize: 12 }}>共 {sold.length} 笔成交 · 勾选后点「删除」永久清除</span>
+                    <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} onChange={toggleSelectAll}>Select all</Checkbox>
+                    <span style={{ color: '#999', fontSize: 12 }}>{sold.length} sale(s) - tick them and hit Delete to remove permanently</span>
                   </div>
                 )}
                 <List
@@ -219,7 +221,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
                 />
               </>
             ) : (
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无成交 · 落锤后实时出现" style={{ margin: '24px 0' }} />
+              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No sales yet - they appear here in real time after the hammer" style={{ margin: '24px 0' }} />
             )}
           </Card>
         </Col>
@@ -228,7 +230,7 @@ export default function Dashboard({ onGo }: { onGo: (p: string) => void }) {
       {catRows.length > 0 && (
         <Row gutter={16} style={{ marginTop: 16 }}>
           <Col span={24}>
-            <Card title="各品类成交占比">
+            <Card title="Sales share by category">
               {catRows.map((row) => (
                 <div key={row.k} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 }}>
                   <span style={{ width: 96, fontSize: 13 }}>{row.k}</span>

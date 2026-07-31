@@ -1,49 +1,54 @@
-// lib/intro — 商品介绍文案的全部纯逻辑（秒出模板 + AI 识图精修的取舍）。
+// lib/intro - all the pure logic for product description copy (an instant template plus the choice of an AI vision refinement).
 //
-// 两段式契约（与 AuctionPublish「✨ AI 生成介绍」配合）：
-//   1) 点击瞬间写入分类模板 —— 卖家零等待、永不空白。模板按"金牌主播口播"
-//      标准写：有人味、有画面感、带点俏皮，落点是让人想出价；合规上一律
-//      不承诺真伪（平台不保真）、不暗示升值，结尾带免责。
-//   2) 后台真豆包多模态识图（/facts/draft）返回后，pickIntro 决定精修文案：
-//      优先用模型一次调用直出的 intro（sidecar 已做违禁词/链接/电话/价格
-//      清洗，违规即整段丢弃），缺失时退回 facts 结构化拼接，两者都没有
-//      则返回 null —— 保留模板。
+// A two-stage contract (paired with the AI description button in AuctionPublish):
+//   1) On click, write the category template immediately - zero wait for the seller, never blank.
+//      The templates are written to a top-host standard: human, vivid, a little playful, and aimed at
+//      making people want to bid; on compliance they never promise authenticity (the platform does not
+//      guarantee it), never imply appreciation in value, and end with a disclaimer.
+//   2) Once the real Doubao multimodal vision call (/facts/draft) returns, pickIntro decides the refined
+//      copy: prefer the intro the model produced in a single call (the sidecar has already stripped
+//      banned words / links / phone numbers / prices and discards the whole thing on a violation); if it
+//      is missing, fall back to assembling the structured facts; if neither exists, return null and keep
+//      the template.
 //
-// 0 元起拍是真实硬编码规则（AuctionPublish 始终 startPriceCents=0），写进
-// 文案不是营销话术。
+// Starting at zero is a genuine hard-coded rule (AuctionPublish always sets startPriceCents=0), so
+// putting it in the copy is a fact, not marketing.
 export type DraftFact = { field?: string; value?: string; highRisk?: boolean };
 
 export const INTRO_TEMPLATES: Record<string, (name: string) => string> = {
-  名表: (n) => `${n}：盘面灯下泛光，走时稳得让人安心，腕间一抬全是底气。0元起拍，捡漏窗口已开，懂表的别装睡。成色真伪以卖家声明为准，平台不作鉴定背书，理性竞拍。`,
-  箱包: (n) => `${n}：五金锃亮、廓形挺括，通勤约会一包搞定，背出门就是态度。0元起拍，出到哪算哪，手慢真的无。成色细节以实物及卖家声明为准，平台不保真，理性出价。`,
-  服饰: (n) => `${n}：版型立体、上身就有气场，细节做工经得起怼脸看，衣柜里就缺这一件。0元起拍，眼缘对了别犹豫。尺码成色以卖家描述为准，平台不保真，理性出价。`,
-  鞋履: (n) => `${n}：鞋型正、上脚轻，闭眼搭都出片，鞋柜C位预定。0元起拍，码数合适就是缘分，价高者得。成色尺码以实物及卖家声明为准，平台不保真，理性竞拍。`,
+  Watches: (n) => `${n}: the dial catches the light, the movement keeps steady time, and it carries real presence on the wrist. Starts at zero, the window for a good find is open, and anyone who knows watches will not sleep on it. Condition and authenticity are per the seller's statement; the platform does not endorse any appraisal. Please bid responsibly.`,
+  Bags: (n) => `${n}: bright hardware, a structured silhouette, and one bag that covers both the commute and the evening. Starts at zero, wherever the bidding lands is where it lands, and hesitation costs. Condition details are per the item itself and the seller's statement; the platform does not guarantee authenticity. Please bid responsibly.`,
+  Apparel: (n) => `${n}: a sculpted cut that gives you presence the moment you put it on, with workmanship that holds up close, and it is the one piece your wardrobe is missing. Starts at zero, so if it catches your eye do not hesitate. Size and condition are per the seller's description; the platform does not guarantee authenticity. Please bid responsibly.`,
+  Shoes: (n) => `${n}: a clean shape, light on the foot, and it photographs well with anything - front row of the shoe rack. Starts at zero, and if the size fits, it is meant to be; the highest bid wins. Condition and sizing are per the item itself and the seller's statement; the platform does not guarantee authenticity. Please bid responsibly.`,
 };
 
 export const defaultIntro = (n: string) =>
-  `${n}：细节都在图里，成色在线，眼缘对了就是你的。0元起拍，价高者得，犹豫就会败北。材质瑕疵以实物及卖家声明为准，平台不保真，理性出价。`;
+  `${n}: the details are all in the photos, the condition holds up, and if it catches your eye it is yours. Starts at zero, the highest bid wins, and hesitation loses. Material and flaws are per the item itself and the seller's statement; the platform does not guarantee authenticity. Please bid responsibly.`;
 
-// AI intro 不写免责（sidecar prompt 明确禁止）——免责尾巴由这里确定性追加，
-// 合规不依赖模型自觉。
-export const INTRO_TAIL = '成色与瑕疵以实物及卖家声明为准，平台不保真，理性出价。';
+// The AI intro never writes the disclaimer (the sidecar prompt forbids it) - the disclaimer tail is
+// appended deterministically here, so compliance does not depend on the model behaving.
+export const INTRO_TAIL = ' Condition and flaws are per the item itself and the seller\'s statement; the platform does not guarantee authenticity. Please bid responsibly.';
 
-// composeIntro 把真豆包识图返回的 facts 拼成一段「AI 识图」介绍：过滤掉
-// highRisk / authenticity / unverified（平台不保真），无可用事实时返回 null。
-// 现在仅作为 intro 缺失/被清洗掉时的结构化兜底。
-const FIELD_CN: Record<string, string> = { category: '品类', brand: '品牌', model: '型号', condition: '成色', defects: '瑕疵', material: '材质', color: '颜色' };
+// composeIntro assembles the facts returned by the real Doubao vision call into an AI-vision
+// description, filtering out highRisk / authenticity / unverified (the platform does not guarantee
+// authenticity) and returning null when no usable fact remains.
+// It now serves only as the structured fallback when the intro is missing or was stripped.
+const FIELD_LABEL: Record<string, string> = { category: 'category', brand: 'brand', model: 'model', condition: 'condition', defects: 'flaws', material: 'material', color: 'colour' };
 export function composeIntro(name: string, facts?: DraftFact[]): string | null {
-  // estimateCNY 是给卖家配置参考的识图估价（#261-12b），绝不能出现在买家文案里
-  // （价格随拍随变，写死会误导 — 与 sidecar intro 的禁价规则一致）。
+  // estimateCNY is the vision-based estimate that helps the seller configure the auction (#261-12b) and
+  // must never appear in buyer-facing copy (the price moves during the auction, so a fixed one would
+  // mislead - consistent with the sidecar intro's no-price rule).
   const good = (facts ?? []).filter(
     (f) => f?.value && !f.highRisk && f.field !== 'authenticity' && f.field !== 'estimateCNY' && String(f.value).trim().toLowerCase() !== 'unverified',
   );
   if (!good.length) return null;
-  const parts = good.map((f) => `${FIELD_CN[f.field ?? ''] ?? f.field}：${f.value}`);
-  return `${name}（AI 识图）${parts.join('，')}。${INTRO_TAIL}`;
+  const parts = good.map((f) => `${FIELD_LABEL[f.field ?? ''] ?? f.field}：${f.value}`);
+  return `${name} (AI vision): ${parts.join(', ')}.${INTRO_TAIL}`;
 }
 
-// pickEstimate：从识图 facts 里取 AI 估价（estimateCNY，元）。返回 null 表示
-// 模型没给/不可解析 — 调用方退回封顶价启发式（#261-12b 推荐加价幅度识图化）。
+// pickEstimate: read the AI estimate (estimateCNY, in yuan) out of the vision facts. Returning null
+// means the model gave nothing usable, and the caller falls back to the cap-price heuristic
+// (#261-12b, the vision-driven suggested increment).
 export function pickEstimate(resp?: { facts?: DraftFact[] }): number | null {
   const f = (resp?.facts ?? []).find((x) => x?.field === 'estimateCNY');
   if (!f?.value) return null;
@@ -51,13 +56,14 @@ export function pickEstimate(resp?: { facts?: DraftFact[] }): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-// pickIntro：AI 识图响应 → 精修文案。模型直出的 intro（已过 sidecar 合规
-// 清洗）优先；它本身不含免责则追加 INTRO_TAIL；intro 为空（mock / 清洗
-// 丢弃 / 旧版 sidecar）退回 composeIntro；最后裁到表单 200 字上限。
+// pickIntro: the AI vision response -> refined copy. The model's own intro (already through the
+// sidecar's compliance cleanup) wins; if it does not already carry the disclaimer, INTRO_TAIL is
+// appended; an empty intro (mock / stripped / an older sidecar) falls back to composeIntro; and the
+// result is finally trimmed to the form's 200-character limit.
 export function pickIntro(name: string, resp?: { intro?: string; facts?: DraftFact[] }): string | null {
   const ai = String(resp?.intro ?? '').trim();
   if (ai) {
-    const text = ai.includes('不保真') ? ai : ai + INTRO_TAIL;
+    const text = ai.includes('does not guarantee authenticity') ? ai : ai + INTRO_TAIL;
     return text.slice(0, 200);
   }
   const fallback = composeIntro(name, resp?.facts);

@@ -12,12 +12,13 @@ import { listDrafts, upsertDraft, removeDraft, newDraftId, fmtSavedAt, type Auct
 
 const yuanToCents = (y: unknown): string => String(Math.round((Number(y) || 0) * 100));
 
-// 本地占位图（products/…）和上传图（/uploads/…）都是相对路径；发给 AI 识图、
-// 存进后端的 imageUrl 统一补成同源绝对地址（过 SSRF、跨端可取）。
+// Local placeholder images (products/...) and uploaded images (/uploads/...) are both
+// relative paths; the imageUrl sent to AI vision and stored in the backend is always
+// promoted to a same-origin absolute URL (passes SSRF checks, reachable cross-client).
 const toAbsUrl = (u: string): string => (u.startsWith('http') ? u : new URL(u, location.href).toString());
 
-const CAT_EMOJI: Record<string, string> = { 名表: '⌚️', 箱包: '👜', 服饰: '👗', 鞋履: '👟' };
-const CAT_IMG: Record<string, string> = { 名表: PROD.watch, 箱包: PROD.bag, 服饰: PROD.apparel, 鞋履: PROD.shoes };
+const CAT_EMOJI: Record<string, string> = { Watches: '⌚️', Bags: '👜', Apparel: '👗', Shoes: '👟' };
+const CAT_IMG: Record<string, string> = { Watches: PROD.watch, Bags: PROD.bag, Apparel: PROD.apparel, Shoes: PROD.shoes };
 
 export default function AuctionPublish() {
   const { message } = AntdApp.useApp();
@@ -30,19 +31,19 @@ export default function AuctionPublish() {
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(null);
   const [fileList, setFileList] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<AuctionDraft[]>(() => listDrafts());
-  const [draftId, setDraftId] = useState<string | null>(null); // 表单当前载入的草稿；发布成功即消耗
-  const [aiBusy, setAiBusy] = useState(false); // #261-12b AI 识图生成中
-  const [aiEstimate, setAiEstimate] = useState<number | null>(null); // #261-12b 识图估价（元）→ 推荐加价幅度
-  const [videoFile, setVideoFile] = useState<File | null>(null); // #261-12b 直播视频：选中的本地文件（用于显示名/大小）
-  const [videoUrl, setVideoUrl] = useState<string | null>(null); // 拖入即上传后服务端返回的 /uploads/<name>
-  const [videoUploading, setVideoUploading] = useState(false); // 拖入上传进行中
-  const videoUploadRef = useRef<Promise<string | null> | null>(null); // 在途上传：用户手快、发布时还没传完就 await 它
-  const videoSeqRef = useRef(0); // 上传代号：重复拖入/移除时作废旧上传的回写，避免竞态
-  const [history, setHistory] = useState<any[]>([]); // #261-13 发布历史
+  const [draftId, setDraftId] = useState<string | null>(null); // the draft currently loaded into the form; consumed once publishing succeeds
+  const [aiBusy, setAiBusy] = useState(false); // #261-12b AI image recognition in progress
+  const [aiEstimate, setAiEstimate] = useState<number | null>(null); // #261-12b image-based estimate (yuan) -> suggested bid increment
+  const [videoFile, setVideoFile] = useState<File | null>(null); // #261-12b live video: the selected local file (for showing name/size)
+  const [videoUrl, setVideoUrl] = useState<string | null>(null); // the /uploads/<name> the server returns after the drop-to-upload
+  const [videoUploading, setVideoUploading] = useState(false); // a drop-triggered upload is in flight
+  const videoUploadRef = useRef<Promise<string | null> | null>(null); // in-flight upload: if the user is quick and it has not finished at publish time, await it
+  const videoSeqRef = useRef(0); // upload token: invalidates the write-back of a stale upload on re-drop/remove, avoiding races
+  const [history, setHistory] = useState<any[]>([]); // #261-13 publish history
   const previewImg = uploadedUrl || (CAT_IMG[v.category as string] ?? PROD.watch);
   const step = v.step ?? 50;
 
-  // #261-13: 发布历史 — 主播看得到这场直播发过什么（10s 轮询，与商品管理同源）。
+  // #261-13: publish history - the host can see what this stream has published (10s polling, same source as product management).
   const loadHistory = useCallback(async () => {
     try {
       const { auctions = [] } = await api.listAuctions({ limit: 500 } as any);
@@ -55,9 +56,10 @@ export default function AuctionPublish() {
     return () => clearInterval(t);
   }, [loadHistory]);
 
-  // 发布历史管理（多选/全选删除）— 仅「已结束」的拍品可删（成交/流拍/已下架）；
-  // 正在直播 LIVE 与待开拍 DRAFT/SCHEDULED 不可删，需先下架。删除走后端硬删除，
-  // 连带成交订单/竞价事件一并清除，不可恢复。
+  // Publish-history management (multi-select / select-all delete) - only finished lots can be
+  // deleted (sold / no bid / withdrawn); LIVE and upcoming DRAFT/SCHEDULED lots cannot be deleted
+  // and must be withdrawn first. Delete goes through a backend hard delete that also removes the
+  // resulting order and bid events, and is not recoverable.
   const [manage, setManage] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
@@ -73,26 +75,27 @@ export default function AuctionPublish() {
   const exitManage = () => { setManage(false); setSelected(new Set()); };
   const onDeleteSelected = async () => {
     const ids = deletableIds.filter((id) => selected.has(id));
-    if (ids.length === 0) { message.warning('请勾选要删除的发布记录'); return; }
+    if (ids.length === 0) { message.warning('Select the publish records to delete'); return; }
     setDeleting(true);
     try {
       await ensureSession('seller-demo');
       const results = await Promise.allSettled(ids.map((id) => api.deleteAuction(id)));
       const ok = results.filter((r) => r.status === 'fulfilled').length;
       const fail = results.length - ok;
-      if (ok > 0) message.success(`已永久删除 ${ok} 条发布记录${fail ? `，${fail} 条失败` : ''}`);
-      else message.error('删除失败：' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || '请重试'));
+      if (ok > 0) message.success(`Permanently deleted ${ok} publish record(s)${fail ? `, ${fail} failed` : ''}`);
+      else message.error('Delete failed: ' + ((results[0] as PromiseRejectedResult | undefined)?.reason?.message || 'please retry'));
       setSelected(new Set());
       await loadHistory();
     } catch (e: any) {
-      message.error('删除失败：' + (e?.message || e));
+      message.error('Delete failed: ' + (e?.message || e));
     } finally {
       setDeleting(false);
     }
   };
 
-  // #256: AI 拍卖文案（标题/卖点/开场话术，LLM 起草）— 与 #261 的识图介绍并存：
-  // 识图按钮管「商品介绍」（看图写），这个按钮管标题+卖点+话术（读表单文字）。
+  // #256: AI auction copy (title / selling points / opening line, drafted by the LLM) - coexists
+  // with the #261 vision-based intro: the vision button owns the product description (written from
+  // the photo), while this button owns title + selling points + script (read from the form text).
   const onGenerateCopy = async () => {
     if (copyBusy) return;
     const vals = form.getFieldsValue();
@@ -111,12 +114,12 @@ export default function AuctionPublish() {
       if (Object.keys(next).length > 0) form.setFieldsValue(next);
       setSellingPoints(Array.isArray(draft?.sellingPoints) ? draft.sellingPoints : []);
       const note = draft?.fallback
-        ? 'AI 暂不可用 · 已填入兜底文案，可继续编辑'
-        : 'AI 已生成 · 请核对后再发布';
+        ? 'AI unavailable - fallback copy filled in, you can keep editing'
+        : 'AI draft ready - review it before publishing';
       setCopyNote(note);
       message.success(note);
     } catch (e: any) {
-      const msg = '生成失败：' + (e?.message || e);
+      const msg = 'Generation failed: ' + (e?.message || e);
       setCopyNote(msg);
       message.warning(msg);
     } finally {
@@ -126,30 +129,32 @@ export default function AuctionPublish() {
 
   // REAL upload: POST /api/upload (multipart) → { url } same-origin; stored as the product imageUrl.
   const handleUpload = async (file: File): Promise<boolean> => {
-    if (!/image\/(png|jpe?g|webp|gif)/.test(file.type)) { message.error('仅支持 png / jpg / webp / gif'); return false; }
-    if (file.size > 5 * 1024 * 1024) { message.error('图片需 ≤ 5MB'); return false; }
+    if (!/image\/(png|jpe?g|webp|gif)/.test(file.type)) { message.error('Only png / jpg / webp / gif are supported'); return false; }
+    if (file.size > 5 * 1024 * 1024) { message.error('The image must be 5MB or smaller'); return false; }
     setFileList([{ uid: file.name, name: file.name, status: 'uploading' }]);
     try {
       await ensureSession('seller-demo');
       const { url } = await api.uploadImage(file);
       setUploadedUrl(url);
       setFileList([{ uid: file.name, name: file.name, status: 'done', url }]);
-      message.success('商品主图已上传');
+      message.success('Product cover image uploaded');
     } catch (e: any) {
       setFileList([]); setUploadedUrl(null);
-      message.error('图片上传失败：' + (e?.message || e));
+      message.error('Image upload failed: ' + (e?.message || e));
     }
     return false; // stop antd's built-in XHR; we upload via api.uploadImage
   };
 
-  // ✨ AI 生成商品介绍 (#261-12b) —— 真图识别优先，不再模板先行：
-  //   点击后调真豆包多模态识图（/facts/draft），用上传的商品主图直出全中文、
-  //   有人味的介绍（sidecar 已做合规清洗 + 免责尾巴）。按钮转圈最多 15s；
-  //   仅当识图失败/超时才退回分类模板兜底（demo 不能空白），并明确提示。
+  // AI-generated product description (#261-12b) - real image recognition first, no template-first:
+  //   clicking calls the real Doubao multimodal vision endpoint (/facts/draft) and writes a human,
+  //   sales-ready description straight from the uploaded cover image (the sidecar already applies
+  //   compliance cleanup plus the disclaimer tail). The spinner runs for at most 15s; only when
+  //   recognition fails or times out do we fall back to the category template (the demo must never
+  //   be blank), and we say so explicitly.
   const onAiIntro = () => {
     const name = String(form.getFieldValue('name') || '').trim();
-    if (!name) { message.warning('请先填写商品名称'); return; }
-    if (!uploadedUrl) { message.warning('请先上传商品主图 — AI 要看着真图写介绍'); return; }
+    if (!name) { message.warning('Enter the product name first'); return; }
+    if (!uploadedUrl) { message.warning('Upload the cover image first - the AI writes from the real photo'); return; }
     const category = form.getFieldValue('category') as string;
     setAiBusy(true);
     const ctrl = new AbortController();
@@ -161,25 +166,25 @@ export default function AuctionPublish() {
           productId: 'draft-preview',
           title: name,
           description: String(form.getFieldValue('intro') || ''),
-          // AI 视觉需服务端可抓取的【绝对】URL。
+          // AI vision needs an ABSOLUTE URL the server can fetch.
           imageUrls: [toAbsUrl(uploadedUrl)],
           signal: ctrl.signal,
         });
         const refined = pickIntro(name, resp);
-        // 识图估价随手带回（给「AI 推荐」加价幅度用 — #261-12b 推荐识图化）。
+        // The vision estimate comes back with it (used by the AI-suggested increment - #261-12b).
         const est = pickEstimate(resp);
         if (est) setAiEstimate(est);
         if (refined) {
           form.setFieldsValue({ intro: refined });
-          message.success(est ? `✨ AI 已看图写好介绍 · 识图估价约 ¥${fmtMoney(est)}` : '✨ AI 已看图写好介绍');
+          message.success(est ? `AI wrote the description from your photo - estimated around ¥${fmtMoney(est)}` : 'AI wrote the description from your photo');
           return;
         }
         throw new Error('empty intro');
       } catch {
-        // 识图失败/超时 → 模板兜底（明确告知，不冒充 AI）。
+        // Recognition failed or timed out -> template fallback (say so, do not pass it off as AI).
         const tpl = (INTRO_TEMPLATES[category] ?? defaultIntro)(name).slice(0, 200);
         form.setFieldsValue({ intro: tpl });
-        message.warning('AI 识图暂不可用，已先用通用文案 — 可点击重试');
+        message.warning('AI vision is unavailable, generic copy used for now - tap to retry');
       } finally {
         clearTimeout(timer);
         setAiBusy(false);
@@ -187,25 +192,27 @@ export default function AuctionPublish() {
     })();
   };
 
-  // AI 推荐加价幅度（#261-12b 识图化）：优先用「AI 识图估价」（estimateCNY，
-  // 点过 AI 识图生成介绍后自动带回）取 ≈2.5% 的「好看」档位；没估价时退回
-  // 封顶价启发式。详见 lib/pricing.recommendIncrement。
+  // AI-suggested bid increment (#261-12b, vision-driven): prefer the AI vision estimate
+  // (estimateCNY, returned automatically once the vision description has been generated) and take
+  // a round ~2.5% step; without an estimate, fall back to the cap-price heuristic.
+  // See lib/pricing.recommendIncrement.
   const onAiStep = () => {
     const cap = Number(form.getFieldValue('cap')) || 0;
     const basis = aiEstimate ?? cap;
-    if (!basis) { message.warning('先点「AI 识图生成介绍」拿到估价，或填写封顶价'); return; }
+    if (!basis) { message.warning('Tap "AI description from photo" to get an estimate first, or fill in the cap price'); return; }
     const rec = recommendIncrement(basis);
-    form.setFieldsValue({ step: rec }); // minStep 字段已按 #255 移除（与后端 model.Rules 对齐）
+    form.setFieldsValue({ step: rec }); // the minStep field was removed per #255 (aligned with the backend model.Rules)
     message.success(aiEstimate
-      ? `AI 按图估价 ¥${fmtMoney(aiEstimate)} → 推荐加价幅度 ¥${rec}`
-      : `AI 推荐加价幅度 ¥${rec}（按封顶价约 2.5%）`);
+      ? `AI estimated ¥${fmtMoney(aiEstimate)} from the photo -> suggested increment ¥${rec}`
+      : `AI suggested increment ¥${rec} (about 2.5% of the cap price)`);
   };
 
-  // ---- 草稿箱：localStorage 持久化（demo 单卖家本机即可）。存/载/删，发布成功即消耗。 ----
+  // ---- Draft box: persisted in localStorage (a single seller on one machine is enough for the demo).
+  // Save / load / delete, and a draft is consumed once publishing succeeds. ----
   const onSaveDraft = () => {
     const vals = form.getFieldsValue();
     const name = String(vals.name || '').trim();
-    if (!name) { message.warning('先填写商品名称，才能存草稿'); return; }
+    if (!name) { message.warning('Fill in the product name before saving a draft'); return; }
     const id = draftId ?? newDraftId();
     setDrafts(upsertDraft({
       id, savedAt: Date.now(), name,
@@ -215,7 +222,7 @@ export default function AuctionPublish() {
       imageUrl: uploadedUrl,
     }));
     setDraftId(id);
-    message.success(draftId ? '草稿已更新 · 见下方草稿箱' : '已存入下方草稿箱 📦');
+    message.success(draftId ? 'Draft updated - see the draft box below' : 'Saved to the draft box below 📦');
   };
 
   const onLoadDraft = (d: AuctionDraft) => {
@@ -226,32 +233,35 @@ export default function AuctionPublish() {
     });
     if (d.imageUrl) {
       setUploadedUrl(d.imageUrl);
-      setFileList([{ uid: d.id, name: '草稿主图', status: 'done', url: d.imageUrl }]);
+      setFileList([{ uid: d.id, name: 'draft cover image', status: 'done', url: d.imageUrl }]);
     } else {
       setUploadedUrl(null);
       setFileList([]);
     }
     setDraftId(d.id);
-    message.success(`已载入草稿「${d.name}」，可继续编辑发布`);
+    message.success(`Loaded the draft "${d.name}" - keep editing and publish`);
   };
 
   const onDeleteDraft = (id: string) => {
     setDrafts(removeDraft(id));
     if (draftId === id) setDraftId(null);
-    message.success('草稿已删除');
+    message.success('Draft deleted');
   };
 
-  // #261-12b 拖入即上传：视频一落进框就把 64MB 传到通用 /api/upload/video（无需
-  // auctionId），让上传与「填表单的剩余时间」重叠 —— 而不是等到点发布才开始传。
-  // 拿到的 /uploads/<name> 记在 videoUrl，发布时随 createDraft 的 rules.livePlayUrl
-  // 一起下发（开拍第 0 秒视频即就位），所以「立即发布」是秒开、无需等传。
-  // 用 seq 代号护栏：重复拖入/中途移除时，旧上传的迟到回写按代号作废，不污染状态。
+  // #261-12b drop to upload: as soon as the video lands in the box, the 64MB file goes to the
+  // generic /api/upload/video (no auctionId needed), so the upload overlaps with the time still
+  // spent filling in the form rather than starting only when publish is tapped.
+  // The resulting /uploads/<name> is kept in videoUrl and shipped with createDraft's
+  // rules.livePlayUrl at publish time (the video is in place at second zero of the auction), so
+  // "publish now" is instant and never waits on the upload.
+  // A seq token guards it: on re-drop or mid-flight removal, a late write-back from the old upload
+  // is invalidated by token and cannot pollute state.
   const startVideoUpload = (file: File) => {
     const seq = ++videoSeqRef.current;
     setVideoUploading(true);
     setVideoUrl(null);
     const mb = Math.round((file.size / 1024 / 1024) * 10) / 10;
-    const hide = message.loading(`直播视频上传中（${mb}MB）…`, 0);
+    const hide = message.loading(`Uploading live video (${mb}MB)...`, 0);
     const p = (async (): Promise<string | null> => {
       try {
         await ensureSession('seller-demo');
@@ -259,14 +269,14 @@ export default function AuctionPublish() {
         hide();
         if (videoSeqRef.current === seq) {
           setVideoUrl(url);
-          message.success('🎬 直播视频已上传 · 开拍即自动播放');
+          message.success('🎬 Live video uploaded - it plays automatically when the auction starts');
         }
         return url;
       } catch (e: any) {
         hide();
         if (videoSeqRef.current === seq) {
           setVideoUrl(null);
-          message.error('视频上传失败（点「重试」或发布时自动补传）：' + (e?.message || String(e ?? '未知错误')));
+          message.error('Video upload failed (tap retry, or it is re-sent automatically at publish): ' + (e?.message || String(e ?? 'unknown error')));
         }
         return null;
       } finally {
@@ -276,17 +286,17 @@ export default function AuctionPublish() {
     videoUploadRef.current = p;
   };
 
-  // 拖拽选直播视频（mp4/webm ≤64MB）→ 立即开始上传（见 startVideoUpload）。
+  // Drag in a live video (mp4/webm, 64MB max) -> start uploading immediately (see startVideoUpload).
   const onPickVideo = (file: File): boolean => {
-    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('仅支持 mp4 / webm 格式'); return false; }
-    if (file.size > 64 * 1024 * 1024) { message.error('视频不能超过 64MB，请压缩后再上传'); return false; }
+    if (!/^video\/(mp4|webm)$/.test(file.type)) { message.error('Only mp4 / webm are supported'); return false; }
+    if (file.size > 64 * 1024 * 1024) { message.error('The video must be 64MB or smaller - please compress it first'); return false; }
     setVideoFile(file);
     startVideoUpload(file);
-    return false; // 不走 antd 内建上传；我们自己传
+    return false; // do not use antd's built-in upload; we handle it ourselves
   };
 
   const removeVideo = () => {
-    videoSeqRef.current++; // 作废任何在途上传的回写
+    videoSeqRef.current++; // invalidate the write-back of any in-flight upload
     setVideoFile(null);
     setVideoUrl(null);
     setVideoUploading(false);
@@ -297,14 +307,15 @@ export default function AuctionPublish() {
   // The auction immediately appears in the buyer mobile rail and is biddable.
   const onPublish = () => {
     form.validateFields().then(async (vals: any) => {
-      // #261-11: 开拍由「我自己上传的」图片/视频驱动 — 不再静默用预置示例图。
-      if (!uploadedUrl) { message.warning('请先上传商品主图（AI 介绍与买家端都用它）'); return; }
+      // #261-11: the auction runs on the image/video the seller actually uploaded - no silent fallback to a bundled sample.
+      if (!uploadedUrl) { message.warning('Upload the cover image first (both the AI description and the buyer side use it)'); return; }
       setBusy(true);
       try {
         await ensureSession('seller-demo');
         const imageUrl = toAbsUrl(uploadedUrl);
-        // 直播视频：优先用「拖入即上传」拿到的 URL；若用户手快、上传还在途，就 await
-        // 它（而不是再传一遍）。彻底失败则 liveUrl 为 null，走下方建拍后的兜底补传。
+        // Live video: prefer the URL from the drop-to-upload; if the user was quick and the upload is
+        // still in flight, await it rather than uploading again. On outright failure liveUrl stays
+        // null and the post-create fallback upload below handles it.
         let liveUrl = videoUrl;
         if (videoFile && !liveUrl && videoUploadRef.current) {
           try { liveUrl = await videoUploadRef.current; } catch { liveUrl = null; }
@@ -323,7 +334,7 @@ export default function AuctionPublish() {
           confirmedFacts: { description: vals.intro || '', category: vals.category || '' },
           rules: {
             mode: 'ENGLISH',
-            // 始终 0 元起拍 · 无保留价：忽略表单值，硬编码为 0。
+            // Always start from zero with no reserve: ignore the form value and hard-code 0.
             startPriceCents: '0',
             incrementCents: yuanToCents(vals.step),
             capPriceCents: yuanToCents(vals.cap),
@@ -331,111 +342,112 @@ export default function AuctionPublish() {
             extendWindowSec: 10,
             extendSec: vals.autoExtend === false ? 0 : (Number(vals.extendSec) || 30),
             maxExtensions: 10,
-            // #261-12b 拖入即上传：把已传好的视频 URL 随建拍一起下发，开拍第0秒就位。
+            // #261-12b drop-to-upload: ship the already-uploaded video URL with the auction creation so it is in place at second zero.
             ...(liveUrl ? { livePlayUrl: liveUrl } : {}),
           },
         });
-        // #261-12b 直播视频在开拍【前】就位。常规路径已在「拖入即上传」时把
-        // /uploads/<name> 随上面 rules.livePlayUrl 落库 —— 开拍第 0 秒视频即在，
-        // 所有进房买家都拿得到。只有当拖入上传失败/没赶上（liveUrl 为空但确有选片）
-        // 才在 freeze/start 之前补传一次，保证不空场；补传失败不阻断发布。
+        // #261-12b the live video is in place BEFORE the auction starts. The normal path already
+        // persisted /uploads/<name> through rules.livePlayUrl above, so the video exists at second
+        // zero and every buyer entering the room gets it. Only when the drop-upload failed or did
+        // not finish in time (liveUrl empty but a file was chosen) do we re-send once before
+        // freeze/start so the room is never empty; a failed re-send does not block publishing.
         if (videoFile && !liveUrl) {
           const mb = Math.round((videoFile.size / 1024 / 1024) * 10) / 10;
-          const hideUp = message.loading(`直播视频上传中（${mb}MB）— 传完即开拍…`, 0);
+          const hideUp = message.loading(`Uploading live video (${mb}MB) - the auction starts when it finishes...`, 0);
           try {
             await api.uploadStreamVideo(auctionId, videoFile);
             hideUp();
-            message.success('🎬 直播视频已就位，开拍即自动播放');
+            message.success('🎬 Live video is in place - it plays automatically when the auction starts');
           } catch (ve: any) {
             hideUp();
-            message.warning('视频上传失败（可去「直播商品 · 开始直播」重传）：' + (ve?.message || String(ve ?? '未知错误')));
+            message.warning('Video upload failed (you can re-upload from Live products - Start streaming): ' + (ve?.message || String(ve ?? 'unknown error')));
           }
         }
         await api.freeze(auctionId, { factsConfirmed: true });
-        // #261-12a: demoCrowd 开关随发布下发 — 服务端内置人气脚本（~9997 观众 +
-        // 按规则随机模拟出价）随开拍自动注入。
+        // #261-12a: the demoCrowd switch ships with the publish - the server's built-in crowd script
+        // (~9997 viewers plus rule-driven simulated bids) is injected automatically when the auction starts.
         await api.startLive(auctionId, { durationMs: durationSec * 1000, demoCrowd: vals.demoCrowd !== false });
-        message.success(`已发布开拍 🎉 移动端已上架 · ${auctionId.slice(0, 14)}`);
-        // 发布后重置表单与已上传主图：否则 uploadedUrl 会被下一个商品沿用，
-        // 导致「商品图片不反应商品变化」（新商品发上了上一个商品的图）。
+        message.success(`Published and live 🎉 now listed on mobile - ${auctionId.slice(0, 14)}`);
+        // Reset the form and the uploaded cover after publishing: otherwise uploadedUrl carries over to
+        // the next product and the listing shows the previous product's photo.
         form.resetFields();
         setUploadedUrl(null);
         setFileList([]);
-        removeVideo(); // 清空视频文件/已传 URL/在途上传，避免下一单沿用
+        removeVideo(); // clear the video file / uploaded URL / in-flight upload so the next listing does not inherit them
         setAiEstimate(null);
-        loadHistory(); // 发布历史立即出现这一单（#261-13）
-        // 从草稿载入的商品发布成功即消耗草稿：避免已上架的商品还躺在草稿箱里被重复发布。
+        loadHistory(); // this listing shows up in the publish history immediately (#261-13)
+        // A product loaded from a draft consumes that draft on a successful publish, so an already-listed product cannot be published twice from the draft box.
         if (draftId) { setDrafts(removeDraft(draftId)); setDraftId(null); }
       } catch (e: any) {
-        message.error('发布失败：' + (e?.message || e));
+        message.error('Publish failed: ' + (e?.message || e));
       } finally {
         setBusy(false);
       }
-    }).catch(() => message.error('请完善必填项与规则配置'));
+    }).catch(() => message.error('Please complete the required fields and rule configuration'));
   };
 
   return (
     <div className="admin-content">
-      <Alert type="info" showIcon style={{ marginBottom: 18 }} message="发布即生成竞拍状态机：上架 → 竞拍中 → 截拍中 → 成交/流拍。规则一经有人出价不可再改，请提前配置好。" />
+      <Alert type="info" showIcon style={{ marginBottom: 18 }} message="Publishing creates the auction state machine: listed -> bidding -> closing -> sold/no bid. Rules can no longer be changed once someone has bid, so configure them up front." />
       <div className="pub-grid">
-        {/* #261-13: 发布历史 — 这场直播发过什么，一眼可见。 */}
+        {/* #261-13: publish history - what this stream has published, at a glance. */}
         <div className="pub-history">
           <div className="pub-history-head">
-            <HistoryOutlined /> 发布历史
+            <HistoryOutlined /> Publish history
             <span className="pub-history-count">{history.length}</span>
             {history.length > 0 && (manage ? (
-              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} onClick={exitManage}>完成</Button>
+              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} onClick={exitManage}>Done</Button>
             ) : (
-              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} icon={<DeleteOutlined />} onClick={() => setManage(true)}>管理</Button>
+              <Button type="link" size="small" style={{ marginLeft: 'auto', padding: 0, height: 'auto' }} icon={<DeleteOutlined />} onClick={() => setManage(true)}>Manage</Button>
             ))}
           </div>
           {manage && (
             <div className="pub-hist-toolbar">
-              <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} disabled={deletableIds.length === 0} onChange={toggleSelectAll}>全选可删</Checkbox>
+              <Checkbox checked={allSelected} indeterminate={!allSelected && selectedCount > 0} disabled={deletableIds.length === 0} onChange={toggleSelectAll}>Select all deletable</Checkbox>
               <span className="pub-hist-toolbar-spacer" />
               <Popconfirm
-                title={`永久删除选中的 ${selectedCount} 条发布记录？`}
-                description="将从后端彻底删除（含成交订单 / 竞价记录），不可恢复"
-                okText="永久删除"
-                cancelText="再想想"
+                title={`Permanently delete the ${selectedCount} selected publish record(s)?`}
+                description="This deletes them from the backend for good (including the resulting order and bid records) and cannot be undone"
+                okText="Delete permanently"
+                cancelText="Cancel"
                 okButtonProps={{ danger: true }}
                 onConfirm={onDeleteSelected}
                 disabled={selectedCount === 0}
               >
                 <Button danger size="small" icon={<DeleteOutlined />} loading={deleting} disabled={selectedCount === 0}>
-                  删除{selectedCount > 0 ? ` (${selectedCount})` : ''}
+                  Delete{selectedCount > 0 ? ` (${selectedCount})` : ''}
                 </Button>
               </Popconfirm>
             </div>
           )}
-          {history.length === 0 && <div className="pub-history-empty">还没有发布记录。<br />右侧填好商品，一键发布开拍。</div>}
+          {history.length === 0 && <div className="pub-history-empty">No publish records yet.<br />Fill in the product on the right and publish in one tap.</div>}
           {history.map((a) => {
             const live = a.status === 'LIVE';
             const deletable = isDeletableAuction(a.status);
             const checked = selected.has(a.auctionId);
-            const sub = a.status === 'LIVE' ? `竞拍中 · 当前 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
-              : a.status === 'SOLD' || a.status === 'ORDER_CREATED' ? `已成交 ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
-              : a.status === 'CANCELLED' ? '已下架' : a.status === 'NO_BID' ? '流拍' : '待开拍';
+            const sub = a.status === 'LIVE' ? `Bidding - now ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
+              : a.status === 'SOLD' || a.status === 'ORDER_CREATED' ? `Sold ¥${fmtMoney(Math.round(Number(a.currentPriceCents || 0) / 100))}`
+              : a.status === 'CANCELLED' ? 'Withdrawn' : a.status === 'NO_BID' ? 'No bid' : 'Upcoming';
             return (
               <div key={a.auctionId} className={'pub-hist-item' + (live ? ' live' : '') + (manage && deletable && checked ? ' selected' : '')}>
                 {manage && (
-                  <span className="pub-hist-check" title={deletable ? '' : (live ? '正在直播，不能删除' : '未结束，请先下架后再删除')} style={{ display: 'inline-flex' }}>
+                  <span className="pub-hist-check" title={deletable ? '' : (live ? 'Live right now, cannot be deleted' : 'Not finished - withdraw it before deleting')} style={{ display: 'inline-flex' }}>
                     <Checkbox checked={checked} disabled={!deletable} onChange={() => toggleSelect(a.auctionId)} />
                   </span>
                 )}
                 <img className="pub-hist-thumb" src={a.imageUrl || PROD.watch} alt="" loading="lazy" />
                 <div className="pub-hist-meta">
-                  <div className="pub-hist-name">{a.productName || '直播拍品'}</div>
-                  <div className="pub-hist-sub">{sub}{a.createdAtMs ? ` · ${new Date(a.createdAtMs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}` : ''}</div>
+                  <div className="pub-hist-name">{a.productName || 'Live lot'}</div>
+                  <div className="pub-hist-sub">{sub}{a.createdAtMs ? ` · ${new Date(a.createdAtMs).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}` : ''}</div>
                 </div>
                 {live && <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>LIVE</Tag>}
               </div>
             );
           })}
         </div>
-        <Form form={form} layout="vertical" initialValues={{ category: '名表', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, demoCrowd: true }}>
-          <Divider orientation="left" plain>商品信息</Divider>
-          <Form.Item label="商品主图" required tooltip="上传真实商品图（≤5MB · png/jpg/webp）— AI 介绍按这张图识别生成，买家端也展示它">
+        <Form form={form} layout="vertical" initialValues={{ category: 'Watches', start: 0, step: 50, cap: 12000, duration: 80, autoExtend: true, extendSec: 15, demoCrowd: true }}>
+          <Divider orientation="left" plain>Product details</Divider>
+          <Form.Item label="Cover image" required tooltip="Upload a real product photo (5MB max, png/jpg/webp) - the AI description is generated from this photo and buyers see it too">
             <Upload
               listType="picture-card"
               accept="image/png,image/jpeg,image/webp,image/gif"
@@ -444,53 +456,53 @@ export default function AuctionPublish() {
               beforeUpload={handleUpload}
               onRemove={() => { setFileList([]); setUploadedUrl(null); }}
             >
-              {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>上传</div></div>}
+              {fileList.length >= 1 ? null : <div><PlusOutlined /><div style={{ marginTop: 6 }}>Upload</div></div>}
             </Upload>
           </Form.Item>
-          {/* #261-12b: 拖入视频 → 立即上传（不等发布）→ 发布时随 rules.livePlayUrl 下发，开拍即自动播放，无需 OBS。 */}
-          <Form.Item label="直播视频（选填）" tooltip="拖入 mp4/webm（≤64MB）即开始上传，无需等发布。发布开拍后自动作为本场直播画面，买家进直播间即自动播放">
+          {/* #261-12b: drop a video -> upload immediately (without waiting for publish) -> ship it with rules.livePlayUrl at publish time so it plays automatically when the auction starts, no OBS needed. */}
+          <Form.Item label="Live video (optional)" tooltip="Drop in an mp4/webm (64MB max) and it starts uploading right away, no need to wait for publish. Once the auction starts it becomes this session's live feed and plays automatically when a buyer enters the room">
             <div className="pub-video-dragger">
               <Upload.Dragger accept="video/mp4,video/webm" showUploadList={false} beforeUpload={onPickVideo} maxCount={1}>
                 <p style={{ margin: '6px 0 2px' }}><VideoCameraAddOutlined style={{ fontSize: 26, color: '#fe2c55' }} /></p>
-                <p style={{ fontWeight: 600, margin: 0 }}>拖拽视频到这里 · 松手即开始上传，开拍即自动播放</p>
-                <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>建议 H.264 编码 mp4 · ≤64MB（webm 在 iPhone 无法播放；也可发布后用 OBS 推真镜头）</p>
+                <p style={{ fontWeight: 600, margin: 0 }}>Drag a video here - it uploads on drop and plays when the auction starts</p>
+                <p style={{ color: '#999', fontSize: 12, margin: '4px 0 6px' }}>H.264 mp4 recommended, 64MB max (webm does not play on iPhone; you can also push a real camera with OBS after publishing)</p>
               </Upload.Dragger>
             </div>
             {videoFile && (
               <div className="pub-video-meta">
                 {videoUploading ? (
-                  <span><LoadingOutlined /> 上传中：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）</span>
+                  <span><LoadingOutlined /> Uploading: {videoFile.name} ({Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB)</span>
                 ) : videoUrl ? (
-                  <span><CheckCircleFilled /> 已上传：{videoFile.name}（{Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB）· 开拍即自动播放</span>
+                  <span><CheckCircleFilled /> Uploaded: {videoFile.name} ({Math.round(videoFile.size / 1024 / 1024 * 10) / 10}MB) - plays when the auction starts</span>
                 ) : (
                   <span style={{ color: '#d4380d' }}>
-                    上传未完成：{videoFile.name}
-                    <Button size="small" type="link" style={{ paddingInline: 4 }} onClick={() => startVideoUpload(videoFile)}>重试上传</Button>
+                    Upload incomplete: {videoFile.name}
+                    <Button size="small" type="link" style={{ paddingInline: 4 }} onClick={() => startVideoUpload(videoFile)}>Retry upload</Button>
                   </span>
                 )}
                 {!videoUploading && (
-                  <Button size="small" type="text" danger onClick={removeVideo}>移除</Button>
+                  <Button size="small" type="text" danger onClick={removeVideo}>Remove</Button>
                 )}
               </div>
             )}
           </Form.Item>
-          <Form.Item label="商品名称" name="name" rules={[{ required: true, message: '请输入商品名称' }]}>
-            <Input placeholder="如：百达翡丽年历计时腕表 玫瑰金蓝盘" maxLength={60} showCount />
+          <Form.Item label="Product name" name="name" rules={[{ required: true, message: 'Enter the product name' }]}>
+            <Input placeholder="e.g. Patek Philippe Annual Calendar Chronograph, rose gold blue dial" maxLength={60} showCount />
           </Form.Item>
-          <Form.Item label="商品分类" name="category">
+          <Form.Item label="Category" name="category">
             <Select options={Object.keys(CAT_EMOJI).map((c) => ({ label: `${CAT_EMOJI[c]} ${c}`, value: c }))} />
           </Form.Item>
           <Form.Item
             name="intro"
             label={
               <Space>
-                <span>商品介绍</span>
-                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} loading={aiBusy} onClick={onAiIntro}>{aiBusy ? 'AI 识图中…' : '✨ AI 识图生成介绍'}</Button>
-                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} icon={<ThunderboltOutlined />} loading={copyBusy} onClick={onGenerateCopy}>AI 拍卖文案</Button>
+                <span>Description</span>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} loading={aiBusy} onClick={onAiIntro}>{aiBusy ? 'AI is reading the photo...' : '✨ AI description from photo'}</Button>
+                <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} icon={<ThunderboltOutlined />} loading={copyBusy} onClick={onGenerateCopy}>AI auction copy</Button>
               </Space>
             }
           >
-            <Input.TextArea rows={2} placeholder="材质、成色、证书、瑕疵说明等" maxLength={200} showCount />
+            <Input.TextArea rows={2} placeholder="Material, condition, certificate, flaws, and so on" maxLength={200} showCount />
           </Form.Item>
           {copyNote && (
             <div style={{ marginTop: -8, marginBottom: 10, fontSize: 12, color: '#8c8c8c' }}>{copyNote}</div>
@@ -506,15 +518,15 @@ export default function AuctionPublish() {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message="AI 文案仅供起草"
-            description="标题、卖点和开场话术不会自动发布为权威事实；卖家需核对后再点击发布。"
+            message="AI copy is a draft only"
+            description="The title, selling points, and opening line are never published as authoritative facts; the seller must review them before publishing."
           />
-          <Divider orientation="left" plain>竞拍规则</Divider>
+          <Divider orientation="left" plain>Auction rules</Divider>
           <Space size={16} style={{ display: 'flex' }}>
-            <Form.Item label="起拍价" name="start" style={{ flex: 1 }} extra="0 元起拍（固定 · 无保留价）" tooltip="本场拍卖始终 0 元起拍，无保留价，人人可参与">
+            <Form.Item label="Start price" name="start" style={{ flex: 1 }} extra="Starts at zero (fixed, no reserve)" tooltip="This auction always starts at zero with no reserve, so anyone can take part">
               <InputNumber min={0} max={0} step={0} value={0} disabled addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="封顶价" name="cap" style={{ flex: 1 }} tooltip="出价达到封顶价立即成交">
+            <Form.Item label="Cap price" name="cap" style={{ flex: 1 }} tooltip="A bid that reaches the cap price closes the auction immediately">
               <InputNumber min={0} step={500} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
           </Space>
@@ -525,41 +537,41 @@ export default function AuctionPublish() {
               rules={[{ required: true }]}
               label={
                 <Space>
-                  <span>加价幅度（固定）</span>
-                  <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiStep}>AI 推荐</Button>
+                  <span>Bid increment (fixed)</span>
+                  <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={onAiStep}>AI suggest</Button>
                 </Space>
               }
             >
               <InputNumber min={1} step={10} addonBefore="¥" style={{ width: '100%' }} />
             </Form.Item>
-            <Form.Item label="竞拍时长（秒）" name="duration" style={{ flex: 1 }}>
+            <Form.Item label="Duration (seconds)" name="duration" style={{ flex: 1 }}>
               <InputNumber min={10} step={10} style={{ width: '100%' }} />
             </Form.Item>
           </Space>
           <Space size={16} style={{ display: 'flex', alignItems: 'flex-start' }}>
-            <Form.Item label="结束前自动延时" name="extendSec" style={{ flex: 1 }} tooltip="结束前 10s 内有人出价则延长，10-30s">
-              <InputNumber min={10} max={30} step={5} addonAfter="秒" style={{ width: '100%' }} disabled={v.autoExtend === false} />
+            <Form.Item label="Auto-extend before the end" name="extendSec" style={{ flex: 1 }} tooltip="A bid within the last 10s extends the auction, by 10-30s">
+              <InputNumber min={10} max={30} step={5} addonAfter="s" style={{ width: '100%' }} disabled={v.autoExtend === false} />
             </Form.Item>
-            <Form.Item label="启用延时" name="autoExtend" valuePropName="checked">
+            <Form.Item label="Enable extensions" name="autoExtend" valuePropName="checked">
               <Switch />
             </Form.Item>
-            {/* #261-12a: 发布即人气 — 服务端自动注入 ~9997 观众 + 按规则随机模拟出价 */}
-            <Form.Item label="演示人气" name="demoCrowd" valuePropName="checked" tooltip="开拍后系统自动注入约 9997 名观众与按规则随机出价（封顶前自动停手，落锤留给真人）">
-              <Switch checkedChildren="自动" unCheckedChildren="关" />
+            {/* #261-12a: popularity on publish - the server injects ~9997 viewers plus rule-driven simulated bids */}
+            <Form.Item label="Demo crowd" name="demoCrowd" valuePropName="checked" tooltip="Once the auction starts the system injects about 9997 viewers and rule-driven random bids (they stop before the cap, leaving the hammer to real people)">
+              <Switch checkedChildren="Auto" unCheckedChildren="Off" />
             </Form.Item>
           </Space>
           <Space style={{ marginTop: 8 }}>
-            <Button type="primary" size="large" icon={<RocketOutlined />} loading={busy} onClick={onPublish}>立即发布开拍</Button>
-            <Button size="large" icon={<SaveOutlined />} onClick={onSaveDraft}>存草稿{drafts.length > 0 ? ` (${drafts.length})` : ''}</Button>
+            <Button type="primary" size="large" icon={<RocketOutlined />} loading={busy} onClick={onPublish}>Publish and go live</Button>
+            <Button size="large" icon={<SaveOutlined />} onClick={onSaveDraft}>Save draft{drafts.length > 0 ? ` (${drafts.length})` : ''}</Button>
           </Space>
 
-          {/* 草稿箱：有草稿才出现，正好长在「存草稿」按钮下方——存完立刻看得见。 */}
+          {/* Draft box: only shows when drafts exist, right under the save-draft button so it is visible immediately. */}
           {drafts.length > 0 && (
             <div className="draft-box">
               <div className="draft-box-head">
-                <span className="draft-box-title"><FolderOpenOutlined /> 草稿箱</span>
+                <span className="draft-box-title"><FolderOpenOutlined /> Draft box</span>
                 <span className="draft-box-count">{drafts.length}</span>
-                <span className="draft-box-hint">存在本机浏览器 · 载入即可继续编辑</span>
+                <span className="draft-box-hint">Stored in this browser - load one to keep editing</span>
               </div>
               {drafts.map((d) => (
                 <div key={d.id} className={'draft-item' + (d.id === draftId ? ' editing' : '')}>
@@ -572,17 +584,17 @@ export default function AuctionPublish() {
                   <div className="draft-meta">
                     <div className="draft-name">{d.name}</div>
                     <div className="draft-sub">
-                      {CAT_EMOJI[d.category ?? ''] ? `${CAT_EMOJI[d.category ?? '']} ` : ''}{d.category || '未分类'} · 封顶 ¥{fmtMoney(d.cap ?? 0)} · 加价 ¥{fmtMoney(d.step ?? 0)} · {d.duration ?? 80}s
+                      {CAT_EMOJI[d.category ?? ''] ? `${CAT_EMOJI[d.category ?? '']} ` : ''}{d.category || 'Uncategorized'} - cap ¥{fmtMoney(d.cap ?? 0)} - increment ¥{fmtMoney(d.step ?? 0)} - {d.duration ?? 80}s
                     </div>
                   </div>
                   <span className="draft-time">{fmtSavedAt(d.savedAt)}</span>
                   {d.id === draftId ? (
-                    <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>编辑中</Tag>
+                    <Tag color="#fe2c55" style={{ marginInlineEnd: 0 }}>Editing</Tag>
                   ) : (
-                    <Button size="small" type="primary" ghost onClick={() => onLoadDraft(d)}>载入</Button>
+                    <Button size="small" type="primary" ghost onClick={() => onLoadDraft(d)}>Load</Button>
                   )}
-                  <Popconfirm title="删除这条草稿？" okText="删除" cancelText="留着" okButtonProps={{ danger: true }} onConfirm={() => onDeleteDraft(d.id)}>
-                    <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="删除草稿" />
+                  <Popconfirm title="Delete this draft?" okText="Delete" cancelText="Keep" okButtonProps={{ danger: true }} onConfirm={() => onDeleteDraft(d.id)}>
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} aria-label="Delete draft" />
                   </Popconfirm>
                 </div>
               ))}
@@ -590,21 +602,21 @@ export default function AuctionPublish() {
           )}
         </Form>
         <div className="pub-preview">
-          <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>移动端直播间预览</div>
+          <div style={{ fontSize: 13, color: '#888', marginBottom: 8 }}>Mobile live-room preview</div>
           <div className="pub-phone">
-            <div style={{ fontSize: 12, opacity: 0.85 }}>距竞拍结束仅剩 {String(Math.floor((v.duration ?? 80) / 60)).padStart(2, '0')}:{String((v.duration ?? 80) % 60).padStart(2, '0')}</div>
+            <div style={{ fontSize: 12, opacity: 0.85 }}>Auction ends in {String(Math.floor((v.duration ?? 80) / 60)).padStart(2, '0')}:{String((v.duration ?? 80) % 60).padStart(2, '0')}</div>
             <img className="pub-img" src={previewImg} alt="" />
             <div className="pub-card">
-              <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>{v.name || '商品名称将显示在这里'}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>{v.name || 'The product name will appear here'}</div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10 }}>
-                <div><div style={{ fontSize: 10, opacity: 0.7 }}>{v.start === 0 ? '0 元起拍' : '起拍价'}</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(v.start ?? 0)}</div></div>
-                <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, opacity: 0.7 }}>加价幅度</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(step)}</div></div>
+                <div><div style={{ fontSize: 10, opacity: 0.7 }}>{v.start === 0 ? 'Starts at zero' : 'Start price'}</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(v.start ?? 0)}</div></div>
+                <div style={{ textAlign: 'right' }}><div style={{ fontSize: 10, opacity: 0.7 }}>Increment</div><div style={{ fontSize: 18, fontWeight: 800 }}>¥{fmtMoney(step)}</div></div>
               </div>
-              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>{(v.cap ?? 0) > 0 ? `封顶 ¥${fmtMoney(v.cap)}` : '不封顶'} · {v.autoExtend ? `延时 ${v.extendSec ?? 15}s` : '不延时'}</div>
+              <div style={{ fontSize: 10.5, opacity: 0.75, marginTop: 8 }}>{(v.cap ?? 0) > 0 ? `Cap ¥${fmtMoney(v.cap)}` : 'No cap'} - {v.autoExtend ? `extends ${v.extendSec ?? 15}s` : 'no extension'}</div>
             </div>
-            <div className="pub-cta">立即出价 ¥{fmtMoney((v.start ?? 0) + step)}</div>
+            <div className="pub-cta">Bid now ¥{fmtMoney((v.start ?? 0) + step)}</div>
           </div>
-          <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 10, lineHeight: 1.6 }}>预览随表单实时更新。发布后该卡片将出现在主播直播间，买家点击「我要参与」签署条款即可出价。</div>
+          <div style={{ fontSize: 11.5, color: '#aaa', marginTop: 10, lineHeight: 1.6 }}>The preview updates live with the form. After publishing, this card appears in the host's live room, and a buyer can bid once they tap "Join" and accept the terms.</div>
         </div>
       </div>
     </div>
