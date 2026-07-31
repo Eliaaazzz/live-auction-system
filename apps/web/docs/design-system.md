@@ -42,18 +42,18 @@ provenance.
 product. They have seen many livestream commerce demos; the design's job
 is to make them *believe* this is engineered, not skinned. - **End
 users**: Mobile-first Chinese consumers familiar with Douyin live
-commerce patterns (上车, 心动值, 福袋, 抢单). -
+commerce patterns (join tickers, hype meters, lucky bags, grab-the-order). -
 **Sellers/broadcasters**: Power users running auctions from a desktop
 control surface.
 
 **Judging rubric weights** (these are the only goals that matter): \|
 Weight \| Category \| What designs are scored on \| \|---\|---\|---\| \|
-50% \| 技术实现与工程完整度 \| Does the UI surface real engineering
+50% \| Implementation and engineering completeness \| Does the UI surface real engineering
 invariants (clock skew, seqguard, hash chain, reconnect, anti-snipe)? \|
-\| 25% \| 技术深度与创新性 \| Is the real-time / bidding / hammer /
-catchup loop intelligently visualized? \| \| 15% \| AI 使用与落地效果 \|
+\| 25% \| Technical depth and innovation \| Is the real-time / bidding / hammer /
+catchup loop intelligently visualized? \| \| 15% \| AI usage and landed effect \|
 VLM facts confirmation flow + LLM auctioneer text — visible, semantic,
-never blocking \| \| 10% \| 项目材料完整度 \| Polish, demo video,
+never blocking \| \| 10% \| Project material completeness \| Polish, demo video,
 screenshots \|
 
 **Critical**: The product gets a higher score for making backend
@@ -76,7 +76,7 @@ days) - Public D-day: 2026-06-10
 | **PC Admin — Auction publish form** | P0 | Seller | Desktop 1440px+ |
 | **PC Admin — Cancel-with-confirmation flow** | P0 | Seller | Desktop 1440px+ |
 | **PC Admin — Order & product management** | P1 | Seller | Desktop 1440px+ |
-| **Mini-program** | OPEN DECISION → C | — | Stub-only landing ("请在抖音 App 打开") |
+| **Mini-program** | OPEN DECISION → C | — | Stub-only landing ("Please open this in the Douyin app") |
 
 **Out of scope**: native iOS/Android apps; payment flow; logistics; user
 authentication beyond dev-login.
@@ -96,7 +96,7 @@ DRAFT  →  SCHEDULED  →  LIVE  →  { SOLD | NO_BID | CANCELLED }  →  ORDER
 ```
 
 `AUCTION_EXTENDED` is an **event, not a state**. UI renders it as a
-badge ("延时 +30s · 第 K 次反狙击") while status remains LIVE.
+badge ("extended +30s - anti-snipe #K") while status remains LIVE.
 
 Terminal states: SOLD, NO_BID, CANCELLED, ORDER_CREATED. These reject
 further bids.
@@ -110,8 +110,8 @@ further bids.
 | `BID_REJECTED` | `code` | Shake bid button + toast with semantic copy |
 | `AUCTION_EXTENDED` | `seq · endAtMs · extendCount` | Light-sweep on countdown; increment extend badge |
 | `AUCTION_SOLD` | `seq · winnerId · amountCents` | Hammer overlay; flip to solemn palette (see §5) |
-| `AUCTION_NO_BID` | `seq · status` | Static "本场无人出价" gray-scale end |
-| `AUCTION_CANCELLED` | `seq · status` | "已取消" red stamp overlay |
+| `AUCTION_NO_BID` | `seq · status` | Static "nobody bid in this session" gray-scale end |
+| `AUCTION_CANCELLED` | `seq · status` | an "cancelled" red stamp overlay |
 | `PONG` | — | Heartbeat ack |
 
 Every envelope carries `serverTimeMs` — used to maintain a client-server
@@ -163,11 +163,11 @@ treatment violates one, redesign.
 |------------------------|------------------------|------------------------|
 | **P1** | Money is rendered as Decimal string, not parsed number | Use `formatCentsCNY(cents: string)`. Never display a JS-number-parsed value. Component receives strings. |
 | **P2** | UI labels map to the canonical 7-state set | No "Extended" state, no "Cooling" state, no "Hammered" state. `AUCTION_EXTENDED` is a badge. |
-| **P3** | AI components must degrade gracefully | AI bubble must have a first-class offline state. AI outage cannot block bidding, countdown, or leaderboard. Default copy: "拍卖师暂离 · 出价不受影响" |
+| **P3** | AI components must degrade gracefully | AI bubble must have a first-class offline state. AI outage cannot block bidding, countdown, or leaderboard. Default copy: "the auctioneer has stepped away - bidding is unaffected" |
 | **P4** | Countdown uses `serverClockOffsetMs` self-correction | Maintain offset from `serverTimeMs - clientReceiveTimeMs`. Update on every envelope. Drift \>500ms surfaces a Δ warning. |
 | **P5** | `extendCount` is always visible during LIVE | Anti-snipe is the product's trust differentiator. The number must be on screen, not hidden in a menu. |
 | **P6** | Evidence card surfaces hash-chain credibility | Display `prev_hash → event_hash` chain, ≥8 hex chars per link, click to expand full hash. Don't paint over it with illustration. |
-| **P7** | WebSocket lifecycle is visible | Reconnecting → thin top bar. Catchup gap → "正在同步 #N→#M". Schema mismatch → instructive error. Silent reconnect is forbidden. |
+| **P7** | WebSocket lifecycle is visible | Reconnecting → thin top bar. Catchup gap -> "syncing #N->#M". Schema mismatch → instructive error. Silent reconnect is forbidden. |
 | **P8** | WS message handler ≤5ms; animation on compositor | 60fps motion via CSS/WAAPI (transform/opacity); React state updates only at semantic boundaries (≤1Hz for ticks). Broadcast SLO p95 \<150ms is sacred. |
 | **P9** | Reduced-motion + frame-budget auto-degrade | Honor `prefers-reduced-motion`. Runtime FPS dropout → `body.surface-calm` removes decorative animation; semantic motion (state transitions) keeps a single-frame fade. |
 | **P10** | Anti-slop: every visual element has a semantic reason | Gradients, glow, blur, particles appear only on emotional events (overtake, leading, hammer, extend). No decorative chrome. No generic-AI patterns. (See §11.) |
@@ -212,7 +212,7 @@ strengths). - Auction-house gravitas validates the moment of conclusion
 tells the user "this is over, this is recorded, this is real."
 
 **Why we did not pick pure A** (D5 satura, D4 weakness): pure Douyin
-slides into "抽奖感" (lottery-game feel). Auctions can't feel like
+slides into a lottery-game feel. Auctions can't feel like
 gacha.
 
 **Why we did not pick pure B** (D4 satura, D5 weakness): pure
@@ -225,7 +225,7 @@ Douyin.
 in-the-moment - Hero color: Douyin red `#FE2C55` on near-black
 `#161823` - Accent: Douyin cyan `#25F4EE` for sparing semantic
 highlights (online presence, gain feedback) - Typography: PingFang SC /
-抖音 Sans body; tabular-mono for numerics - Motion register: snappy
+Douyin Sans body; tabular-mono for numerics - Motion register: snappy
 springs, immediate, sub-200ms responsiveness, micro-interactions per tap
 
 **B — AuctionHouse Premium**: - Mood: ceremonial, recorded, dignified,
@@ -370,7 +370,7 @@ handler stays free.
 | `lumen-veil-bridge-fade` | 0.35s ease-in 1                      | Hammer transition — bridge palette layer       |
 | `lumen-room-blur-out`    | 1.05s ease-out 1                     | Hammer transition — room blur + dim            |
 | `lumen-hammer-reveal-up` | 0.9s cubic-bezier(.22,1,.36,1), 0.7s delay | Hammer transition — final solemn reveal  |
-| `lumen-lead-pop`         | 1.6s cubic-bezier(.34,1.56,.64,1)    | F06 — "领先" badge entry                       |
+| `lumen-lead-pop`         | 1.6s cubic-bezier(.34,1.56,.64,1)    | F06 - the "in the lead" badge entry            |
 | `lumen-slam-in`          | 0.42s cubic-bezier(.36,.07,.19,.97)  | F07 — overtake banner slam from top            |
 | `lumen-black-horse-in`   | 0.5s cubic-bezier(.34,1.56,.64,1)    | F13 — jump-bid horse banner                    |
 | `lumen-shockwave`        | 1.4s ease-out 1                      | Hammer — champagne ring expand                 |
@@ -414,7 +414,7 @@ below are real; open them to see the implementation.
 
 | Component | Purpose |
 |---|---|
-| `<LeadingToast>` | F06 — `lumen-lead-pop` + `lumen-lead-ring` "领先!" |
+| `<LeadingToast>` | F06 - `lumen-lead-pop` + `lumen-lead-ring` "In the lead!" |
 | `<OvertakenSlam>` | F07 — `lumen-slam-in` top banner |
 | `<SandHourglass>` | F03 — falling-sand hourglass during final 10s |
 | `<PulseWaves>` | Concentric `lumen-pulse-wave` from price card in final 10s |
@@ -436,7 +436,7 @@ below are real; open them to see the implementation.
 | `adminExtra.jsx` → `<AdminPublish>` | New auction 5-step form with pipeline visualizer | Desktop 1440px+ |
 | `adminExtra.jsx` → `<AdminOrders>` | All auctions + orders table with GMV summary cards | Desktop 1440px+ |
 | `adminExtra.jsx` → `<AdminCancelModal>` | 2-step cancel (type current price to verify) | Desktop modal |
-| `misc.jsx` → `<MiniProgramStub>` | "请在抖音 App 内打开" landing per §12 §7.1 → C | Mobile H5 |
+| `misc.jsx` → `<MiniProgramStub>` | a "please open this in the Douyin app" landing per §12 §7.1 -> C | Mobile H5 |
 | `misc.jsx` → `<ConnReconnecting>` / `<ConnSyncing>` / `<ConnSchema>` | Full-screen WS connection state overlays | Mobile H5 |
 
 ### §7.4 Wire-up status
@@ -459,7 +459,7 @@ just REST for static pages like Evidence and Orders).
 
 ### §8.1 Must (Elia review locked these on parent issue)
 
-Each entry hits ≥1 of {backend invariant / AI落地 / materials}. Pure
+Each entry hits >=1 of {backend invariant / AI in practice / materials}. Pure
 aesthetic features were demoted to nice-to-have.
 
 | ID | Feature | Backend anchor |
@@ -478,22 +478,22 @@ In order: **F01 → F06/F07 → F09 → F12 → F14/F15 → F23**
 
 | Beat | Feature | What's on screen |
 |------------------------|------------------------|------------------------|
-| 1 (T-10s) | F01 末-10s 红圈脉冲 | Countdown digits go red, CSS pulse intensifies |
-| 2 (own bid) | F06 「你领先了」 | Full-screen gold flash + haptic |
-| 3 (overtake) | F07 「被超越」 | Top-bar red banner drops, CTA "再加 X 反超" |
-| 4 (any bid) | F09 价格 odometer | Number flips digit-by-digit |
-| 5 (any bid) | F12 排行榜 FLIP | Avatars fly to new positions |
-| 6 (hammer) | F14 心跳音 → F15 落槌音 | Audio (gated on §7.2 OPEN DECISION, currently default-mute) |
+| 1 (T-10s) | F01 last-10s red ring pulse | Countdown digits go red, CSS pulse intensifies |
+| 2 (own bid) | F06 "you are in the lead" | Full-screen gold flash + haptic |
+| 3 (overtake) | F07 "outbid" | Top-bar red banner drops, CTA "bid X more to retake" |
+| 4 (any bid) | F09 price odometer | Number flips digit-by-digit |
+| 5 (any bid) | F12 leaderboard FLIP | Avatars fly to new positions |
+| 6 (hammer) | F14 heartbeat sound -> F15 hammer sound | Audio (gated on §7.2 OPEN DECISION, currently default-mute) |
 | 7 (after hammer) | F23 Hall of Fame | Solemn palette + winner reveal + evidence CTA |
 
 ### §8.3 Deferred (Nice / P1)
 
 F03 sand hourglass, F04 background color-temperature ramp, F10 combo
-counter, F13 黑马 banner, F16 mid-bid tones, F17 default-mute setup, F18
-LLM streaming bubble (needs T7 backend), F21 viewer count, F22 上车
-ticker, F24 心动值, F25 long-press tier wheel, F27 haptics, F29/F30
+counter, F13 dark-horse banner, F16 mid-bid tones, F17 default-mute setup, F18
+LLM streaming bubble (needs T7 backend), F21 viewer count, F22 join
+ticker, F24 hype meter, F25 long-press tier wheel, F27 haptics, F29/F30
 terminal end-states (built but minimal), F32/F33/F34 Douyin-specific
-(福袋/弹幕/礼物特效).
+(lucky bag / danmaku / gift effects).
 
 ------------------------------------------------------------------------
 
@@ -517,7 +517,7 @@ P10.
 -   **Skeuomorphism on auction-house elements** — no faux-wood gavels,
     no leather textures
 -   **Lottery-game patterns** — confetti spam, lucky-draw wheels,
-    "scratch to reveal", spinning prize doors. (Auctions ≠抽奖.)
+    "scratch to reveal", spinning prize doors. (An auction is not a lottery.)
 -   **Generic stack: card-grid-of-three identical tiles with bold
     title + lorem + outlined button**
 
@@ -554,9 +554,9 @@ P10.
 -   CN-dominant copy with EN labels for technical terms (seq, hash,
     schema) is correct — this is the project house style
 -   Numerals: ¥1,234.56 with proper grouping; cents always 2 digits
--   Don't anglicize labels for the sake of it. "Live" → "直播中"
+-   Keep labels in the product's own register rather than translating for its own sake.
     (already in StatusBadge)
--   Auctioneer / 拍卖师 framing is acceptable in CN; "Auctioneer" in EN
+-   The auctioneer framing works in both languages; "Auctioneer" in EN
     is not warm enough
 
 ------------------------------------------------------------------------
@@ -570,10 +570,10 @@ nails layout but flattens these, it fails.
 |------------------|------------------|------------------|------------------|
 | 1 | **Final 10 seconds before hammer** | Maximum tension, judges' lasting impression | Countdown pulse rises in frequency; background color temperature optional ramp; haptic on each second optional; no chrome that competes with the timer |
 | 2 | **Anti-snipe extension trigger** | F02 — the trust differentiator | Visible `AUCTION_EXTENDED` light sweep across the timer; `extendCount +1` badge animates; new `endAtMs` resets the timer with a 1-frame "snap back"; must NOT feel like a glitch |
-| 3 | **Own-bid acceptance ("领先!")** | F06 — emotional reward | Brief gold flash from the price card outward; haptic; "领先!" copy floats; clears in \~1.2s; no permanent UI cost |
-| 4 | **Being overtaken** | F07 — re-engagement | Red top banner drops with "被超越 · 加价反超 ¥X"; CTA on the banner increments to next valid bid; banner persists until next own action |
-| 5 | **Reject feedback** | F08 — clarity over apology | Bid button left-right shake (0.36s); semantic toast (e.g. "出价低于最低加价或超过上限"); no modal interruption |
-| 6 | **The hammer (status → SOLD)** | The product's center of gravity — A→B accent flip | Background fades to `solemn-deep`; serif gold price reveal (\~7xl); winner name in serif cream; CTA "查看证据卡 →" appears at delay 0.6s; gold dust particles low-density |
+| 3 | **Own-bid acceptance ("In the lead!")** | F06 - emotional reward | Brief gold flash from the price card outward; haptic; the "In the lead!" copy floats; clears in \~1.2s; no permanent UI cost |
+| 4 | **Being overtaken** | F07 - re-engagement | Red top banner drops with "outbid - raise by ¥X to retake"; CTA on the banner increments to next valid bid; banner persists until next own action |
+| 5 | **Reject feedback** | F08 - clarity over apology | Bid button left-right shake (0.36s); semantic toast (e.g. "the bid is below the minimum increment or over the cap"); no modal interruption |
+| 6 | **The hammer (status -> SOLD)** | The product's center of gravity - A->B accent flip | Background fades to `solemn-deep`; serif gold price reveal (\~7xl); winner name in serif cream; the "view the evidence card" CTA appears at delay 0.6s; gold dust particles low-density |
 | 7 | **Evidence screen entry** | Backs up the claim — P6 + F31 | Continuous from hammer (no jump cut); top: chain-verified badge or break flag; timeline as a vertical ledger; mono-tabular hashes; `prev_hash → event_hash` link visible per row |
 | 8 | **VLM facts confirmation (admin)** | The 15% AI rubric chunk + #42 hero of admin | Full-screen review; each VLM-drafted fact on its own card with edit/confirm/delete; "diff" visible if seller modified; progress to "all confirmed" gate visible; cannot proceed to SCHEDULED until 100% |
 
@@ -640,11 +640,11 @@ outcomes (post-review) the design must honor.
 
 | \# | Topic | Locked answer | Implication for design |
 |------------------|------------------|------------------|------------------|
-| §7.1 | Mini-program (Douyin 小程序) | **C — H5 P0 + Mini-program stub-only** | Don't design Mini-program native flows; do design a stub landing page ("请在抖音 App 打开") |
+| §7.1 | Mini-program (Douyin mini-program) | **C - H5 P0 + Mini-program stub-only** | Don't design Mini-program native flows; do design a stub landing page ("please open this in the Douyin app") |
 | §7.2 | Sound default | **A — default mute + breathing speaker icon** | All audio (F14/F15/F16/F17) starts muted; speaker icon in header to enable |
 | §7.3 | Animation vs perf SLO | **B — frame budget auto-degrade** | Decorative motion is removable; semantic motion must work in `surface-calm` mode |
 | §7.4 | PC ↔ H5 design language | **A — shared tokens, different density** | Same palette and motion language; PC uses denser spacing, larger info density |
-| §7.5 | AI bubble offline copy | **Keep visible + gray badge** | Copy locked: "拍卖师暂离 · 出价不受影响" |
+| §7.5 | AI bubble offline copy | **Keep visible + gray badge** | Copy locked: "the auctioneer has stepped away - bidding is unaffected" |
 
 ------------------------------------------------------------------------
 
@@ -683,7 +683,7 @@ you actively avoided and how)
 
 1.  **Mobile H5 — Room (LIVE, 30s remaining)** — countdown active,
     leaderboard populated, bid CTA at thumb-reach, AI bubble with one
-    auctioneer line, ExtendBadge showing `延时 ×2 +60s`
+    auctioneer line, ExtendBadge showing `extended x2 +60s`
 2.  **Mobile H5 — Room (final 10s)** — F01 pulse engaged, color
     temperature ramp on/off variants
 3.  **Mobile H5 — Hammer overlay (status SOLD)** — the A→B accent
@@ -692,9 +692,9 @@ you actively avoided and how)
     of 6–8 events with mono-tabular hashes; chain head visible at
     bottom; "back to room" affordance
 5.  **PC Admin — VLM facts confirmation** — full-screen hero; \~5 fact
-    cards (品牌/型号/成色/瑕疵/关键参数) showing VLM-drafted text + diff
+    cards (brand / model / condition / flaws / key specs) showing VLM-drafted text + diff
     if edited + per-card confirm/edit/delete; bottom-bar gate
-    "全部确认后开拍" (disabled until 100%)
+    "confirm all, then go live" (disabled until 100%)
 6.  **PC Admin — Live console** — big status bar at top; live bid stream
     as a vertical ticker; AI text preview panel (read-only); danger zone
     with cancel button leading to the 2-step modal
@@ -756,8 +756,8 @@ A summary in one paragraph, suitable for a designer reading this on a
 Friday afternoon:
 
 > Lumen Auction is a livestream auction that wants to feel honest. We're
-> competing in a context flooded with lottery-game UIs (转盘, 福袋,
-> 抽奖) and we want the opposite — credibility. The product surfaces
+> competing in a context flooded with lottery-game UIs (spin wheels, lucky
+> bags, prize draws) and we want the opposite - credibility. The product surfaces
 > real backend guarantees (hash-chained evidence, monotonic sequence
 > numbers, server-clock-corrected countdowns, anti-snipe extensions,
 > graceful reconnect) and the design's job is to make those guarantees

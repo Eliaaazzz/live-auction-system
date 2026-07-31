@@ -146,7 +146,7 @@ Frontend work was scoped after T3 merged. **On 2026-05-26 a comprehensive 13-scr
 | **FE-T5a wired** | (admin standalone) | 🟡 UI ready — `<AdminVLMFacts>`, `<AdminConsole>`, `<AdminCancelModal>`, `<AdminPublish>` all exist; need `api.draftFacts` / `api.freeze` / `api.startLive` / `api.cancel` wiring on the route handlers |
 | **FE-T5b wired** | (admin CRUD) | 🟡 UI ready — `<AdminOrders>` renders from static `ORDER_ROWS`; need `api.listAuctions` once backend ships it (P1 — currently mock-only) |
 | **FE-T7 wired** | T7 (AI streaming) | 🟡 UI ready — `<AIBubble>` + `<TypewriterText>` ready for streaming; need T7 backend to expose LLM SSE/WS event channel |
-| **FE-MiniStub** | (Mini-program) | ✅ visual at `/preview/mp` — `<MiniProgramStub>` renders "请在抖音 App 内打开" landing; deep-link wiring is a 2-line add when needed |
+| **FE-MiniStub** | (Mini-program) | ✅ visual at `/preview/mp` — `<MiniProgramStub>` renders a "please open this in the Douyin app" landing; deep-link wiring is a 2-line add when needed |
 
 **Source of truth for wired state**: `src/routes/LiveRoomRoute.jsx` is the canonical example; all other routes follow the same pattern (ensure session → REST fetch → optional WS subscription).
 
@@ -207,7 +207,7 @@ Required functionality, in order of dependence:
 | AI bubble visible during LIVE (placeholder text) | T7 LLM stream (currently stubbed) | ✅ scaffold only |
 | AI bubble offline degrade badge | F19 + P3 — first-class | ✅ |
 | Hammer overlay on `AUCTION_SOLD` | F23 — A→B accent flip | ✅ |
-| "查看证据卡" CTA from hammer | links to `?view=evidence` | ✅ |
+| The "view the evidence card" CTA from the hammer | links to `?view=evidence` | ✅ |
 | Static gray finale on `AUCTION_NO_BID` | F29 | ✅ (minimal — could be richer) |
 | Red stamp on `AUCTION_CANCELLED` | F30 | ✅ (minimal) |
 | Connection bar (reconnecting / sync gap / schema mismatch) | P7 + F28 | ✅ |
@@ -220,13 +220,13 @@ Required functionality, in order of dependence:
 | Long-press bid tier wheel | F25 | ⬜ NOT BUILT |
 | Audio cues (heartbeat, gavel, accept-tones) | F14/F15/F16/F17 | ⬜ blocked on §7.2 |
 | Mobile haptics on accept/sold | F27 | ⬜ NOT BUILT |
-| "上车" join ticker | F22 | ⬜ NOT BUILT |
-| 围观人数 ticker | F21 | ⬜ NOT BUILT |
-| 黑马 banner (jump-bid) | F13 | ⬜ NOT BUILT |
-| 心动值 progress bar | F24 | ⬜ NOT BUILT |
-| 福袋 hourly easter egg | F32 | ⬜ NOT BUILT |
-| 主播话术弹幕 (AI as bullet text) | F33 (alt to AIBubble) | ⬜ NOT BUILT |
-| Champagne/烟花 particles on SOLD | F34 | ⬜ NOT BUILT |
+| Join ticker | F22 | ⬜ NOT BUILT |
+| Viewer-count ticker | F21 | ⬜ NOT BUILT |
+| Dark-horse banner (jump bid) | F13 | ⬜ NOT BUILT |
+| Hype-meter progress bar | F24 | ⬜ NOT BUILT |
+| Hourly lucky-bag easter egg | F32 | ⬜ NOT BUILT |
+| Host commentary as danmaku (AI as bullet text) | F33 (alt to AIBubble) | ⬜ NOT BUILT |
+| Champagne / firework particles on SOLD | F34 | ⬜ NOT BUILT |
 | Hourglass particle countdown | F03 | ⬜ NOT BUILT |
 | Background color-temp ramp | F04 | ⬜ NOT BUILT |
 | Catchup fast-forward of replayed events | F28 — partial | 🟡 gap-bar exists, event replay animation TODO |
@@ -316,7 +316,7 @@ Required functionality, in order of dependence:
 | Capability | Wire dependency | Status |
 |---|---|---|
 | Detect Douyin in-app browser via UA | client-side | ⬜ |
-| Show landing: "请在抖音 App 内打开" with deep-link CTA | static | ⬜ |
+| Show a "please open this in the Douyin app" landing with a deep-link CTA | static | ⬜ |
 | Auction preview card (no live updates) | `GET /api/auctions/:id` snapshot | ⬜ |
 | Open in Douyin App deep link | URL scheme | ⬜ |
 
@@ -518,7 +518,7 @@ Performance budget: ack p95 < 80ms, broadcast p95 < 150ms (Plan V9 §4 SLOs).
 7. FE: Room re-renders → isSolemnState() returns true → document.body adds .surface-solemn
 8. FE: HammerOverlay becomes visible (status === 'SOLD')
 9. FE: 6/10 design moment — gold serif reveal, particles, winner name
-10. User taps "查看证据卡 →" → navigation to ?view=evidence
+10. User taps "view the evidence card" -> navigation to ?view=evidence
 ```
 
 ### §5.4 Life of a seller cancel
@@ -559,7 +559,7 @@ Performance budget: ack p95 < 80ms, broadcast p95 < 150ms (Plan V9 §4 SLOs).
 1. Server bumps schemaVersion to 2 (breaking change)
 2. Old FE client opens WS, receives envelope with schemaVersion=2
 3. FE useAuctionRoom: dispatch connection:schema_mismatch event
-4. ConnectionBar shows red strip: "客户端版本与服务器协议不匹配,请刷新"
+4. ConnectionBar shows a red strip: "the client version does not match the server protocol, please refresh"
 5. FE does NOT process the envelope's data (incompatible)
 6. User refreshes; new bundle has schemaVersion=2; works
 ```
@@ -642,13 +642,13 @@ If a feature is unanchored, it loses to the MUST list:
 | F03 sand hourglass | only `endAtMs` | Optional aesthetic; consider for solemn palette only |
 | F04 background color-temp | only `endAtMs` | Cheap if CSS-only; skip if competes with F01 pulse |
 | F10 combo counter | self-bid streak (client-derived) | Skip — Douyin pattern but no engineering value |
-| F13 黑马 banner | jump in `amountCents` (client-derived from rule) | P1 only — fun but not anchoring |
+| F13 dark-horse banner | jump in `amountCents` (client-derived from rule) | P1 only - fun but not anchoring |
 | F21 viewer count | requires backend presence count (NOT IMPLEMENTED) | Skip unless presence channel lands |
-| F22 上车 ticker | requires join broadcast (NOT IMPLEMENTED) | Skip |
-| F24 心动值 | client-derived from total bid count | Skip — pure decoration |
+| F22 join ticker | requires join broadcast (NOT IMPLEMENTED) | Skip |
+| F24 hype meter | client-derived from total bid count | Skip - pure decoration |
 | F25 long-press tier wheel | client-only | P1 — improves UX, no engineering signal |
 | F27 haptics | client-only Web Vibration API | P1 — easy and on-brand |
-| F32–F34 (福袋/弹幕/礼物) | none — pure aesthetic | Reject — risks Douyin-slop |
+| F32-F34 (lucky bag / danmaku / gifts) | none - pure aesthetic | Reject - risks Douyin-slop |
 
 ---
 
@@ -764,7 +764,7 @@ The 3-minute demo (T10) requires this exact path. Every visible screen must supp
 02:00–02:30 — Hammer + evidence
   • Timer expires → close_auction.lua → AUCTION_SOLD
   • HammerOverlay: A→B accent flip → gold serif winner reveal
-  • Tap "查看证据卡 →" → EvidenceScreen
+  • Tap "view the evidence card" -> EvidenceScreen
   • Show hash-chain timeline → chain head → chainVerified badge
 
 02:30–03:00 — Backend invariants on screen (judges' eyes)
@@ -803,7 +803,7 @@ If the design doesn't support this flow visibly, reject.
 | Q2 | Sound default (#41 §7.2) | Product/legal | F14–F17 audio features |
 | Q3 | Animation frame budget mode (#41 §7.3) | FE owner | P9 implementation (DONE — option B locked) |
 | Q4 | PC ↔ H5 design language (#41 §7.4) | Design vote | T5a admin token system |
-| Q5 | AI offline copy (#41 §7.5) | Copy review | DONE — "拍卖师暂离 · 出价不受影响" locked |
+| Q5 | AI offline copy (#41 §7.5) | Copy review | DONE - "the auctioneer has stepped away - bidding is unaffected" locked |
 | Q6 | Reserve price (V9 §2 OPEN DECISION) | All-member vote (contract PR) | P1 only — not blocking P0 |
 | Q7 | One-T-per-PR vs bundled trunk flush (issue #36) | Process RFC | Future PR strategy |
 | Q8 | Repo structure ratification (issue #14) | All-member ratify | Onboarding doc clarity |
@@ -832,7 +832,7 @@ When evaluating a design proposal (e.g. from `/frontend-design` or a human desig
 ### §12.2 Soft rejection criteria (multiple fails → redesign)
 
 - [ ] Numeric column without `tabular-nums`
-- [ ] Cliched livestream commerce patterns (转盘, lucky-draw)
+- [ ] Cliched livestream commerce patterns (spin wheels, lucky draws)
 - [ ] Generic AI-default fonts (Inter, Roboto, Arial as display)
 - [ ] No safe-area-inset on iPhone notch / home indicator
 - [ ] CTA outside thumb-reach on mobile
@@ -987,4 +987,4 @@ lumen-frontend/
 
 ## §15 Closing — the design's job in one paragraph
 
-The judges are 50% engineering. The product's claim is: **every bid is atomically adjudicated, every event is sequence-guaranteed, every auction has a provable hash chain, every reconnect catches up, every clock is server-corrected, every anti-snipe extension is visible, every AI failure is degraded.** The design's job is to make all of that *legible* in 30 seconds of silent video — without becoming an engineering dashboard, without losing the Douyin live-commerce energy, without sliding into抽奖 aesthetics, and without violating any of the §4 wire contracts. We use A+B accent to honor both halves: Douyin during the action (D5), AuctionHouse at the hammer (D4, D9). Everything in this document is a constraint that supports that single goal.
+The judges are 50% engineering. The product's claim is: **every bid is atomically adjudicated, every event is sequence-guaranteed, every auction has a provable hash chain, every reconnect catches up, every clock is server-corrected, every anti-snipe extension is visible, every AI failure is degraded.** The design's job is to make all of that *legible* in 30 seconds of silent video — without becoming an engineering dashboard, without losing the Douyin live-commerce energy, without sliding into lottery aesthetics, and without violating any of the §4 wire contracts. We use A+B accent to honor both halves: Douyin during the action (D5), AuctionHouse at the hammer (D4, D9). Everything in this document is a constraint that supports that single goal.
