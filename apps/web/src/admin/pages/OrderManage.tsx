@@ -33,7 +33,7 @@ function mapAuctionToOrder(a: any, order: any | null): Order {
     buyer: a.status === 'NO_BID' ? '- (no bid)' : (nick ? nick.slice(0, 1) + '***' : 'Anonymous buyer'),
     deposit: 0,
     status,
-    time: t ? new Date(t).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
+    time: t ? new Date(t).toLocaleString('en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—',
     img: a.imageUrl || undefined,
   };
 }

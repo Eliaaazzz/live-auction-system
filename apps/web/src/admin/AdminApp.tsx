@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ConfigProvider, Layout, Menu, theme, Badge, Avatar, Button, App as AntdApp } from 'antd';
-import zhCN from 'antd/locale/zh_CN';
-import 'dayjs/locale/zh-cn';
+import enUS from 'antd/locale/en_US';
+import 'dayjs/locale/en';
 import {
   DashboardOutlined,
   CloudUploadOutlined,
@@ -65,7 +65,7 @@ export default function AdminApp({
 
   return (
     <ConfigProvider
-      locale={zhCN}
+      locale={enUS}
       theme={{
         token: { colorPrimary: '#fe2c55', borderRadius: 8, fontSize: 14 },
         components: { Layout: { siderBg: '#15151d', triggerBg: '#0f0f16' } },

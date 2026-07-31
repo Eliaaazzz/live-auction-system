@@ -99,7 +99,7 @@ export function speak(text: string, minGapMs = 2500): void {
     try {
       synth.resume(); // Chromium occasionally sticks in the paused state, so resume before speaking
       const u = new SpeechSynthesisUtterance(text);
-      u.lang = 'zh-CN';
+      u.lang = 'en-US';
       u.rate = 1.12;
       u.pitch = 1.05;
       u.volume = 0.95;
